@@ -1,0 +1,18 @@
+
+
+# ── Web framework ──────────────────────────────────────────
+flask[async]>=2.3          # async-view support
+flask-cors>=4.0
+
+# ── Infrastructure clients ─────────────────────────────────
+redis>=5.0                 # Python client for Redis 7+
+anthropic>=0.17            # Claude API SDK
+
+# ── Dev / testing ──────────────────────────────────────────
+python-dotenv>=1.0         # load .env in local dev
+pytest>=8.0
+pytest-asyncio>=0.23       # run async tests
+
+# ── (Optional) production servers ──────────────────────────
+gunicorn>=22.0             # WSGI (sync) – good enough for simple deploys
+hypercorn>=0.16            # ASGI (async) – use if you need full async throughput

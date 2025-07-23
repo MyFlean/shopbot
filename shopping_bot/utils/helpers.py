@@ -1,6 +1,5 @@
-# shopping_bot/utils/helpers.py
 """
-Side-effect-free utility helpers reused across the bot.
+Utility helpers
 """
 
 from __future__ import annotations
@@ -10,17 +9,10 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
-# ─────────────────────────────────────────────
-# Budget parsing
-# ─────────────────────────────────────────────
 _BUDGET_RGX = re.compile(r"(\d[\d,]*)\s*[-–]\s*(\d[\d,]*)")
 
 
 def parse_budget_range(raw: str) -> Tuple[int, int] | None:
-    """
-    '$1,000-1,500' → (1000, 1500)
-    Returns None when pattern not found.
-    """
     m = _BUDGET_RGX.search(raw.replace("$", "").replace("₹", ""))
     if not m:
         return None
@@ -31,17 +23,10 @@ def parse_budget_range(raw: str) -> Tuple[int, int] | None:
 def price_within(price: int | float, budget: Tuple[int, int] | None) -> bool:
     return True if budget is None else budget[0] <= price <= budget[1]
 
-
-# ─────────────────────────────────────────────
-# JSON extraction from LLM output
-# ─────────────────────────────────────────────
 _JSON_BLOCK = re.compile(r"\{.*\}", re.S)
 
 
 def extract_json_block(text: str) -> Dict[str, Any]:
-    """
-    Returns first {...} block parsed as dict, {} on failure.
-    """
     m = _JSON_BLOCK.search(text)
     if not m:
         return {}
@@ -51,9 +36,6 @@ def extract_json_block(text: str) -> Dict[str, Any]:
         return {}
 
 
-# ─────────────────────────────────────────────
-# Misc small helpers
-# ─────────────────────────────────────────────
 def iso_now() -> str:
     return datetime.now().isoformat()
 
@@ -66,3 +48,19 @@ def unique(seq: List[Any]) -> List[Any]:
             seen.add(x)
             out.append(x)
     return out
+
+# NEW small helpers
+
+def trim_history(history: List[Dict[str, Any]], max_len: int) -> None:
+    if max_len <= 0:
+        return
+    overflow = len(history) - max_len
+    if overflow > 0:
+        del history[:overflow]
+
+
+def safe_get(d: Dict[str, Any], key: str, default: Any = None) -> Any:
+    try:
+        return d[key]
+    except Exception:
+        return default

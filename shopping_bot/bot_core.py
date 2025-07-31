@@ -140,7 +140,11 @@ class ShoppingBotCore:
             contextual_questions = await self.llm_service.generate_contextual_questions(
                 user_slots, query, result.layer3, ctx
             )
-            ctx.session["contextual_questions"] = contextual_questions
+            # 🌟 NORMALISE EACH QUESTION
+            from .bot_helpers import normalize_to_mc3
+            ctx.session["contextual_questions"] = {
+                slot: normalize_to_mc3(q) for slot, q in contextual_questions.items()
+            }
 
         # Store assessment state
         ctx.session["assessment"] = {

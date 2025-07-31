@@ -1,10 +1,16 @@
 """
-Helper utilities for ShoppingBotCore.
-…
+Helper utilities for ShoppingBotCore
+────────────────────────────────────
+Includes:
+• KEY_ELEMENTS (Flean’s six-element answer spec)
+• normalize_to_mc3  – guarantees every question is 3-option multi_choice
+• sections_to_text  – formats the six-element dict into WhatsApp-friendly text
+All original helpers are preserved.
 """
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Union
 
@@ -14,12 +20,32 @@ from .intent_config import FUNCTION_TTL, SLOT_QUESTIONS, SLOT_TO_SESSION_KEY
 from .utils.helpers import iso_now, trim_history, safe_get  # noqa: F401
 from .models import UserContext
 
-import re
-from typing import Any, Dict, List
-
 Cfg = get_config()
 log = logging.getLogger(__name__)
 
+# ────────────────────────────────────────────────────────────
+# Flean – six core elements
+# ────────────────────────────────────────────────────────────
+KEY_ELEMENTS: List[str] = [
+    "+",          # Core benefit / positive hook
+    "ALT",        # Alternatives
+    "-",          # Drawbacks / caveats
+    "BUY",        # Purchase CTA
+    "OVERRIDE",   # How user can tweak / override
+    "INFO",       # Extra facts (nutrition, rating, etc.)
+]
+_LABELS = {
+    "+": "Why you’ll love it",
+    "ALT": "Alternatives",
+    "-": "Watch-outs",
+    "BUY": "Buy",
+    "OVERRIDE": "Override tips",
+    "INFO": "Extra info",
+}
+
+# ────────────────────────────────────────────────────────────
+# Public exports
+# ────────────────────────────────────────────────────────────
 __all__ = [
     "already_have_data",
     "build_question",
@@ -30,24 +56,26 @@ __all__ = [
     "store_user_answer",
     "snapshot_and_trim",
     "pick_tool",
-    "normalize_to_mc3",         
+    "normalize_to_mc3",
+    "sections_to_text",
 ]
 
+# ────────────────────────────────────────────────────────────
+# Question normaliser – guarantees MC-3
+# ────────────────────────────────────────────────────────────
 EXAMPLE_TOKENS = {"e.g.", "e.g", "eg", "eg."}
 
 
-# ────────────────────────────────────────────────────────────
-# Normaliser ─ guarantees MC-3
-# ────────────────────────────────────────────────────────────
 def _from_placeholder(ph: str) -> List[str]:
     """Extract comma-separated phrases from placeholder minus 'e.g.' prefix."""
     ph = ph.replace("e.g.,", "").replace("e.g.", "").strip()
     parts = [p.strip(" .") for p in ph.split(",") if p.strip()]
     return [p for p in parts if p.lower() not in EXAMPLE_TOKENS]
 
+
 def _from_hints(hints: List[str]) -> List[str]:
-    """Take the first 3 hint lines, keep text before ' - ' / ' – '."""
-    out = []
+    """Take first 3 hint lines, keep text before ' - ' / ' – '."""
+    out: List[str] = []
     for h in hints:
         if len(out) >= 3:
             break
@@ -56,10 +84,11 @@ def _from_hints(hints: List[str]) -> List[str]:
             out.append(base)
     return out
 
+
 def normalize_to_mc3(q: Dict[str, Any]) -> Dict[str, Any]:
     """
     Force every question to be multi_choice with exactly 3 clean options.
-    Order of precedence to build options:
+    Derivation precedence:
     1. existing q['options']
     2. placeholder examples
     3. first few hints
@@ -70,7 +99,9 @@ def normalize_to_mc3(q: Dict[str, Any]) -> Dict[str, Any]:
     opts: List[Any] = q.get("options") or []
 
     # 2. Derive from placeholder if missing or faulty
-    if not opts or all(o in EXAMPLE_TOKENS for o in opts if isinstance(o, str)):
+    if not opts or all(
+        isinstance(o, str) and o.lower() in EXAMPLE_TOKENS for o in opts
+    ):
         opts = _from_placeholder(q.get("placeholder", ""))
 
     # 3. Derive from hints if still empty
@@ -89,21 +120,29 @@ def normalize_to_mc3(q: Dict[str, Any]) -> Dict[str, Any]:
             val = o.get("value") or lab
         else:
             lab = val = str(o).strip()
-        # Title-case for WA buttons
         lab = lab[0].upper() + lab[1:] if lab else lab
         return {"label": lab, "value": val}
 
     q["options"] = [canon(o) for o in opts]
     return q
 
+# ────────────────────────────────────────────────────────────
+# Six-section answer formatter
+# ────────────────────────────────────────────────────────────
+def sections_to_text(sections: Dict[str, str]) -> str:
+    """Convert the six-element dict into WhatsApp-friendly text."""
+    lines: List[str] = []
+    for key in KEY_ELEMENTS:
+        txt = sections.get(key, "").strip()
+        if txt:
+            lines.append(f"*{_LABELS[key]}:* {txt}")
+    return "\n\n".join(lines)
 
 # ────────────────────────────────────────────────────────────
 # Primitive converters / inspectors
+# (unchanged code below)
 # ────────────────────────────────────────────────────────────
-
 def string_to_function(f_str: str) -> Union[BackendFunction, UserSlot, None]:
-    """Convert *f_str* to the matching :class:`BackendFunction` or
-    :class:`UserSlot`. Return *None* if it matches neither."""
     try:
         return UserSlot(f_str)
     except ValueError:
@@ -114,24 +153,20 @@ def string_to_function(f_str: str) -> Union[BackendFunction, UserSlot, None]:
 
 
 def is_user_slot(func: Union[BackendFunction, UserSlot, str]) -> bool:
-    """True for ``ASK_*`` ‑style user slots."""
-    return isinstance(func, UserSlot) or (isinstance(func, str) and func.startswith("ASK_"))
+    return isinstance(func, UserSlot) or (
+        isinstance(func, str) and func.startswith("ASK_")
+    )
 
 
 def get_func_value(func: Union[BackendFunction, UserSlot, str]) -> str:
-    """Canonical string identifier for *func*."""
     if isinstance(func, (BackendFunction, UserSlot)):
         return func.value
     return str(func)
 
 # ────────────────────────────────────────────────────────────
-# Data‑availability helpers
+# Data-availability helpers (already_have_data) – unchanged
 # ────────────────────────────────────────────────────────────
-
 def already_have_data(func_str: str, ctx: UserContext) -> bool:
-    """Return *True* if the information implied by *func_str* is already
-    present in *ctx* and still within TTL (for FETCH_*)."""
-    # User slot?
     try:
         slot = UserSlot(func_str)
         session_key = SLOT_TO_SESSION_KEY.get(slot, slot.name.lower())
@@ -141,7 +176,6 @@ def already_have_data(func_str: str, ctx: UserContext) -> bool:
     except ValueError:
         pass
 
-    # Backend function?
     try:
         func = BackendFunction(func_str)
         rec = ctx.fetched_data.get(func.value)
@@ -155,18 +189,14 @@ def already_have_data(func_str: str, ctx: UserContext) -> bool:
     return False
 
 # ────────────────────────────────────────────────────────────
-# Question generation & answer storage
+# Question generation (build_question) – key lines modified
 # ────────────────────────────────────────────────────────────
-
 def build_question(func: Union[BackendFunction, UserSlot, str], ctx: UserContext) -> Dict[str, Any]:
-    """Generate a user‑friendly question for the slot/function *func*."""
     func_value = get_func_value(func)
-    # Prefer contextual question pre‑generated by LLM
     contextual_q = ctx.session.get("contextual_questions", {}).get(func_value)
     if contextual_q:
         return normalize_to_mc3(contextual_q)
 
-    # Static fall‑back from config
     if isinstance(func, UserSlot):
         cfg = SLOT_QUESTIONS.get(func, {})
         if "fallback" in cfg:
@@ -175,28 +205,26 @@ def build_question(func: Union[BackendFunction, UserSlot, str], ctx: UserContext
         slot = UserSlot(func_value)
         cfg = SLOT_QUESTIONS.get(slot, {})
         if "fallback" in cfg:
-            return cfg["fallback"].copy()
+            return normalize_to_mc3(cfg["fallback"].copy())
     except ValueError:
         pass
-
-    # Generic text‑input fall‑back
 
     if func_value.startswith("ASK_"):
         slot_name = func_value[4:].lower().replace("_", " ")
         q = {
             "message": f"Could you tell me your {slot_name}?",
-            "type": "multi_choice",   # ← required, but will be enforced anyway
-            "options": []             # leave empty → helper pads to 3
+            "type": "multi_choice",
+            "options": [],
         }
         return normalize_to_mc3(q)
 
-    # Catch-all fall-back
     q = {
         "message": "Could you provide more details?",
         "type": "multi_choice",
-        "options": []
+        "options": [],
     }
     return normalize_to_mc3(q)
+
 
 
 def store_user_answer(text: str, assessment: Dict[str, Any], ctx: UserContext) -> None:

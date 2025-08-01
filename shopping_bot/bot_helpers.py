@@ -2,8 +2,8 @@
 Helper utilities for ShoppingBotCore
 ────────────────────────────────────
 Includes:
-• KEY_ELEMENTS (Flean’s six-element answer spec)
-• normalize_to_mc3  – guarantees every question is 3-option multi_choice
+• KEY_ELEMENTS (Flean's six-element answer spec)
+• Simplified question processing (no more complex parsing)
 • sections_to_text  – formats the six-element dict into WhatsApp-friendly text
 All original helpers are preserved.
 """
@@ -35,7 +35,7 @@ KEY_ELEMENTS: List[str] = [
     "INFO",       # Extra facts (nutrition, rating, etc.)
 ]
 _LABELS = {
-    "+": "Why you’ll love it",
+    "+": "Why you'll love it",
     "ALT": "Alternatives",
     "-": "Watch-outs",
     "BUY": "Buy",
@@ -56,74 +56,44 @@ __all__ = [
     "store_user_answer",
     "snapshot_and_trim",
     "pick_tool",
-    "normalize_to_mc3",
+    "ensure_proper_options",
     "sections_to_text",
 ]
 
 # ────────────────────────────────────────────────────────────
-# Question normaliser – guarantees MC-3
+# Question option validator – ensures we have proper MC-3 format
 # ────────────────────────────────────────────────────────────
-EXAMPLE_TOKENS = {"e.g.", "e.g", "eg", "eg."}
 
-
-def _from_placeholder(ph: str) -> List[str]:
-    """Extract comma-separated phrases from placeholder minus 'e.g.' prefix."""
-    ph = ph.replace("e.g.,", "").replace("e.g.", "").strip()
-    parts = [p.strip(" .") for p in ph.split(",") if p.strip()]
-    return [p for p in parts if p.lower() not in EXAMPLE_TOKENS]
-
-
-def _from_hints(hints: List[str]) -> List[str]:
-    """Take first 3 hint lines, keep text before ' - ' / ' – '."""
-    out: List[str] = []
-    for h in hints:
-        if len(out) >= 3:
-            break
-        base = re.split(r"\s[-–]\s", h, maxsplit=1)[0].strip()
-        if base and base.lower() not in EXAMPLE_TOKENS:
-            out.append(base)
-    return out
-
-
-def normalize_to_mc3(q: Dict[str, Any]) -> Dict[str, Any]:
+def ensure_proper_options(q: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Force every question to be multi_choice with exactly 3 clean options.
-    Derivation precedence:
-    1. existing q['options']
-    2. placeholder examples
-    3. first few hints
+    Ensure question has proper multi_choice format with exactly 3 options.
+    This is a simplified version that doesn't do complex parsing since
+    the LLM now provides proper options directly.
     """
     q["type"] = "multi_choice"
-
-    # 1. start with whatever came from LLM
-    opts: List[Any] = q.get("options") or []
-
-    # 2. Derive from placeholder if missing or faulty
-    if not opts or all(
-        isinstance(o, str) and o.lower() in EXAMPLE_TOKENS for o in opts
-    ):
-        opts = _from_placeholder(q.get("placeholder", ""))
-
-    # 3. Derive from hints if still empty
-    if not opts:
-        opts = _from_hints(q.get("hints", []))
-
-    # 4. Trim / pad
-    opts = opts[:3]
-    while len(opts) < 3:
-        opts.append("Other")
-
-    # 5. Canonicalise
-    def canon(o):
-        if isinstance(o, dict):
-            lab = o.get("label") or o.get("value")
-            val = o.get("value") or lab
-        else:
-            lab = val = str(o).strip()
-        lab = lab[0].upper() + lab[1:] if lab else lab
-        return {"label": lab, "value": val}
-
-    q["options"] = [canon(o) for o in opts]
+    
+    options = q.get("options", [])
+    
+    # If we already have proper options format, use them
+    if isinstance(options, list) and len(options) >= 3:
+        # Ensure each option is in proper format
+        formatted_options = []
+        for opt in options[:3]:  # Take first 3
+            if isinstance(opt, dict) and "label" in opt and "value" in opt:
+                formatted_options.append(opt)
+            elif isinstance(opt, str):
+                formatted_options.append({"label": opt, "value": opt})
+        
+        if len(formatted_options) == 3:
+            q["options"] = formatted_options
+            return q
+    
+    # Fallback: generate default options
+    q["options"] = [
+        {"label": "Yes", "value": "Yes"},
+        {"label": "No", "value": "No"},
+        {"label": "Maybe", "value": "Maybe"}
+    ]
     return q
 
 # ────────────────────────────────────────────────────────────
@@ -140,7 +110,6 @@ def sections_to_text(sections: Dict[str, str]) -> str:
 
 # ────────────────────────────────────────────────────────────
 # Primitive converters / inspectors
-# (unchanged code below)
 # ────────────────────────────────────────────────────────────
 def string_to_function(f_str: str) -> Union[BackendFunction, UserSlot, None]:
     try:
@@ -189,42 +158,54 @@ def already_have_data(func_str: str, ctx: UserContext) -> bool:
     return False
 
 # ────────────────────────────────────────────────────────────
-# Question generation (build_question) – key lines modified
+# Question generation (build_question) – simplified version
 # ────────────────────────────────────────────────────────────
 def build_question(func: Union[BackendFunction, UserSlot, str], ctx: UserContext) -> Dict[str, Any]:
+    """
+    Build a question for the given function/slot.
+    Now simplified since contextual questions from LLM should have proper options.
+    """
     func_value = get_func_value(func)
+    
+    # First, try to get contextual question from LLM
     contextual_q = ctx.session.get("contextual_questions", {}).get(func_value)
     if contextual_q:
-        return normalize_to_mc3(contextual_q)
+        # Just ensure it has proper format, no complex parsing
+        return ensure_proper_options(contextual_q)
 
+    # Fallback to predefined questions
     if isinstance(func, UserSlot):
         cfg = SLOT_QUESTIONS.get(func, {})
         if "fallback" in cfg:
-            return normalize_to_mc3(cfg["fallback"].copy())
+            fallback_q = cfg["fallback"].copy()
+            return ensure_proper_options(fallback_q)
+    
     try:
         slot = UserSlot(func_value)
         cfg = SLOT_QUESTIONS.get(slot, {})
         if "fallback" in cfg:
-            return normalize_to_mc3(cfg["fallback"].copy())
+            fallback_q = cfg["fallback"].copy()
+            return ensure_proper_options(fallback_q)
     except ValueError:
         pass
 
+    # Generate basic question for ASK_* slots
     if func_value.startswith("ASK_"):
         slot_name = func_value[4:].lower().replace("_", " ")
         q = {
             "message": f"Could you tell me your {slot_name}?",
             "type": "multi_choice",
-            "options": [],
+            "options": []
         }
-        return normalize_to_mc3(q)
+        return ensure_proper_options(q)
 
+    # Ultimate fallback
     q = {
         "message": "Could you provide more details?",
         "type": "multi_choice",
-        "options": [],
+        "options": []
     }
-    return normalize_to_mc3(q)
-
+    return ensure_proper_options(q)
 
 
 def store_user_answer(text: str, assessment: Dict[str, Any], ctx: UserContext) -> None:

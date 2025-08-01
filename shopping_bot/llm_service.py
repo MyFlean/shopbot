@@ -11,6 +11,7 @@ Changes (2025-07-31):
   object ( + / ALT / – / BUY / OVERRIDE / INFO ).
 • generate_answer() converts that dict -> formatted text via
   bot_helpers.sections_to_text().
+• Improved build_questions_tool to generate proper discrete options
 """
 
 from __future__ import annotations
@@ -149,29 +150,51 @@ def build_assessment_tool() -> Dict[str, Any]:
     }
 
 def build_questions_tool(slots_needed: List[UserSlot]) -> Dict[str, Any]:
-    """Build the contextual questions generation tool dynamically."""
+    """Build the contextual questions generation tool dynamically with improved option generation."""
+    slot_properties = {}
+    
+    for slot in slots_needed:
+        slot_properties[slot.value] = {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "The question text to ask the user"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": ["multi_choice"],
+                    "description": "Always multi_choice"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Exactly 3 discrete, actionable options (no instructional text or 'e.g.' examples)"
+                },
+                "placeholder": {
+                    "type": "string",
+                    "description": "Optional placeholder text"
+                },
+                "hints": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional helpful hints"
+                },
+            },
+            "required": ["message", "type", "options"],
+        }
+    
     return {
         "name": "generate_questions",
-        "description": "Generate contextual questions for user slots",
+        "description": "Generate contextual questions for user slots with proper discrete options",
         "input_schema": {
             "type": "object",
             "properties": {
                 "questions": {
                     "type": "object",
-                    "properties": {
-                        slot.value: {
-                            "type": "object",
-                            "properties": {
-                                "message": {"type": "string"},
-                                "type": {"type": "string"},
-                                "options": {"type": "array", "items": {"type": "string"}},
-                                "placeholder": {"type": "string"},
-                                "hints": {"type": "array", "items": {"type": "string"}},
-                            },
-                            "required": ["message", "type"],
-                        }
-                        for slot in slots_needed
-                    },
+                    "properties": slot_properties,
                 }
             },
             "required": ["questions"],
@@ -274,7 +297,7 @@ Consider the specific query details - not all typical requirements may be needed
 """
 
 CONTEXTUAL_QUESTIONS_PROMPT = """
-Generate contextual questions for a shopping query.
+Generate contextual questions for a shopping query with EXACTLY 3 discrete options for each question.
 
 Original Query: "{query}"
 Intent: {intent_l3}
@@ -289,12 +312,30 @@ Category-Specific Hints:
 Generate natural, contextual questions for these information needs:
 {slots_needed}
 
+CRITICAL REQUIREMENTS for options:
+1. Provide EXACTLY 3 discrete, actionable options per question
+2. Each option should be a short, specific choice (1-4 words max)
+3. NO instructional text like "Consider..." or "Think about..."
+4. NO examples prefixed with "e.g." or similar
+5. Options should be directly selectable answers
+6. Make options relevant to the query context and product category
+
+Examples of GOOD options:
+- For budget: ["Under $100", "$100-500", "Over $500"]
+- For size: ["Small", "Medium", "Large"]
+- For brand preference: ["Premium brands", "Popular brands", "Budget-friendly"]
+- For features: ["Basic features", "Standard features", "Advanced features"]
+- For style: ["Modern", "Classic", "Trendy"]
+
+Examples of BAD options (AVOID):
+- ["Consider your budget, quality needs, etc.", "Think about features", "Other"]
+- ["e.g. Nike, Adidas", "Such as wireless, waterproof", "etc."]
+
 Guidelines:
 - Make questions specific to the query context
-- Include relevant options where appropriate
-- For budget questions, use category-appropriate ranges
-- For preferences, include category-relevant options
+- Use category-appropriate option ranges
 - Questions should feel conversational and helpful
+- Each question must have exactly 3 options that are clear choices
 """
 
 ANSWER_GENERATION_PROMPT = """
@@ -508,10 +549,145 @@ class LLMService:
         intent_l3: str,
         ctx: UserContext,
     ) -> Dict[str, Dict[str, Any]]:
-        # (unchanged body)
-        # …
+        """Generate contextual questions with improved option generation."""
+        if not slots_needed:
+            return {}
 
-        return {}
+        # Get product category from session if available
+        product_category = ctx.session.get("product_category", "general products")
+        
+        # Build slot hints
+        slot_hints_lines = []
+        for slot in slots_needed:
+            hint_config = SLOT_QUESTIONS.get(slot, {})
+            if "hint" in hint_config:
+                slot_hints_lines.append(f"- {slot.value}: {hint_config['hint']}")
+        slot_hints = "\n".join(slot_hints_lines) if slot_hints_lines else "No specific hints available."
+
+        # Get category-specific hints
+        category_hints = CATEGORY_QUESTION_HINTS.get(product_category, "Focus on the most relevant attributes for the user's query.")
+
+        # Prepare slots needed description
+        slots_needed_desc = ", ".join([slot.value for slot in slots_needed])
+
+        prompt = CONTEXTUAL_QUESTIONS_PROMPT.format(
+            query=query,
+            intent_l3=intent_l3,
+            product_category=product_category,
+            slot_hints=slot_hints,
+            category_hints=category_hints,
+            slots_needed=slots_needed_desc,
+        )
+
+        try:
+            questions_tool = build_questions_tool(slots_needed)
+            resp = self.anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[questions_tool],
+                tool_choice={"type": "tool", "name": "generate_questions"},
+                temperature=0.3,
+                max_tokens=800,
+            )
+
+            tool_use = pick_tool(resp, "generate_questions")
+            if not tool_use:
+                log.warning("No generate_questions tool use found")
+                return {}
+
+            questions_data = tool_use.input.get("questions", {})
+            
+            # Process the questions to ensure proper format
+            processed_questions = {}
+            for slot_value, question_data in questions_data.items():
+                # Ensure we have exactly 3 options and they're properly formatted
+                options = question_data.get("options", [])
+                
+                # Convert string options to proper format if needed
+                if isinstance(options, list) and len(options) >= 3:
+                    formatted_options = []
+                    for i, opt in enumerate(options[:3]):  # Take first 3
+                        if isinstance(opt, str):
+                            # Clean up the option text
+                            clean_opt = opt.strip()
+                            # Skip options that look like instructions
+                            if any(phrase in clean_opt.lower() for phrase in ["consider", "think about", "e.g.", "such as", "etc."]):
+                                continue
+                            formatted_options.append({
+                                "label": clean_opt,
+                                "value": clean_opt
+                            })
+                    
+                    # If we don't have enough good options, add generic ones
+                    while len(formatted_options) < 3:
+                        if len(formatted_options) == 0:
+                            formatted_options.append({"label": "Yes", "value": "Yes"})
+                        elif len(formatted_options) == 1:
+                            formatted_options.append({"label": "No", "value": "No"})
+                        else:
+                            formatted_options.append({"label": "Other", "value": "Other"})
+                    
+                    processed_questions[slot_value] = {
+                        "message": question_data.get("message", f"Please provide your {slot_value.lower().replace('_', ' ')}"),
+                        "type": "multi_choice",
+                        "options": formatted_options[:3],  # Ensure exactly 3
+                        "placeholder": question_data.get("placeholder", ""),
+                        "hints": question_data.get("hints", [])
+                    }
+                else:
+                    # Fallback if options are malformed
+                    processed_questions[slot_value] = self._generate_fallback_question(slot_value)
+
+            return processed_questions
+
+        except Exception as exc:
+            log.warning("Contextual question generation failed: %s", exc)
+            # Return fallback questions for all slots
+            return {slot.value: self._generate_fallback_question(slot.value) for slot in slots_needed}
+
+    def _generate_fallback_question(self, slot_value: str) -> Dict[str, Any]:
+        """Generate a fallback question with proper options."""
+        slot_name = slot_value.lower().replace("ask_", "").replace("_", " ")
+        
+        # Provide sensible default options based on slot type
+        if "budget" in slot_name or "price" in slot_name:
+            options = [
+                {"label": "Budget-friendly", "value": "Budget-friendly"},
+                {"label": "Mid-range", "value": "Mid-range"},
+                {"label": "Premium", "value": "Premium"}
+            ]
+        elif "size" in slot_name:
+            options = [
+                {"label": "Small", "value": "Small"},
+                {"label": "Medium", "value": "Medium"},
+                {"label": "Large", "value": "Large"}
+            ]
+        elif "brand" in slot_name:
+            options = [
+                {"label": "Popular brands", "value": "Popular brands"},
+                {"label": "Premium brands", "value": "Premium brands"},
+                {"label": "Any brand", "value": "Any brand"}
+            ]
+        elif "color" in slot_name:
+            options = [
+                {"label": "Dark colors", "value": "Dark colors"},
+                {"label": "Light colors", "value": "Light colors"},
+                {"label": "Bright colors", "value": "Bright colors"}
+            ]
+        else:
+            options = [
+                {"label": "Important", "value": "Important"},
+                {"label": "Somewhat important", "value": "Somewhat important"},
+                {"label": "Not important", "value": "Not important"}
+            ]
+        
+        return {
+            "message": f"What's your preference for {slot_name}?",
+            "type": "multi_choice",
+            "options": options,
+            "placeholder": "",
+            "hints": []
+        }
 
     # ---------------- ANSWER GENERATION ----------------
     async def generate_answer(

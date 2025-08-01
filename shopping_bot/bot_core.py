@@ -21,7 +21,7 @@ from .bot_helpers import (
     is_user_slot,
     get_func_value,
     build_question,
-    normalize_to_mc3,          # used once below
+    ensure_proper_options,     # updated import
 )
 from .llm_service import LLMService, map_leaf_to_query_intent
 
@@ -126,9 +126,8 @@ class ShoppingBotCore:
             contextual_questions = await self.llm_service.generate_contextual_questions(
                 user_slots, query, result.layer3, ctx
             )
-            ctx.session["contextual_questions"] = {
-                slot: normalize_to_mc3(q) for slot, q in contextual_questions.items()
-            }
+            # Store the questions - they should already have proper options from the improved LLM service
+            ctx.session["contextual_questions"] = contextual_questions
 
         ctx.session["assessment"] = {
             "original_query": query,

@@ -1,0 +1,228 @@
+# ShoppingBotCore Logging Strategy Documentation
+
+## Overview
+This document explains the comprehensive logging strategy implemented in `bot_core.py` to help with debugging, monitoring, and understanding the bot's behavior in production.
+
+## Logging Philosophy
+
+### 🎯 **Core Principles**
+1. **Traceability**: Every user interaction gets a unique request ID for end-to-end tracking
+2. **State Visibility**: Log key state changes and decision points
+3. **Error Context**: Comprehensive error logging with context
+4. **Performance Monitoring**: Track function execution and data fetching
+5. **User Journey Mapping**: Follow the complete user interaction flow
+
+### 📊 **Log Levels Used**
+- **INFO**: High-level flow events, state changes, and important milestones
+- **DEBUG**: Detailed internal operations, data content, and fine-grained tracking
+- **WARNING**: Non-fatal errors that don't break the flow
+- **ERROR/EXCEPTION**: Fatal errors with full stack traces
+
+## Detailed Log Categories
+
+### 🚀 **1. Request Lifecycle Tracking**
+
+#### Entry Point Logs
+```python
+# Log Pattern: PROCESSING_QUERY_START
+log.info("🚀 PROCESSING_QUERY_START | req_id=%s | user_id=%s | query_len=%d | has_session=%s")
+```
+**Purpose**: Track every incoming query with context about user state
+**Debug Value**: Helps identify load patterns, user behavior, and session continuity
+
+#### Query Content Logging
+```python
+# Log Pattern: QUERY_CONTENT
+log.debug("📝 QUERY_CONTENT | req_id=%s | query='%s'", request_id, query[:200])
+```
+**Purpose**: Capture actual user input (truncated for privacy)
+**Debug Value**: Essential for understanding user intent and debugging classification issues
+
+### 🔄 **2. Flow Decision Points**
+
+#### Session State Analysis
+```python
+# Log Pattern: SESSION_STATE
+log.debug("📊 SESSION_STATE | req_id=%s | keys=%s | assessment_active=%s")
+```
+**Purpose**: Understand current conversation state
+**Debug Value**: Helps debug context management and flow continuity issues
+
+#### Follow-up vs New Query Detection
+```python
+# Log Pattern: FOLLOW_UP_CLASSIFICATION
+log.info("📋 FOLLOW_UP_CLASSIFICATION | req_id=%s | is_follow_up=%s | reset_context=%s")
+```
+**Purpose**: Track how the bot categorizes user input
+**Debug Value**: Critical for debugging conversation flow and context management
+
+### 🧠 **3. Intent Classification & Assessment**
+
+#### Intent Classification Results
+```python
+# Log Pattern: INTENT_CLASSIFIED
+log.info("🎯 INTENT_CLASSIFIED | user_id=%s | l1=%s | l2=%s | l3=%s | mapped_intent=%s")
+```
+**Purpose**: Track the hierarchical intent classification
+**Debug Value**: Essential for debugging intent recognition accuracy
+
+#### Requirements Assessment
+```python
+# Log Pattern: REQUIREMENTS_ASSESSED
+log.info("📋 REQUIREMENTS_ASSESSED | user_id=%s | missing_data=%s | priority_order=%s")
+```
+**Purpose**: Show what data the bot determined it needs
+**Debug Value**: Helps optimize the question-asking strategy
+
+### 🔍 **4. Data Fetching Operations**
+
+#### Individual Fetch Operations
+```python
+# Log Pattern: DATA_FETCHED / DATA_FETCH_FAILED
+log.info("✅ DATA_FETCHED | user_id=%s | function=%s | data_size=%d")
+log.warning("⚠️ DATA_FETCH_FAILED | user_id=%s | function=%s | error=%s")
+```
+**Purpose**: Track external API calls and their success/failure
+**Debug Value**: Critical for monitoring external service reliability and performance
+
+#### Delta Requirements (Follow-ups)
+```python
+# Log Pattern: DELTA_REQUIREMENTS_ASSESSED
+log.info("📋 DELTA_REQUIREMENTS_ASSESSED | user_id=%s | functions_needed=%s")
+```
+**Purpose**: Show what additional data is needed for follow-up queries
+**Debug Value**: Helps optimize follow-up handling and reduce unnecessary API calls
+
+### ❓ **5. Question Generation & User Interaction**
+
+#### Contextual Questions
+```python
+# Log Pattern: GENERATING_CONTEXTUAL_QUESTIONS
+log.info("❓ GENERATING_CONTEXTUAL_QUESTIONS | user_id=%s | user_slots=%s")
+```
+**Purpose**: Track when and why the bot generates questions
+**Debug Value**: Helps optimize question generation and reduce user friction
+
+#### User Answer Processing
+```python
+# Log Pattern: STORING_USER_ANSWER
+log.info("💬 STORING_USER_ANSWER | user_id=%s | currently_asking=%s")
+```
+**Purpose**: Track user responses to bot questions
+**Debug Value**: Essential for debugging answer parsing and slot filling
+
+### 🏁 **6. Response Generation**
+
+#### Final Answer Generation
+```python
+# Log Pattern: FINAL_ANSWER_GENERATED
+log.info("✅ FINAL_ANSWER_GENERATED | user_id=%s | response_type=%s | has_sections=%s | message_len=%d")
+```
+**Purpose**: Track successful response generation
+**Debug Value**: Monitor response quality and structure
+
+#### Assessment Status Tracking
+```python
+# Log Pattern: ASSESSMENT_STATUS
+log.info("📊 ASSESSMENT_STATUS | user_id=%s | still_missing=%s | ask_first=%s | fetch_later=%s")
+```
+**Purpose**: Show the current state of data gathering
+**Debug Value**: Helps optimize the assessment flow and reduce conversation length
+
+### 🔧 **7. Context Management**
+
+#### Session Updates
+```python
+# Log Pattern: SLOT_UPDATED
+log.debug("🔄 SLOT_UPDATED | user_id=%s | slot=%s | old_value=%s | new_value=%s")
+```
+**Purpose**: Track changes to user context
+**Debug Value**: Critical for debugging context persistence and slot management
+
+#### Context Resets
+```python
+# Log Pattern: SESSION_RESET
+log.info("🔄 SESSION_RESET | user_id=%s | cleared_session_keys=%s | cleared_fetched_keys=%s")
+```
+**Purpose**: Track when and why context gets cleared
+**Debug Value**: Helps understand user behavior patterns and optimize context management
+
+## Emoji Legend
+
+| Emoji | Category | Purpose |
+|-------|----------|---------|
+| 🚀 | Lifecycle | Request start/major milestones |
+| 📝 | Content | User input and content logging |
+| 📊 | Analysis | State analysis and assessments |
+| 🧠 | Intelligence | AI/LLM operations |
+| 🔍 | Data | Data fetching and processing |
+| ❓ | Interaction | Question generation and user interaction |
+| 🔄 | State | State changes and updates |
+| ✅ | Success | Successful operations |
+| ⚠️ | Warning | Non-fatal issues |
+| ❌ | Error | Fatal errors |
+| 🎯 | Classification | Intent and classification results |
+| 🏁 | Completion | End of processes |
+| 💾 | Persistence | Data saving operations |
+| 🎉 | Achievement | Major completions |
+
+## Request ID Pattern
+
+Each conversation generates a unique request ID following the pattern:
+```
+{user_id}_{YYYYMMDD_HHMMSS_microseconds}
+```
+
+Example: `user_12345_20241225_143052_123456`
+
+This allows you to:
+- Trace a complete user interaction from start to finish
+- Correlate logs across different services
+- Debug specific user issues
+- Monitor performance per request
+
+## Debugging Common Issues
+
+### 🔍 **Intent Classification Problems**
+Look for logs: `INTENT_CLASSIFIED`, `REQUIREMENTS_ASSESSED`
+Check if the classification layers make sense for the user's query.
+
+### 🔍 **Context Loss Issues**
+Look for logs: `SESSION_STATE`, `SESSION_RESET`, `SLOT_UPDATED`
+Track when context gets cleared and why.
+
+### 🔍 **Data Fetching Failures**
+Look for logs: `DATA_FETCH_FAILED`, `FINAL_DATA_FETCH_FAILED`
+Monitor external API reliability and error patterns.
+
+### 🔍 **Conversation Flow Problems**
+Look for logs: `FOLLOW_UP_CLASSIFICATION`, `ASSESSMENT_STATUS`
+Track how the bot decides between follow-ups and new assessments.
+
+### 🔍 **Performance Issues**
+Look for logs with timing information and `data_size` parameters
+Monitor which operations are slow and optimize accordingly.
+
+## Log Analysis Tips
+
+1. **Use Request ID Filtering**: Filter logs by request ID to trace complete user journeys
+2. **Monitor Error Patterns**: Group similar errors to identify systemic issues
+3. **Track User Behavior**: Analyze intent patterns and common user paths
+4. **Performance Monitoring**: Watch data fetch times and response generation speed
+5. **Context Debugging**: Follow slot updates to understand context management
+
+## Production Considerations
+
+1. **Log Retention**: Keep logs for at least 30 days for debugging purposes
+2. **PII Protection**: User queries are truncated at 200 characters to protect privacy
+3. **Performance Impact**: Debug logs can be disabled in production if needed
+4. **Structured Logging**: All logs follow a consistent pattern for easy parsing
+5. **Monitoring Integration**: Log patterns are designed for easy integration with monitoring tools
+
+## Best Practices for Adding New Logs
+
+1. **Use Consistent Patterns**: Follow the established `CATEGORY | key=value` format
+2. **Include Request/User Context**: Always include `req_id` or `user_id`
+3. **Choose Appropriate Level**: INFO for flow events, DEBUG for details
+4. **Add Meaningful Emojis**: Use the established emoji system for easy visual scanning
+5. **Avoid Sensitive Data**: Never log full user data or API keys

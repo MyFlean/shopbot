@@ -12,6 +12,11 @@ Changes (2025-07-31):
 • generate_answer() converts that dict -> formatted text via
   bot_helpers.sections_to_text().
 • Improved build_questions_tool to generate proper discrete options
+
+Enhanced (Flow Support):
+• Added structured product data generation
+• Enhanced answer generation with Flow support
+• Product data extraction and validation
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Union, Optional
 
 import anthropic
 
@@ -35,6 +40,7 @@ from .models import (
     UserContext,
     FollowUpResult,
     FollowUpPatch,
+    ProductData,
 )
 from .utils.helpers import extract_json_block
 from .bot_helpers import pick_tool, string_to_function, sections_to_text
@@ -113,6 +119,72 @@ DELTA_ASSESS_TOOL = {
         },
         "required": ["fetch_functions"],
     },
+}
+
+# NEW: Enhanced tool for structured product generation
+STRUCTURED_ANSWER_TOOL = {
+    "name": "generate_structured_answer",
+    "description": "Generate structured answer with product data for Flow rendering",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "response_type": {
+                "type": "string",
+                "enum": ["final_answer", "question", "error"],
+                "description": "Type of response"
+            },
+            "sections": {
+                "type": "object",
+                "properties": {
+                    "+": {"type": "string", "description": "Core benefit / positive hook"},
+                    "ALT": {"type": "string", "description": "Alternatives text summary"},
+                    "-": {"type": "string", "description": "Drawbacks / caveats"},
+                    "BUY": {"type": "string", "description": "Purchase CTA"},
+                    "OVERRIDE": {"type": "string", "description": "How user can tweak / override"},
+                    "INFO": {"type": "string", "description": "Extra facts"}
+                },
+                "required": ["+", "ALT", "-", "BUY", "OVERRIDE", "INFO"]
+            },
+            "structured_products": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Product name"},
+                        "subtitle": {"type": "string", "description": "Brief description or brand"},
+                        "price": {"type": "string", "description": "Price with currency"},
+                        "rating": {"type": "number", "minimum": 0, "maximum": 5},
+                        "image_url": {"type": "string", "description": "Product image URL"},
+                        "brand": {"type": "string", "description": "Brand name"},
+                        "key_features": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "maxItems": 5,
+                            "description": "Top 5 key features"
+                        },
+                        "availability": {"type": "string", "description": "Stock status"},
+                        "discount": {"type": "string", "description": "Discount info if any"}
+                    },
+                    "required": ["title", "subtitle", "price"]
+                },
+                "maxItems": 10,
+                "description": "Structured product data for Flow rendering"
+            },
+            "flow_context": {
+                "type": "object",
+                "properties": {
+                    "intent": {
+                        "type": "string",
+                        "enum": ["recommendation", "comparison", "catalog", "none"],
+                        "description": "Recommended Flow type"
+                    },
+                    "header_text": {"type": "string", "description": "Flow header text"},
+                    "reason": {"type": "string", "description": "Why these products are suggested"}
+                }
+            }
+        },
+        "required": ["response_type", "sections"]
+    }
 }
 
 def build_assessment_tool() -> Dict[str, Any]:
@@ -367,6 +439,49 @@ Respond with **only** a JSON object (no code fences) shaped like:
   }}
 }}
 Always include all six keys; leave a key an empty string if you have no content.
+"""
+
+# NEW: Enhanced answer generation prompt
+ENHANCED_ANSWER_GENERATION_PROMPT = """
+You are an e-commerce assistant that provides both textual answers and structured product data.
+
+### USER QUERY
+{query}
+
+### USER PROFILE
+{permanent}
+
+### SESSION ANSWERS  
+{session}
+
+### FETCHED DATA
+{fetched}
+
+### Instructions
+Analyze the query and provide a comprehensive response with both textual content and structured product data.
+
+**For the sections object:**
+- "+": Core benefit/positive hook - why user will love these options
+- "ALT": Brief text summary of alternatives (keep concise since structured data is separate)
+- "-": Watch-outs, limitations, or things to consider
+- "BUY": Clear purchase guidance and next steps
+- "OVERRIDE": How user can customize or modify the recommendations
+- "INFO": Additional useful information (specs, ratings, etc.)
+
+**For structured_products array (if recommending products):**
+- Include 3-8 relevant products with complete data
+- Ensure all products have realistic prices, ratings, and features
+- Use placeholder image URLs if real ones aren't available
+- Make sure titles are clear and descriptive
+- Include key differentiating features for each product
+
+**For flow_context:**
+- "recommendation" - if personalizing based on user preferences
+- "comparison" - if showing similar products to compare
+- "catalog" - if showing general product options
+- "none" - if no products are being suggested
+
+Focus on providing actionable, helpful information that guides the user toward a good purchasing decision.
 """
 
 # ─────────────────────────────────────────────────────────────
@@ -734,6 +849,184 @@ class LLMService:
             "response_type": "final_answer",
             "message": resp.content[0].text.strip(),
         }
+
+    # ---------------- ENHANCED ANSWER GENERATION ----------------
+    async def generate_enhanced_answer(
+        self,
+        query: str,
+        ctx: UserContext,
+        fetched: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Generate enhanced answer with structured product data for Flow support.
+        
+        Returns:
+            Dict containing:
+            - response_type: str
+            - sections: Dict[str, str] (Flean's 6 elements)
+            - structured_products: List[Dict] (for Flow generation)
+            - flow_context: Dict (Flow metadata)
+        """
+        prompt = ENHANCED_ANSWER_GENERATION_PROMPT.format(
+            query=query,
+            permanent=ctx.permanent,
+            session=ctx.session,
+            fetched=fetched,
+        )
+
+        try:
+            resp = self.anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[STRUCTURED_ANSWER_TOOL],
+                tool_choice={"type": "tool", "name": "generate_structured_answer"},
+                temperature=0.7,
+                max_tokens=2000,
+            )
+
+            tool_use = pick_tool(resp, "generate_structured_answer")
+            if not tool_use:
+                # Fallback to base generate_answer method
+                log.warning("No structured answer tool found, falling back to base service")
+                return await self.generate_answer(query, ctx, fetched)
+
+            result = tool_use.input
+            
+            # Validate and process the structured response
+            processed_result = self._process_structured_response(result)
+            
+            # Generate text message from sections
+            if processed_result.get("sections"):
+                text_message = sections_to_text(processed_result["sections"])
+                processed_result["message"] = text_message
+            
+            return processed_result
+
+        except Exception as exc:
+            log.error(f"Enhanced answer generation failed: {exc}")
+            # Fallback to base generate_answer method
+            return await self.generate_answer(query, ctx, fetched)
+    
+    def _process_structured_response(self, raw_response: Dict[str, Any]) -> Dict[str, Any]:
+        """Process and validate the structured response"""
+        
+        processed = {
+            "response_type": raw_response.get("response_type", "final_answer"),
+            "sections": raw_response.get("sections", {}),
+            "structured_products": [],
+            "flow_context": raw_response.get("flow_context", {"intent": "none"})
+        }
+        
+        # Process structured products
+        raw_products = raw_response.get("structured_products", [])
+        for product_data in raw_products:
+            try:
+                product = self._create_product_data(product_data)
+                if product:
+                    processed["structured_products"].append(product)
+            except Exception as e:
+                log.warning(f"Failed to process product data: {e}")
+                continue
+        
+        # Validate sections have all 6 elements
+        required_sections = ["+", "ALT", "-", "BUY", "OVERRIDE", "INFO"]
+        for section in required_sections:
+            if section not in processed["sections"]:
+                processed["sections"][section] = ""
+        
+        return processed
+    
+    def _create_product_data(self, product_dict: Dict[str, Any]) -> Optional[ProductData]:
+        """Create ProductData object from dictionary"""
+        
+        try:
+            return ProductData(
+                product_id=f"prod_{hash(product_dict.get('title', ''))%100000}",
+                title=product_dict["title"],
+                subtitle=product_dict["subtitle"],
+                price=product_dict["price"],
+                rating=product_dict.get("rating"),
+                image_url=product_dict.get("image_url", "https://via.placeholder.com/200x200?text=Product"),
+                brand=product_dict.get("brand"),
+                key_features=product_dict.get("key_features", []),
+                availability=product_dict.get("availability", "In Stock"),
+                discount=product_dict.get("discount")
+            )
+        except KeyError as e:
+            log.error(f"Missing required product field: {e}")
+            return None
+        except Exception as e:
+            log.error(f"Error creating ProductData: {e}")
+            return None
+    
+    def should_use_flow(
+        self, 
+        query: str, 
+        intent_layer3: str, 
+        structured_products: List[ProductData]
+    ) -> bool:
+        """Determine if this response should use a Flow"""
+        
+        # Use Flow if we have structured products
+        if structured_products and len(structured_products) >= 2:
+            return True
+        
+        # Use Flow for specific intents
+        flow_intents = [
+            "Product_Discovery",
+            "Recommendation", 
+            "Product_Comparison",
+            "Specific_Product_Search"
+        ]
+        
+        if intent_layer3 in flow_intents:
+            return True
+            
+        # Check query for Flow-indicating keywords
+        flow_keywords = [
+            "alternatives", "options", "compare", "similar", 
+            "recommend", "suggest", "show me", "what about"
+        ]
+        
+        query_lower = query.lower()
+        if any(keyword in query_lower for keyword in flow_keywords):
+            return True
+        
+        return False
+    
+    def determine_flow_type(
+        self, 
+        flow_context: Dict[str, Any], 
+        intent_layer3: str,
+        query: str
+    ) -> str:
+        """Determine appropriate Flow type"""
+        from .models import FlowType
+        
+        # Check explicit flow context
+        context_intent = flow_context.get("intent", "none")
+        if context_intent == "recommendation":
+            return FlowType.RECOMMENDATION
+        elif context_intent == "comparison":
+            return FlowType.COMPARISON
+        elif context_intent == "catalog":
+            return FlowType.PRODUCT_CATALOG
+        
+        # Infer from intent
+        if intent_layer3 == "Product_Comparison":
+            return FlowType.COMPARISON
+        elif intent_layer3 in ["Recommendation", "Product_Discovery"]:
+            return FlowType.RECOMMENDATION
+        
+        # Infer from query
+        query_lower = query.lower()
+        if any(word in query_lower for word in ["compare", "vs", "versus", "difference"]):
+            return FlowType.COMPARISON
+        elif any(word in query_lower for word in ["recommend", "suggest", "best", "should i"]):
+            return FlowType.RECOMMENDATION
+        
+        # Default to catalog
+        return FlowType.PRODUCT_CATALOG
 
 # ─────────────────────────────────────────────────────────────
 # Helper – map layer3 leaf to QueryIntent

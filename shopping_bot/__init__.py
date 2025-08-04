@@ -1,4 +1,3 @@
-# shopping_bot/__init__.py
 """
 Flask *application factory*.
 
@@ -12,6 +11,7 @@ Why a factory?
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from flask import Flask
@@ -50,8 +50,99 @@ def create_app(**overrides: Any) -> Flask:
     app.extensions["ctx_mgr"] = ctx_mgr
     app.extensions["bot_core"] = bot_core
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Enhanced Bot Core with Flow Support
+    # ──────────────────────────────────────────────────────────────────────────
+    
+    # Check if Flow features should be enabled
+    enable_flows = os.getenv("ENABLE_WHATSAPP_FLOWS", "true").lower() == "true"
+    
+    if enable_flows:
+        try:
+            from .enhanced_bot_core import EnhancedShoppingBotCore
+            
+            enhanced_bot_core = EnhancedShoppingBotCore(bot_core)
+            
+            # Configure Flow features based on environment
+            enhanced_bot_core.enable_flows(
+                os.getenv("ENABLE_FLOW_GENERATION", "true").lower() == "true"
+            )
+            enhanced_bot_core.enable_enhanced_llm(
+                os.getenv("ENABLE_ENHANCED_LLM", "true").lower() == "true"
+            )
+            
+            app.extensions["enhanced_bot_core"] = enhanced_bot_core
+            
+            flow_status = "✅ enabled" if enhanced_bot_core.flow_enabled else "⚠️ disabled"
+            llm_status = "✅ enabled" if enhanced_bot_core.enhanced_llm_enabled else "⚠️ disabled"
+            
+            log.info(f"Enhanced bot core initialized - Flows: {flow_status}, Enhanced LLM: {llm_status}")
+            
+        except ImportError as e:
+            log.warning(f"⚠️ Enhanced bot core dependencies missing: {e}")
+            log.info("📱 Continuing with base bot core (Flows disabled)")
+            log.info("💡 Install Flow dependencies or set ENABLE_WHATSAPP_FLOWS=false")
+            
+        except Exception as e:
+            log.error(f"❌ Enhanced bot core initialization failed: {e}")
+            log.info("📱 Continuing with base bot core (Flows disabled)")
+            
+    else:
+        log.info("📱 WhatsApp Flows disabled via ENABLE_WHATSAPP_FLOWS environment variable")
+
     # Register all blueprints in shopping_bot/routes/*
     register_routes(app)
 
-    log.info("Flask app initialised (env=%s)", Cfg.__name__)
+    # Log final initialization status
+    has_enhanced = "enhanced_bot_core" in app.extensions
+    core_type = "Enhanced (with Flows)" if has_enhanced else "Base (text-only)"
+    
+    log.info(f"Flask app initialised (env={Cfg.__name__}, core={core_type})")
+    
     return app
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Environment Configuration Helper
+# ──────────────────────────────────────────────────────────────────────────────
+
+def get_flow_config_info() -> dict[str, Any]:
+    """
+    Get current Flow configuration for debugging/monitoring.
+    
+    Returns:
+        Dict with current Flow configuration status
+    """
+    return {
+        "flows_enabled": os.getenv("ENABLE_WHATSAPP_FLOWS", "true").lower() == "true",
+        "flow_generation_enabled": os.getenv("ENABLE_FLOW_GENERATION", "true").lower() == "true", 
+        "enhanced_llm_enabled": os.getenv("ENABLE_ENHANCED_LLM", "true").lower() == "true",
+        "environment": os.getenv("APP_ENV", "development"),
+        "log_level": os.getenv("BOT_LOG_LEVEL", "STANDARD"),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Alternative Factory for Testing
+# ──────────────────────────────────────────────────────────────────────────────
+
+def create_app_without_flows(**overrides: Any) -> Flask:
+    """
+    Create app with Flows explicitly disabled - useful for testing legacy behavior.
+    """
+    # Force disable Flows
+    overrides.setdefault("ENABLE_WHATSAPP_FLOWS", "false")
+    
+    # Temporarily set environment variable
+    original_env = os.getenv("ENABLE_WHATSAPP_FLOWS")
+    os.environ["ENABLE_WHATSAPP_FLOWS"] = "false"
+    
+    try:
+        app = create_app(**overrides)
+        return app
+    finally:
+        # Restore original environment
+        if original_env is not None:
+            os.environ["ENABLE_WHATSAPP_FLOWS"] = original_env
+        else:
+            os.environ.pop("ENABLE_WHATSAPP_FLOWS", None)

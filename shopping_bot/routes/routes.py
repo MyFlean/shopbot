@@ -1,6 +1,6 @@
 # shopping_bot/routes/onboarding_flow.py
 from flask import Blueprint, request, jsonify
-import logging, json, base64
+import logging, json, base64, os
 from cryptography.hazmat.primitives import serialization, padding as sympad, hashes
 from cryptography.hazmat.primitives.asymmetric import padding as asympad
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -10,20 +10,29 @@ bp = Blueprint("onboarding_flow", __name__)
 log = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────
-# Load RSA private key (relative to this file)
-_key_path = Path(__file__).resolve().parent / "private.pem"
+# 1. Resolve private-key path
+_key_path = Path(
+    os.getenv("FLOW_PRIVATE_KEY", Path(__file__).resolve().parent / "private.pem")
+)
 if not _key_path.exists():
-    raise RuntimeError(f"private.pem not found at {_key_path}")
+    raise RuntimeError(
+        f"private.pem not found. "
+        f"Set env FLOW_PRIVATE_KEY or place key at {_key_path}"
+    )
+
+# 2. Load RSA private key
 _private_key = serialization.load_pem_private_key(
     _key_path.read_bytes(), password=None
 )
-
+# ──────────────────────────────────────────────────────────
 def _rsa_decrypt(b64_cipher: str) -> bytes:
     return _private_key.decrypt(
         base64.b64decode(b64_cipher),
-        asympad.OAEP(mgf=asympad.MGF1(hashes.SHA256()),
-                     algorithm=hashes.SHA256(),
-                     label=None)
+        asympad.OAEP(
+            mgf=asympad.MGF1(hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None,
+        ),
     )
 
 def _aes_decrypt(b64_cipher: str, aes_key: bytes, b64_iv: str) -> bytes:
@@ -39,6 +48,7 @@ def _aes_encrypt(plain: bytes, aes_key: bytes, b64_iv: str) -> str:
     padder = sympad.PKCS7(128).padder()
     padded = padder.update(plain) + padder.finalize()
     return base64.b64encode(encryptor.update(padded) + encryptor.finalize()).decode()
+
 
 # ──────────────────────────────────────────────────────────
 INITIAL_DATA = {

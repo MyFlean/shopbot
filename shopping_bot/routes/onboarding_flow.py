@@ -57,17 +57,24 @@ def _aes_encrypt(plain: bytes, aes_key: bytes, b64_iv: str) -> str:
     padded = padder.update(plain) + padder.finalize()
     return base64.b64encode(encryptor.update(padded) + encryptor.finalize()).decode()
 
-def _b64(s: str) -> bytes:
+
+
+_ws_re = re.compile(rb'\s+')            # matches \r, \n, spaces, tabs
+
+def _b64(s: str | bytes) -> bytes:
     """
-    WhatsApp sends URL-safe Base64 WITHOUT padding.
-    • convert -_ → +/
-    • add '=' padding to length % 4
-    • strip any stray whitespace
+    WhatsApp sends URL-safe Base64, no padding, with \n line-wraps.
+    • make bytes
+    • drop ALL whitespace
+    • map -_ → +/
+    • add '=' padding so len % 4 == 0
     """
-    s = _b64url_re.sub('', s)          # remove accidental whitespace
-    s = s.replace('-', '+').replace('_', '/')
-    s += '=' * (-len(s) % 4)
-    return base64.b64decode(s)
+    if isinstance(s, str):
+        s = s.encode()
+    s = _ws_re.sub(b'', s)              # remove \n \r etc
+    s = s.replace(b'-', b'+').replace(b'_', b'/')
+    s += b'=' * (-len(s) % 4)
+    return base64.b64decode(s, validate=False)
 
 
 # Static dropdown data

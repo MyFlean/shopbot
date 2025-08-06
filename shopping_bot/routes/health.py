@@ -31,7 +31,7 @@ def health_check() -> tuple[Dict[str, Any], int]:
         return jsonify({"status": "unhealthy", "redis": "disconnected"}), 500
 
 @bp.post("/health_check")
-def health_check() -> tuple[Dict[str, Any], int]:
+def health_check_new() -> tuple[Dict[str, Any], int]:
     try:
         payload = request.get_json(force=True)
         # ctx_mgr = current_app.extensions["ctx_mgr"]  # RedisContextManager

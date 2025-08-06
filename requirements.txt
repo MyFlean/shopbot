@@ -16,3 +16,6 @@ pytest-asyncio>=0.23       # run async tests
 # ── (Optional) production servers ──────────────────────────
 gunicorn>=22.0             # WSGI (sync) – good enough for simple deploys
 hypercorn>=0.16            # ASGI (async) – use if you need full async throughput
+
+
+cryptography

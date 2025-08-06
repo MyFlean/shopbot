@@ -1,10 +1,46 @@
 # shopping_bot/routes/onboarding_flow.py
-from flask import Blueprint, request, jsonify, current_app
-import logging
+from flask import Blueprint, request, jsonify
+import logging, json, base64
+from cryptography.hazmat.primitives import serialization, padding as sympad, hashes
+from cryptography.hazmat.primitives.asymmetric import padding as asympad
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from pathlib import Path
 
 bp = Blueprint("onboarding_flow", __name__)
 log = logging.getLogger(__name__)
 
+# ──────────────────────────────────────────────────────────
+# Load RSA private key (relative to this file)
+_key_path = Path(__file__).resolve().parent / "private.pem"
+if not _key_path.exists():
+    raise RuntimeError(f"private.pem not found at {_key_path}")
+_private_key = serialization.load_pem_private_key(
+    _key_path.read_bytes(), password=None
+)
+
+def _rsa_decrypt(b64_cipher: str) -> bytes:
+    return _private_key.decrypt(
+        base64.b64decode(b64_cipher),
+        asympad.OAEP(mgf=asympad.MGF1(hashes.SHA256()),
+                     algorithm=hashes.SHA256(),
+                     label=None)
+    )
+
+def _aes_decrypt(b64_cipher: str, aes_key: bytes, b64_iv: str) -> bytes:
+    cipher = Cipher(algorithms.AES(aes_key), modes.CBC(base64.b64decode(b64_iv)))
+    decryptor = cipher.decryptor()
+    padded = decryptor.update(base64.b64decode(b64_cipher)) + decryptor.finalize()
+    unpadder = sympad.PKCS7(128).unpadder()
+    return unpadder.update(padded) + unpadder.finalize()
+
+def _aes_encrypt(plain: bytes, aes_key: bytes, b64_iv: str) -> str:
+    cipher = Cipher(algorithms.AES(aes_key), modes.CBC(base64.b64decode(b64_iv)))
+    encryptor = cipher.encryptor()
+    padder = sympad.PKCS7(128).padder()
+    padded = padder.update(plain) + padder.finalize()
+    return base64.b64encode(encryptor.update(padded) + encryptor.finalize()).decode()
+
+# ──────────────────────────────────────────────────────────
 INITIAL_DATA = {
     "societies": [
         {"id": "amrapali_sapphire", "title": "Amrapali Sapphire"},
@@ -28,14 +64,36 @@ INITIAL_DATA = {
     ],
 }
 
+# ──────────────────────────────────────────────────────────
 @bp.post("/flow/onboarding")
 def onboarding_flow():
-    payload = request.get_json(force=True)
+    raw = request.get_json(silent=True) or {}
+
+    # 0. Health-check → Meta sends an empty body
+    if not raw:
+        return jsonify({}), 200
+
+    # 1. Determine whether payload is encrypted
+    encrypted = "encrypted_flow_data" in raw
+    if encrypted:
+        try:
+            aes_key = _rsa_decrypt(raw["encrypted_aes_key"])
+            decrypted_bytes = _aes_decrypt(
+                raw["encrypted_flow_data"], aes_key, raw["initial_vector"]
+            )
+            payload = json.loads(decrypted_bytes.decode())
+        except Exception as exc:
+            log.exception("Decrypt failed: %s", exc)
+            return jsonify({"error": "decryption_failed"}), 400
+    else:
+        payload = raw
+
+    # 2. Handle business logic
     action = payload.get("action")
     if action == "init":
-        # Send dropdown data back to the Flow
-        return jsonify({"data": INITIAL_DATA}), 200
-    if action == "validate":
+        resp_obj = {"data": INITIAL_DATA}
+
+    elif action == "validate":
         data = payload.get("payload", {})
         errors = {}
         if not data.get("society"):
@@ -46,13 +104,19 @@ def onboarding_flow():
             errors["gender"] = "Please select your gender."
         if not data.get("age_group"):
             errors["age_group"] = "Please select your age group."
-        return jsonify({"errors": errors}) if errors else jsonify({}), 200
-    if action == "submit":
-        # Persist the user’s selections.  This example just logs them.
+        resp_obj = {"errors": errors} if errors else {}
+
+    elif action == "submit":
         log.info("Onboarding submission: %s", payload.get("payload"))
         return "", 204
-    return jsonify({"error": "Unsupported action"}), 400
 
+    else:
+        return jsonify({"error": "Unsupported action"}), 400
 
-
-
+    # 3. Encrypt response if request was encrypted
+    if encrypted:
+        encrypted_resp = _aes_encrypt(
+            json.dumps(resp_obj).encode(), aes_key, raw["initial_vector"]
+        )
+        return jsonify({"encrypted_flow_data": encrypted_resp}), 200
+    return jsonify(resp_obj), 200

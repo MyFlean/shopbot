@@ -10,10 +10,13 @@ from cryptography.hazmat.primitives import serialization, padding as sympad, has
 from cryptography.hazmat.primitives.asymmetric import padding as asympad
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from pathlib import Path
-import base64
+import base64, re
+from cryptography.hazmat.primitives import hashes 
 
 bp = Blueprint("onboarding_flow", __name__)
 log = logging.getLogger(__name__)
+
+_b64url_re = re.compile(r'[^A-Za-z0-9\-_]+')
 
 # ───────────────────────────────────────────
 # Load RSA private key (env‑var first ‑> fallback)
@@ -25,18 +28,20 @@ _private_key = serialization.load_pem_private_key(_key_path.read_bytes(), passwo
 
 # Helper crypto fns
 
+from cryptography.hazmat.primitives.asymmetric import padding as asympad
+
 def _rsa_decrypt(b64_cipher: str) -> bytes:
     return _private_key.decrypt(
         _b64(b64_cipher),
         asympad.OAEP(
-            mgf=asympad.MGF1(hashes.SHA256()),
-            algorithm=hashes.SHA256(),
+            mgf=asympad.MGF1(hashes.SHA1()),
+            algorithm=hashes.SHA1(),
             label=None,
         ),
     )
 
 
-# AES decrypt
+# ── use _b64 everywhere  ─────────────────────────────────────
 def _aes_decrypt(b64_cipher: str, aes_key: bytes, b64_iv: str) -> bytes:
     cipher = Cipher(algorithms.AES(aes_key), modes.CBC(_b64(b64_iv)))
     decryptor = cipher.decryptor()
@@ -44,7 +49,7 @@ def _aes_decrypt(b64_cipher: str, aes_key: bytes, b64_iv: str) -> bytes:
     unpadder = sympad.PKCS7(128).unpadder()
     return unpadder.update(padded) + unpadder.finalize()
 
-# AES encrypt (only iv needs decoding once)
+
 def _aes_encrypt(plain: bytes, aes_key: bytes, b64_iv: str) -> str:
     cipher = Cipher(algorithms.AES(aes_key), modes.CBC(_b64(b64_iv)))
     encryptor = cipher.encryptor()
@@ -53,9 +58,17 @@ def _aes_encrypt(plain: bytes, aes_key: bytes, b64_iv: str) -> str:
     return base64.b64encode(encryptor.update(padded) + encryptor.finalize()).decode()
 
 def _b64(s: str) -> bytes:
-    """Robust base-64: handles URL-safe alphabet and missing padding."""
-    s = s + "=" * (-len(s) % 4)          # add padding if needed
-    return base64.urlsafe_b64decode(s)
+    """
+    WhatsApp sends URL-safe Base64 WITHOUT padding.
+    • convert -_ → +/
+    • add '=' padding to length % 4
+    • strip any stray whitespace
+    """
+    s = _b64url_re.sub('', s)          # remove accidental whitespace
+    s = s.replace('-', '+').replace('_', '/')
+    s += '=' * (-len(s) % 4)
+    return base64.b64decode(s)
+
 
 # Static dropdown data
 INITIAL_DATA = {

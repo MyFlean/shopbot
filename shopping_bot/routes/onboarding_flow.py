@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives import serialization, padding as sympad, has
 from cryptography.hazmat.primitives.asymmetric import padding as asympad
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from pathlib import Path
+import base64
 
 bp = Blueprint("onboarding_flow", __name__)
 log = logging.getLogger(__name__)
@@ -26,22 +27,35 @@ _private_key = serialization.load_pem_private_key(_key_path.read_bytes(), passwo
 
 def _rsa_decrypt(b64_cipher: str) -> bytes:
     return _private_key.decrypt(
-        base64.b64decode(b64_cipher),
-        asympad.OAEP(mgf=asympad.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None),
+        _b64(b64_cipher),
+        asympad.OAEP(
+            mgf=asympad.MGF1(hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None,
+        ),
     )
 
-def _aes_decrypt(b64_cipher: str, aes_key: bytes, b64_iv: str) -> bytes:
-    cipher = Cipher(algorithms.AES(aes_key), modes.CBC(base64.b64decode(b64_iv)))
-    decryptor = cipher.decryptor()
-    padded = decryptor.update(base64.b64decode(b64_cipher)) + decryptor.finalize()
-    return sympad.PKCS7(128).unpadder().update(padded) + sympad.PKCS7(128).unpadder().finalize()
 
+# AES decrypt
+def _aes_decrypt(b64_cipher: str, aes_key: bytes, b64_iv: str) -> bytes:
+    cipher = Cipher(algorithms.AES(aes_key), modes.CBC(_b64(b64_iv)))
+    decryptor = cipher.decryptor()
+    padded = decryptor.update(_b64(b64_cipher)) + decryptor.finalize()
+    unpadder = sympad.PKCS7(128).unpadder()
+    return unpadder.update(padded) + unpadder.finalize()
+
+# AES encrypt (only iv needs decoding once)
 def _aes_encrypt(plain: bytes, aes_key: bytes, b64_iv: str) -> str:
-    cipher = Cipher(algorithms.AES(aes_key), modes.CBC(base64.b64decode(b64_iv)))
+    cipher = Cipher(algorithms.AES(aes_key), modes.CBC(_b64(b64_iv)))
     encryptor = cipher.encryptor()
     padder = sympad.PKCS7(128).padder()
     padded = padder.update(plain) + padder.finalize()
     return base64.b64encode(encryptor.update(padded) + encryptor.finalize()).decode()
+
+def _b64(s: str) -> bytes:
+    """Robust base-64: handles URL-safe alphabet and missing padding."""
+    s = s + "=" * (-len(s) % 4)          # add padding if needed
+    return base64.urlsafe_b64decode(s)
 
 # Static dropdown data
 INITIAL_DATA = {

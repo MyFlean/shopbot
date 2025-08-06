@@ -54,18 +54,5 @@ def onboarding_flow():
     return jsonify({"error": "Unsupported action"}), 400
 
 
-@bp.post("/flow/onboardings")
-def onboarding_flow():
-    payload = request.get_json(silent=True) or {}   # ← graceful if body is empty
-    action  = payload.get("action")
 
-    # 🔹 Health-check: Meta sends no action
-    if action is None:         # or action == "health_check"
-        return jsonify({}), 200
-
-    if action == "init":
-        return jsonify({"data": INITIAL_DATA}), 200
-
-    if action == "validate":
-        return jsonify({"data": INITIAL_DATA}), 200
 

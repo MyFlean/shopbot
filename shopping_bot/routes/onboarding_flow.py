@@ -31,14 +31,22 @@ _private_key = serialization.load_pem_private_key(_key_path.read_bytes(), passwo
 from cryptography.hazmat.primitives.asymmetric import padding as asympad
 
 def _rsa_decrypt(b64_cipher: str) -> bytes:
-    return _private_key.decrypt(
-        _b64(b64_cipher),
-        asympad.OAEP(
-            mgf=asympad.MGF1(hashes.SHA1()),
-            algorithm=hashes.SHA1(),
-            label=None,
-        ),
-    )
+    """WhatsApp may wrap AES key with OAEP-SHA256 (new) or OAEP-SHA1 (old)."""
+    cipher = _b64(b64_cipher)
+    for algo in (hashes.SHA256(), hashes.SHA1()):
+        try:
+            return _private_key.decrypt(
+                cipher,
+                asympad.OAEP(
+                    mgf=asympad.MGF1(algo),
+                    algorithm=algo,
+                    label=None,
+                ),
+            )
+        except Exception:
+            continue    # try next algorithm
+    raise ValueError("RSA-OAEP decrypt failed with both SHA-256 and SHA-1")
+
 
 
 # ── use _b64 everywhere  ─────────────────────────────────────

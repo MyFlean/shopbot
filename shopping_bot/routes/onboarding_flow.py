@@ -1,98 +1,112 @@
-
-
-# ────────────────────────────────────────────────────────────────
-# File: shopping_bot/routes/onboarding_flow.py
-# ----------------------------------------------------------------
-
 from flask import Blueprint, request, jsonify
-import logging, json, base64, os
+import logging
+import json
+import base64
+import os
 from cryptography.hazmat.primitives import serialization, padding as sympad, hashes
 from cryptography.hazmat.primitives.asymmetric import padding as asympad
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
 from pathlib import Path
-import base64, re
-from cryptography.hazmat.primitives import hashes 
 
 bp = Blueprint("onboarding_flow", __name__)
 log = logging.getLogger(__name__)
 
-_b64url_re = re.compile(r'[^A-Za-z0-9\-_]+')
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 
 # ───────────────────────────────────────────
-# Load RSA private key (env‑var first ‑> fallback)
+# Load RSA private key
 _key_path = Path(os.getenv("FLOW_PRIVATE_KEY", Path(__file__).resolve().parent / "private.pem"))
 if not _key_path.exists():
     raise RuntimeError(f"private.pem not found at {_key_path}. Set env FLOW_PRIVATE_KEY or mount secret.")
 
-_private_key = serialization.load_pem_private_key(_key_path.read_bytes(), password=None)
+with open(_key_path, 'rb') as key_file:
+    _private_key = serialization.load_pem_private_key(
+        key_file.read(), 
+        password=None,
+        backend=default_backend()
+    )
 
-# Helper crypto fns
-
-from cryptography.hazmat.primitives.asymmetric import padding as asympad
+def _b64_decode(data: str) -> bytes:
+    """Decode base64 with proper padding - handles WhatsApp's format."""
+    # Remove all whitespace
+    data = ''.join(data.split())
+    # Add padding if needed
+    missing_padding = len(data) % 4
+    if missing_padding:
+        data += '=' * (4 - missing_padding)
+    return base64.b64decode(data)
 
 def _rsa_decrypt(b64_cipher: str) -> bytes:
-    """WhatsApp may wrap AES key with OAEP-SHA256 (new) or OAEP-SHA1 (old)."""
-    cipher = _b64(b64_cipher)
-    for algo in (hashes.SHA256(), hashes.SHA1()):
+    """Decrypt RSA using OAEP with SHA256."""
+    cipher_bytes = _b64_decode(b64_cipher)
+    try:
+        # WhatsApp uses OAEP with SHA256
+        return _private_key.decrypt(
+            cipher_bytes,
+            asympad.OAEP(
+                mgf=asympad.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+    except Exception as e:
+        log.error(f"RSA decryption with SHA256 failed: {e}")
+        # Fallback to SHA1 if SHA256 fails (for compatibility)
         try:
             return _private_key.decrypt(
-                cipher,
+                cipher_bytes,
                 asympad.OAEP(
-                    mgf=asympad.MGF1(algo),
-                    algorithm=algo,
-                    label=None,
-                ),
+                    mgf=asympad.MGF1(algorithm=hashes.SHA1()),
+                    algorithm=hashes.SHA1(),
+                    label=None
+                )
             )
-        except Exception:
-            continue    # try next algorithm
-    raise ValueError("RSA-OAEP decrypt failed with both SHA-256 and SHA-1")
+        except Exception as e2:
+            log.error(f"RSA decryption with SHA1 also failed: {e2}")
+            raise
 
-
-
-# ── use _b64 everywhere  ─────────────────────────────────────
 def _aes_decrypt(b64_cipher: str, aes_key: bytes, b64_iv: str) -> bytes:
-    cipher = Cipher(algorithms.AES(aes_key), modes.CBC(_b64(b64_iv)))
+    """Decrypt AES-CBC with PKCS7 padding."""
+    cipher_bytes = _b64_decode(b64_cipher)
+    iv_bytes = _b64_decode(b64_iv)
+    
+    cipher = Cipher(
+        algorithms.AES(aes_key), 
+        modes.CBC(iv_bytes),
+        backend=default_backend()
+    )
     decryptor = cipher.decryptor()
-    padded = decryptor.update(_b64(b64_cipher)) + decryptor.finalize()
+    padded = decryptor.update(cipher_bytes) + decryptor.finalize()
+    
     unpadder = sympad.PKCS7(128).unpadder()
     return unpadder.update(padded) + unpadder.finalize()
 
-
 def _aes_encrypt(plain: bytes, aes_key: bytes, b64_iv: str) -> str:
-    cipher = Cipher(algorithms.AES(aes_key), modes.CBC(_b64(b64_iv)))
-    encryptor = cipher.encryptor()
+    """Encrypt AES-CBC with PKCS7 padding."""
+    iv_bytes = _b64_decode(b64_iv)
+    
     padder = sympad.PKCS7(128).padder()
     padded = padder.update(plain) + padder.finalize()
-    return base64.b64encode(encryptor.update(padded) + encryptor.finalize()).decode()
+    
+    cipher = Cipher(
+        algorithms.AES(aes_key), 
+        modes.CBC(iv_bytes),
+        backend=default_backend()
+    )
+    encryptor = cipher.encryptor()
+    encrypted = encryptor.update(padded) + encryptor.finalize()
+    
+    return base64.b64encode(encrypted).decode('utf-8')
 
-
-
-_ws_re = re.compile(rb'\s+')            # matches \r, \n, spaces, tabs
-
-def _b64(s: str | bytes) -> bytes:
-    """
-    WhatsApp sends URL-safe Base64, no padding, with \n line-wraps.
-    • make bytes
-    • drop ALL whitespace
-    • map -_ → +/
-    • add '=' padding so len % 4 == 0
-    """
-    if isinstance(s, str):
-        s = s.encode()
-    s = _ws_re.sub(b'', s)              # remove \n \r etc
-    s = s.replace(b'-', b'+').replace(b'_', b'/')
-    s += b'=' * (-len(s) % 4)
-    return base64.b64decode(s, validate=False)
-
-
-# Static dropdown data
-INITIAL_DATA = {
+# Static dropdown data for the flow
+FLOW_DATA = {
     "societies": [
         {"id": "amrapali_sapphire", "title": "Amrapali Sapphire"},
         {"id": "parsvnath_prestige", "title": "Parsvnath Prestige"},
         {"id": "other", "title": "Other"},
     ],
-    "show_custom_society": False,
     "genders": [
         {"id": "male", "title": "Male"},
         {"id": "female", "title": "Female"},
@@ -109,53 +123,143 @@ INITIAL_DATA = {
     ],
 }
 
-# Endpoint
 @bp.post("/flow/onboarding")
 def onboarding_flow():
-    raw = request.get_json(silent=True) or {}
+    """Handle WhatsApp Flow requests including health checks."""
+    try:
+        # Get request data
+        raw = request.get_json(silent=True)
+        
+        # Health check - empty request body
+        if not raw or raw == {}:
+            log.info("Health check received - returning empty 200 response")
+            return "", 200
+        
+        log.info(f"Received request with keys: {list(raw.keys())}")
+        
+        # Check if data is encrypted
+        is_encrypted = "encrypted_flow_data" in raw
+        
+        if is_encrypted:
+            log.info("Processing encrypted request")
+            try:
+                # Decrypt AES key using RSA
+                encrypted_aes_key = raw.get("encrypted_aes_key", "")
+                log.info(f"Encrypted AES key length: {len(encrypted_aes_key)}")
+                
+                aes_key = _rsa_decrypt(encrypted_aes_key)
+                log.info(f"AES key decrypted successfully, length: {len(aes_key)} bytes")
+                
+                # Decrypt flow data using AES
+                encrypted_flow_data = raw.get("encrypted_flow_data", "")
+                initial_vector = raw.get("initial_vector", "")
+                
+                decrypted_bytes = _aes_decrypt(encrypted_flow_data, aes_key, initial_vector)
+                payload = json.loads(decrypted_bytes.decode('utf-8'))
+                log.info(f"Decrypted payload: {json.dumps(payload, indent=2)}")
+                
+            except Exception as exc:
+                log.exception(f"Decryption failed: {exc}")
+                # Return proper error code for WhatsApp
+                return jsonify({"error_type": "DECRYPTION_FAILED"}), 421
+        else:
+            # Unencrypted request (shouldn't happen in production)
+            log.warning("Received unencrypted flow data")
+            payload = raw
+            aes_key = None
+            is_encrypted = False
+        
+        # Process the flow action
+        action = payload.get("action", "").upper()
+        version = payload.get("version", "3.0")
+        log.info(f"Processing action: {action}, version: {version}")
+        
+        # Handle different actions
+        if action in ["PING", "ping"]:
+            # WhatsApp health check ping
+            resp_obj = {
+                "version": version,
+                "data": {
+                    "status": "active"
+                }
+            }
+            
+        elif action in ["INIT", "init"]:
+            # Initialize flow with data
+            resp_obj = {
+                "version": version,
+                "screen": "ONBOARDING",
+                "data": FLOW_DATA
+            }
+            
+        elif action in ["DATA_EXCHANGE", "data_exchange"]:
+            # Handle form data submission
+            screen = payload.get("screen", "")
+            data = payload.get("data", {})
+            
+            log.info(f"Data exchange for screen: {screen}, data: {data}")
+            
+            # Validate submitted data
+            errors = {}
+            
+            if not data.get("society"):
+                errors["society"] = "Please select your society"
+            elif data.get("society") == "other" and not data.get("custom_society", "").strip():
+                errors["custom_society"] = "Please enter your society name"
+            
+            if not data.get("gender"):
+                errors["gender"] = "Please select your gender"
+            
+            if not data.get("age_group"):
+                errors["age_group"] = "Please select your age group"
+            
+            if errors:
+                # Return errors to display on the same screen
+                resp_obj = {
+                    "version": version,
+                    "screen": "ONBOARDING",
+                    "data": {
+                        **FLOW_DATA,
+                        "error": errors
+                    }
+                }
+            else:
+                # Data is valid, complete the flow
+                log.info(f"Onboarding completed successfully with data: {data}")
+                
+                # Send success response that closes the flow
+                resp_obj = {
+                    "version": version,
+                    "data": {
+                        "status": "completed",
+                        "message": "Thank you for completing the onboarding!"
+                    }
+                }
+                
+        else:
+            log.warning(f"Unknown action received: {action}")
+            return jsonify({"error_type": "UNKNOWN_ACTION"}), 422
+        
+        # Encrypt response if request was encrypted
+        if is_encrypted and aes_key:
+            log.info("Encrypting response")
+            response_json = json.dumps(resp_obj)
+            encrypted_response = _aes_encrypt(
+                response_json.encode('utf-8'), 
+                aes_key, 
+                raw["initial_vector"]
+            )
+            return jsonify({"encrypted_flow_data": encrypted_response}), 200
+        else:
+            # Return unencrypted response (for health checks)
+            return jsonify(resp_obj), 200
+            
+    except Exception as e:
+        log.exception(f"Unexpected error in flow endpoint: {e}")
+        return jsonify({"error_type": "INTERNAL_ERROR"}), 500
 
-    # Health‑check → empty body
-    if not raw:
-        return jsonify({}), 200
-
-    # Decrypt if needed
-    encrypted = "encrypted_flow_data" in raw
-    if encrypted:
-        try:
-            aes_key = _rsa_decrypt(raw["encrypted_aes_key"])
-            decrypted_bytes = _aes_decrypt(raw["encrypted_flow_data"], aes_key, raw["initial_vector"])
-            payload = json.loads(decrypted_bytes.decode())
-        except Exception as exc:
-            log.exception("Decrypt failed: %s", exc)
-            return jsonify({"error": "decryption_failed"}), 400
-    else:
-        payload = raw
-
-    # Business logic
-    action = payload.get("action")
-    if action == "init":
-        resp_obj = {"data": INITIAL_DATA}
-    elif action == "validate":
-        data = payload.get("payload", {})
-        errors = {}
-        if not data.get("society"):
-            errors["society"] = "Please select your society."
-        elif data["society"] == "other" and not data.get("custom_society", "").strip():
-            errors["custom_society"] = "Please enter your society name."
-        if not data.get("gender"):
-            errors["gender"] = "Please select your gender."
-        if not data.get("age_group"):
-            errors["age_group"] = "Please select your age group."
-        resp_obj = {"errors": errors} if errors else {}
-    elif action == "submit":
-        log.info("Onboarding submission: %s", payload.get("payload"))
-        return "", 204
-    else:
-        return jsonify({"error": "Unsupported action"}), 400
-
-    # Encrypt response if request was encrypted
-    if encrypted:
-        encrypted_resp = _aes_encrypt(json.dumps(resp_obj).encode(), aes_key, raw["initial_vector"])
-        return jsonify({"encrypted_flow_data": encrypted_resp}), 200
-    return jsonify(resp_obj), 200
-
+# Additional health check endpoint for debugging
+@bp.get("/flow/health")
+def health_check():
+    """Simple health check endpoint for testing."""
+    return jsonify({"status": "healthy", "endpoint": "onboarding_flow"}), 200

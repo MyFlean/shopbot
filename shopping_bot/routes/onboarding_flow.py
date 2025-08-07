@@ -3,7 +3,7 @@ import logging
 import json
 import base64
 import os
-from cryptography.hazmat.primitives import serialization, padding as sympad, hashes
+from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding as asympad
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 # Load RSA private key - GCP mounts secrets at /secrets/{SECRET_NAME}
 _key_path = Path(os.getenv("FLOW_PRIVATE_KEY", "/secrets/Flow_Private_Key"))
 if not _key_path.exists():
-    # Fallback to check if it's a local development environment
+    # Fallback for local development
     alt_path = Path(__file__).resolve().parent / "private.pem"
     if alt_path.exists():
         _key_path = alt_path
@@ -33,23 +33,13 @@ with open(_key_path, 'rb') as key_file:
         backend=default_backend()
     )
 
-def _b64_decode(data: str) -> bytes:
-    """Decode base64 with proper padding - handles WhatsApp's format."""
-    # Remove all whitespace
-    data = ''.join(data.split())
-    # Add padding if needed
-    missing_padding = len(data) % 4
-    if missing_padding:
-        data += '=' * (4 - missing_padding)
-    return base64.b64decode(data)
-
-def _rsa_decrypt(b64_cipher: str) -> bytes:
-    """Decrypt RSA using OAEP with SHA256."""
-    cipher_bytes = _b64_decode(b64_cipher)
+def _rsa_decrypt(encrypted_aes_key_b64: str) -> bytes:
+    """Decrypt RSA encrypted AES key using OAEP with SHA256."""
+    encrypted_aes_key = base64.b64decode(encrypted_aes_key_b64)
     try:
         # WhatsApp uses OAEP with SHA256
         return _private_key.decrypt(
-            cipher_bytes,
+            encrypted_aes_key,
             asympad.OAEP(
                 mgf=asympad.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
@@ -57,53 +47,66 @@ def _rsa_decrypt(b64_cipher: str) -> bytes:
             )
         )
     except Exception as e:
-        log.error(f"RSA decryption with SHA256 failed: {e}")
-        # Fallback to SHA1 if SHA256 fails (for compatibility)
-        try:
-            return _private_key.decrypt(
-                cipher_bytes,
-                asympad.OAEP(
-                    mgf=asympad.MGF1(algorithm=hashes.SHA1()),
-                    algorithm=hashes.SHA1(),
-                    label=None
-                )
-            )
-        except Exception as e2:
-            log.error(f"RSA decryption with SHA1 also failed: {e2}")
-            raise
+        log.error(f"RSA decryption failed: {e}")
+        raise
 
-def _aes_decrypt(b64_cipher: str, aes_key: bytes, b64_iv: str) -> bytes:
-    """Decrypt AES-CBC with PKCS7 padding."""
-    cipher_bytes = _b64_decode(b64_cipher)
-    iv_bytes = _b64_decode(b64_iv)
-    
-    cipher = Cipher(
-        algorithms.AES(aes_key), 
-        modes.CBC(iv_bytes),
-        backend=default_backend()
-    )
-    decryptor = cipher.decryptor()
-    padded = decryptor.update(cipher_bytes) + decryptor.finalize()
-    
-    unpadder = sympad.PKCS7(128).unpadder()
-    return unpadder.update(padded) + unpadder.finalize()
+def flip_iv(iv: bytes) -> bytes:
+    """Flip all bits in IV for GCM mode response encryption."""
+    return bytes(byte ^ 0xFF for byte in iv)
 
-def _aes_encrypt(plain: bytes, aes_key: bytes, b64_iv: str) -> str:
-    """Encrypt AES-CBC with PKCS7 padding."""
-    iv_bytes = _b64_decode(b64_iv)
-    
-    padder = sympad.PKCS7(128).padder()
-    padded = padder.update(plain) + padder.finalize()
-    
-    cipher = Cipher(
-        algorithms.AES(aes_key), 
-        modes.CBC(iv_bytes),
-        backend=default_backend()
-    )
-    encryptor = cipher.encryptor()
-    encrypted = encryptor.update(padded) + encryptor.finalize()
-    
-    return base64.b64encode(encrypted).decode('utf-8')
+def _aes_gcm_decrypt(encrypted_flow_data_b64: str, aes_key: bytes, initial_vector_b64: str) -> str:
+    """Decrypt using AES-GCM mode (WhatsApp Flows use GCM, not CBC)."""
+    try:
+        # Decode the encrypted data and IV
+        encrypted_flow_data = base64.b64decode(encrypted_flow_data_b64)
+        iv = base64.b64decode(initial_vector_b64)
+        
+        # For GCM mode, the last 16 bytes are the authentication tag
+        encrypted_body = encrypted_flow_data[:-16]
+        auth_tag = encrypted_flow_data[-16:]
+        
+        # Create GCM cipher
+        cipher = Cipher(
+            algorithms.AES(aes_key),
+            modes.GCM(iv, auth_tag),
+            backend=default_backend()
+        )
+        
+        decryptor = cipher.decryptor()
+        decrypted_data = decryptor.update(encrypted_body) + decryptor.finalize()
+        
+        return decrypted_data.decode('utf-8')
+        
+    except Exception as e:
+        log.error(f"AES-GCM decryption error: {e}")
+        raise
+
+def _aes_gcm_encrypt(response: str, aes_key: bytes, initial_vector_b64: str) -> str:
+    """Encrypt response using AES-GCM mode with flipped IV."""
+    try:
+        # Decode IV and flip it for response
+        iv = base64.b64decode(initial_vector_b64)
+        flipped_iv = flip_iv(iv)
+        
+        # Create GCM cipher with flipped IV
+        cipher = Cipher(
+            algorithms.AES(aes_key),
+            modes.GCM(flipped_iv),
+            backend=default_backend()
+        )
+        
+        encryptor = cipher.encryptor()
+        encrypted = encryptor.update(response.encode('utf-8')) + encryptor.finalize()
+        
+        # Combine encrypted data with auth tag
+        encrypted_response = encrypted + encryptor.tag
+        
+        # Return base64 encoded
+        return base64.b64encode(encrypted_response).decode('utf-8')
+        
+    except Exception as e:
+        log.error(f"AES-GCM encryption error: {e}")
+        raise
 
 # Static dropdown data for the flow
 FLOW_DATA = {
@@ -155,12 +158,12 @@ def onboarding_flow():
                 aes_key = _rsa_decrypt(encrypted_aes_key)
                 log.info(f"AES key decrypted successfully, length: {len(aes_key)} bytes")
                 
-                # Decrypt flow data using AES
+                # Decrypt flow data using AES-GCM
                 encrypted_flow_data = raw.get("encrypted_flow_data", "")
                 initial_vector = raw.get("initial_vector", "")
                 
-                decrypted_bytes = _aes_decrypt(encrypted_flow_data, aes_key, initial_vector)
-                payload = json.loads(decrypted_bytes.decode('utf-8'))
+                decrypted_json = _aes_gcm_decrypt(encrypted_flow_data, aes_key, initial_vector)
+                payload = json.loads(decrypted_json)
                 log.info(f"Decrypted payload: {json.dumps(payload, indent=2)}")
                 
             except Exception as exc:
@@ -175,12 +178,12 @@ def onboarding_flow():
             is_encrypted = False
         
         # Process the flow action
-        action = payload.get("action", "").upper()
+        action = payload.get("action", "")
         version = payload.get("version", "3.0")
         log.info(f"Processing action: {action}, version: {version}")
         
         # Handle different actions
-        if action in ["PING", "ping"]:
+        if action.lower() == "ping":
             # WhatsApp health check ping
             resp_obj = {
                 "version": version,
@@ -189,7 +192,7 @@ def onboarding_flow():
                 }
             }
             
-        elif action in ["INIT", "init"]:
+        elif action.upper() == "INIT":
             # Initialize flow with data
             resp_obj = {
                 "version": version,
@@ -197,7 +200,7 @@ def onboarding_flow():
                 "data": FLOW_DATA
             }
             
-        elif action in ["DATA_EXCHANGE", "data_exchange"]:
+        elif action.upper() == "DATA_EXCHANGE":
             # Handle form data submission
             screen = payload.get("screen", "")
             data = payload.get("data", {})
@@ -235,9 +238,17 @@ def onboarding_flow():
                 # Send success response that closes the flow
                 resp_obj = {
                     "version": version,
+                    "screen": "SUCCESS",
                     "data": {
-                        "status": "completed",
-                        "message": "Thank you for completing the onboarding!"
+                        "extension_message_response": {
+                            "params": {
+                                "flow_token": payload.get("flow_token", ""),
+                                "status": "completed",
+                                "society": data.get("society"),
+                                "gender": data.get("gender"),
+                                "age_group": data.get("age_group")
+                            }
+                        }
                     }
                 }
                 
@@ -249,11 +260,7 @@ def onboarding_flow():
         if is_encrypted and aes_key:
             log.info("Encrypting response")
             response_json = json.dumps(resp_obj)
-            encrypted_response = _aes_encrypt(
-                response_json.encode('utf-8'), 
-                aes_key, 
-                raw["initial_vector"]
-            )
+            encrypted_response = _aes_gcm_encrypt(response_json, aes_key, raw["initial_vector"])
             return jsonify({"encrypted_flow_data": encrypted_response}), 200
         else:
             # Return unencrypted response (for health checks)

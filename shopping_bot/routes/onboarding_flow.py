@@ -261,7 +261,8 @@ def onboarding_flow():
             log.info("Encrypting response")
             response_json = json.dumps(resp_obj)
             encrypted_response = _aes_gcm_encrypt(response_json, aes_key, raw["initial_vector"])
-            return jsonify({"encrypted_flow_data": encrypted_response}), 200
+            # WhatsApp expects the encrypted response as plain text, not JSON
+            return encrypted_response, 200, {'Content-Type': 'text/plain'}
         else:
             # Return unencrypted response (for health checks)
             return jsonify(resp_obj), 200

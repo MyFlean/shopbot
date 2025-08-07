@@ -16,10 +16,15 @@ log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # ───────────────────────────────────────────
-# Load RSA private key
-_key_path = Path(os.getenv("FLOW_PRIVATE_KEY", Path(__file__).resolve().parent / "private.pem"))
+# Load RSA private key - GCP mounts secrets at /secrets/{SECRET_NAME}
+_key_path = Path(os.getenv("FLOW_PRIVATE_KEY", "/secrets/Flow_Private_Key"))
 if not _key_path.exists():
-    raise RuntimeError(f"private.pem not found at {_key_path}. Set env FLOW_PRIVATE_KEY or mount secret.")
+    # Fallback to check if it's a local development environment
+    alt_path = Path(__file__).resolve().parent / "private.pem"
+    if alt_path.exists():
+        _key_path = alt_path
+    else:
+        raise RuntimeError(f"Private key not found at {_key_path}. Check GCP Secret mount or set FLOW_PRIVATE_KEY env var.")
 
 with open(_key_path, 'rb') as key_file:
     _private_key = serialization.load_pem_private_key(

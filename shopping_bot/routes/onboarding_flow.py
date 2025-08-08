@@ -392,8 +392,8 @@ def _aes_gcm_encrypt(response: str, aes_key: bytes, initial_vector_b64: str) -> 
 # Static dropdown data for onboarding flow
 ONBOARDING_DATA = {
     "societies": [
-        {"id": "amrapali_sapphire", "title": "Amrapali Sapphire"},
-        {"id": "parsvnath_prestige", "title": "Parsvnath Prestige"},
+        {"id": "amrapali_sapphire", "title": "Amrapali Sapphireeeeeeeeeeeeee"},
+        {"id": "parsvnath_prestige", "title": "Parsvnath Prestigeeeeeeeeeee"},
         {"id": "other", "title": "Other"},
     ],
     "genders": [

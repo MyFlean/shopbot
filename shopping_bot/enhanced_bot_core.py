@@ -28,6 +28,12 @@ from .bot_helpers import (
     sections_to_text,
 )
 from .flow_generator import FlowTemplateGenerator
+from .llm_service import map_leaf_to_query_intent
+
+# TYPE_CHECKING import to avoid circular dependency
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .bot_core import ShoppingBotCore
 
 Cfg = get_config()
 log = logging.getLogger(__name__)
@@ -49,14 +55,82 @@ class EnhancedShoppingBotCore:
         self.flow_enabled = True
         self.enhanced_llm_enabled = True
 
+    def enable_flows(self, enabled: bool = True):
+        """Enable or disable Flow functionality"""
+        self.flow_enabled = enabled
+        
+    def enable_enhanced_llm(self, enabled: bool = True):
+        """Enable or disable enhanced LLM features"""
+        self.enhanced_llm_enabled = enabled
+
+    def _reset_session_only(self, ctx: UserContext) -> None:
+        """Reset session data only"""
+        cleared_items = len(ctx.session) + len(ctx.fetched_data)
+        ctx.session.clear()
+        ctx.fetched_data.clear()
+        
+        self.smart_log.context_change(ctx.user_id, "SESSION_RESET", {"cleared_items": cleared_items})
+
+    def _apply_follow_up_patch(self, patch, ctx: UserContext) -> None:
+        """Apply follow-up patch"""
+        changes = {}
+        
+        for k, v in patch.slots.items():
+            old_value = ctx.session.get(k)
+            ctx.session[k] = v
+            changes[k] = f"{old_value}→{v}"
+            
+        if patch.intent_override:
+            ctx.session["intent_override"] = patch.intent_override
+            changes["intent"] = patch.intent_override
+        
+        if changes:
+            self.smart_log.context_change(ctx.user_id, "PATCH_APPLIED", changes)
+
     # ────────────────────────────────────────────────────────
     # Public entry points
     # ────────────────────────────────────────────────────────
     
+    async def collect_questions_for_query(
+        self,
+        query: str,
+        ctx: UserContext
+    ) -> Union[BotResponse, None]:
+        """
+        Phase 1: Collect any required questions without processing.
+        Returns None if no questions needed, or BotResponse with questions.
+        """
+        self.smart_log.query_start(ctx.user_id, query, bool(ctx.session))
+        
+        try:
+            # If we are mid-assessment, continue with questions
+            if "assessment" in ctx.session:
+                self.smart_log.flow_decision(ctx.user_id, "CONTINUE_ASSESSMENT_QUESTIONS")
+                return await self._continue_assessment_questions_only(query, ctx)
+
+            # Check if this is a follow-up (reuse existing logic)
+            fu = await self.llm_service.classify_follow_up(query, ctx)
+            
+            if fu.is_follow_up and not fu.patch.reset_context:
+                # Follow-ups typically don't need new questions
+                return None
+
+            # Reset or start fresh assessment
+            if fu.patch.reset_context:
+                self.smart_log.flow_decision(ctx.user_id, "RESET_CONTEXT")
+                self._reset_session_only(ctx)
+            
+            # Start new assessment and check for questions
+            return await self._start_assessment_questions_only(query, ctx)
+
+        except Exception as exc:
+            self.smart_log.error_occurred(ctx.user_id, type(exc).__name__, "collect_questions", str(exc))
+            return None
+
     async def process_query(
         self, 
         query: str, 
-        ctx: UserContext,
+        ctx: UserContext, 
         enable_flows: bool = True
     ) -> Union[BotResponse, EnhancedBotResponse]:
         """
@@ -238,6 +312,106 @@ class EnhancedShoppingBotCore:
         # Complete the assessment with enhanced response
         self.smart_log.flow_decision(ctx.user_id, "COMPLETE_ASSESSMENT", f"{len(fetch_later)} fetches needed")
         return await self._complete_assessment_enhanced(a, ctx, fetch_later)
+
+    # ────────────────────────────────────────────────────────
+    # Question-only methods for two-phase processing
+    # ────────────────────────────────────────────────────────
+    
+    async def _start_assessment_questions_only(
+        self, 
+        query: str, 
+        ctx: UserContext
+    ) -> Union[BotResponse, None]:
+        """Start assessment and return only questions if needed"""
+        
+        # Classify intent (same as normal flow)
+        result = await self.llm_service.classify_intent(query)
+        intent = map_leaf_to_query_intent(result.layer3)
+        
+        self.smart_log.intent_classified(
+            ctx.user_id, 
+            (result.layer1, result.layer2, result.layer3),
+            intent.value
+        )
+
+        # Update session
+        ctx.session.update(
+            intent_l1=result.layer1,
+            intent_l2=result.layer2,
+            intent_l3=result.layer3,
+        )
+
+        # Assess requirements
+        assessment = await self.llm_service.assess_requirements(query, intent, result.layer3, ctx)
+        
+        user_slots = [f for f in assessment.missing_data if is_user_slot(f)]
+        missing_data_names = [get_func_value(f) for f in assessment.missing_data]
+        ask_first_names = [get_func_value(f) for f in user_slots]
+        
+        self.smart_log.requirements_assessed(ctx.user_id, missing_data_names, ask_first_names)
+
+        # If no user questions needed, return None
+        if not user_slots:
+            return None
+
+        # Generate contextual questions
+        contextual_questions = await self.llm_service.generate_contextual_questions(
+            user_slots, query, result.layer3, ctx
+        )
+        ctx.session["contextual_questions"] = contextual_questions
+
+        # Set up assessment session
+        ctx.session["assessment"] = {
+            "original_query": query,
+            "intent": intent.value,
+            "missing_data": missing_data_names,
+            "priority_order": [get_func_value(f) for f in assessment.priority_order],
+            "fulfilled": [],
+            "currently_asking": None,
+            "phase": "collecting_questions"  # Mark this as question collection phase
+        }
+
+        self.ctx_mgr.save_context(ctx)
+        
+        # Return the first question
+        return await self._continue_assessment_questions_only(query, ctx)
+
+    async def _continue_assessment_questions_only(
+        self, 
+        query: str, 
+        ctx: UserContext
+    ) -> Union[BotResponse, None]:
+        """Continue assessment but only return questions"""
+        
+        a = ctx.session["assessment"]
+
+        # Store user's answer if this isn't the original query
+        if query != a["original_query"]:
+            store_user_answer(query, a, ctx)
+            self.smart_log.context_change(
+                ctx.user_id, "USER_ANSWER_STORED", 
+                {"for": a.get("currently_asking"), "answer_len": len(query)}
+            )
+
+        # Compute what's still missing
+        still_missing = compute_still_missing(a, ctx)
+        ask_first = [f for f in still_missing if is_user_slot(f)]
+
+        # If we need to ask the user something
+        if ask_first:
+            func = ask_first[0]
+            func_value = get_func_value(func)
+            a["currently_asking"] = func_value
+            
+            self.smart_log.user_question(ctx.user_id, func_value)
+            self.ctx_mgr.save_context(ctx)
+            
+            return BotResponse(ResponseType.QUESTION, build_question(func, ctx))
+
+        # No more questions needed - mark as ready for processing
+        a["phase"] = "ready_for_processing"
+        self.ctx_mgr.save_context(ctx)
+        return None
 
     async def _complete_assessment_enhanced(
         self,

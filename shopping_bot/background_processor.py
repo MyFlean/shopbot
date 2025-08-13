@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import json
 import aiohttp
 
@@ -26,6 +26,38 @@ class BackgroundProcessor:
         self.ctx_mgr = ctx_mgr
         self.processing_ttl = timedelta(hours=2)  # How long to keep results
         
+    async def collect_questions_for_query(
+        self,
+        query: str,
+        user_id: str, 
+        session_id: str
+    ) -> Union[Dict[str, Any], None]:
+        """
+        Phase 1: Collect questions needed for the query.
+        Returns question data or None if no questions needed.
+        """
+        try:
+            # Load user context
+            ctx = self.ctx_mgr.get_context(user_id, session_id)
+            
+            # Check if we need questions
+            question_response = await self.enhanced_bot.collect_questions_for_query(query, ctx)
+            
+            if question_response is None:
+                # No questions needed
+                return None
+            
+            # Return question data
+            return {
+                "response_type": question_response.response_type.value,
+                "content": question_response.content,
+                "requires_questions": True
+            }
+            
+        except Exception as e:
+            log.error(f"Question collection failed for {user_id}: {e}")
+            return None
+
     async def process_query_background(
         self, 
         query: str, 
@@ -34,7 +66,7 @@ class BackgroundProcessor:
         notification_callback: Optional[callable] = None
     ) -> str:
         """
-        Process query in background and store results.
+        Phase 2: Process query in background with complete context.
         Returns processing_id for tracking.
         """
         processing_id = f"bg_{user_id}_{session_id}_{int(datetime.now().timestamp())}"
@@ -43,8 +75,13 @@ class BackgroundProcessor:
         await self._set_processing_status(processing_id, "processing", {"query": query})
         
         try:
-            # Load user context
+            # Load user context (should have answers from questions)
             ctx = self.ctx_mgr.get_context(user_id, session_id)
+            
+            # Ensure assessment is marked as ready for processing
+            if "assessment" in ctx.session:
+                ctx.session["assessment"]["phase"] = "processing"
+                self.ctx_mgr.save_context(ctx)
             
             # Process the query (this is the heavy operation)
             log.info(f"Starting background processing for {processing_id}")

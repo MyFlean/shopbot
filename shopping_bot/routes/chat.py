@@ -122,7 +122,24 @@ async def chat_whatsapp() -> tuple[Union[Dict[str, Any], List[Dict[str, Any]]], 
             
             if background_processor:
                 try:
-                    # Start background processing
+                    # Phase 1: Check if we need questions first
+                    questions_data = await background_processor.collect_questions_for_query(
+                        query=message,
+                        user_id=user_id,
+                        session_id=session_id
+                    )
+                    
+                    if questions_data:
+                        # Return questions immediately with 200 status
+                        return jsonify({
+                            "type": "question",
+                            "content": questions_data["content"],
+                            "response_type": "question",
+                            "requires_followup": True,
+                            "message": "I need a bit more info to find the perfect products for you."
+                        }), 200
+                    
+                    # No questions needed - proceed with background processing
                     processing_id = await background_processor.process_query_background(
                         query=message,
                         user_id=user_id,
@@ -141,7 +158,7 @@ async def chat_whatsapp() -> tuple[Union[Dict[str, Any], List[Dict[str, Any]]], 
                     }), 200
                     
                 except Exception as exc:
-                    log.exception(f"Background processing failed: {exc}")
+                    log.exception(f"Two-phase processing failed: {exc}")
                     # Fall back to synchronous processing
 
         # Standard processing for simple queries or fallback
@@ -209,6 +226,76 @@ def flow_status() -> tuple[Dict[str, Any], int]:
         
     except Exception as exc:
         log.exception("Flow status endpoint failed")
+        return jsonify({"error": str(exc)}), 500
+
+
+@bp.post("/chat/continue-processing")
+async def continue_processing_after_questions() -> tuple[Dict[str, Any], int]:
+    """Continue background processing after user answers questions"""
+    try:
+        data: Dict[str, str] = request.get_json(force=True)
+
+        missing = [k for k in ("user_id", "message") if k not in data]
+        if missing:
+            return (
+                {"error": f"Missing required fields: {', '.join(missing)}"},
+                400,
+            )
+
+        user_id = data["user_id"]
+        session_id = data.get("session_id", user_id)
+        message = data["message"]  # This should be the user's answer
+
+        ctx_mgr = current_app.extensions["ctx_mgr"]
+        enhanced_bot = current_app.extensions.get("enhanced_bot_core")
+        background_processor = current_app.extensions.get("background_processor")
+        
+        if not enhanced_bot or not background_processor:
+            return jsonify({"error": "Enhanced bot or background processor not available"}), 500
+
+        # First, handle the user's answer
+        ctx = ctx_mgr.get_context(user_id, session_id)
+        
+        # Check if we're in assessment mode
+        if "assessment" not in ctx.session:
+            return jsonify({"error": "No active assessment found"}), 400
+        
+        # Continue the question collection to see if more questions are needed
+        questions_data = await background_processor.collect_questions_for_query(
+            query=message,  # User's answer
+            user_id=user_id,
+            session_id=session_id
+        )
+        
+        if questions_data:
+            # Still need more questions
+            return jsonify({
+                "type": "question",
+                "content": questions_data["content"],
+                "response_type": "question",
+                "requires_followup": True,
+                "message": "Just one more thing..."
+            }), 200
+        
+        # All questions answered - start background processing
+        processing_id = await background_processor.process_query_background(
+            query=ctx.session["assessment"]["original_query"],  # Use original query
+            user_id=user_id,
+            session_id=session_id,
+            notification_callback=None
+        )
+        
+        return jsonify({
+            "type": "text",
+            "content": {
+                "message": "✅ Perfect! I'm now finding the best products for you...",
+                "processing_id": processing_id,
+                "response_type": "processing"
+            }
+        }), 200
+        
+    except Exception as exc:
+        log.exception("Continue processing endpoint failed")
         return jsonify({"error": str(exc)}), 500
 
 

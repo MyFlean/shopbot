@@ -35,19 +35,61 @@ class BaseConfig:
 
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Background Processing Configuration
+    # ──────────────────────────────────────────────────────────────────────────
+    BACKGROUND_PROCESSING_TTL = int(os.getenv('BACKGROUND_PROCESSING_TTL', 7200))  # 2 hours
+    
+    # Updated webhook URL for product recommendations flow
+    # Change this to your actual frontend URL when deploying
+    FRONTEND_WEBHOOK_URL = os.getenv(
+        'FRONTEND_WEBHOOK_URL', 
+        "http://localhost:3000/api/webhook/processing-complete"  # Your frontend endpoint
+        # "http://httpbin.org/post"  # Fallback for testing
+    )
+    
+    # WhatsApp Flow IDs
+    WHATSAPP_FLOW_ID = os.getenv('WHATSAPP_FLOW_ID', 'your-flow-id-here')
+    WHATSAPP_PRODUCTS_FLOW_ID = os.getenv('WHATSAPP_PRODUCTS_FLOW_ID', 'your-products-flow-id')
+    WHATSAPP_RESULTS_FLOW_ID = os.getenv('WHATSAPP_RESULTS_FLOW_ID', 'your-results-flow-id')
+    
+    # New: Product Recommendations Flow ID
+    WHATSAPP_PRODUCT_RECOMMENDATIONS_FLOW_ID = os.getenv(
+        'WHATSAPP_PRODUCT_RECOMMENDATIONS_FLOW_ID', 
+        'your-product-recommendations-flow-id'
+    )
+
 
 class DevelopmentConfig(BaseConfig):
     DEBUG: bool = True
+    
+    # For development, you might want to use httpbin for testing
+    FRONTEND_WEBHOOK_URL = os.getenv(
+        'FRONTEND_WEBHOOK_URL', 
+        "http://httpbin.org/post"  # Test endpoint for development
+    )
 
 
 class ProductionConfig(BaseConfig):
     DEBUG: bool = False
     REDIS_TTL_SECONDS: int = int(os.getenv("REDIS_TTL_SECONDS", 900))
+    
+    # Production webhook URL should be explicitly set
+    FRONTEND_WEBHOOK_URL = os.getenv(
+        'FRONTEND_WEBHOOK_URL', 
+        "https://your-frontend-domain.com/api/webhook/processing-complete"
+    )
 
 
 class TestingConfig(BaseConfig):
     TESTING: bool = True
     REDIS_DB: int = 15
+    
+    # For testing, use a mock webhook
+    FRONTEND_WEBHOOK_URL = os.getenv(
+        'FRONTEND_WEBHOOK_URL', 
+        "http://localhost:8080/mock-webhook"
+    )
 
 
 def get_config() -> Type[BaseConfig]:

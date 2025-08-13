@@ -78,6 +78,37 @@ def create_app(**overrides: Any) -> Flask:
             
             log.info(f"Enhanced bot core initialized - Flows: {flow_status}, Enhanced LLM: {llm_status}")
             
+            # ──────────────────────────────────────────────────────────────────────────
+            # BACKGROUND PROCESSING SETUP
+            # ──────────────────────────────────────────────────────────────────────────
+            
+            # Initialize background processing components
+            enable_background = os.getenv("ENABLE_BACKGROUND_PROCESSING", "true").lower() == "true"
+            
+            if enable_background:
+                try:
+                    from .background_processor import BackgroundProcessor, FrontendNotifier
+                    
+                    # Initialize components
+                    notifier = FrontendNotifier()
+                    background_processor = BackgroundProcessor(enhanced_bot_core, ctx_mgr)
+                    
+                    # Store in app extensions
+                    app.extensions["background_processor"] = background_processor
+                    app.extensions["frontend_notifier"] = notifier
+                    
+                    log.info("✅ Background processor initialized")
+                    
+                except ImportError as e:
+                    log.warning(f"⚠️ Background processor dependencies missing: {e}")
+                    log.info("📱 Continuing without background processing")
+                    
+                except Exception as e:
+                    log.error(f"❌ Background processor initialization failed: {e}")
+                    log.info("📱 Continuing without background processing")
+            else:
+                log.info("📱 Background processing disabled via ENABLE_BACKGROUND_PROCESSING environment variable")
+            
         except ImportError as e:
             log.warning(f"⚠️ Enhanced bot core dependencies missing: {e}")
             log.info("📱 Continuing with base bot core (Flows disabled)")
@@ -95,9 +126,11 @@ def create_app(**overrides: Any) -> Flask:
 
     # Log final initialization status
     has_enhanced = "enhanced_bot_core" in app.extensions
+    has_background = "background_processor" in app.extensions
     core_type = "Enhanced (with Flows)" if has_enhanced else "Base (text-only)"
+    bg_status = "with Background Processing" if has_background else "synchronous only"
     
-    log.info(f"Flask app initialised (env={Cfg.__name__}, core={core_type})")
+    log.info(f"Flask app initialised (env={Cfg.__name__}, core={core_type}, processing={bg_status})")
     
     return app
 
@@ -117,6 +150,7 @@ def get_flow_config_info() -> dict[str, Any]:
         "flows_enabled": os.getenv("ENABLE_WHATSAPP_FLOWS", "true").lower() == "true",
         "flow_generation_enabled": os.getenv("ENABLE_FLOW_GENERATION", "true").lower() == "true", 
         "enhanced_llm_enabled": os.getenv("ENABLE_ENHANCED_LLM", "true").lower() == "true",
+        "background_processing_enabled": os.getenv("ENABLE_BACKGROUND_PROCESSING", "true").lower() == "true",
         "environment": os.getenv("APP_ENV", "development"),
         "log_level": os.getenv("BOT_LOG_LEVEL", "STANDARD"),
     }

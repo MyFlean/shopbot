@@ -44,7 +44,7 @@ class BaseConfig:
     # Change this to your actual frontend URL when deploying
     FRONTEND_WEBHOOK_URL = os.getenv(
         'FRONTEND_WEBHOOK_URL', 
-        "http://localhost:3000/api/webhook/processing-complete"  # Your frontend endpoint
+        "https://abf0cf6d3546.ngrok-free.app/backend-response"  # Your frontend endpoint
         # "http://httpbin.org/post"  # Fallback for testing
     )
     

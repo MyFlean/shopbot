@@ -56,7 +56,7 @@ class BaseConfig:
     # New: Product Recommendations Flow ID
     WHATSAPP_PRODUCT_RECOMMENDATIONS_FLOW_ID = os.getenv(
         'WHATSAPP_PRODUCT_RECOMMENDATIONS_FLOW_ID', 
-        'your-product-recommendations-flow-id'
+        '799205369204924'
     )
 
 
@@ -66,7 +66,7 @@ class DevelopmentConfig(BaseConfig):
     # For development, you might want to use httpbin for testing
     FRONTEND_WEBHOOK_URL = os.getenv(
         'FRONTEND_WEBHOOK_URL', 
-        "http://httpbin.org/post"  # Test endpoint for development
+        "https://abf0cf6d3546.ngrok-free.app/backend-response"  # Test endpoint for development
     )
 
 

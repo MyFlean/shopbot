@@ -6,8 +6,11 @@ Why a factory?
 • Lets pytest spin up isolated app instances
 • Allows different configs (dev / prod / test) without code forks
 • Keeps top-level imports side-effect-free
-"""
 
+Option A:
+- No server-side WhatsApp sends. FE handles WhatsApp.
+- We still enable Enhanced core + BackgroundProcessor + FrontendNotifier.
+"""
 from __future__ import annotations
 
 import logging
@@ -21,16 +24,6 @@ from .bot_core import ShoppingBotCore
 from .config import get_config
 from .redis_manager import RedisContextManager
 from .routes import register_routes
-
-# NEW: Option B dispatcher (safe import: works even if client missing)
-try:
-    from .dual_message_dispather import DualMessageDispatcher  # the file name in repo is 'dispather'
-except Exception:  # pragma: no cover
-    DualMessageDispatcher = None  # type: ignore[assignment]
-
-# Optionally wire a real WhatsApp client here if you have one.
-# We'll keep it None by default; DualMessageDispatcher will run in mock mode otherwise.
-whatsapp_client = None
 
 log = logging.getLogger(__name__)
 Cfg = get_config()
@@ -84,7 +77,7 @@ def create_app(**overrides: Any) -> Flask:
             log.info(f"Enhanced bot core initialized - Flows: {flow_status}, Enhanced LLM: {llm_status}")
 
             # ──────────────────────────────────────────────────────────────────
-            # BACKGROUND PROCESSING + DISPATCHER SETUP (Option B)
+            # BACKGROUND PROCESSING (Option A)
             # ──────────────────────────────────────────────────────────────────
             enable_background = os.getenv("ENABLE_BACKGROUND_PROCESSING", "true").lower() == "true"
 
@@ -92,26 +85,17 @@ def create_app(**overrides: Any) -> Flask:
                 try:
                     from .background_processor import BackgroundProcessor, FrontendNotifier
 
-                    # Create dispatcher (server-sent Flow). If the class isn't available, run without it.
-                    dispatcher = DualMessageDispatcher(whatsapp_client) if DualMessageDispatcher else None
-                    if dispatcher:
-                        app.extensions["dispatcher"] = dispatcher
-                        log.info("✅ DualMessageDispatcher initialized%s",
-                                 "" if whatsapp_client else " (mock mode)")
-
-                    # Initialize background processor with dispatcher injected
                     notifier = FrontendNotifier()
                     background_processor = BackgroundProcessor(
                         enhanced_bot_core,
                         ctx_mgr,
-                        dispatcher=dispatcher,  # <- inject dispatcher
                     )
 
                     # Store in app extensions
                     app.extensions["background_processor"] = background_processor
                     app.extensions["frontend_notifier"] = notifier
 
-                    log.info("✅ Background processor initialized (Option B ready)")
+                    log.info("✅ Background processor initialized (Option A)")
                 except ImportError as e:
                     log.warning(f"⚠️ Background processor dependencies missing: {e}")
                     log.info("📱 Continuing without background processing")

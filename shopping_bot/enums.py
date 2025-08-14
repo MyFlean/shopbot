@@ -35,9 +35,10 @@ class QueryIntent(str, Enum):
 
 class ResponseType(str, Enum):
     QUESTION = "question"
+    PROCESSING_STUB = "processing"      # NEW: used when core defers to background
     FINAL_ANSWER = "final_answer"
     ERROR = "error"
 
 
-
+# Backwards-compat alias used across the codebase
 ShoppingFunction = BackendFunction

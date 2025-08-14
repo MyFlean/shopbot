@@ -1,234 +1,200 @@
 # shopping_bot/background_processor.py
 """
-Background processing service with real HTTP notifications
+Background processing service – single-phase executor.
+
+Design:
+- The bot core decides backgrounding (returns PROCESSING_STUB after ask-loop).
+- This worker rehydrates context and executes the heavy path.
+- If the bot (defensively) returns PROCESSING_STUB again, we flip
+  `ctx.session["needs_background"]=False` and re-run to force synchronous completion.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Union
-import json
+from typing import Any, Dict, List, Optional
+
 import aiohttp
 
 from .redis_manager import RedisContextManager
 from .models import UserContext
 from .config import get_config
+from .enums import ResponseType
 
 Cfg = get_config()
 log = logging.getLogger(__name__)
 
+
 class BackgroundProcessor:
-    """Handles background processing of complex queries and result storage"""
-    
+    """Handles background execution of complex queries and result storage."""
+
     def __init__(self, enhanced_bot_core, ctx_mgr: RedisContextManager):
         self.enhanced_bot = enhanced_bot_core
         self.ctx_mgr = ctx_mgr
-        self.processing_ttl = timedelta(hours=2)  # How long to keep results
-        
-    async def collect_questions_for_query(
-        self,
-        query: str,
-        user_id: str, 
-        session_id: str
-    ) -> Union[Dict[str, Any], None]:
-        """
-        Phase 1: Collect questions needed for the query.
-        Returns question data or None if no questions needed.
-        """
-        try:
-            # Load user context
-            ctx = self.ctx_mgr.get_context(user_id, session_id)
-            
-            # Check if we need questions
-            question_response = await self.enhanced_bot.collect_questions_for_query(query, ctx)
-            
-            if question_response is None:
-                # No questions needed
-                return None
-            
-            # Return question data
-            return {
-                "response_type": question_response.response_type.value,
-                "content": question_response.content,
-                "requires_questions": True
-            }
-            
-        except Exception as e:
-            log.error(f"Question collection failed for {user_id}: {e}")
-            return None
+        self.processing_ttl = timedelta(hours=2)  # retention for status/result
 
     async def process_query_background(
-        self, 
-        query: str, 
-        user_id: str, 
+        self,
+        query: str,
+        user_id: str,
         session_id: str,
-        notification_callback: Optional[callable] = None
+        notification_callback: Optional[callable] = None,
     ) -> str:
         """
-        Phase 2: Process query in background with complete context.
-        Returns processing_id for tracking.
+        Execute heavy work in background, store result, and notify frontend.
+
+        Returns:
+            processing_id (str): key for polling status/result.
         """
         processing_id = f"bg_{user_id}_{session_id}_{int(datetime.now().timestamp())}"
-        
-        # Mark as processing
+
+        # Mark as processing upfront
         await self._set_processing_status(processing_id, "processing", {"query": query})
-        
+
         try:
-            # Load user context (should have answers from questions)
+            # Rehydrate context (ask-loop should already be complete)
             ctx = self.ctx_mgr.get_context(user_id, session_id)
-            
-            # Ensure assessment is marked as ready for processing
+
+            # Make sure assessment is marked as processing (best-effort)
             if "assessment" in ctx.session:
                 ctx.session["assessment"]["phase"] = "processing"
                 self.ctx_mgr.save_context(ctx)
-            
-            # Process the query (this is the heavy operation)
-            log.info(f"Starting background processing for {processing_id}")
+
+            log.info("Starting background processing for %s", processing_id)
+
+            # First attempt: normal enhanced processing
             result = await self.enhanced_bot.process_query(query, ctx, enable_flows=True)
-            
-            # Store the results (safely handle both response types)
-            await self._store_processing_result(processing_id, result, query, user_id, session_id)
-            
-            log.info(f"Background processing completed for {processing_id}")
+
+            # Defensive guard: if the core still returns a stub here, force sync path
+            if getattr(result, "response_type", None) == ResponseType.PROCESSING_STUB:
+                log.info(
+                    "Core returned PROCESSING_STUB in background for %s – forcing sync",
+                    processing_id,
+                )
+                ctx.session["needs_background"] = False
+                self.ctx_mgr.save_context(ctx)
+                result = await self.enhanced_bot.process_query(query, ctx, enable_flows=True)
+
+            # Persist final result
+            await self._store_processing_result(
+                processing_id=processing_id,
+                result=result,
+                original_query=query,
+                user_id=user_id,
+                session_id=session_id,
+            )
+
+            log.info("Background processing completed for %s", processing_id)
             return processing_id
-            
-        except Exception as e:
-            # Mark as failed
+
+        except Exception as e:  # noqa: BLE001
+            # Store failure status
             await self._set_processing_status(processing_id, "failed", {"error": str(e)})
-            
-            # Notify failure too
+
+            # Notify failure
             notifier = FrontendNotifier()
-            await notifier.notify_completion(processing_id, "failed", user_id, {
-                "error": str(e),
-                "query": query
-            })
-            
+            await notifier.notify_completion(
+                processing_id, "failed", user_id, {"error": str(e), "query": query}
+            )
             if notification_callback:
-                await notification_callback(processing_id, "failed", user_id)
-                
-            log.error(f"Background processing failed for {processing_id}: {e}")
+                try:
+                    await notification_callback(processing_id, "failed", user_id)
+                except Exception as cb_exc:  # noqa: BLE001
+                    log.warning("notification_callback failed: %s", cb_exc)
+
+            log.exception("Background processing failed for %s", processing_id)
             raise
-    
+
     async def get_processing_status(self, processing_id: str) -> Dict[str, Any]:
-        """Get current processing status"""
+        """Return current status for a processing_id."""
         key = f"processing:{processing_id}:status"
         status_data = self.ctx_mgr._get_json(key, default={})
-        
-        if not status_data:
-            return {"status": "not_found"}
-            
-        return status_data
-    
+        return status_data or {"status": "not_found"}
+
     async def get_processing_result(self, processing_id: str) -> Optional[Dict[str, Any]]:
-        """Get completed processing result"""
+        """Return completed result (if any) for a processing_id."""
         key = f"processing:{processing_id}:result"
-        result_data = self.ctx_mgr._get_json(key, default=None)
-        
-        if not result_data:
-            return None
-            
-        return result_data
-    
+        return self.ctx_mgr._get_json(key, default=None)
+
     async def get_products_for_flow(self, processing_id: str) -> List[Dict[str, Any]]:
-        """
-        Get products formatted for Flow consumption.
-        This is what onboarding_flow.py will call.
-        """
+        """Extract products from stored result for Flow consumption (optional helper)."""
         result = await self.get_processing_result(processing_id)
         if not result:
             return []
-            
-        # Extract products from the stored result
-        products = result.get("flow_data", {}).get("products", [])
-        return products
-    
+        return result.get("flow_data", {}).get("products", []) or []
+
     async def get_text_summary_for_flow(self, processing_id: str) -> str:
-        """
-        Get text summary for Flow display.
-        This allows dumping everything as text in the Flow.
-        """
+        """Return a human-readable text summary composed from stored result."""
         result = await self.get_processing_result(processing_id)
         if not result:
             return "No results available."
-            
-        # Extract text content
-        text_content = result.get("text_content", "")
-        sections = result.get("sections", {})
-        
-        # Combine text and sections into a comprehensive summary
+        text_content = result.get("text_content", "") or ""
+        sections = result.get("sections", {}) or {}
         full_text = text_content
-        
         if sections:
-            full_text += "\n\n" + self._format_sections_as_text(sections)
-            
+            full_text = (full_text + "\n\n" if full_text else "") + self._format_sections_as_text(sections)
         return full_text or "Results processed successfully."
-    
+
+    # ────────────────────────────────────────────────────────
+    # Storage & formatting
+    # ────────────────────────────────────────────────────────
     async def _store_processing_result(
-        self, 
-        processing_id: str, 
-        result, 
+        self,
+        processing_id: str,
+        result,
         original_query: str,
         user_id: str,
-        session_id: str
+        session_id: str,
     ) -> None:
-        """Store processing result in Redis (safely handles both response types)"""
-        
-        # Safely extract data from both BotResponse and EnhancedBotResponse
-        products_data = []
+        """Normalize and store result; update status; notify frontend."""
+
+        products_data: List[Dict[str, Any]] = []
         text_content = ""
-        sections = {}
+        sections: Dict[str, Any] = {}
         response_type = "final_answer"
-        functions_executed = []
+        functions_executed: List[str] = []
         requires_flow = False
-        
+
         try:
-            # Get basic attributes that both response types should have
-            response_type = getattr(result, 'response_type', 'final_answer')
-            if hasattr(response_type, 'value'):
-                response_type = response_type.value
-                
-            # Get content
-            content = getattr(result, 'content', {})
+            # response_type
+            rtype = getattr(result, "response_type", "final_answer")
+            response_type = rtype.value if hasattr(rtype, "value") else str(rtype)
+
+            # content
+            content = getattr(result, "content", {}) or {}
             text_content = content.get("message", "") if isinstance(content, dict) else str(content)
             sections = content.get("sections", {}) if isinstance(content, dict) else {}
-            
-            # Get functions executed
-            functions_executed = getattr(result, 'functions_executed', [])
-            
-            # Check if it's an EnhancedBotResponse with flow capabilities
-            if hasattr(result, 'requires_flow'):
-                requires_flow = getattr(result, 'requires_flow', False)
-                
-                # Try to extract products from flow_payload if available
-                if requires_flow and hasattr(result, 'flow_payload') and result.flow_payload:
-                    flow_payload = result.flow_payload
-                    if hasattr(flow_payload, 'products') and flow_payload.products:
-                        products_data = [
+
+            # functions executed
+            functions_executed = getattr(result, "functions_executed", []) or []
+
+            # flow extraction (EnhancedBotResponse)
+            if hasattr(result, "requires_flow"):
+                requires_flow = bool(getattr(result, "requires_flow", False))
+                flow_payload = getattr(result, "flow_payload", None)
+                if requires_flow and flow_payload and hasattr(flow_payload, "products"):
+                    for i, p in enumerate(flow_payload.products or []):
+                        products_data.append(
                             {
-                                "id": getattr(p, 'product_id', f"prod_{i}"),
-                                "title": getattr(p, 'title', 'Product'),
-                                "subtitle": getattr(p, 'subtitle', ''),
-                                "price": getattr(p, 'price', 'Price on request'),
-                                "brand": getattr(p, 'brand', ''),
-                                "rating": getattr(p, 'rating', None),
-                                "availability": getattr(p, 'availability', 'In Stock'),
-                                "discount": getattr(p, 'discount', ''),
-                                "image": getattr(p, 'image_url', 'https://via.placeholder.com/200x200?text=Product'),
-                                "features": getattr(p, 'key_features', [])
+                                "id": getattr(p, "product_id", f"prod_{i}"),
+                                "title": getattr(p, "title", "Product"),
+                                "subtitle": getattr(p, "subtitle", ""),
+                                "price": getattr(p, "price", "Price on request"),
+                                "brand": getattr(p, "brand", ""),
+                                "rating": getattr(p, "rating", None),
+                                "availability": getattr(p, "availability", "In Stock"),
+                                "discount": getattr(p, "discount", ""),
+                                "image": getattr(p, "image_url", "https://via.placeholder.com/200x200?text=Product"),
+                                "features": getattr(p, "key_features", []),
                             }
-                            for i, p in enumerate(flow_payload.products)
-                        ]
-                        
-        except Exception as e:
-            log.warning(f"Error extracting enhanced response data: {e}")
-            # Fall back to basic extraction
-            
-        # If no products from flow_payload, try to create dummy products from text
+                        )
+        except Exception as e:  # noqa: BLE001
+            log.warning("Result normalization error: %s", e)
+
+        # Fallback: synthesize a minimal product when no flow products available
         if not products_data and text_content:
             products_data = self._create_dummy_products_from_text(text_content)
-        
-        # Store comprehensive result
+
         result_data = {
             "processing_id": processing_id,
             "user_id": user_id,
@@ -245,37 +211,39 @@ class BackgroundProcessor:
                 "flow_type": "product_catalog" if products_data else "text_summary",
                 "header_text": f"Results for: {original_query[:50]}...",
                 "footer_text": f"Found {len(products_data)} options" if products_data else "Analysis complete",
-            }
+            },
         }
-        
-        # Store in Redis with TTL
+
+        # Persist
         result_key = f"processing:{processing_id}:result"
         self.ctx_mgr._set_json(result_key, result_data, ttl=self.processing_ttl)
-        
-        # Update status to completed
-        await self._set_processing_status(processing_id, "completed", {
-            "products_count": len(products_data),
-            "has_flow": requires_flow,
-            "text_length": len(text_content)
-        })
-        
-        # ✅ Enhanced notification with flow_data
+
+        # Update status → completed
+        await self._set_processing_status(
+            processing_id,
+            "completed",
+            {"products_count": len(products_data), "has_flow": requires_flow, "text_length": len(text_content)},
+        )
+
+        # Notify FE
         notifier = FrontendNotifier()
-        await notifier.notify_completion(processing_id, "completed", user_id, {
-            "query": original_query,
-            "session_id": session_id,
-            "flow_data": result_data["flow_data"],  # ← Enhanced with flow data
-            "has_products": len(products_data) > 0,  # ← Flag for frontend
-            "has_flow_data": len(products_data) > 0 or bool(text_content)  # ← Overall flag
-        })
-    
+        await notifier.notify_completion(
+            processing_id,
+            "completed",
+            user_id,
+            {
+                "query": original_query,
+                "session_id": session_id,
+                "flow_data": result_data["flow_data"],
+                "has_products": len(products_data) > 0,
+                "has_flow_data": len(products_data) > 0 or bool(text_content),
+            },
+        )
+
     def _create_dummy_products_from_text(self, text_content: str) -> List[Dict[str, Any]]:
-        """Create dummy products based on query analysis"""
-        
-        # Simple keyword-based product generation
-        text_lower = text_content.lower()
-        
-        if any(word in text_lower for word in ["laptop", "computer", "gaming"]):
+        """Very coarse fallback to keep the UI flowing when no products present."""
+        tl = text_content.lower()
+        if any(w in tl for w in ["laptop", "computer", "gaming"]):
             return [
                 {
                     "id": "prod_laptop_1",
@@ -287,10 +255,10 @@ class BackgroundProcessor:
                     "availability": "Available",
                     "discount": "",
                     "image": "https://via.placeholder.com/200x200/4CAF50/FFFFFF?text=Laptop",
-                    "features": ["High Performance", "Good Value", "Recommended Choice"]
+                    "features": ["High Performance", "Good Value", "Recommended Choice"],
                 }
             ]
-        elif any(word in text_lower for word in ["phone", "mobile", "smartphone"]):
+        if any(w in tl for w in ["phone", "mobile", "smartphone"]):
             return [
                 {
                     "id": "prod_phone_1",
@@ -302,134 +270,106 @@ class BackgroundProcessor:
                     "availability": "Available",
                     "discount": "",
                     "image": "https://via.placeholder.com/200x200/2196F3/FFFFFF?text=Phone",
-                    "features": ["Latest Features", "Great Camera", "Long Battery Life"]
+                    "features": ["Latest Features", "Great Camera", "Long Battery Life"],
                 }
             ]
-        else:
-            return [
-                {
-                    "id": "prod_general_1",
-                    "title": "Product Recommendation",
-                    "subtitle": "Based on your analysis",
-                    "price": "Contact for price",
-                    "brand": "Various",
-                    "rating": 4.0,
-                    "availability": "Available",
-                    "discount": "",
-                    "image": "https://via.placeholder.com/200x200/9C27B0/FFFFFF?text=Product",
-                    "features": ["Quality Product", "Good Value", "Recommended"]
-                }
-            ]
-    
-    async def _set_processing_status(
-        self, 
-        processing_id: str, 
-        status: str, 
-        metadata: Dict[str, Any]
-    ) -> None:
-        """Set processing status in Redis"""
-        status_data = {
+        return [
+            {
+                "id": "prod_general_1",
+                "title": "Product Recommendation",
+                "subtitle": "Based on your analysis",
+                "price": "Contact for price",
+                "brand": "Various",
+                "rating": 4.0,
+                "availability": "Available",
+                "discount": "",
+                "image": "https://via.placeholder.com/200x200/9C27B0/FFFFFF?text=Product",
+                "features": ["Quality Product", "Good Value", "Recommended"],
+            }
+        ]
+
+    async def _set_processing_status(self, processing_id: str, status: str, metadata: Dict[str, Any]) -> None:
+        """Persist processing status with TTL."""
+        status_key = f"processing:{processing_id}:status"
+        payload = {
             "processing_id": processing_id,
             "status": status,
             "timestamp": datetime.now().isoformat(),
-            "metadata": metadata
+            "metadata": metadata or {},
         }
-        
-        status_key = f"processing:{processing_id}:status"
-        self.ctx_mgr._set_json(status_key, status_data, ttl=self.processing_ttl)
-    
+        self.ctx_mgr._set_json(status_key, payload, ttl=self.processing_ttl)
+
     def _format_sections_as_text(self, sections: Dict[str, str]) -> str:
-        """Format sections dictionary as readable text"""
-        formatted_text = ""
-        
-        # Order sections logically
-        section_order = ["MAIN", "ALT", "+", "INFO", "TIPS", "LINKS"]
-        
-        for section_key in section_order:
-            if section_key in sections and sections[section_key].strip():
-                content = sections[section_key].strip()
-                
-                # Add section headers
-                if section_key == "MAIN":
-                    formatted_text += f"Main Information:\n{content}\n\n"
-                elif section_key == "ALT":
-                    formatted_text += f"Alternative Options:\n{content}\n\n"
-                elif section_key == "+":
-                    formatted_text += f"Additional Benefits:\n{content}\n\n"
-                elif section_key == "INFO":
-                    formatted_text += f"Important Information:\n{content}\n\n"
-                elif section_key == "TIPS":
-                    formatted_text += f"Tips & Recommendations:\n{content}\n\n"
-                elif section_key == "LINKS":
-                    formatted_text += f"Useful Links:\n{content}\n\n"
-        
-        return formatted_text.strip()
+        """Render section dict to text for summary views."""
+        formatted = []
+        order = ["MAIN", "ALT", "+", "INFO", "TIPS", "LINKS"]
+        names = {
+            "MAIN": "Main Information",
+            "ALT": "Alternative Options",
+            "+": "Additional Benefits",
+            "INFO": "Important Information",
+            "TIPS": "Tips & Recommendations",
+            "LINKS": "Useful Links",
+        }
+        for key in order:
+            val = (sections.get(key) or "").strip()
+            if val:
+                formatted.append(f"{names[key]}:\n{val}")
+        return "\n\n".join(formatted)
 
 
 class FrontendNotifier:
-    """Service for notifying frontend when background processing completes"""
-    
+    """Notify the frontend when background processing completes (optional webhook)."""
+
     def __init__(self, webhook_url: Optional[str] = None):
-        self.webhook_url = webhook_url or getattr(Cfg, 'FRONTEND_WEBHOOK_URL', None)
-    
+        self.webhook_url = webhook_url or getattr(Cfg, "FRONTEND_WEBHOOK_URL", None)
+
     async def notify_completion(
-        self, 
-        processing_id: str, 
-        status: str, 
+        self,
+        processing_id: str,
+        status: str,
         user_id: str,
-        additional_data: Dict[str, Any] = None
+        additional_data: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        """Notify frontend that processing is complete - triggers flow button"""
-        
-        # Check if we have products for flow
-        has_flow_data = False
-        flow_type = "text_summary"
-        
-        if additional_data:
-            has_flow_data = additional_data.get("has_flow_data", False)
-            if additional_data.get("has_products", False):
-                flow_type = "product_recommendations"
-        
-        notification_payload = {
+        """POST a completion payload to the frontend, if configured."""
+        additional_data = additional_data or {}
+        has_flow_data = bool(additional_data.get("has_flow_data"))
+        flow_type = "product_recommendations" if additional_data.get("has_products") else "text_summary"
+
+        payload = {
             "processing_id": processing_id,
             "status": status,
             "user_id": user_id,
             "timestamp": datetime.now().isoformat(),
-            "action": "show_flow_button",  # This tells frontend to show flow button
+            "action": "show_flow_button",
             "has_flow_data": has_flow_data,
             "flow_type": flow_type,
-            "webhook_url": self.webhook_url,  # Include for debugging
-            "data": additional_data or {}
+            "webhook_url": self.webhook_url,
+            "data": additional_data,
         }
-        
-        if self.webhook_url:
-            try:
-                # Send actual HTTP request to frontend
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        self.webhook_url,
-                        json=notification_payload,
-                        headers={'Content-Type': 'application/json'},
-                        timeout=10  # 10 second timeout
-                    ) as response:
-                        response_text = await response.text()
-                        
-                        if response.status == 200:
-                            log.info(f"✅ Flow button notification sent successfully to {self.webhook_url}")
-                            log.info(f"Frontend response: {response_text}")
-                            return True
-                        else:
-                            log.warning(f"⚠️ Flow button notification failed: {response.status} - {response_text}")
-                            return False
-                            
-            except aiohttp.ClientTimeout:
-                log.error(f"❌ Frontend notification timeout to {self.webhook_url}")
-                return False
-            except Exception as e:
-                log.error(f"❌ Failed to send flow button notification: {e}")
-                return False
-        else:
-            # No webhook configured, just log
-            log.warning("⚠️ No FRONTEND_WEBHOOK_URL configured - notification not sent")
-            log.info(f"Would send notification: {notification_payload}")
+
+        if not self.webhook_url:
+            log.warning("No FRONTEND_WEBHOOK_URL configured – skipping webhook. Payload: %s", payload)
+            return False
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.webhook_url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=10,
+                ) as resp:
+                    text = await resp.text()
+                    if resp.status == 200:
+                        log.info("Flow button notification sent to %s", self.webhook_url)
+                        log.debug("Frontend response: %s", text)
+                        return True
+                    log.warning("Frontend notification failed: %s - %s", resp.status, text)
+                    return False
+        except aiohttp.ClientTimeout:
+            log.error("Frontend notification timeout to %s", self.webhook_url)
+            return False
+        except Exception as e:  # noqa: BLE001
+            log.error("Failed to send frontend notification: %s", e)
             return False

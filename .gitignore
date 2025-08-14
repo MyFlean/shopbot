@@ -1,1 +1,31 @@
+# Python
+*.pyc
+__pycache__/
+.Python
+env/
+venv/
 .env
+.flaskenv
+
+# Flask instance folder
+instance/
+
+# Database
+*.sqlite3
+*.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Distribution and packaging
+dist/
+build/
+*.egg-info/
+
+# Editor-specific files (optional)
+.vscode/
+.idea/
+*.swp
+*~

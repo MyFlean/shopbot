@@ -1,6 +1,11 @@
 """
 Brain of the WhatsApp shopping bot – with follow-up classification & delta assessment.
 Core logic focuses on orchestration; helpers/LLM are modular.
+
+UPDATED:
+- Adds core-owned background decision immediately after intent classification.
+- Returns a PROCESSING_STUB right after the ask-loop finishes when background is needed,
+  deferring heavy fetchers/LLM work to the route/worker.
 """
 from __future__ import annotations
 
@@ -41,7 +46,7 @@ class ShoppingBotCore:
     # ────────────────────────────────────────────────────────
     async def process_query(self, query: str, ctx: UserContext) -> BotResponse:
         self.smart_log.query_start(ctx.user_id, query, bool(ctx.session))
-        
+
         try:
             # If we are mid-assessment, continue
             if "assessment" in ctx.session:
@@ -50,7 +55,7 @@ class ShoppingBotCore:
 
             # Otherwise, check follow-up first
             fu = await self.llm_service.classify_follow_up(query, ctx)
-            
+
             if fu.is_follow_up and not fu.patch.reset_context:
                 self.smart_log.flow_decision(ctx.user_id, "HANDLE_FOLLOW_UP")
                 self._apply_follow_up_patch(fu.patch, ctx)
@@ -73,19 +78,19 @@ class ShoppingBotCore:
             )
 
     # ────────────────────────────────────────────────────────
-    # Follow-up path
+    # Follow-up path (unchanged behavior)
     # ────────────────────────────────────────────────────────
     async def _handle_follow_up(self, query: str, ctx: UserContext, fu) -> BotResponse:
         # Assess what additional data we need
         fetch_list = await self.llm_service.assess_delta_requirements(query, ctx, fu.patch)
-        
+
         if fetch_list:
             self.smart_log.data_operations(ctx.user_id, [f.value for f in fetch_list])
 
         # Fetch the data
         fetched: Dict[str, Any] = {}
         success_count = 0
-        
+
         for func in fetch_list:
             try:
                 result = await get_fetcher(func)(ctx)
@@ -95,13 +100,13 @@ class ShoppingBotCore:
                     "timestamp": datetime.now().isoformat(),
                 }
                 success_count += 1
-                
+
                 # Log performance at detailed level
                 self.smart_log.performance_metric(
-                    ctx.user_id, func.value, 
+                    ctx.user_id, func.value,
                     data_size=len(str(result)) if result else 0
                 )
-                
+
             except Exception as exc:  # noqa: BLE001
                 self.smart_log.warning(ctx.user_id, f"DATA_FETCH_FAILED", f"{func.value}: {exc}")
                 fetched[func.value] = {"error": str(exc)}
@@ -112,11 +117,11 @@ class ShoppingBotCore:
         # Generate answer
         answer_dict = await self.llm_service.generate_answer(query, ctx, fetched)
         resp_type = ResponseType(answer_dict.get("response_type", "final_answer"))
-        
+
         # Save and return
         snapshot_and_trim(ctx, base_query=query)
         self.ctx_mgr.save_context(ctx)
-        
+
         self.smart_log.response_generated(ctx.user_id, resp_type.value, bool(answer_dict.get("sections")))
 
         return BotResponse(
@@ -130,16 +135,16 @@ class ShoppingBotCore:
 
     def _apply_follow_up_patch(self, patch, ctx: UserContext) -> None:
         changes = {}
-        
+
         for k, v in patch.slots.items():
             old_value = ctx.session.get(k)
             ctx.session[k] = v
             changes[k] = f"{old_value}→{v}"
-            
+
         if patch.intent_override:
             ctx.session["intent_override"] = patch.intent_override
             changes["intent"] = patch.intent_override
-        
+
         if changes:
             self.smart_log.context_change(ctx.user_id, "PATCH_APPLIED", changes)
 
@@ -147,7 +152,7 @@ class ShoppingBotCore:
         cleared_items = len(ctx.session) + len(ctx.fetched_data)
         ctx.session.clear()
         ctx.fetched_data.clear()
-        
+
         self.smart_log.context_change(ctx.user_id, "SESSION_RESET", {"cleared_items": cleared_items})
 
     # ────────────────────────────────────────────────────────
@@ -157,27 +162,30 @@ class ShoppingBotCore:
         # Classify intent
         result = await self.llm_service.classify_intent(query)
         intent = map_leaf_to_query_intent(result.layer3)
-        
+
         self.smart_log.intent_classified(
-            ctx.user_id, 
+            ctx.user_id,
             (result.layer1, result.layer2, result.layer3),
             intent.value
         )
 
-        # Update session
+        # Update session with intent taxonomy and core-owned background decision
         ctx.session.update(
             intent_l1=result.layer1,
             intent_l2=result.layer2,
             intent_l3=result.layer3,
         )
+        needs_bg = self._needs_background(intent)
+        ctx.session["needs_background"] = needs_bg
+        self.smart_log.flow_decision(ctx.user_id, "BACKGROUND_DECISION", {"needs_background": needs_bg, "intent": intent.value})
 
         # Assess requirements
         assessment = await self.llm_service.assess_requirements(query, intent, result.layer3, ctx)
-        
+
         user_slots = [f for f in assessment.missing_data if is_user_slot(f)]
         missing_data_names = [get_func_value(f) for f in assessment.missing_data]
         ask_first_names = [get_func_value(f) for f in user_slots]
-        
+
         self.smart_log.requirements_assessed(ctx.user_id, missing_data_names, ask_first_names)
 
         # Generate contextual questions if needed
@@ -210,7 +218,7 @@ class ShoppingBotCore:
         if query != a["original_query"]:
             store_user_answer(query, a, ctx)
             self.smart_log.context_change(
-                ctx.user_id, "USER_ANSWER_STORED", 
+                ctx.user_id, "USER_ANSWER_STORED",
                 {"for": a.get("currently_asking"), "answer_len": len(query)}
             )
 
@@ -224,13 +232,26 @@ class ShoppingBotCore:
             func = ask_first[0]
             func_value = get_func_value(func)
             a["currently_asking"] = func_value
-            
+
             self.smart_log.user_question(ctx.user_id, func_value)
             self.ctx_mgr.save_context(ctx)
-            
+
             return BotResponse(ResponseType.QUESTION, build_question(func, ctx))
 
-        # Complete the assessment
+        # No more questions to ask; decide whether to defer heavy work
+        needs_bg = bool(ctx.session.get("needs_background"))
+        if fetch_later and needs_bg:
+            # Mark phase as processing and persist; the route will enqueue the background job.
+            a["phase"] = "processing"
+            self.smart_log.flow_decision(ctx.user_id, "DEFER_TO_BACKGROUND", {"fetchers": [get_func_value(f) for f in fetch_later]})
+            self.ctx_mgr.save_context(ctx)
+
+            return BotResponse(
+                ResponseType.PROCESSING_STUB,
+                content={"message": "Processing your request…"}
+            )
+
+        # Complete the assessment synchronously
         self.smart_log.flow_decision(ctx.user_id, "COMPLETE_ASSESSMENT", f"{len(fetch_later)} fetches needed")
         return await self._complete_assessment(a, ctx, fetch_later)
 
@@ -243,15 +264,15 @@ class ShoppingBotCore:
         ctx: UserContext,
         fetchers: List[Union[BackendFunction, UserSlot]],
     ) -> BotResponse:
-        
+
         backend_fetchers = [f for f in fetchers if isinstance(f, BackendFunction)]
-        
+
         if backend_fetchers:
             self.smart_log.data_operations(ctx.user_id, [f.value for f in backend_fetchers])
-        
+
         fetched: Dict[str, Any] = {}
         success_count = 0
-        
+
         for func in backend_fetchers:
             try:
                 result = await get_fetcher(func)(ctx)
@@ -261,13 +282,13 @@ class ShoppingBotCore:
                     "timestamp": datetime.now().isoformat(),
                 }
                 success_count += 1
-                
+
                 # Log performance at detailed level
                 self.smart_log.performance_metric(
                     ctx.user_id, func.value,
                     data_size=len(str(result)) if result else 0
                 )
-                
+
             except Exception as exc:  # noqa: BLE001
                 self.smart_log.warning(ctx.user_id, "DATA_FETCH_FAILED", f"{func.value}: {exc}")
                 fetched[func.value] = {"error": str(exc)}
@@ -300,3 +321,21 @@ class ShoppingBotCore:
             },
             functions_executed=list(fetched.keys()),
         )
+
+    # ────────────────────────────────────────────────────────
+    # Background policy helper (core-owned)
+    # ────────────────────────────────────────────────────────
+    def _needs_background(self, intent) -> bool:
+        """
+        Decide early—right after intent classification—if this query should be deferred.
+        Keep it fast and deterministic. You can later tune this mapping without touching routes.
+        """
+        try:
+            return str(intent).lower() in {
+                "queryintent.product_search",
+                "queryintent.recommendation",
+                "queryintent.product_comparison",
+            }
+        except Exception:
+            # Be conservative on unexpected intents.
+            return False

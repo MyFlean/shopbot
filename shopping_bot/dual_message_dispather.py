@@ -28,15 +28,20 @@ class DualMessageDispatcher:
         self, 
         response: BotResponse, 
         user_id: str,
-        phone_number: str
+        phone_number: str,
+        *,
+        session_id: Optional[str] = None,
+        processing_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Main dispatch method handling both standard and Flow responses.
+
+        You can optionally pass `processing_id` and `session_id`.
+        If `processing_id` is not provided, we try `response.content.get("processing_id")`.
         
         Returns:
             Dict with dispatch results and metadata
         """
-        
         dispatch_result = {
             "user_id": user_id,
             "timestamp": datetime.now().isoformat(),
@@ -57,11 +62,21 @@ class DualMessageDispatcher:
             # If this is a Flow response, send Flow payload after delay
             if response.is_flow_response and response.flow_payload:
                 await asyncio.sleep(self.dispatch_delay)
-                
+
+                # Prefer explicit processing_id arg; fallback to response content
+                pid = processing_id or response.content.get("processing_id")
+                extra_flow_data = {
+                    "processing_id": pid,
+                    "user_id": user_id,
+                }
+                if session_id:
+                    extra_flow_data["session_id"] = session_id
+
                 flow_result = await self._send_flow_message(
                     response.flow_payload,
                     phone_number,
-                    user_id
+                    user_id,
+                    extra_flow_data=extra_flow_data
                 )
                 dispatch_result["messages_sent"].append(flow_result)
                 
@@ -124,10 +139,26 @@ class DualMessageDispatcher:
         self, 
         flow_payload: FlowPayload, 
         phone_number: str,
-        user_id: str
+        user_id: str,
+        *,
+        extra_flow_data: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Send WhatsApp Flow message."""
-        
+        # Merge/augment flow data with processing_id, user_id, (optional) session_id
+        base_flow_data = getattr(flow_payload, "flow_data", None) or {}
+        flow_data = dict(base_flow_data)  # shallow copy
+        if extra_flow_data:
+            # Only set keys that aren't already present in flow_data
+            for k, v in extra_flow_data.items():
+                if v is not None and k not in flow_data:
+                    flow_data[k] = v
+
+        # Prefer fields on payload; fall back to sensible defaults
+        header_text = getattr(flow_payload, "header", None) or getattr(flow_payload, "header_text", None) or "Product Options"
+        body_text   = getattr(flow_payload, "body", None)   or getattr(flow_payload, "body_text", None)   or "Here are your options"
+        footer_text = getattr(flow_payload, "footer", None) or getattr(flow_payload, "footer_text", None) or "Tap to explore"
+        screen_name = getattr(flow_payload, "screen", None) or "PRODUCT_LIST"
+
         # Convert FlowPayload to WhatsApp API format
         whatsapp_flow_payload = {
             "messaging_product": "whatsapp",
@@ -137,25 +168,26 @@ class DualMessageDispatcher:
                 "type": "flow",
                 "header": {
                     "type": "text",
-                    "text": flow_payload.header or "Product Options"
+                    "text": header_text
                 },
                 "body": {
-                    "text": flow_payload.body or "Here are your options"
+                    "text": body_text
                 },
                 "footer": {
-                    "text": flow_payload.footer or "Tap to explore"
+                    "text": footer_text
                 },
                 "action": {
                     "name": "flow",
                     "parameters": {
                         "flow_message_version": "3",
-                        "flow_token": flow_payload.flow_id,
-                        "flow_id": Cfg.WHATSAPP_FLOW_ID,  # Configured Flow ID
+                        # WhatsApp requires both: your published Flow ID and the token
+                        "flow_token": getattr(flow_payload, "flow_id", None),  # often used as token in your code
+                        "flow_id": Cfg.WHATSAPP_FLOW_ID,                      # the published Flow ID from config
                         "flow_cta": "View Options",
                         "flow_action": "navigate",
                         "flow_action_payload": {
-                            "screen": "PRODUCT_CATALOG",
-                            "data": flow_payload.flow_data
+                            "screen": screen_name,
+                            "data": flow_data
                         }
                     }
                 }
@@ -167,8 +199,8 @@ class DualMessageDispatcher:
                 result = await self.whatsapp_client.send_message(whatsapp_flow_payload)
                 return {
                     "type": "flow",
-                    "flow_type": flow_payload.flow_type,
-                    "flow_id": flow_payload.flow_id,
+                    "flow_type": getattr(flow_payload, "flow_type", None),
+                    "flow_id": getattr(flow_payload, "flow_id", None),
                     "status": "sent",
                     "message_id": result.get("messages", [{}])[0].get("id"),
                     "timestamp": datetime.now().isoformat()
@@ -183,11 +215,27 @@ class DualMessageDispatcher:
                 }
         else:
             # Mock mode for testing
-            log.info(f"Mock Flow sent to {phone_number}: {flow_payload.flow_type} with {len(flow_payload.flow_data.get('products_data', []))} products")
+            # Try to show a meaningful count if products are present in flow_data
+            products_count = 0
+            try:
+                if isinstance(flow_data, dict):
+                    if "products_data" in flow_data and isinstance(flow_data["products_data"], list):
+                        products_count = len(flow_data["products_data"])
+                    elif "products" in flow_data and isinstance(flow_data["products"], list):
+                        products_count = len(flow_data["products"])
+            except Exception:
+                pass
+
+            log.info(
+                f"Mock Flow sent to {phone_number}: "
+                f"{getattr(flow_payload, 'flow_type', None)} "
+                f"with {products_count} products; "
+                f"data keys={list(flow_data.keys())}"
+            )
             return {
                 "type": "flow",
-                "flow_type": flow_payload.flow_type,
-                "flow_id": flow_payload.flow_id,
+                "flow_type": getattr(flow_payload, "flow_type", None),
+                "flow_id": getattr(flow_payload, "flow_id", None),
                 "status": "sent_mock",
                 "message_id": f"mock_flow_{int(datetime.now().timestamp())}",
                 "timestamp": datetime.now().isoformat()
@@ -201,12 +249,23 @@ class DualMessageDispatcher:
         self, 
         flow_payload: FlowPayload, 
         phone_number: str,
-        user_id: str
+        user_id: str,
+        *,
+        session_id: Optional[str] = None,
+        processing_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send only Flow message (for specific use cases)."""
-        
         try:
-            flow_result = await self._send_flow_message(flow_payload, phone_number, user_id)
+            extra_flow_data = {
+                "processing_id": processing_id,
+                "user_id": user_id,
+            }
+            if session_id:
+                extra_flow_data["session_id"] = session_id
+
+            flow_result = await self._send_flow_message(
+                flow_payload, phone_number, user_id, extra_flow_data=extra_flow_data
+            )
             return {
                 "user_id": user_id,
                 "timestamp": datetime.now().isoformat(),
@@ -230,7 +289,6 @@ class DualMessageDispatcher:
         user_id: str
     ) -> Dict[str, Any]:
         """Send only text message (for fallback scenarios)."""
-        
         try:
             text_result = await self._send_text_message(message_text, phone_number, user_id)
             return {
@@ -262,13 +320,18 @@ class FlowIntegrationHelper:
         self, 
         query: str, 
         ctx, 
-        phone_number: str
+        phone_number: str,
+        *,
+        session_id: Optional[str] = None,
+        processing_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Process query through bot core and dispatch appropriate response.
         This is the main integration point for existing webhook handlers.
+
+        You can pass `processing_id`/`session_id` here; dispatcher will inject them
+        into the Flow payload's data so WhatsApp will echo them back to your flow webhook.
         """
-        
         # Process query through enhanced bot core
         bot_response = await self.bot_core.process_query(query, ctx)
         
@@ -276,7 +339,9 @@ class FlowIntegrationHelper:
         dispatch_result = await self.dispatcher.dispatch_response(
             bot_response, 
             ctx.user_id, 
-            phone_number
+            phone_number,
+            session_id=session_id,
+            processing_id=processing_id,
         )
         
         # Add bot response metadata to dispatch result

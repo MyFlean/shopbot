@@ -7,6 +7,11 @@ Design:
 - This worker rehydrates context and executes the heavy path.
 - If the bot (defensively) returns PROCESSING_STUB again, we flip
   `ctx.session["needs_background"]=False` and re-run to force synchronous completion.
+
+Option A:
+- The backend NEVER sends WhatsApp messages.
+- It only stores normalized results and notifies the FE via FRONTEND_WEBHOOK_URL.
+- The FE sends the WhatsApp Flow and embeds the `processing_id`.
 """
 from __future__ import annotations
 
@@ -17,40 +22,19 @@ from typing import Any, Dict, List, Optional
 import aiohttp
 
 from .redis_manager import RedisContextManager
-from .models import UserContext
 from .config import get_config
 from .enums import ResponseType
-
-# NEW: for Option B flow sending
-try:
-    from .dual_message_dispather import DualMessageDispatcher  # note: file name is 'dispather' in repo
-except Exception:  # pragma: no cover
-    DualMessageDispatcher = None  # type: ignore[assignment]
-
-# If you want to build a FlowPayload fallback when core didn't provide one:
-try:
-    from .models import FlowPayload, ProductData, FlowType
-except Exception:  # pragma: no cover
-    FlowPayload = None  # type: ignore[assignment]
-    ProductData = None  # type: ignore[assignment]
-    FlowType = None  # type: ignore[assignment]
 
 Cfg = get_config()
 log = logging.getLogger(__name__)
 
 
 class BackgroundProcessor:
-    """Handles background execution of complex queries, result storage, and (Option B) sending Flow."""
+    """Handles background execution of complex queries and result storage (Option A)."""
 
-    def __init__(
-        self,
-        enhanced_bot_core,
-        ctx_mgr: RedisContextManager,
-        dispatcher: Optional["DualMessageDispatcher"] = None,  # NEW
-    ):
+    def __init__(self, enhanced_bot_core, ctx_mgr: RedisContextManager):
         self.enhanced_bot = enhanced_bot_core
         self.ctx_mgr = ctx_mgr
-        self.dispatcher = dispatcher  # NEW
         self.processing_ttl = timedelta(hours=2)  # retention for status/result
 
     async def process_query_background(
@@ -61,7 +45,7 @@ class BackgroundProcessor:
         notification_callback: Optional[callable] = None,
     ) -> str:
         """
-        Execute heavy work in background, store result, and (Option B) send the Flow.
+        Execute heavy work in background, store result, and notify the FE (Option A).
 
         Returns:
             processing_id (str): key for polling status/result.
@@ -95,23 +79,11 @@ class BackgroundProcessor:
                 self.ctx_mgr.save_context(ctx)
                 result = await self.enhanced_bot.process_query(query, ctx, enable_flows=True)
 
-            # Persist final result
-            result_data = await self._store_processing_result(
+            # Persist final result (also notifies FE)
+            await self._store_processing_result(
                 processing_id=processing_id,
                 result=result,
                 original_query=query,
-                user_id=user_id,
-                session_id=session_id,
-            )
-
-            # ──────────────────────────────────────────────────────────────
-            # Option B: send the Flow from the server (if possible)
-            # ──────────────────────────────────────────────────────────────
-            await self._maybe_send_flow(
-                processing_id=processing_id,
-                result=result,
-                result_data=result_data,
-                ctx=ctx,
                 user_id=user_id,
                 session_id=session_id,
             )
@@ -123,7 +95,7 @@ class BackgroundProcessor:
             # Store failure status
             await self._set_processing_status(processing_id, "failed", {"error": str(e)})
 
-            # Still notify FE (optional)
+            # Notify failure to FE (optional)
             notifier = FrontendNotifier()
             await notifier.notify_completion(
                 processing_id, "failed", user_id, {"error": str(e), "query": query}
@@ -149,7 +121,10 @@ class BackgroundProcessor:
         return self.ctx_mgr._get_json(key, default=None)
 
     async def get_products_for_flow(self, processing_id: str) -> List[Dict[str, Any]]:
-        """Extract products from stored result for Flow consumption (optional helper)."""
+        """
+        Extract products from stored result for Flow consumption.
+        Option A endpoints can call this to rehydrate UI directly from cache.
+        """
         result = await self.get_processing_result(processing_id)
         if not result:
             return []
@@ -177,8 +152,8 @@ class BackgroundProcessor:
         original_query: str,
         user_id: str,
         session_id: str,
-    ) -> Dict[str, Any]:
-        """Normalize and store result; update status; notify frontend. Returns the normalized payload."""
+    ) -> None:
+        """Normalize and store result; update status; notify frontend."""
 
         products_data: List[Dict[str, Any]] = []
         text_content = ""
@@ -257,7 +232,7 @@ class BackgroundProcessor:
             {"products_count": len(products_data), "has_flow": requires_flow, "text_length": len(text_content)},
         )
 
-        # Notify FE (kept as optional signal; Option B can work with/without this)
+        # Notify FE
         notifier = FrontendNotifier()
         await notifier.notify_completion(
             processing_id,
@@ -271,163 +246,6 @@ class BackgroundProcessor:
                 "has_flow_data": len(products_data) > 0 or bool(text_content),
             },
         )
-        return result_data
-
-    async def _maybe_send_flow(
-        self,
-        processing_id: str,
-        result: Any,
-        result_data: Dict[str, Any],
-        ctx: "UserContext",
-        user_id: str,
-        session_id: str,
-    ) -> None:
-        """Option B: If possible, send the WhatsApp Flow directly from server."""
-        if not self.dispatcher:
-            log.info("No DualMessageDispatcher configured; skipping server-side Flow send.")
-            return
-
-        phone = self._resolve_phone_number(ctx)
-        if not phone:
-            log.warning("No phone number available in context; skipping Flow dispatch for %s", processing_id)
-            return
-
-        # If the core already built a FlowPayload, prefer that.
-        core_flow_payload = getattr(result, "flow_payload", None)
-        if core_flow_payload is not None:
-            try:
-                await self.dispatcher.dispatch_flow_only(
-                    core_flow_payload,
-                    phone_number=phone,
-                    user_id=user_id,
-                    session_id=session_id,
-                    processing_id=processing_id,
-                )
-                log.info("Server-side Flow dispatched (core payload) for %s", processing_id)
-                return
-            except Exception as e:
-                log.warning("Flow dispatch (core payload) failed for %s: %s; will try fallback.", processing_id, e)
-
-        # Fallback: construct a minimal FlowPayload from stored result_data
-        if FlowPayload and ProductData and FlowType:
-            try:
-                products = []
-                for p in (result_data.get("flow_data", {}).get("products") or []):
-                    products.append(
-                        ProductData(
-                            product_id=str(p.get("id") or ""),
-                            title=p.get("title") or "Product",
-                            subtitle=p.get("subtitle") or "",
-                            image_url=p.get("image") or "https://via.placeholder.com/200x200?text=Product",
-                            price=p.get("price") or "Price on request",
-                            rating=p.get("rating"),
-                            brand=p.get("brand"),
-                            key_features=p.get("features") or [],
-                            availability=p.get("availability") or "In Stock",
-                            discount=p.get("discount"),
-                        )
-                    )
-
-                header_text = result_data.get("flow_data", {}).get("header_text") or "Product Options"
-                footer_text = result_data.get("flow_data", {}).get("footer_text") or "Tap to explore"
-
-                fallback_payload = FlowPayload(
-                    flow_type=FlowType.PRODUCT_CATALOG,
-                    products=products,
-                    header_text=header_text,
-                    footer_text=footer_text,
-                )
-
-                await self.dispatcher.dispatch_flow_only(
-                    fallback_payload,
-                    phone_number=phone,
-                    user_id=user_id,
-                    session_id=session_id,
-                    processing_id=processing_id,
-                )
-                log.info("Server-side Flow dispatched (fallback payload) for %s", processing_id)
-            except Exception as e:  # noqa: BLE001
-                log.warning("Flow dispatch (fallback) failed for %s: %s", processing_id, e)
-        else:
-            log.info("FlowPayload model not available; cannot build fallback payload.")
-
-    def _resolve_phone_number(self, ctx: "UserContext") -> Optional[str]:
-        """
-        Best-effort extraction of the user's WhatsApp phone number from context.
-        Adjust this to match your actual context structure.
-        """
-        # Common places to look:
-        # 1) ctx.session["user"]["phone"]
-        try:
-            phone = (ctx.session.get("user") or {}).get("phone")
-            if phone:
-                return str(phone)
-        except Exception:
-            pass
-        # 2) ctx.user_profile.phone (if present)
-        try:
-            profile = getattr(ctx, "user_profile", None)
-            phone = getattr(profile, "phone", None) if profile else None
-            if phone:
-                return str(phone)
-        except Exception:
-            pass
-        # 3) environment for dev/testing
-        try:
-            phone = getattr(Cfg, "DEFAULT_TEST_PHONE", None)
-            if phone:
-                return str(phone)
-        except Exception:
-            pass
-        return None
-
-    def _create_dummy_products_from_text(self, text_content: str) -> List[Dict[str, Any]]:
-        """Very coarse fallback to keep the UI flowing when no products present."""
-        tl = text_content.lower()
-        if any(w in tl for w in ["laptop", "computer", "gaming"]):
-            return [
-                {
-                    "id": "prod_laptop_1",
-                    "title": "Gaming Laptop Recommendation",
-                    "subtitle": "Based on your query analysis",
-                    "price": "$899",
-                    "brand": "Recommended",
-                    "rating": 4.5,
-                    "availability": "Available",
-                    "discount": "",
-                    "image": "https://via.placeholder.com/200x200/4CAF50/FFFFFF?text=Laptop",
-                    "features": ["High Performance", "Good Value", "Recommended Choice"],
-                }
-            ]
-        if any(w in tl for w in ["phone", "mobile", "smartphone"]):
-            return [
-                {
-                    "id": "prod_phone_1",
-                    "title": "Smartphone Recommendation",
-                    "subtitle": "Based on your query analysis",
-                    "price": "$699",
-                    "brand": "Recommended",
-                    "rating": 4.3,
-                    "availability": "Available",
-                    "discount": "",
-                    "image": "https://via.placeholder.com/200x200/2196F3/FFFFFF?text=Phone",
-                    "features": ["Latest Features", "Great Camera", "Long Battery Life"],
-                }
-            ]
-        return [
-            {
-                "id": "prod_general_1",
-                "title": "Product Recommendation",
-                "subtitle": "Based on your analysis",
-                "price": "Contact for price",
-                "brand": "Various",
-                "rating": 4.0,
-                "availability": "Available",
-                "discount": "",
-                "image": "https://via.placeholder.com/200x200/9C27B0/FFFFFF?text=Product",
-                "features": ["Quality Product", "Good Value", "Recommended"],
-            }
-        ]
 
     async def _set_processing_status(self, processing_id: str, status: str, metadata: Dict[str, Any]) -> None:
         """Persist processing status with TTL."""

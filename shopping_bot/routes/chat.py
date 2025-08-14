@@ -14,12 +14,40 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Union
+from dataclasses import asdict, is_dataclass
+from enum import Enum
 
 from flask import Blueprint, current_app, jsonify, request
 from ..enums import ResponseType
 
 log = logging.getLogger(__name__)
 bp = Blueprint("chat", __name__)
+
+# ─────────────────────────────────────────────────────────────
+# Utilities: make any object JSON-safe (dataclasses, Enums, etc.)
+# ─────────────────────────────────────────────────────────────
+def _to_json_safe(obj: Any) -> Any:
+    # Enum → its value
+    if isinstance(obj, Enum):
+        return obj.value
+    # Dataclass → dict, then recurse
+    if is_dataclass(obj):
+        return _to_json_safe(asdict(obj))
+    # Dict → recurse keys/values
+    if isinstance(obj, dict):
+        return {k: _to_json_safe(v) for k, v in obj.items()}
+    # List/tuple/set → recurse
+    if isinstance(obj, (list, tuple, set)):
+        return [_to_json_safe(v) for v in obj]
+    # datetime-like → isoformat if available
+    if hasattr(obj, "isoformat"):
+        try:
+            return obj.isoformat()
+        except Exception:
+            pass
+    # Anything else is returned as-is (str, int, float, bool, None)
+    return obj
+
 
 # ─────────────────────────────────────────────────────────────
 # POST /chat  (only endpoint)
@@ -81,14 +109,17 @@ async def chat() -> tuple[Dict[str, Any], int]:
             }), 202
 
         # 4) Otherwise just return QUESTION or FINAL_ANSWER in canonical shape
-        return jsonify({
+        resp_payload = {
             "response_type": bot_resp.response_type.value,   # "question" | "final_answer"
             "content": bot_resp.content,                     # { message, sections? … }
             "functions_executed": getattr(bot_resp, "functions_executed", []),
             "requires_flow": getattr(bot_resp, "requires_flow", False),
-            "flow_payload": getattr(bot_resp, "flow_payload", None),  # if EnhancedBotResponse
+            "flow_payload": getattr(bot_resp, "flow_payload", None),  # may be a dataclass with Enums
             "timestamp": getattr(bot_resp, "timestamp", None),
-        }), 200
+        }
+
+        # Ensure everything is JSON serializable (handles FlowType/FlowPayload/etc.)
+        return jsonify(_to_json_safe(resp_payload)), 200
 
     except Exception as exc:  # noqa: BLE001
         log.exception("chat endpoint failed")

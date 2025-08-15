@@ -13,11 +13,11 @@ Notes:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Union
+from typing import Any
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, Response
 from ..enums import ResponseType
 
 log = logging.getLogger(__name__)
@@ -53,9 +53,9 @@ def _to_json_safe(obj: Any) -> Any:
 # POST /chat  (only endpoint)
 # ─────────────────────────────────────────────────────────────
 @bp.post("/chat")
-async def chat() -> tuple[Dict[str, Any], int]:
+async def chat() -> Response:
     try:
-        data: Dict[str, Any] = request.get_json(force=True)
+        data: dict[str, Any] = request.get_json(force=True)
 
         # Minimal schema (channel-agnostic)
         missing = [k for k in ("user_id", "message") if k not in data]
@@ -101,9 +101,14 @@ async def chat() -> tuple[Dict[str, Any], int]:
             )
 
             # Canonical stub (clients render however they want)
+            stub_message = (bot_resp.content or {}).get("message", "Processing your request…")
+            log.info(
+                "CHAT defer → PROCESSING_STUB | processing_id=%s | user=%s | session=%s",
+                processing_id, user_id, session_id,
+            )
             return jsonify({
                 "response_type": "processing",
-                "message": bot_resp.content.get("message", "Processing your request…"),
+                "message": stub_message,
                 "processing_id": processing_id,
                 "status": "processing",
             }), 202
@@ -117,6 +122,10 @@ async def chat() -> tuple[Dict[str, Any], int]:
             "flow_payload": getattr(bot_resp, "flow_payload", None),  # may be a dataclass with Enums
             "timestamp": getattr(bot_resp, "timestamp", None),
         }
+        log.info(
+            "CHAT sync → %s | user=%s | session=%s",
+            bot_resp.response_type.value, user_id, session_id,
+        )
 
         # Ensure everything is JSON serializable (handles FlowType/FlowPayload/etc.)
         return jsonify(_to_json_safe(resp_payload)), 200
@@ -130,7 +139,7 @@ async def chat() -> tuple[Dict[str, Any], int]:
 # Background processing polling (unchanged)
 # ─────────────────────────────────────────────────────────────
 @bp.get("/chat/processing/<processing_id>/status")
-async def get_processing_status(processing_id: str) -> tuple[Dict[str, Any], int]:
+async def get_processing_status(processing_id: str) -> Response:
     try:
         background_processor = current_app.extensions.get("background_processor")
         if not background_processor:
@@ -143,7 +152,7 @@ async def get_processing_status(processing_id: str) -> tuple[Dict[str, Any], int
 
 
 @bp.get("/chat/processing/<processing_id>/result")
-async def get_processing_result(processing_id: str) -> tuple[Dict[str, Any], int]:
+async def get_processing_result(processing_id: str) -> Response:
     try:
         background_processor = current_app.extensions.get("background_processor")
         if not background_processor:

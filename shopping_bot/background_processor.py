@@ -187,14 +187,6 @@ class BackgroundProcessor:
             {"products_count": len(products_data), "has_flow": requires_flow, "text_length": len(text_content)},
         )
 
-        # Optional static test payloads (won't run when FE_TEST_STATIC_PAYLOADS=false)
-        if os.getenv("FE_TEST_STATIC_PAYLOADS", "false").lower() == "true":
-            try:
-                wa_id = os.getenv("FE_TEST_WA_ID") or str(user_id)
-                await self._send_static_payloads(wa_id)
-            except Exception as e:  # noqa: BLE001
-                log.warning("Failed sending static FE test payloads: %s", e)
-
     # ────────────────────────────────────────────────────────
     # Minimal FE notify
     # ────────────────────────────────────────────────────────
@@ -213,69 +205,6 @@ class BackgroundProcessor:
         }
         notifier = FrontendNotifier()
         await notifier.post_json(payload)
-
-    # ────────────────────────────────────────────────────────
-    # Helpers
-    # ────────────────────────────────────────────────────────
-    async def _send_static_payloads(self, wa_id: str) -> None:
-        # Retained for your earlier one-off testing; disabled when FE_TEST_STATIC_PAYLOADS=false
-        now_iso = datetime.now().isoformat()
-        samples = [
-            {
-                "wa_id": wa_id,
-                "content": {
-                    "message": (
-                        "Alternatives: I'd be happy to help you find shoes, but unfortunately we don't have any "
-                        "shoes currently available in our inventory that match your budget of under ₹10k. You might "
-                        "want to check back later as our inventory updates regularly, or consider expanding your "
-                        "search criteria.\n\n"
-                        "*Watch-outs:* No shoes are currently available in our inventory within your specified "
-                        "budget range.\n\n"
-                        "*Extra info:* Based on your preferences for size-focused shoes under ₹10k, I searched our "
-                        "current inventory but found no matching products available at this time."
-                    ),
-                    "sections": {
-                        "+": "",
-                        "-": "No shoes are currently available in our inventory within your specified budget range.",
-                        "ALT": (
-                            "I'd be happy to help you find shoes, but unfortunately we don't have any shoes currently "
-                            "available in our inventory that match your budget of under ₹10k. You might want to check "
-                            "back later as our inventory updates regularly, or consider expanding your search criteria."
-                        ),
-                        "BUY": "",
-                        "INFO": (
-                            "Based on your preferences for size-focused shoes under ₹10k, I searched our current "
-                            "inventory but found no matching products available at this time."
-                        ),
-                        "OVERRIDE": ""
-                    }
-                },
-                "functions_executed": ["FETCH_PRODUCT_INVENTORY"],
-                "response_type": "final_answer",
-                "timestamp": now_iso
-            },
-            {
-                "wa_id": wa_id,
-                "content": {
-                    "hints": ["Consider size, brand, quality, features, etc."],
-                    "message": "What features matter most to you?",
-                    "options": [
-                        {
-                            "label": "Consider size, brand, quality, features, etc.",
-                            "value": "Consider size, brand, quality, features, etc."
-                        },
-                        {"label": "Other", "value": "Other"}
-                    ],
-                    "type": "multi_choice"
-                },
-                "functions_executed": [],
-                "response_type": "question",
-                "timestamp": now_iso
-            }
-        ]
-        notifier = FrontendNotifier()
-        for p in samples:
-            await notifier.post_json(p)
 
     async def _set_processing_status(self, processing_id: str, status: str, metadata: Dict[str, Any]) -> None:
         status_key = f"processing:{processing_id}:status"
@@ -357,7 +286,7 @@ class FrontendNotifier:
         except Exception:
             self.timeout = 10
 
-        # NEW: logging controls
+        # Logging controls
         self.log_payloads = os.getenv("FE_WEBHOOK_LOG_PAYLOADS", "true").lower() == "true"
         self.log_response = os.getenv("FE_WEBHOOK_LOG_RESPONSE", "true").lower() == "true"
         try:
@@ -380,7 +309,6 @@ class FrontendNotifier:
         try:
             payload_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         except Exception:
-            # Fallback if payload has non-serializable objects (shouldn't happen here)
             payload_json = str(payload)
 
         if self.log_payloads:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import json
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -356,11 +357,37 @@ class FrontendNotifier:
         except Exception:
             self.timeout = 10
 
+        # NEW: logging controls
+        self.log_payloads = os.getenv("FE_WEBHOOK_LOG_PAYLOADS", "true").lower() == "true"
+        self.log_response = os.getenv("FE_WEBHOOK_LOG_RESPONSE", "true").lower() == "true"
+        try:
+            self.max_log_bytes = int(os.getenv("FE_WEBHOOK_LOG_MAX_BYTES", "8192"))
+        except Exception:
+            self.max_log_bytes = 8192
+
+    def _truncate(self, s: str) -> str:
+        if len(s) <= self.max_log_bytes:
+            return s
+        return f"{s[:self.max_log_bytes]}... (truncated {len(s) - self.max_log_bytes} bytes)"
+
     async def post_json(self, payload: Dict[str, Any]) -> bool:
-        """POST JSON to FE webhook; returns True on 2xx."""
+        """POST JSON to FE webhook; returns True on 2xx, logging payload & response."""
         if not self.webhook_url:
             log.warning("No FRONTEND_WEBHOOK_URL configured – skipping webhook. Payload: %s", payload)
             return False
+
+        # Log exactly what we are sending
+        try:
+            payload_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        except Exception:
+            # Fallback if payload has non-serializable objects (shouldn't happen here)
+            payload_json = str(payload)
+
+        if self.log_payloads:
+            log.info(
+                "FE webhook POST url=%s insecure=%s timeout=%ss payload=%s",
+                self.webhook_url, self.insecure, self.timeout, self._truncate(payload_json)
+            )
 
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         connector = aiohttp.TCPConnector(ssl=False) if self.insecure else None
@@ -369,12 +396,16 @@ class FrontendNotifier:
             async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
                 async with session.post(
                     self.webhook_url,
-                    json=payload,
+                    data=payload_json,  # send the exact json string we logged
                     headers={"Content-Type": "application/json"},
                 ) as resp:
                     text = await resp.text()
+                    if self.log_response:
+                        log.info(
+                            "FE webhook response status=%s reason=%s body=%s",
+                            resp.status, getattr(resp, "reason", ""), self._truncate(text or "")
+                        )
                     if 200 <= resp.status < 300:
-                        log.info("Frontend notification sent to %s", self.webhook_url)
                         return True
                     log.warning("Frontend notification failed: %s - %s", resp.status, text)
                     return False

@@ -28,6 +28,10 @@ from .routes import register_routes
 from .logging_setup import setup_logging
 setup_logging()
 
+import logging
+logging.getLogger("shopping_bot.boot").info("Boot: logging configured")
+
+
 log = logging.getLogger(__name__)
 Cfg = get_config()
 

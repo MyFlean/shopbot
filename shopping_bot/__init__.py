@@ -32,6 +32,7 @@ import logging
 logging.getLogger("shopping_bot.boot").info("Boot: logging configured")
 
 
+
 log = logging.getLogger(__name__)
 Cfg = get_config()
 

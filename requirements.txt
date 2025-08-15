@@ -21,3 +21,4 @@ hypercorn>=0.16            # ASGI (async) – use if you need full async through
 cryptography
 requests
 aiohttp>=3.8.0
+google-cloud-logging>=3.10.0

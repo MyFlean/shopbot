@@ -25,6 +25,9 @@ from .config import get_config
 from .redis_manager import RedisContextManager
 from .routes import register_routes
 
+from .logging_setup import setup_logging
+setup_logging()
+
 log = logging.getLogger(__name__)
 Cfg = get_config()
 

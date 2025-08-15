@@ -44,12 +44,12 @@ class BaseConfig:
     # Change this to your actual frontend URL when deploying
     FRONTEND_WEBHOOK_URL = os.getenv(
         'FRONTEND_WEBHOOK_URL', 
-        "https://abf0cf6d3546.ngrok-free.app/backend-response"  # Your frontend endpoint
+        "https://a5c39b3ea9ae.ngrok-free.app/backend-response"  # Your frontend endpoint
         # "http://httpbin.org/post"  # Fallback for testing
     )
     
     # WhatsApp Flow IDs
-    WHATSAPP_FLOW_ID = os.getenv('WHATSAPP_FLOW_ID', 'your-flow-id-here')
+    WHATSAPP_FLOW_ID = os.getenv('WHATSAPP_FLOW_ID', '1093082415928891')
     WHATSAPP_PRODUCTS_FLOW_ID = os.getenv('WHATSAPP_PRODUCTS_FLOW_ID', 'your-products-flow-id')
     WHATSAPP_RESULTS_FLOW_ID = os.getenv('WHATSAPP_RESULTS_FLOW_ID', 'your-results-flow-id')
     
@@ -66,7 +66,7 @@ class DevelopmentConfig(BaseConfig):
     # For development, you might want to use httpbin for testing
     FRONTEND_WEBHOOK_URL = os.getenv(
         'FRONTEND_WEBHOOK_URL', 
-        "https://abf0cf6d3546.ngrok-free.app/backend-response"  # Test endpoint for development
+        "https://a5c39b3ea9ae.ngrok-free.app/backend-response"  # Test endpoint for development
     )
 
 
@@ -77,7 +77,7 @@ class ProductionConfig(BaseConfig):
     # Production webhook URL should be explicitly set
     FRONTEND_WEBHOOK_URL = os.getenv(
         'FRONTEND_WEBHOOK_URL', 
-        "https://your-frontend-domain.com/api/webhook/processing-complete"
+        "https://a5c39b3ea9ae.ngrok-free.app/backend-response"
     )
 
 
@@ -88,7 +88,7 @@ class TestingConfig(BaseConfig):
     # For testing, use a mock webhook
     FRONTEND_WEBHOOK_URL = os.getenv(
         'FRONTEND_WEBHOOK_URL', 
-        "http://localhost:8080/mock-webhook"
+        "https://a5c39b3ea9ae.ngrok-free.app/backend-response"
     )
 
 

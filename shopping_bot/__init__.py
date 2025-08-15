@@ -61,6 +61,8 @@ def create_app(**overrides: Any) -> Flask:
     if enable_flows:
         try:
             from .enhanced_bot_core import EnhancedShoppingBotCore
+            from .background_processor import BackgroundProcessor, FrontendNotifier
+
             enhanced_bot_core = EnhancedShoppingBotCore(bot_core)
 
             # Configure Flow features based on environment
@@ -83,22 +85,16 @@ def create_app(**overrides: Any) -> Flask:
 
             if enable_background:
                 try:
-                    from .background_processor import BackgroundProcessor, FrontendNotifier
-
                     notifier = FrontendNotifier()
                     background_processor = BackgroundProcessor(
                         enhanced_bot_core,
                         ctx_mgr,
                     )
-
                     # Store in app extensions
                     app.extensions["background_processor"] = background_processor
                     app.extensions["frontend_notifier"] = notifier
 
                     log.info("✅ Background processor initialized (Option A)")
-                except ImportError as e:
-                    log.warning(f"⚠️ Background processor dependencies missing: {e}")
-                    log.info("📱 Continuing without background processing")
                 except Exception as e:
                     log.error(f"❌ Background processor initialization failed: {e}")
                     log.info("📱 Continuing without background processing")
@@ -151,10 +147,7 @@ def create_app_without_flows(**overrides: Any) -> Flask:
     """
     Create app with Flows explicitly disabled - useful for testing legacy behavior.
     """
-    # Force disable Flows
     overrides.setdefault("ENABLE_WHATSAPP_FLOWS", "false")
-    
-    # Temporarily set environment variable
     original_env = os.getenv("ENABLE_WHATSAPP_FLOWS")
     os.environ["ENABLE_WHATSAPP_FLOWS"] = "false"
     
@@ -162,7 +155,6 @@ def create_app_without_flows(**overrides: Any) -> Flask:
         app = create_app(**overrides)
         return app
     finally:
-        # Restore original environment
         if original_env is not None:
             os.environ["ENABLE_WHATSAPP_FLOWS"] = original_env
         else:

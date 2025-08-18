@@ -44,7 +44,7 @@ class BaseConfig:
     # Change this to your actual frontend URL when deploying
     FRONTEND_WEBHOOK_URL = os.getenv(
         'FRONTEND_WEBHOOK_URL', 
-        "https://ui-885484857389.asia-south2.run.app/"  # Your frontend endpoint
+        "https://ui-885484857389.asia-south2.run.app/backend-response"  # Your frontend endpoint
         # "http://httpbin.org/post"  # Fallback for testing
     )
     
@@ -66,7 +66,7 @@ class DevelopmentConfig(BaseConfig):
     # For development, you might want to use httpbin for testing
     FRONTEND_WEBHOOK_URL = os.getenv(
         'FRONTEND_WEBHOOK_URL', 
-        "https://ui-885484857389.asia-south2.run.app/"  # Test endpoint for development
+        "https://ui-885484857389.asia-south2.run.app/backend-response"  # Test endpoint for development
     )
 
 
@@ -77,7 +77,7 @@ class ProductionConfig(BaseConfig):
     # Production webhook URL should be explicitly set
     FRONTEND_WEBHOOK_URL = os.getenv(
         'FRONTEND_WEBHOOK_URL', 
-        "https://ui-885484857389.asia-south2.run.app/"
+        "https://ui-885484857389.asia-south2.run.app/backend-response"
     )
 
 
@@ -88,7 +88,7 @@ class TestingConfig(BaseConfig):
     # For testing, use a mock webhook
     FRONTEND_WEBHOOK_URL = os.getenv(
         'FRONTEND_WEBHOOK_URL', 
-        "https://ui-885484857389.asia-south2.run.app/"
+        "https://ui-885484857389.asia-south2.run.app/backend-response"
     )
 
 

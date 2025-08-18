@@ -129,12 +129,13 @@ async def chat() -> Response:
             )
 
             # Minimal stub: FE shows loader and waits for FE webhook ping; nothing is sent to the user here.
-            return jsonify({
-                "response_type": "processing",
-                "processing_id": processing_id,
-                "status": "processing",
-                "suppress_user_channel": True,   # hint to clients: do not synthesize user-visible text
-            }), 202
+            return None
+            # return jsonify({
+            #     "response_type": "processing",
+            #     "processing_id": processing_id,
+            #     "status": "processing",
+            #     "suppress_user_channel": True,   # hint to clients: do not synthesize user-visible text
+            # }), 202
 
         # 4) Otherwise: QUESTION or FINAL_ANSWER
         requires_flow = bool(getattr(bot_resp, "requires_flow", False))
@@ -147,11 +148,12 @@ async def chat() -> Response:
                 user_id, session_id,
             )
             # Return a tiny ack so API clients know nothing textual should be sent.
-            return jsonify({
-                "response_type": "flow_only",
-                "status": "ok",
-                "suppress_user_channel": True,
-            }), 200
+            # return jsonify({
+            #     "response_type": "flow_only",
+            #     "status": "ok",
+            #     "suppress_user_channel": True,
+            # }), 200
+            return None
 
         # Normal non-flow path → return canonical payload (this is what channels render as text/ask)
         resp_payload = {

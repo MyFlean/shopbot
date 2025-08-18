@@ -65,6 +65,8 @@ async def chat() -> Response:
         user_id = str(data["user_id"])
         session_id = str(data.get("session_id", user_id))  # default to user_id
         message = str(data["message"])
+        wa_id = data["wa_id"]
+        
 
         # Resolve deps
         ctx_mgr = current_app.extensions["ctx_mgr"]

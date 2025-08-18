@@ -147,7 +147,8 @@ async def chat() -> Response:
                 "CHAT sync produced requires_flow=True without deferral; suppressing text. user=%s session=%s",
                 user_id, session_id,
             )
-            Return a tiny ack so API clients know nothing textual should be sent.
+            #Return a tiny ack so API clients know nothing textual should be sent.
+            
             return jsonify({
                 "response_type": "flow_only",
                 "status": "ok",

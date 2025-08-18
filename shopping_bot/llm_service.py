@@ -1,3 +1,4 @@
+# shopping_bot/llm_service.py
 """
 LLM service module for ShoppingBotCore
 ──────────────────────────────────────
@@ -24,6 +25,12 @@ Updates (2025-08-18):
   - If no shopping signal in the latest message, classify as E2→General_Help
 • classify_intent now accepts optional ctx to pass a compact recent-context
   summary to the prompt (still LLM-driven; no hardcoded rules).
+
+Bugfixes (2025-08-18 later):
+• Harden follow-up parsing to trim whitespace in tool-input keys (avoids KeyError
+  from accidental `" slots"`).
+• Updated follow-up prompt example to quoted JSON keys with no stray spaces.
+• Extra validation around intent tool outputs.
 """
 
 from __future__ import annotations
@@ -346,7 +353,7 @@ PRINCIPLES:
 Return a tool call to classify_follow_up with:
 - is_follow_up (bool)
 - reason (short)
-- patch: { slots: {…}, intent_override?: str, reset_context?: bool }
+- patch: {{"slots": {{ … }}, "intent_override"?: "Recommendation" | "Product_Discovery" | "General_Help" | string, "reset_context"?: bool}}
 """
 
 DELTA_ASSESS_PROMPT = """
@@ -551,6 +558,50 @@ class IntentResult:
 
 
 # ─────────────────────────────────────────────────────────────
+# Internal helpers (normalization / safety)
+# ─────────────────────────────────────────────────────────────
+
+def _strip_keys(obj: Any) -> Any:
+    """
+    Recursively trim whitespace around dict keys (e.g., " slots" -> "slots").
+    Also normalizes common accidental variants in follow-up payloads.
+    """
+    if isinstance(obj, dict):
+        new: Dict[str, Any] = {}
+        for k, v in obj.items():
+            key = k.strip() if isinstance(k, str) else k
+            # normalize a couple of accidental variants we’ve seen
+            if key == " slots":
+                key = "slots"
+            if key == "intent" and "intent_override" not in obj:
+                # some models emit "intent" instead of "intent_override"
+                pass
+            new[key] = _strip_keys(v)
+        # If we had " intent_override" etc., ensure canonical keys exist
+        if " intent_override" in obj and "intent_override" not in new:
+            new["intent_override"] = _strip_keys(obj[" intent_override"])
+        if " slots" in obj and "slots" not in new:
+            new["slots"] = _strip_keys(obj[" slots"])
+        return new
+    if isinstance(obj, list):
+        return [_strip_keys(x) for x in obj]
+    return obj
+
+
+def _safe_get(d: Dict[str, Any], key: str, default: Any = None) -> Any:
+    """
+    Get value by key, trying both exact and stripped variants.
+    """
+    if key in d:
+        return d[key]
+    if isinstance(key, str):
+        for k in d.keys():
+            if isinstance(k, str) and k.strip() == key:
+                return d[k]
+    return default
+
+
+# ─────────────────────────────────────────────────────────────
 # LLM Service
 # ─────────────────────────────────────────────────────────────
 
@@ -572,12 +623,9 @@ class LLMService:
                 history = ctx.session.get("history", [])
                 if history:
                     last = history[-1]
-                    # Keep it tiny and neutral: intent + a few slots (no raw text)
                     recent_context = {
                         "last_intent_l3": last.get("intent"),
-                        "last_slots": {
-                            k: v for k, v in (last.get("slots") or {}).items() if v
-                        },
+                        "last_slots": {k: v for k, v in (last.get("slots") or {}).items() if v},
                     }
         except Exception as exc:  # noqa: BLE001
             log.debug("Failed to build recent_context for intent: %s", exc)
@@ -596,9 +644,21 @@ class LLMService:
         )
         tool_use = pick_tool(resp, "classify_intent")
         if not tool_use:
-            raise ValueError("No classify_intent tool use found")
-        args = tool_use.input
-        return IntentResult(args["layer1"], args["layer2"], args["layer3"])
+            # Defensive default
+            return IntentResult("E", "E2", "General_Help")
+
+        args_raw = tool_use.input or {}
+        args = _strip_keys(args_raw) if isinstance(args_raw, dict) else {}
+
+        layer1 = args.get("layer1") or "E"
+        layer2 = args.get("layer2") or "E2"
+        layer3 = args.get("layer3") or "General_Help"
+
+        # Validate against our taxonomy; fall back to safe defaults
+        if layer3 not in INTENT_MAPPING:
+            layer1, layer2, layer3 = "E", "E2", "General_Help"
+
+        return IntentResult(layer1, layer2, layer3)
     
     # ---------------- SIMPLE REPLY ----------------
     async def generate_simple_reply(
@@ -656,11 +716,27 @@ class LLMService:
             if not tool_use:
                 return FollowUpResult(False, FollowUpPatch(slots={}))
 
-            ipt = tool_use.input
+            ipt_raw = tool_use.input or {}
+            ipt = _strip_keys(ipt_raw) if isinstance(ipt_raw, dict) else {}
+
+            patch_dict = _safe_get(ipt, "patch", {}) or {}
+            # normalize common mistakes
+            if "slots" not in patch_dict and " slots" in patch_dict:
+                patch_dict["slots"] = patch_dict.get(" slots", {})
+            # ensure slots dict and strip its keys too
+            slots_dict = patch_dict.get("slots") or {}
+            if isinstance(slots_dict, dict):
+                slots_dict = { (k.strip() if isinstance(k, str) else k): v for k, v in slots_dict.items() }
+            else:
+                slots_dict = {}
+
+            intent_override = patch_dict.get("intent_override") or patch_dict.get("intent")  # tolerate "intent"
+            reset_context = bool(patch_dict.get("reset_context", False))
+
             patch = FollowUpPatch(
-                slots=ipt.get("patch", {}).get("slots", {}),
-                intent_override=ipt.get("patch", {}).get("intent_override"),
-                reset_context=ipt.get("patch", {}).get("reset_context", False),
+                slots=slots_dict,
+                intent_override=intent_override,
+                reset_context=reset_context,
             )
             return FollowUpResult(
                 bool(ipt.get("is_follow_up", False)),
@@ -694,7 +770,14 @@ class LLMService:
             tool_use = pick_tool(resp, "assess_delta_requirements")
             if not tool_use:
                 return []
-            items = tool_use.input.get("fetch_functions", [])
+            items_raw = tool_use.input.get("fetch_functions", [])
+            # normalize possible stray whitespace values
+            items = []
+            for it in items_raw:
+                try:
+                    items.append(it.strip() if isinstance(it, str) else it)
+                except Exception:
+                    pass
             out: List[BackendFunction] = []
             for it in items:
                 try:
@@ -741,22 +824,38 @@ class LLMService:
 
         tool_use = pick_tool(resp, "assess_requirements")
         if not tool_use:
-            raise ValueError("No assess_requirements tool use found")
+            # Defensive empty assessment
+            return RequirementAssessment(
+                intent=intent, missing_data=[], rationale={}, priority_order=[]
+            )
 
-        args = tool_use.input
+        args_raw = tool_use.input or {}
+        args = _strip_keys(args_raw) if isinstance(args_raw, dict) else {}
+        missing_items = args.get("missing_data", []) or []
+        priority_items = args.get("priority_order", []) or []
+
         missing: List[Union[BackendFunction, UserSlot]] = []
-        for item in args["missing_data"]:
-            func = string_to_function(item["function"])
+        for item in missing_items:
+            fn = item.get("function") if isinstance(item, dict) else None
+            func = string_to_function(fn) if fn else None
             if func:
                 missing.append(func)
 
         order: List[Union[BackendFunction, UserSlot]] = []
-        for f in args["priority_order"]:
+        for f in priority_items:
             func = string_to_function(f)
             if func:
                 order.append(func)
 
-        rationale = {item["function"]: item["rationale"] for item in args["missing_data"]}
+        rationale = {}
+        try:
+            rationale = {
+                item.get("function"): item.get("rationale", "")
+                for item in missing_items
+                if isinstance(item, dict) and item.get("function")
+            }
+        except Exception:
+            pass
 
         return RequirementAssessment(
             intent=intent,
@@ -819,27 +918,26 @@ class LLMService:
                 log.warning("No generate_questions tool use found")
                 return {}
 
-            questions_data = tool_use.input.get("questions", {})
+            questions_data_raw = tool_use.input.get("questions", {}) or {}
+            questions_data = _strip_keys(questions_data_raw) if isinstance(questions_data_raw, dict) else {}
 
             # Process the questions to ensure proper format
             processed_questions = {}
             for slot_value, question_data in questions_data.items():
-                # Ensure we have exactly 3 options and they're properly formatted
                 options = question_data.get("options", [])
 
                 # Convert string options to proper format if needed
                 if isinstance(options, list) and len(options) >= 3:
                     formatted_options = []
-                    for i, opt in enumerate(options[:3]):  # Take first 3
+                    for opt in options[:3]:  # Take first 3
                         if isinstance(opt, str):
                             clean_opt = opt.strip()
                             # Skip options that look like instructions
                             if any(phrase in clean_opt.lower() for phrase in ["consider", "think about", "e.g.", "such as", "etc."]):
                                 continue
-                            formatted_options.append({
-                                "label": clean_opt,
-                                "value": clean_opt
-                            })
+                            formatted_options.append({"label": clean_opt, "value": clean_opt})
+                        elif isinstance(opt, dict) and "label" in opt and "value" in opt:
+                            formatted_options.append(opt)
 
                     # If we don't have enough good options, add generic ones
                     while len(formatted_options) < 3:
@@ -853,7 +951,7 @@ class LLMService:
                     processed_questions[slot_value] = {
                         "message": question_data.get("message", f"Please provide your {slot_value.lower().replace('_', ' ')}"),
                         "type": "multi_choice",
-                        "options": formatted_options[:3],  # Ensure exactly 3
+                        "options": formatted_options[:3],
                         "placeholder": question_data.get("placeholder", ""),
                         "hints": question_data.get("hints", [])
                     }
@@ -998,7 +1096,8 @@ class LLMService:
                 log.warning("No structured answer tool found, falling back to base service")
                 return await self.generate_answer(query, ctx, fetched)
 
-            result = tool_use.input
+            result_raw = tool_use.input or {}
+            result = _strip_keys(result_raw) if isinstance(result_raw, dict) else {}
 
             # Validate and process the structured response
             processed_result = self._process_structured_response(result)
@@ -1025,7 +1124,7 @@ class LLMService:
         }
 
         # Process structured products
-        raw_products = raw_response.get("structured_products", [])
+        raw_products = raw_response.get("structured_products", []) or []
         for product_data in raw_products:
             try:
                 product = self._create_product_data(product_data)

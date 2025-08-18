@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 
 class BackgroundProcessor:
-    """Handles background execution of complex queries and result storage (Option A)."""
+    """Runs heavy work in the background and notifies FE with a minimal payload."""
 
     def __init__(self, enhanced_bot_core, ctx_mgr: RedisContextManager):
         self.enhanced_bot = enhanced_bot_core
@@ -32,26 +32,35 @@ class BackgroundProcessor:
         session_id: str,
         notification_callback: Optional[callable] = None,
     ) -> str:
+        """
+        Execute heavy work, persist the full result for polling,
+        and ping FE with a *minimal* button-show payload.
+        """
         processing_id = f"bg_{user_id}_{session_id}_{int(datetime.now().timestamp())}"
         await self._set_processing_status(processing_id, "processing", {"query": query})
 
+        ctx = None
         try:
             ctx = self.ctx_mgr.get_context(user_id, session_id)
+
+            # Mark assessment phase
             if "assessment" in ctx.session:
                 ctx.session["assessment"]["phase"] = "processing"
                 self.ctx_mgr.save_context(ctx)
 
             log.info("Starting background processing for %s", processing_id)
 
+            # Do the real work
             result = await self.enhanced_bot.process_query(query, ctx, enable_flows=True)
 
+            # Defensive: if core still returned PROCESSING_STUB here, force a sync run
             if getattr(result, "response_type", None) == ResponseType.PROCESSING_STUB:
                 log.info("Core returned PROCESSING_STUB in background for %s – forcing sync", processing_id)
                 ctx.session["needs_background"] = False
                 self.ctx_mgr.save_context(ctx)
                 result = await self.enhanced_bot.process_query(query, ctx, enable_flows=True)
 
-            # Normalize + store (result is kept for polling APIs)
+            # Normalize + store full result for polling APIs
             await self._store_processing_result(
                 processing_id=processing_id,
                 result=result,
@@ -60,8 +69,9 @@ class BackgroundProcessor:
                 session_id=session_id,
             )
 
-            # Send MINIMAL FE payload (COMPLETED)
-            await self._notify_fe_minimal(processing_id, user_id, status="completed")
+            # Minimal FE notify (COMPLETED)
+            wa_id = self._resolve_wa_id(ctx, user_id)
+            await self._notify_fe_minimal(processing_id, user_id, wa_id, status="completed")
 
             log.info("Background processing completed for %s", processing_id)
             return processing_id
@@ -69,9 +79,10 @@ class BackgroundProcessor:
         except Exception as e:  # noqa: BLE001
             await self._set_processing_status(processing_id, "failed", {"error": str(e)})
 
-            # Send MINIMAL FE payload (FAILED). Never raise from notifier.
+            # Try to notify FE even on failure (best effort)
             try:
-                await self._notify_fe_minimal(processing_id, user_id, status="failed")
+                wa_id = self._resolve_wa_id(ctx, user_id) if ctx else os.getenv("FE_TEST_WA_ID", "917398580865")
+                await self._notify_fe_minimal(processing_id, user_id, wa_id, status="failed")
             except Exception:
                 pass
 
@@ -105,7 +116,7 @@ class BackgroundProcessor:
         return full_text or "Results processed successfully."
 
     # ────────────────────────────────────────────────────────
-    # Storage (schema unchanged for polling endpoints)
+    # Storage (schema kept for polling endpoints)
     # ────────────────────────────────────────────────────────
     async def _store_processing_result(
         self,
@@ -187,10 +198,18 @@ class BackgroundProcessor:
             {"products_count": len(products_data), "has_flow": requires_flow, "text_length": len(text_content)},
         )
 
+        # Optional: send legacy static test payloads only if explicitly enabled
+        if os.getenv("FE_TEST_STATIC_PAYLOADS", "false").lower() == "true":
+            try:
+                wa_id = self._resolve_wa_id(self.ctx_mgr.get_context(user_id, session_id), user_id)
+                await self._send_static_payloads(wa_id)
+            except Exception as e:  # noqa: BLE001
+                log.warning("Failed sending static FE test payloads: %s", e)
+
     # ────────────────────────────────────────────────────────
     # Minimal FE notify
     # ────────────────────────────────────────────────────────
-    async def _notify_fe_minimal(self, processing_id: str, user_id: str, status: str) -> None:
+    async def _notify_fe_minimal(self, processing_id: str, user_id: str, wa_id: str, status: str) -> None:
         """
         Send the minimal payload to FE:
         processing_id, flow_id, wa_id, status, user_id, timestamp
@@ -198,13 +217,92 @@ class BackgroundProcessor:
         payload = {
             "processing_id": processing_id,
             "flow_id": getattr(Cfg, "WHATSAPP_FLOW_ID", "") or "",
-            "wa_id": os.getenv("FE_TEST_WA_ID", "917398580865"),
+            "wa_id": str(wa_id or ""),
             "status": status,  # "completed" or "failed"
             "user_id": user_id,
             "timestamp": datetime.now().isoformat(),
         }
         notifier = FrontendNotifier()
         await notifier.post_json(payload)
+
+    # ────────────────────────────────────────────────────────
+    # Helpers
+    # ────────────────────────────────────────────────────────
+    def _resolve_wa_id(self, ctx, user_id: str) -> str:
+        """
+        Pull wa_id from context set by /chat; fallback to env or empty string.
+        """
+        try:
+            if ctx and isinstance(ctx.session, dict):
+                if "wa_id" in ctx.session and ctx.session["wa_id"]:
+                    return str(ctx.session["wa_id"])
+                user_bucket = ctx.session.get("user") or {}
+                if user_bucket.get("wa_id"):
+                    return str(user_bucket["wa_id"])
+        except Exception:
+            pass
+        # Fallback (dev)
+        return os.getenv("FE_TEST_WA_ID", "917398580865")
+
+    async def _send_static_payloads(self, wa_id: str) -> None:
+        # For one-off testing; disabled unless FE_TEST_STATIC_PAYLOADS=true
+        now_iso = datetime.now().isoformat()
+        samples = [
+            {
+                "wa_id": wa_id,
+                "content": {
+                    "message": (
+                        "Alternatives: I'd be happy to help you find shoes, but unfortunately we don't have any "
+                        "shoes currently available in our inventory that match your budget of under ₹10k. You might "
+                        "want to check back later as our inventory updates regularly, or consider expanding your "
+                        "search criteria.\n\n"
+                        "*Watch-outs:* No shoes are currently available in our inventory within your specified "
+                        "budget range.\n\n"
+                        "*Extra info:* Based on your preferences for size-focused shoes under ₹10k, I searched our "
+                        "current inventory but found no matching products available at this time."
+                    ),
+                    "sections": {
+                        "+": "",
+                        "-": "No shoes are currently available in our inventory within your specified budget range.",
+                        "ALT": (
+                            "I'd be happy to help you find shoes, but unfortunately we don't have any shoes currently "
+                            "available in our inventory that match your budget of under ₹10k. You might want to check "
+                            "back later as our inventory updates regularly, or consider expanding your search criteria."
+                        ),
+                        "BUY": "",
+                        "INFO": (
+                            "Based on your preferences for size-focused shoes under ₹10k, I searched our current "
+                            "inventory but found no matching products available at this time."
+                        ),
+                        "OVERRIDE": ""
+                    }
+                },
+                "functions_executed": ["FETCH_PRODUCT_INVENTORY"],
+                "response_type": "final_answer",
+                "timestamp": now_iso
+            },
+            {
+                "wa_id": wa_id,
+                "content": {
+                    "hints": ["Consider size, brand, quality, features, etc."],
+                    "message": "What features matter most to you?",
+                    "options": [
+                        {
+                            "label": "Consider size, brand, quality, features, etc.",
+                            "value": "Consider size, brand, quality, features, etc."
+                        },
+                        {"label": "Other", "value": "Other"}
+                    ],
+                    "type": "multi_choice"
+                },
+                "functions_executed": [],
+                "response_type": "question",
+                "timestamp": now_iso
+            }
+        ]
+        notifier = FrontendNotifier()
+        for p in samples:
+            await notifier.post_json(p)
 
     async def _set_processing_status(self, processing_id: str, status: str, metadata: Dict[str, Any]) -> None:
         status_key = f"processing:{processing_id}:status"
@@ -276,7 +374,7 @@ class BackgroundProcessor:
 
 
 class FrontendNotifier:
-    """Simple webhook poster with robust TLS handling and clear logs."""
+    """Webhook poster with explicit, compact logs of the outbound payload and FE response."""
 
     def __init__(self, webhook_url: Optional[str] = None):
         self.webhook_url = webhook_url or getattr(Cfg, "FRONTEND_WEBHOOK_URL", None)

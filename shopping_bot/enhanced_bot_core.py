@@ -1,12 +1,13 @@
 """
 Enhanced ShoppingBotCore with Flow support.
 
-UPDATE:
-- Core-owned background decision: set `ctx.session["needs_background"]` immediately after
-  intent classification.
-- After ask-loop completes, if background is needed and fetchers are pending, return a
-  PROCESSING_STUB (do NOT run fetchers); the route/worker will execute heavy work.
-- Backward compatible: if background not needed, proceed synchronously as before.
+Policy (final):
+- Flows are ONLY used for layer3 intent == "Recommendation".
+- Background deferral (PROCESSING_STUB → FE button after webhook) happens ONLY for Recommendation.
+- All non-Flow intents always return sync text (QUESTION or FINAL_ANSWER).
+- Follow-ups that land on Recommendation also defer (return PROCESSING_STUB), never send sync text.
+
+This guarantees: no dual text+flow, and a clean split between Flow vs non-Flow behaviors.
 """
 from __future__ import annotations
 
@@ -132,25 +133,37 @@ class EnhancedShoppingBotCore:
         ctx: UserContext,
         fu,
     ) -> Union[BotResponse, EnhancedBotResponse]:
-        """Enhanced follow-up handling with Flow support."""
+        """Enhanced follow-up handling with Flow policy."""
+        # Determine effective layer3 after patch
+        effective_l3 = fu.patch.intent_override or ctx.session.get("intent_l3", "") or ""
 
-        # Assess what additional data we need
+        # If Recommendation, we always defer to background (no sync text).
+        if effective_l3 == "Recommendation":
+            ctx.session["needs_background"] = True
+            a = ctx.session.get("assessment")
+            if a and a.get("original_query"):
+                a["phase"] = "processing"
+            self.ctx_mgr.save_context(ctx)
+            self.smart_log.flow_decision(
+                ctx.user_id, "DEFER_TO_BACKGROUND_FOLLOW_UP", {"intent_l3": effective_l3}
+            )
+            return BotResponse(
+                ResponseType.PROCESSING_STUB,
+                content={"message": "Processing your request…"},
+            )
+
+        # Non-Flow intents: do a normal follow-up (synchronous)
         fetch_list = await self.llm_service.assess_delta_requirements(query, ctx, fu.patch)
         if fetch_list:
             self.smart_log.data_operations(ctx.user_id, [f.value for f in fetch_list])
 
-        # Fetch the data now (follow-ups are typically incremental)
         fetched = await self._execute_fetchers(fetch_list, ctx)
-
-        # Generate enhanced answer with structured product data
         answer_dict = await self._generate_enhanced_answer(query, ctx, fetched)
 
-        # Create enhanced response with potential Flow
         enhanced_response = await self._create_enhanced_response(
             answer_dict, list(fetched.keys()), query, ctx
         )
 
-        # Save context and return
         snapshot_and_trim(ctx, base_query=query)
         self.ctx_mgr.save_context(ctx)
 
@@ -183,12 +196,12 @@ class EnhancedShoppingBotCore:
             intent_l2=result.layer2,
             intent_l3=result.layer3,
         )
-        needs_bg = self._needs_background(intent)
+        needs_bg = self._needs_background(intent)  # only True for Recommendation
         ctx.session["needs_background"] = needs_bg
         self.smart_log.flow_decision(
             ctx.user_id,
             "BACKGROUND_DECISION",
-            {"needs_background": needs_bg, "intent": intent.value},
+            {"needs_background": needs_bg, "intent": intent.value, "intent_l3": result.layer3},
         )
 
         # Assess requirements (slots + backend plan)
@@ -247,7 +260,7 @@ class EnhancedShoppingBotCore:
         ask_first = [f for f in still_missing if is_user_slot(f)]
         fetch_later = [f for f in still_missing if not is_user_slot(f)]
 
-        # If we need to ask the user something, return a plain BotResponse(QUESTION)
+        # If we need to ask the user something, return QUESTION
         if ask_first:
             func = ask_first[0]
             func_value = get_func_value(func)
@@ -258,8 +271,8 @@ class EnhancedShoppingBotCore:
 
             return BotResponse(ResponseType.QUESTION, build_question(func, ctx))
 
-        # Ask-loop is done. If background was requested by core policy and we still have
-        # backend work to do, return a processing stub (do not run fetchers here).
+        # Ask-loop is done. If background is needed (Recommendation only) and backend work remains,
+        # return PROCESSING_STUB (do NOT run fetchers here).
         needs_bg = bool(ctx.session.get("needs_background"))
         if fetch_later and needs_bg:
             a["phase"] = "processing"
@@ -275,7 +288,7 @@ class EnhancedShoppingBotCore:
                 content={"message": "Processing your request…"},
             )
 
-        # Otherwise complete synchronously with enhanced answer
+        # Otherwise complete synchronously with enhanced answer (non-Flow path)
         self.smart_log.flow_decision(
             ctx.user_id, "COMPLETE_ASSESSMENT", f"{len(fetch_later)} fetches needed"
         )
@@ -287,7 +300,7 @@ class EnhancedShoppingBotCore:
         ctx: UserContext,
         fetchers: List[Union[BackendFunction, UserSlot]],
     ) -> EnhancedBotResponse:
-        """Enhanced assessment completion with Flow support (synchronous path)."""
+        """Enhanced assessment completion with Flow support (synchronous path for non-Flow)."""
 
         backend_fetchers = [f for f in fetchers if isinstance(f, BackendFunction)]
 
@@ -298,7 +311,7 @@ class EnhancedShoppingBotCore:
         original_q = a.get("original_query", "")
         answer_dict = await self._generate_enhanced_answer(original_q, ctx, fetched)
 
-        # Create enhanced response (with potential Flow)
+        # Create enhanced response (Flow only if Recommendation; otherwise None)
         enhanced_response = await self._create_enhanced_response(
             answer_dict, list(fetched.keys()), original_q, ctx
         )
@@ -328,7 +341,7 @@ class EnhancedShoppingBotCore:
         query: str,
         ctx: UserContext,
     ) -> EnhancedBotResponse:
-        """Create enhanced response with potential Flow support."""
+        """Create enhanced response (Flow only for Recommendation)."""
 
         resp_type = ResponseType(answer_dict.get("response_type", "final_answer"))
         message = answer_dict.get("message", "")
@@ -342,7 +355,7 @@ class EnhancedShoppingBotCore:
         flow_payload: Optional[FlowPayload] = None
         requires_flow = False
 
-        # Try to create a Flow only on final answers
+        # Flow is gated strictly to Recommendation
         if self.flow_enabled and resp_type == ResponseType.FINAL_ANSWER:
             flow_payload = await self._create_flow_payload(answer_dict, query, ctx)
             requires_flow = flow_payload is not None
@@ -361,7 +374,13 @@ class EnhancedShoppingBotCore:
         query: str,
         ctx: UserContext,
     ) -> Optional[FlowPayload]:
-        """Create Flow payload if appropriate."""
+        """
+        Create Flow payload ONLY for Recommendation.
+        Returns None for any other intent.
+        """
+        intent_l3 = ctx.session.get("intent_l3", "") or ""
+        if intent_l3 != "Recommendation":
+            return None  # hard gate: flows are only for recommendations
 
         structured_products = answer_dict.get("structured_products", [])
         flow_context = answer_dict.get("flow_context", {})
@@ -400,27 +419,15 @@ class EnhancedShoppingBotCore:
             if not products:
                 return None
 
-            # Determine Flow type and create payload
-            intent_layer3 = ctx.session.get("intent_l3", "")
-            flow_type = self._determine_flow_type(flow_context, intent_layer3, query)
-
-            header_text = flow_context.get("header_text", "Product Options")
+            # For Recommendation we default to a recommendation flow
+            header_text = flow_context.get("header_text", "Recommended for you")
             reason = flow_context.get("reason", "")
-
-            if flow_type == FlowType.RECOMMENDATION:
-                return self.flow_generator.generate_recommendation_flow(
-                    products, reason, header_text
-                )
-            elif flow_type == FlowType.COMPARISON:
-                return self.flow_generator.generate_comparison_flow(
-                    products, ["price", "rating", "features"], header_text
-                )
-            else:
-                return self.flow_generator.generate_product_catalog_flow(
-                    products, query, header_text
-                )
+            return self.flow_generator.generate_recommendation_flow(
+                products, reason, header_text
+            )
 
         # Otherwise, attempt to derive a Flow from the “sections”
+        # (still gated to Recommendation)
         sections = answer_dict.get("sections", {})
         flow_payload = self.flow_generator.create_flow_from_sections(sections)
         if flow_payload and self.flow_generator.validate_flow_payload(flow_payload):
@@ -491,38 +498,6 @@ class EnhancedShoppingBotCore:
 
         return await self.llm_service.generate_answer(query, ctx, fetched)
 
-    def _determine_flow_type(
-        self,
-        flow_context: Dict[str, Any],
-        intent_layer3: str,
-        query: str,
-    ) -> FlowType:
-        """Determine appropriate Flow type."""
-        # Explicit flow intent
-        context_intent = flow_context.get("intent", "none")
-        if context_intent == "recommendation":
-            return FlowType.RECOMMENDATION
-        elif context_intent == "comparison":
-            return FlowType.COMPARISON
-        elif context_intent == "catalog":
-            return FlowType.PRODUCT_CATALOG
-
-        # Infer from L3
-        if intent_layer3 == "Product_Comparison":
-            return FlowType.COMPARISON
-        elif intent_layer3 in ["Recommendation", "Product_Discovery"]:
-            return FlowType.RECOMMENDATION
-
-        # Infer from query terms
-        ql = query.lower()
-        if any(w in ql for w in ["compare", "vs", "versus", "difference"]):
-            return FlowType.COMPARISON
-        if any(w in ql for w in ["recommend", "suggest", "best", "should i"]):
-            return FlowType.RECOMMENDATION
-
-        # Default
-        return FlowType.PRODUCT_CATALOG
-
     def _apply_follow_up_patch(self, patch, ctx: UserContext) -> None:
         """Apply follow-up patch (same semantics as base)."""
         changes = {}
@@ -571,19 +546,15 @@ class EnhancedShoppingBotCore:
         }
 
     # ────────────────────────────────────────────────────────
-    # Core-owned background policy (same shape as base)
+    # Core-owned background policy
     # ────────────────────────────────────────────────────────
 
     def _needs_background(self, intent) -> bool:
         """
-        Decide early—right after intent classification—if this query should be deferred.
-        Keep it fast and deterministic. Tune mapping as needed; routes remain dumb.
+        ONLY Recommendation defers to background (for Flow).
+        All other intents are synchronous text.
         """
         try:
-            return str(intent).lower() in {
-                "queryintent.product_search",
-                "queryintent.recommendation",
-                "queryintent.product_comparison",
-            }
+            return str(intent).lower() in {"queryintent.recommendation"}
         except Exception:
             return False

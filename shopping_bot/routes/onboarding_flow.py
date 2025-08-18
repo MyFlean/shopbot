@@ -5,7 +5,7 @@ import logging
 import json
 import base64
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding as asympad
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -40,7 +40,6 @@ else:
 # Crypto helpers
 # ─────────────────────────────────────────────────────────────
 def _rsa_decrypt(encrypted_aes_key_b64: str) -> bytes:
-    """Decrypt RSA-encrypted AES key using OAEP(SHA-256)."""
     if not _private_key:
         raise RuntimeError("Private key not available")
     encrypted_aes_key = base64.b64decode(encrypted_aes_key_b64)
@@ -50,11 +49,9 @@ def _rsa_decrypt(encrypted_aes_key_b64: str) -> bytes:
     )
 
 def flip_iv(iv: bytes) -> bytes:
-    """Flip all bits in IV for GCM response encryption (per WA requirement)."""
     return bytes(b ^ 0xFF for b in iv)
 
 def _aes_gcm_decrypt(encrypted_flow_data_b64: str, aes_key: bytes, initial_vector_b64: str) -> str:
-    """Decrypt using AES-GCM."""
     encrypted_flow_data = base64.b64decode(encrypted_flow_data_b64)
     iv = base64.b64decode(initial_vector_b64)
     encrypted_body = encrypted_flow_data[:-16]
@@ -64,7 +61,6 @@ def _aes_gcm_decrypt(encrypted_flow_data_b64: str, aes_key: bytes, initial_vecto
     return (decryptor.update(encrypted_body) + decryptor.finalize()).decode("utf-8")
 
 def _aes_gcm_encrypt(response: str, aes_key: bytes, initial_vector_b64: str) -> str:
-    """Encrypt response using AES-GCM with flipped IV."""
     iv = base64.b64decode(initial_vector_b64)
     flipped_iv = flip_iv(iv)
     cipher = Cipher(algorithms.AES(aes_key), modes.GCM(flipped_iv), backend=default_backend())
@@ -99,8 +95,83 @@ ONBOARDING_DATA = {
     "show_custom_society": False,
 }
 
+# ── NEW: helpers to extract IDs and resolve user's full name ───────────────────
+def _extract_ids(payload: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Returns (user_id, session_id, wa_id) by checking top-level fields first,
+    then falling back to payload['data'].
+    """
+    user_id = payload.get("user_id")
+    session_id = payload.get("session_id")
+    wa_id = payload.get("wa_id")
+    if not (user_id and session_id and wa_id):
+        data = payload.get("data") or {}
+        user_id = user_id or data.get("user_id")
+        session_id = session_id or data.get("session_id")
+        wa_id = wa_id or data.get("wa_id")
+    return user_id, session_id, wa_id
+
+def _resolve_user_full_name(payload: Dict[str, Any]) -> str:
+    """
+    Pulls a friendly display name from backend context if available.
+    Fallbacks: payload-provided name → wa_id → 'there'
+    """
+    user_id, session_id, wa_id = _extract_ids(payload)
+
+    # If FE ever sends name directly
+    data = payload.get("data") or {}
+    direct_name = payload.get("user_full_name") or data.get("user_full_name")
+    if direct_name and isinstance(direct_name, str) and direct_name.strip():
+        return direct_name.strip()
+
+    try:
+        ctx_mgr = current_app.extensions.get("ctx_mgr")
+        if ctx_mgr and (user_id or wa_id):
+            # Prefer the (user_id, session_id) tuple if present; else derive a safe default
+            sid = session_id or (user_id or wa_id or "default")
+            uid = user_id or (wa_id or "anon")
+            ctx = ctx_mgr.get_context(uid, sid)
+
+            # Common places we might store a name
+            # 1) ctx.session["user"]["full_name"/"name"/"first_name"]
+            try:
+                user_blob = (ctx.session or {}).get("user") or {}
+                for k in ("full_name", "name", "first_name", "display_name"):
+                    val = user_blob.get(k)
+                    if isinstance(val, str) and val.strip():
+                        return val.strip()
+            except Exception:
+                pass
+
+            # 2) ctx.user_profile.name / full_name
+            try:
+                prof = getattr(ctx, "user_profile", None)
+                for k in ("full_name", "name", "first_name", "display_name"):
+                    val = getattr(prof, k, None) if prof else None
+                    if isinstance(val, str) and val.strip():
+                        return val.strip()
+            except Exception:
+                pass
+
+            # 3) Other common session buckets
+            for bucket in ("profile", "whatsapp", "meta", "customer"):
+                try:
+                    b = (ctx.session or {}).get(bucket) or {}
+                    for k in ("full_name", "name", "first_name"):
+                        val = b.get(k)
+                        if isinstance(val, str) and val.strip():
+                            return val.strip()
+                except Exception:
+                    pass
+    except Exception as e:
+        log.debug(f"Name resolution via context failed: {e}")
+
+    # 4) Fall back to masked wa_id or generic
+    if wa_id:
+        return f"user {str(wa_id)[-4:]}"
+    return "there"
+
 def get_dummy_products() -> List[Dict[str, Any]]:
-    """Fallback dummy products if no background results."""
     return [
         {
             "id": "prod_90459",
@@ -141,7 +212,6 @@ def get_dummy_products() -> List[Dict[str, Any]]:
     ]
 
 def get_product_by_id(product_id: str, products_list: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
-    """Get specific product details by ID."""
     products_list = products_list or get_dummy_products()
     for product in products_list:
         if product["id"] == product_id:
@@ -156,10 +226,14 @@ def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") -> Dic
     screen = payload.get("screen", "")
     data = payload.get("data", {}) or {}
 
-    log.info(f"Onboarding flow - Action: {action}, Screen: {screen}")
+    # Always resolve name so we can inject it in every return path
+    user_full_name = _resolve_user_full_name(payload)
+    log.info(f"Onboarding flow - Action: {action}, Screen: {screen}, Resolved name: {user_full_name!r}")
 
     if action.upper() == "INIT":
-        return {"version": version, "screen": "ONBOARDING", "data": ONBOARDING_DATA}
+        initial = dict(ONBOARDING_DATA)
+        initial["user_full_name"] = user_full_name
+        return {"version": version, "screen": "ONBOARDING", "data": initial}
 
     if action.upper() == "DATA_EXCHANGE":
         log.info(f"Onboarding data exchange: {data}")
@@ -170,6 +244,7 @@ def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") -> Dic
         if society_value == "other":
             onboarding_data_with_custom = dict(ONBOARDING_DATA)
             onboarding_data_with_custom["show_custom_society"] = True
+            onboarding_data_with_custom["user_full_name"] = user_full_name  # preserve name
             return {"version": version, "screen": "ONBOARDING", "data": onboarding_data_with_custom}
 
         # Validate complete form submission
@@ -189,25 +264,26 @@ def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") -> Dic
         if errors:
             merged = dict(ONBOARDING_DATA)
             merged["error"] = errors
+            merged["user_full_name"] = user_full_name  # preserve name on error re-render
             return {"version": version, "screen": "ONBOARDING", "data": merged}
 
         log.info(f"Onboarding completed successfully with data: {data}")
-        return {"version": version, "screen": "COMPLETE", "data": {}}
+        # COMPLETE screen template doesn’t currently render the name, but keep shape consistent
+        return {"version": version, "screen": "COMPLETE", "data": {"user_full_name": user_full_name}}
 
     # Default
-    return {"version": version, "screen": "ONBOARDING", "data": ONBOARDING_DATA}
+    default_data = dict(ONBOARDING_DATA)
+    default_data["user_full_name"] = user_full_name
+    return {"version": version, "screen": "ONBOARDING", "data": default_data}
 
 # ─────────────────────────────────────────────────────────────
 # Product recommendation (dummy products; sync)
 # ─────────────────────────────────────────────────────────────
 def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "7.2") -> Dict[str, Any]:
-    """Basic product flow using dummy items (kept for demos)."""
     action = payload.get("action", "")
     screen = payload.get("screen", "")
     data = payload.get("data", {}) or {}
-
     log.info(f"Product flow - Action: {action}, Screen: {screen}")
-
     processing_id = data.get("processing_id") or payload.get("processing_id")
 
     if action.upper() == "INIT":
@@ -274,7 +350,6 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
             "data": {"product_id": "unknown", "product_details": "Product details not available.", "processing_id": processing_id},
         }
 
-    # Default
     products = get_dummy_products()
     product_options = [{"id": p["id"], "title": p["title"]} for p in products]
     return {
@@ -294,16 +369,10 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
 # Product recommendations (real results via BackgroundProcessor; async)
 # ─────────────────────────────────────────────────────────────
 async def handle_product_recommendations_flow(payload: Dict[str, Any], version: str = "7.2") -> Dict[str, Any]:
-    """
-    Product recommendations flow backed by background processing results.
-    Requires `processing_id` to be included in the Flow action payload's `data`.
-    """
     action = payload.get("action", "")
     screen = payload.get("screen", "")
     data = payload.get("data", {}) or {}
-
     log.info(f"Product recommendations flow - Action: {action}, Screen: {screen}")
-
     processing_id = data.get("processing_id") or payload.get("processing_id")
     if not processing_id:
         log.error("No processing_id provided for product recommendations flow")
@@ -315,7 +384,7 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
         products: List[Dict[str, Any]] = []
         if background_processor:
             try:
-                products = await background_processor.get_products_for_flow(processing_id)  # async call
+                products = await background_processor.get_products_for_flow(processing_id)
             except Exception as e:
                 log.error(f"Failed to get products for flow: {e}")
 
@@ -334,11 +403,10 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
                 },
             }
         else:
-            # No products found, try text summary
             text_summary = ""
             if background_processor:
                 try:
-                    text_summary = await background_processor.get_text_summary_for_flow(processing_id)  # async call
+                    text_summary = await background_processor.get_text_summary_for_flow(processing_id)
                 except Exception as e:
                     log.error(f"Failed to get text summary for flow: {e}")
             msg = (text_summary[:500] + "...") if text_summary and len(text_summary) > 500 else (text_summary or "No results found.")
@@ -400,7 +468,6 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
 
         return {"version": version, "screen": "PRODUCT_DETAILS", "data": {"product_id": "unknown", "product_details": "Product details not available.", "processing_id": processing_id}}
 
-    # Default
     return {"version": version, "screen": "COMPLETED", "data": {"message": "Thank you for using our product recommendations!"}}
 
 # ─────────────────────────────────────────────────────────────
@@ -408,32 +475,25 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
 # ─────────────────────────────────────────────────────────────
 @bp.post("/flow/onboarding")
 async def onboarding_flow():
-    """Handle onboarding WhatsApp Flow requests."""
     return await _handle_flow_request("onboarding")
 
 @bp.post("/flow/products")
 async def product_flow():
-    """Handle product recommendation WhatsApp Flow requests (dummy)."""
     return await _handle_flow_request("products")
 
 @bp.post("/flow/product_recommendations")
 async def product_recommendations_flow():
-    """Handle NEW product recommendations WhatsApp Flow requests (uses background results)."""
     return await _handle_flow_request("product_recommendations")
 
 async def _handle_flow_request(flow_type: str):
-    """Unified handler for onboarding, products, and product_recommendations."""
     try:
         raw = request.get_json(silent=True)
-
-        # Health check
         if not raw or raw == {}:
             log.info(f"Health check received for {flow_type}")
             return "", 200
 
         log.info(f"Received {flow_type} request with keys: {list(raw.keys())}")
 
-        # Decrypt if needed
         is_encrypted = "encrypted_flow_data" in raw
         aes_key = None
         if is_encrypted and _private_key:
@@ -457,7 +517,6 @@ async def _handle_flow_request(flow_type: str):
         version = payload.get("version", "7.2")
         log.info(f"Processing {flow_type} - action: {action}")
 
-        # Dispatch
         if action.lower() == "ping":
             resp_obj = {"version": version, "data": {"status": "active"}}
         else:
@@ -470,11 +529,9 @@ async def _handle_flow_request(flow_type: str):
             else:
                 return jsonify({"error_type": "UNKNOWN_FLOW_TYPE"}), 422
 
-        # Encrypt response if needed
         if is_encrypted and aes_key:
             response_json = json.dumps(resp_obj)
             encrypted_response = _aes_gcm_encrypt(response_json, aes_key, raw["initial_vector"])
-            # Some stacks prefer 'application/octet-stream'
             return encrypted_response, 200, {"Content-Type": "text/plain"}
         else:
             return jsonify(resp_obj), 200

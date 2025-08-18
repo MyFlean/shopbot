@@ -3,11 +3,9 @@ Brain of the WhatsApp shopping bot – baseline core (no Flow building here).
 
 FINAL POLICY
 ------------
-• Only layer3 == "Recommendation" defers to background.
-  - Route returns 202 (PROCESSING_STUB); worker does heavy work and FE shows Flow button.
-• All other intents are synchronous text (QUESTION / FINAL_ANSWER).
+• Only layer3 == "Recommendation" defers to background (enhanced core handles Flow).
+• All other intents are synchronous text (QUESTION / simple FINAL_ANSWER; no six-section formatting).
 • Follow-ups that land on "Recommendation" also defer (no sync text).
-• Prevents dual messages: route will suppress sync text if PROCESSING_STUB was returned.
 """
 from __future__ import annotations
 
@@ -54,7 +52,7 @@ class ShoppingBotCore:
                 self.smart_log.flow_decision(ctx.user_id, "CONTINUE_ASSESSMENT")
                 return await self._continue_assessment(query, ctx)
 
-            # Follow-up first
+            # Follow-up first (LLM decides; latest-turn dominance is in the prompt)
             fu = await self.llm_service.classify_follow_up(query, ctx)
             if fu.is_follow_up and not fu.patch.reset_context:
                 self.smart_log.flow_decision(ctx.user_id, "HANDLE_FOLLOW_UP")
@@ -104,7 +102,7 @@ class ShoppingBotCore:
                 content={"message": "Processing your request…"},
             )
 
-        # Otherwise do the normal delta fetch + sync answer
+        # Otherwise do the normal delta fetch + SIMPLE reply (no six sections)
         fetch_list = await self.llm_service.assess_delta_requirements(query, ctx, fu.patch)
         if fetch_list:
             self.smart_log.data_operations(ctx.user_id, [f.value for f in fetch_list])
@@ -132,18 +130,25 @@ class ShoppingBotCore:
                 ctx.user_id, [f.value for f in fetch_list], success_count
             )
 
-        answer_dict = await self.llm_service.generate_answer(query, ctx, fetched)
+        # Non-Recommendation → single-message reply
+        answer_dict = await self.llm_service.generate_simple_reply(
+            query,
+            ctx,
+            fetched,
+            intent_l3=effective_l3,
+            query_intent=map_leaf_to_query_intent(effective_l3),
+        )
         resp_type = ResponseType(answer_dict.get("response_type", "final_answer"))
 
         snapshot_and_trim(ctx, base_query=query)
         self.ctx_mgr.save_context(ctx)
-        self.smart_log.response_generated(ctx.user_id, resp_type.value, bool(answer_dict.get("sections")))
+        self.smart_log.response_generated(ctx.user_id, resp_type.value, False)
 
         return BotResponse(
             resp_type,
             content={
                 "message": answer_dict.get("message", ""),
-                "sections": answer_dict.get("sections"),
+                # no sections for non-Recommendation
             },
             functions_executed=list(fetched.keys()),
         )
@@ -172,8 +177,8 @@ class ShoppingBotCore:
     # New assessment
     # ────────────────────────────────────────────────────────
     async def _start_new_assessment(self, query: str, ctx: UserContext) -> BotResponse:
-        # Classify intent
-        result = await self.llm_service.classify_intent(query)
+        # Classify intent (latest-turn dominance handled in LLM prompt)
+        result = await self.llm_service.classify_intent(query, ctx)
         intent = map_leaf_to_query_intent(result.layer3)
 
         self.smart_log.intent_classified(
@@ -270,7 +275,7 @@ class ShoppingBotCore:
                 content={"message": "Processing your request…"}
             )
 
-        # Otherwise complete synchronously (non-Flow path)
+        # Otherwise complete synchronously
         self.smart_log.flow_decision(
             ctx.user_id, "COMPLETE_ASSESSMENT", f"{len(fetch_later)} fetches needed"
         )
@@ -313,9 +318,21 @@ class ShoppingBotCore:
                 ctx.user_id, [f.value for f in backend_fetchers], success_count
             )
 
-        # Generate final answer
+        # Generate final answer: six-section ONLY for Recommendation; otherwise simple reply
         original_q = safe_get(a, "original_query", "")
-        answer_dict = await self.llm_service.generate_answer(original_q, ctx, fetched)
+        intent_l3 = ctx.session.get("intent_l3", "") or ""
+
+        if intent_l3 == "Recommendation":
+            answer_dict = await self.llm_service.generate_answer(original_q, ctx, fetched)
+        else:
+            answer_dict = await self.llm_service.generate_simple_reply(
+                original_q,
+                ctx,
+                fetched,
+                intent_l3=intent_l3,
+                query_intent=map_leaf_to_query_intent(intent_l3),
+            )
+
         resp_type = ResponseType(answer_dict.get("response_type", "final_answer"))
         message = answer_dict.get(
             "message",
@@ -328,14 +345,16 @@ class ShoppingBotCore:
         ctx.session.pop("contextual_questions", None)
         self.ctx_mgr.save_context(ctx)
 
-        self.smart_log.response_generated(ctx.user_id, resp_type.value, bool(answer_dict.get("sections")))
+        self.smart_log.response_generated(ctx.user_id, resp_type.value, False)
+
+        # For non-Recommendation we intentionally omit sections
+        content = {"message": message}
+        if intent_l3 == "Recommendation" and "sections" in answer_dict:
+            content["sections"] = answer_dict.get("sections")
 
         return BotResponse(
             resp_type,
-            content={
-                "message": message,
-                "sections": answer_dict.get("sections"),
-            },
+            content=content,
             functions_executed=list(fetched.keys()),
         )
 

@@ -2,13 +2,12 @@
 Enhanced ShoppingBotCore with Flow support.
 
 Policy (final):
-- Flows are ONLY used for layer3 intent == "Recommendation".
-- Background deferral (PROCESSING_STUB → FE button after webhook) happens ONLY for Recommendation.
-- All non-Flow intents always return sync text (QUESTION or FINAL_ANSWER).
+- Flows & six-core sections are ONLY used when layer3 intent == "Recommendation".
+- Background deferral (PROCESSING_STUB → FE polls → Flow) happens ONLY for Recommendation.
+- All other intents always return synchronous simple text (single-message reply).
 - Follow-ups that land on Recommendation also defer (return PROCESSING_STUB), never send sync text.
-
-This guarantees: no dual text+flow, and a clean split between Flow vs non-Flow behaviors.
 """
+
 from __future__ import annotations
 
 import logging
@@ -64,7 +63,7 @@ class EnhancedShoppingBotCore:
 
         # Feature flags
         self.flow_enabled = True
-        self.enhanced_llm_enabled = True
+        self.enhanced_llm_enabled = True  # controls generate_enhanced_answer usage
 
     # ────────────────────────────────────────────────────────
     # Public entry points
@@ -83,6 +82,7 @@ class EnhancedShoppingBotCore:
         self.smart_log.query_start(ctx.user_id, query, bool(ctx.session))
 
         if not self.flow_enabled or not enable_flows:
+            # Behave exactly like baseline when flows disabled
             return await self.base_core.process_query(query, ctx)
 
         try:
@@ -91,14 +91,14 @@ class EnhancedShoppingBotCore:
                 self.smart_log.flow_decision(ctx.user_id, "CONTINUE_ASSESSMENT")
                 return await self._continue_assessment_enhanced(query, ctx)
 
-            # Follow-up handling (use same logic as base)
+            # Follow-up handling (LLM decides; latest-turn dominance is in prompt)
             fu = await self.llm_service.classify_follow_up(query, ctx)
             if fu.is_follow_up and not fu.patch.reset_context:
                 self.smart_log.flow_decision(ctx.user_id, "HANDLE_FOLLOW_UP")
                 self._apply_follow_up_patch(fu.patch, ctx)
                 return await self._handle_follow_up_enhanced(query, ctx, fu)
 
-            # Reset or start fresh
+            # Reset or start fresh (new assessment)
             if fu.patch.reset_context:
                 self.smart_log.flow_decision(ctx.user_id, "RESET_CONTEXT")
                 self._reset_session_only(ctx)
@@ -133,9 +133,10 @@ class EnhancedShoppingBotCore:
         ctx: UserContext,
         fu,
     ) -> Union[BotResponse, EnhancedBotResponse]:
-        """Enhanced follow-up handling with Flow policy."""
+        """Enhanced follow-up handling with Flow policy & simple-reply for non-Recommendation."""
         # Determine effective layer3 after patch
         effective_l3 = fu.patch.intent_override or ctx.session.get("intent_l3", "") or ""
+        effective_qi = map_leaf_to_query_intent(effective_l3)
 
         # If Recommendation, we always defer to background (no sync text).
         if effective_l3 == "Recommendation":
@@ -152,13 +153,17 @@ class EnhancedShoppingBotCore:
                 content={"message": "Processing your request…"},
             )
 
-        # Non-Flow intents: do a normal follow-up (synchronous)
+        # Non-Recommendation: delta fetch → SIMPLE reply (no six-sections)
         fetch_list = await self.llm_service.assess_delta_requirements(query, ctx, fu.patch)
         if fetch_list:
             self.smart_log.data_operations(ctx.user_id, [f.value for f in fetch_list])
 
         fetched = await self._execute_fetchers(fetch_list, ctx)
-        answer_dict = await self._generate_enhanced_answer(query, ctx, fetched)
+
+        # Simple single-message reply for non-Recommendation
+        answer_dict = await self.llm_service.generate_simple_reply(
+            query, ctx, fetched, intent_l3=effective_l3, query_intent=effective_qi
+        )
 
         enhanced_response = await self._create_enhanced_response(
             answer_dict, list(fetched.keys()), query, ctx
@@ -180,10 +185,10 @@ class EnhancedShoppingBotCore:
         query: str,
         ctx: UserContext,
     ) -> Union[BotResponse, EnhancedBotResponse]:
-        """Enhanced new assessment with Flow support."""
+        """Enhanced new assessment with Flow support and simple replies for non-Recommendation."""
 
-        # Classify intent
-        result = await self.llm_service.classify_intent(query)
+        # Classify intent (latest-turn dominance handled in LLM prompt)
+        result = await self.llm_service.classify_intent(query, ctx)
         intent = map_leaf_to_query_intent(result.layer3)
 
         self.smart_log.intent_classified(
@@ -224,7 +229,7 @@ class EnhancedShoppingBotCore:
             )
             ctx.session["contextual_questions"] = contextual_questions
 
-        # Set up assessment session
+        # Initialize assessment session
         ctx.session["assessment"] = {
             "original_query": query,
             "intent": intent.value,
@@ -288,7 +293,7 @@ class EnhancedShoppingBotCore:
                 content={"message": "Processing your request…"},
             )
 
-        # Otherwise complete synchronously with enhanced answer (non-Flow path)
+        # Otherwise complete synchronously (non-Flow/simple reply OR rec sys if no fetchers)
         self.smart_log.flow_decision(
             ctx.user_id, "COMPLETE_ASSESSMENT", f"{len(fetch_later)} fetches needed"
         )
@@ -300,18 +305,31 @@ class EnhancedShoppingBotCore:
         ctx: UserContext,
         fetchers: List[Union[BackendFunction, UserSlot]],
     ) -> EnhancedBotResponse:
-        """Enhanced assessment completion with Flow support (synchronous path for non-Flow)."""
+        """Enhanced assessment completion.
+
+        - If Recommendation → execute fetchers → enhanced answer (six sections / structured) → Flow (if possible)
+        - Else → execute fetchers → simple single-message reply (no sections, no Flow)
+        """
 
         backend_fetchers = [f for f in fetchers if isinstance(f, BackendFunction)]
 
         # Execute backend fetchers
         fetched = await self._execute_fetchers(backend_fetchers, ctx)
 
-        # Generate enhanced answer
         original_q = a.get("original_query", "")
-        answer_dict = await self._generate_enhanced_answer(original_q, ctx, fetched)
+        intent_l3 = ctx.session.get("intent_l3", "") or ""
+        query_intent = map_leaf_to_query_intent(intent_l3)
 
-        # Create enhanced response (Flow only if Recommendation; otherwise None)
+        if intent_l3 == "Recommendation":
+            # Generate enhanced (six core sections + structured if available)
+            answer_dict = await self._generate_enhanced_answer(original_q, ctx, fetched)
+        else:
+            # Non-Recommendation → SIMPLE REPLY
+            answer_dict = await self.llm_service.generate_simple_reply(
+                original_q, ctx, fetched, intent_l3=intent_l3, query_intent=query_intent
+            )
+
+        # Create enhanced response (Flow only if Recommendation branch)
         enhanced_response = await self._create_enhanced_response(
             answer_dict, list(fetched.keys()), original_q, ctx
         )
@@ -341,7 +359,7 @@ class EnhancedShoppingBotCore:
         query: str,
         ctx: UserContext,
     ) -> EnhancedBotResponse:
-        """Create enhanced response (Flow only for Recommendation)."""
+        """Create enhanced response (Flow only for Recommendation branch)."""
 
         resp_type = ResponseType(answer_dict.get("response_type", "final_answer"))
         message = answer_dict.get("message", "")
@@ -349,13 +367,14 @@ class EnhancedShoppingBotCore:
 
         base_content = {
             "message": message,
-            "sections": sections,
+            # Sections may be absent for non-Recommendation (simple reply)
+            **({"sections": sections} if sections else {}),
         }
 
         flow_payload: Optional[FlowPayload] = None
         requires_flow = False
 
-        # Flow is gated strictly to Recommendation
+        # Flow is gated strictly to current session intent being Recommendation
         if self.flow_enabled and resp_type == ResponseType.FINAL_ANSWER:
             flow_payload = await self._create_flow_payload(answer_dict, query, ctx)
             requires_flow = flow_payload is not None
@@ -419,7 +438,6 @@ class EnhancedShoppingBotCore:
             if not products:
                 return None
 
-            # For Recommendation we default to a recommendation flow
             header_text = flow_context.get("header_text", "Recommended for you")
             reason = flow_context.get("reason", "")
             return self.flow_generator.generate_recommendation_flow(
@@ -427,8 +445,9 @@ class EnhancedShoppingBotCore:
             )
 
         # Otherwise, attempt to derive a Flow from the “sections”
-        # (still gated to Recommendation)
         sections = answer_dict.get("sections", {})
+        if not sections:
+            return None
         flow_payload = self.flow_generator.create_flow_from_sections(sections)
         if flow_payload and self.flow_generator.validate_flow_payload(flow_payload):
             return flow_payload

@@ -1,30 +1,16 @@
-import asyncio
-import requests
-import json
-import time
+import base64
 
-BASE_URL = "http://localhost:8080"
+def image_to_base64(image_path):
+    with open(image_path, "rb") as image_file:
+        encoded = base64.b64encode(image_file.read()).decode('utf-8')
+        # Determine the image type
+        if image_path.endswith('.png'):
+            return f"data:image/png;base64,{encoded}"
+        elif image_path.endswith('.jpg') or image_path.endswith('.jpeg'):
+            return f"data:image/jpeg;base64,{encoded}"
+        else:
+            return f"data:image/png;base64,{encoded}"
 
-def test_background_processing():
-    """Test background processing functionality"""
-    
-    # Test 1: Start background processing
-    print("🧪 Test 1: Starting background processing...")
-    response = requests.post(f"{BASE_URL}/chat", json={
-        "user_id": "test123",
-        "session_id": "session123", 
-        "message": "recommend gaming laptops under $1000",
-        "background_processing": True
-    })
-    
-    print(f"Status: {response.status_code}")
-    if response.status_code == 200:
-        data = response.json()
-        processing_id = data.get("processing_id")
-        print(f"Processing ID: {processing_id}")
-        print("✅ Background processing started successfully!")
-    else:
-        print(f"❌ Error: {response.text}")
-
-if __name__ == "__main__":
-    test_background_processing()
+# Use this base64 string directly in your Flow JSON
+logo_base64 = image_to_base64("Flean_Logo_White_BG_SQ.jpg")
+print(logo_base64)

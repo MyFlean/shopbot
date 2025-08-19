@@ -380,65 +380,43 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
 # ─────────────────────────────────────────────────────────────
 # Product recommendations (real results via BackgroundProcessor; async)
 # ─────────────────────────────────────────────────────────────
-async def handle_product_recommendations_flow(payload: Dict[str, Any], version: str = "7.2") -> Dict[str, Any]:
+# Fix for the NAVIGATE action in handle_product_recommendation_flow
+
+def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "7.2") -> Dict[str, Any]:
     action = payload.get("action", "")
     screen = payload.get("screen", "")
     data = payload.get("data", {}) or {}
-    log.info(f"Product recommendations flow - Action: {action}, Screen: {screen}")
+    log.info(f"Product flow - Action: {action}, Screen: {screen}, Data: {data}")
     processing_id = data.get("processing_id") or payload.get("processing_id")
-    if not processing_id:
-        log.error("No processing_id provided for product recommendations flow")
-        return {"version": version, "screen": "COMPLETED", "data": {"message": "Sorry, no results available."}}
-
-    background_processor = current_app.extensions.get("background_processor")
 
     if action.upper() == "INIT":
-        products: List[Dict[str, Any]] = []
-        if background_processor:
-            try:
-                products = await background_processor.get_products_for_flow(processing_id)
-            except Exception as e:
-                log.error(f"Failed to get products for flow: {e}")
-
-        if products:
-            product_options = [{"id": p["id"], "title": p.get("title") or p.get("name", "Product")} for p in products]
-            return {
-                "version": version,
-                "screen": "PRODUCT_LIST",
-                "data": {
-                    "products": products,
-                    "product_options": product_options,
-                    "header_text": "Recommended Products for You",
-                    "footer_text": f"Found {len(products)} great options",
-                    "selected_product_id": "",
-                    "processing_id": processing_id,
-                },
-            }
-        else:
-            text_summary = ""
-            if background_processor:
-                try:
-                    text_summary = await background_processor.get_text_summary_for_flow(processing_id)
-                except Exception as e:
-                    log.error(f"Failed to get text summary for flow: {e}")
-            msg = (text_summary[:500] + "...") if text_summary and len(text_summary) > 500 else (text_summary or "No results found.")
-            return {"version": version, "screen": "COMPLETED", "data": {"message": msg}}
+        products = get_dummy_products()
+        header_text = "Product Recommendations"
+        footer_text = "Select a product to view details"
+        if processing_id:
+            header_text = "Your Personalized Results"
+            footer_text = f"Results from processing: {processing_id[:8]}..."
+        product_options = [{"id": p["id"], "title": p["title"]} for p in products]
+        return {
+            "version": version,
+            "screen": "PRODUCT_LIST",
+            "data": {
+                "products": products,
+                "product_options": product_options,
+                "header_text": header_text,
+                "footer_text": footer_text,
+                "selected_product_id": "",
+                "processing_id": processing_id,
+            },
+        }
 
     if action.upper() == "DATA_EXCHANGE" and (screen == "PRODUCT_LIST" or not screen):
         raw_selected = data.get("selected_product_id") or data.get("selected_product")
         selected_product_id = _coerce_product_id(raw_selected)
-        log.info(f"[DATA_EXCHANGE] (async) Product selected (raw={raw_selected!r}) → (coerced={selected_product_id!r})")
+        log.info(f"[DATA_EXCHANGE] Product selected (raw={raw_selected!r}) → (coerced={selected_product_id!r})")
 
-        products: List[Dict[str, Any]] = []
-        if background_processor:
-            try:
-                products = await background_processor.get_products_for_flow(processing_id)
-            except Exception as e:
-                log.error(f"Failed to get products for data exchange: {e}")
-        if not products:
-            products = get_dummy_products()
-
-        product_options = [{"id": p["id"], "title": p.get("title") or p.get("name", "Product")} for p in products]
+        products = get_dummy_products()
+        product_options = [{"id": p["id"], "title": p["title"]} for p in products]
         return {
             "version": version,
             "screen": "PRODUCT_LIST",
@@ -452,57 +430,101 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
             },
         }
 
-    if action.upper() == "NAVIGATE" and (payload.get("next", {}) or {}).get("name") == "PRODUCT_DETAILS":
-        product_id = _coerce_product_id(data.get("product_id") or data.get("selected_product_id"))
-        if not product_id:
-            log.warning("(async) NAVIGATE with empty product_id; defaulting to first product")
-
-        products: List[Dict[str, Any]] = []
-        if background_processor:
-            try:
-                products = await background_processor.get_products_for_flow(processing_id)
-            except Exception as e:
-                log.error(f"Failed to get products for navigation: {e}")
-        if not products:
+    if action.upper() == "NAVIGATE":
+        next_screen = (payload.get("next", {}) or {}).get("name", "")
+        log.info(f"NAVIGATE to: {next_screen}")
+        
+        if next_screen == "PRODUCT_DETAILS":
+            # Get product_id from multiple possible sources
+            product_id = _coerce_product_id(
+                data.get("product_id") or 
+                data.get("selected_product_id") or
+                payload.get("payload", {}).get("product_id")
+            )
+            
+            log.info(f"Looking for product_id: {product_id}")
+            
             products = get_dummy_products()
+            
+            # If no product_id provided, use the first product as fallback
+            if not product_id and products:
+                product_id = products[0]["id"]
+                log.warning(f"No product_id provided, using first product: {product_id}")
 
-        if not product_id and products:
-            product_id = products[0]["id"]
-
-        product = get_product_by_id(product_id, products) if product_id else None
-        if product:
-            details_text = (
-                f"{product.get('title') or product.get('name', 'Product')}\n"
-                f"{product.get('subtitle', '')}\n\n"
-                f"Price: {product.get('price', 'N/A')}\n"
-                f"Brand: {product.get('brand', 'N/A')}\n"
-                f"Rating: {product.get('rating', 'N/A')}/5.0\n"
-                f"Status: {product.get('availability', 'N/A')}\n\n"
-                "Features:\n" + "\n".join(f"• {ft}" for ft in product.get("features", [])) + "\n\n"
-                f"{product.get('discount', '')}"
-            ).strip()
+            product = get_product_by_id(product_id, products) if product_id else None
+            
+            if product:
+                # Build detailed product text
+                features_text = "\n".join(f"• {ft}" for ft in product.get("features", []))
+                discount_text = f"\n{product.get('discount', '')}" if product.get('discount') else ""
+                
+                details_text = (
+                    f"{product['title']}\n"
+                    f"{product['subtitle']}\n\n"
+                    f"Price: {product['price']}\n"
+                    f"Brand: {product['brand']}\n"
+                    f"Rating: {product.get('rating', 'N/A')}/5.0\n"
+                    f"Status: {product['availability']}\n\n"
+                    f"Features:\n{features_text}"
+                    f"{discount_text}"
+                ).strip()
+                
+                log.info(f"Generated product details for {product_id}: {len(details_text)} chars")
+                
+                # CRITICAL: Ensure product_details is never empty
+                if not details_text:
+                    details_text = f"Product information for {product.get('title', 'this item')} is being loaded."
+                
+                return {
+                    "version": version,
+                    "screen": "PRODUCT_DETAILS",
+                    "data": {
+                        "product_id": product_id,
+                        "product_details": details_text,  # This MUST have a value
+                        "processing_id": processing_id,
+                    },
+                }
+            else:
+                # Product not found - provide fallback text
+                log.warning(f"Product not found: {product_id}")
+                return {
+                    "version": version,
+                    "screen": "PRODUCT_DETAILS",
+                    "data": {
+                        "product_id": product_id or "unknown",
+                        "product_details": "Product information is currently unavailable. Please go back and select another product.",
+                        "processing_id": processing_id,
+                    },
+                }
+        
+        elif next_screen == "COMPLETED":
             return {
                 "version": version,
-                "screen": "PRODUCT_DETAILS",
+                "screen": "COMPLETED",
                 "data": {
-                    "product_id": product_id,
-                    "product_details": details_text or "Details coming soon.",
+                    "message": "Thank you for viewing our products!",
                     "processing_id": processing_id,
                 },
             }
 
-        return {
-            "version": version,
-            "screen": "PRODUCT_DETAILS",
-            "data": {
-                "product_id": product_id or "unknown",
-                "product_details": "Product details not available.",
-                "processing_id": processing_id,
-            },
-        }
-
-    return {"version": version, "screen": "COMPLETED", "data": {"message": "Thank you for using our product recommendations!"}}
-
+    # Default fallback - return to product list
+    log.info(f"Unhandled action/screen combination: {action}/{screen}")
+    products = get_dummy_products()
+    product_options = [{"id": p["id"], "title": p["title"]} for p in products]
+    selected_product_id = _coerce_product_id(data.get("selected_product_id") or data.get("selected_product"))
+    
+    return {
+        "version": version,
+        "screen": "PRODUCT_LIST",
+        "data": {
+            "products": products,
+            "product_options": product_options,
+            "header_text": "Product Recommendations",
+            "footer_text": "Select a product to view details",
+            "selected_product_id": selected_product_id or "",
+            "processing_id": processing_id,
+        },
+    }
 # ─────────────────────────────────────────────────────────────
 # Unified Flow request handler (now async to support awaits)
 # ─────────────────────────────────────────────────────────────

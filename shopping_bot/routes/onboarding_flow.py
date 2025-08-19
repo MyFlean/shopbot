@@ -111,6 +111,7 @@ def _coerce_product_id(val) -> str:
     """Normalize product id from string/object/None → string id."""
     try:
         if isinstance(val, dict):
+            # Handle dropdown selection objects
             return str(val.get("id") or val.get("value") or val.get("product_id") or "").strip()
         if val is None:
             return ""
@@ -269,19 +270,21 @@ def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") -> Dic
     return {"version": version, "screen": "ONBOARDING", "data": default_data}
 
 # ─────────────────────────────────────────────────────────────
-# Product recommendation flow (FIXED - only one function now)
+# Product recommendation flow (FIXED for navigation)
 # ─────────────────────────────────────────────────────────────
 def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "7.2") -> Dict[str, Any]:
     action = payload.get("action", "")
     screen = payload.get("screen", "")
     data = payload.get("data", {}) or {}
     
-    # Enhanced logging for debugging
+    # Enhanced logging
     log.info(f"=== PRODUCT FLOW DEBUG ===")
     log.info(f"Action: {action}")
     log.info(f"Screen: {screen}")
     log.info(f"Data keys: {list(data.keys())}")
-    log.info(f"Full payload: {json.dumps(payload, indent=2)[:1000]}")  # First 1000 chars
+    log.info(f"Payload keys: {list(payload.keys())}")
+    if "payload" in payload:
+        log.info(f"Navigation payload: {payload.get('payload')}")
     
     processing_id = data.get("processing_id") or payload.get("processing_id")
 
@@ -296,7 +299,7 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
         product_options = [{"id": p["id"], "title": p["title"]} for p in products]
         
         # Default to first product for better UX
-        initial_selection = products[0]["id"] if products else ""
+        initial_selection = ""  # Leave empty on init to force user selection
         
         response = {
             "version": version,
@@ -306,33 +309,21 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
                 "product_options": product_options,
                 "header_text": header_text,
                 "footer_text": footer_text,
-                "selected_product_id": initial_selection,
                 "processing_id": processing_id,
             },
         }
-        log.info(f"INIT Response: selected_product_id={initial_selection}")
+        log.info(f"INIT Response sent with {len(products)} products")
         return response
 
     if action.upper() == "DATA_EXCHANGE":
-        # Handle dropdown selection
-        raw_selected = data.get("selected_product_id") or data.get("selected_product")
-        
-        # Handle both string and object formats
-        if isinstance(raw_selected, dict):
-            selected_product_id = raw_selected.get("id", "")
-        else:
-            selected_product_id = str(raw_selected) if raw_selected else ""
-        
-        log.info(f"DATA_EXCHANGE - Raw: {raw_selected}, Selected: {selected_product_id}")
+        # This action is typically not needed for simple dropdown selection
+        # But handle it if the Flow sends it
+        log.info(f"DATA_EXCHANGE received (unexpected for this flow)")
         
         products = get_dummy_products()
         product_options = [{"id": p["id"], "title": p["title"]} for p in products]
         
-        # Ensure valid selection
-        if not selected_product_id and products:
-            selected_product_id = products[0]["id"]
-        
-        response = {
+        return {
             "version": version,
             "screen": "PRODUCT_LIST",
             "data": {
@@ -340,12 +331,9 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
                 "product_options": product_options,
                 "header_text": "Product Recommendations",
                 "footer_text": "Select a product to view details",
-                "selected_product_id": selected_product_id,
                 "processing_id": processing_id,
             },
         }
-        log.info(f"DATA_EXCHANGE Response: selected_product_id={selected_product_id}")
-        return response
 
     if action.upper() == "NAVIGATE":
         next_info = payload.get("next", {}) or {}
@@ -353,40 +341,39 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
         log.info(f"NAVIGATE to: {next_screen}")
         
         if next_screen == "PRODUCT_DETAILS":
+            # CRITICAL: The product_id comes from the navigation payload
+            # This is what WhatsApp sends when user clicks "View Details"
+            nav_payload = payload.get("payload", {})
+            log.info(f"Navigation payload received: {nav_payload}")
+            
             # Try multiple sources for product_id
             product_id = None
             
-            # Source 1: From navigation payload
-            nav_payload = payload.get("payload", {})
+            # Primary source: navigation payload
             if nav_payload:
-                product_id = nav_payload.get("product_id")
-                log.info(f"Product ID from nav payload: {product_id}")
+                product_id = nav_payload.get("product_id") or nav_payload.get("selected_product_id")
+                log.info(f"Product ID from navigation payload: {product_id}")
             
-            # Source 2: From data.selected_product_id
+            # Fallback to data if needed
             if not product_id:
-                product_id = data.get("selected_product_id")
-                log.info(f"Product ID from data.selected_product_id: {product_id}")
+                product_id = data.get("product_id") or data.get("selected_product_id")
+                log.info(f"Product ID from data (fallback): {product_id}")
             
-            # Source 3: From data.product_id
-            if not product_id:
-                product_id = data.get("product_id")
-                log.info(f"Product ID from data.product_id: {product_id}")
-            
-            # Normalize
+            # Normalize the product_id
             product_id = _coerce_product_id(product_id)
-            log.info(f"Final product_id after coercion: {product_id}")
+            log.info(f"Final normalized product_id: {product_id}")
             
             products = get_dummy_products()
             
-            # Fallback to first product
+            # If still no product_id, use first as fallback
             if not product_id and products:
                 product_id = products[0]["id"]
-                log.warning(f"Using fallback product_id: {product_id}")
+                log.warning(f"No product_id found, using first product: {product_id}")
             
             product = get_product_by_id(product_id, products) if product_id else None
             
             if product:
-                # Build comprehensive product details
+                # Build product details text (simple format, no markdown)
                 features = product.get("features", [])
                 features_text = "\n".join(f"• {ft}" for ft in features) if features else "• Standard features"
                 
@@ -395,24 +382,26 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
                 
                 details_text = (
                     f"{product['title']}\n"
-                    f"{product.get('subtitle', '')}\n\n"
+                    f"{product.get('subtitle', '')}\n"
+                    f"\n"
                     f"Price: {product.get('price', 'Contact for price')}\n"
                     f"Brand: {product.get('brand', 'Premium Brand')}\n"
                     f"Rating: {product.get('rating', 'N/A')}/5.0\n"
-                    f"Availability: {product.get('availability', 'Check availability')}\n\n"
+                    f"Availability: {product.get('availability', 'Check availability')}\n"
+                    f"\n"
                     f"Key Features:\n{features_text}"
                     f"{discount_text}"
                 ).strip()
                 
-                # Guarantee non-empty text
-                if not details_text or len(details_text) < 20:
+                # Ensure non-empty text
+                if not details_text or len(details_text) < 10:
                     details_text = (
                         f"Product: {product.get('title', 'Selected Item')}\n"
                         f"Price: {product.get('price', 'Contact us')}\n\n"
                         f"For more information about this product, please contact our support team."
                     )
                 
-                log.info(f"Generated details for {product_id}: {len(details_text)} chars")
+                log.info(f"Returning PRODUCT_DETAILS for {product_id} with {len(details_text)} chars")
                 
                 response = {
                     "version": version,
@@ -423,29 +412,29 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
                         "processing_id": processing_id,
                     },
                 }
+                
+                log.info(f"PRODUCT_DETAILS response: {json.dumps(response, indent=2)[:500]}")
+                return response
             else:
-                # Product not found
-                log.error(f"Product not found: {product_id}")
-                response = {
+                # Product not found - provide clear error message
+                log.error(f"Product not found for ID: {product_id}")
+                return {
                     "version": version,
                     "screen": "PRODUCT_DETAILS",
                     "data": {
                         "product_id": product_id or "unknown",
                         "product_details": (
-                            "**Product Not Available**\n\n"
+                            "Product Not Available\n\n"
                             "We couldn't find the product you selected.\n\n"
                             "Possible reasons:\n"
-                            "• Product selection was not properly saved\n"
-                            "• Product is no longer in our catalog\n"
+                            "• Product selection was not saved\n"
+                            "• Product is no longer available\n"
                             "• Technical issue occurred\n\n"
-                            "Please go back and select a different product."
+                            "Please go back and try selecting again."
                         ),
                         "processing_id": processing_id,
                     },
                 }
-            
-            log.info(f"NAVIGATE to PRODUCT_DETAILS response ready")
-            return response
         
         elif next_screen == "COMPLETED":
             return {
@@ -461,10 +450,6 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
     log.info(f"Unhandled flow state: {action}/{screen} - returning to list")
     products = get_dummy_products()
     product_options = [{"id": p["id"], "title": p["title"]} for p in products]
-    selected = _coerce_product_id(data.get("selected_product_id"))
-    
-    if not selected and products:
-        selected = products[0]["id"]
     
     return {
         "version": version,
@@ -474,7 +459,6 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
             "product_options": product_options,
             "header_text": "Product Recommendations",
             "footer_text": "Select a product to view details",
-            "selected_product_id": selected,
             "processing_id": processing_id,
         },
     }
@@ -487,33 +471,32 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
     action = payload.get("action", "")
     screen = payload.get("screen", "")
     data = payload.get("data", {}) or {}
+    
     log.info(f"Product recommendations async - Action: {action}, Screen: {screen}")
     
     processing_id = data.get("processing_id") or payload.get("processing_id")
     if not processing_id:
-        log.error("No processing_id for async flow")
-        # Fall back to sync version
+        log.warning("No processing_id for async flow, falling back to sync handler")
         return handle_product_recommendation_flow(payload, version)
     
     background_processor = current_app.extensions.get("background_processor")
     if not background_processor:
-        log.warning("No background processor available, using dummy products")
+        log.warning("No background processor available, using sync handler")
         return handle_product_recommendation_flow(payload, version)
     
-    # For all actions, try to get real products first
-    try:
-        products = await background_processor.get_products_for_flow(processing_id)
-        if products:
-            log.info(f"Got {len(products)} real products from background processor")
-        else:
-            products = get_dummy_products()
-            log.info("Using dummy products as fallback")
-    except Exception as e:
-        log.error(f"Failed to get products: {e}")
-        products = get_dummy_products()
-    
-    # Now handle the action with real or dummy products
+    # For INIT action, try to get real products
     if action.upper() == "INIT":
+        try:
+            products = await background_processor.get_products_for_flow(processing_id)
+            if products:
+                log.info(f"Got {len(products)} real products from background processor")
+            else:
+                products = get_dummy_products()
+                log.info("Using dummy products as fallback")
+        except Exception as e:
+            log.error(f"Failed to get products: {e}")
+            products = get_dummy_products()
+        
         product_options = [{"id": p["id"], "title": p.get("title", p.get("name", "Product"))} for p in products]
         return {
             "version": version,
@@ -523,13 +506,59 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
                 "product_options": product_options,
                 "header_text": "Your Personalized Recommendations",
                 "footer_text": f"Found {len(products)} products for you",
-                "selected_product_id": products[0]["id"] if products else "",
                 "processing_id": processing_id,
             },
         }
     
-    # For other actions, delegate to sync handler with current products
-    # This maintains all the navigation logic
+    # For NAVIGATE action, handle it the same way as sync
+    if action.upper() == "NAVIGATE":
+        # Get real products if available
+        try:
+            products = await background_processor.get_products_for_flow(processing_id)
+            if not products:
+                products = get_dummy_products()
+        except Exception:
+            products = get_dummy_products()
+        
+        # Use sync navigation logic with real products
+        temp_payload = dict(payload)
+        temp_data = temp_payload.get("data", {})
+        temp_data["_products_cache"] = products  # Pass products through
+        temp_payload["data"] = temp_data
+        
+        result = handle_product_recommendation_flow(temp_payload, version)
+        
+        # If navigating to PRODUCT_DETAILS, use real product data
+        if result.get("screen") == "PRODUCT_DETAILS":
+            product_id = result.get("data", {}).get("product_id")
+            if product_id:
+                product = get_product_by_id(product_id, products)
+                if product:
+                    # Rebuild details with real product data
+                    features = product.get("features", [])
+                    features_text = "\n".join(f"• {ft}" for ft in features) if features else "• Standard features"
+                    
+                    discount = product.get("discount", "")
+                    discount_text = f"\nSpecial Offer: {discount}" if discount else ""
+                    
+                    details_text = (
+                        f"{product.get('title', product.get('name', 'Product'))}\n"
+                        f"{product.get('subtitle', '')}\n"
+                        f"\n"
+                        f"Price: {product.get('price', 'Contact for price')}\n"
+                        f"Brand: {product.get('brand', 'Premium Brand')}\n"
+                        f"Rating: {product.get('rating', 'N/A')}/5.0\n"
+                        f"Availability: {product.get('availability', 'Check availability')}\n"
+                        f"\n"
+                        f"Key Features:\n{features_text}"
+                        f"{discount_text}"
+                    ).strip()
+                    
+                    result["data"]["product_details"] = details_text
+        
+        return result
+    
+    # For other actions, delegate to sync handler
     return handle_product_recommendation_flow(payload, version)
 
 # ─────────────────────────────────────────────────────────────
@@ -567,6 +596,7 @@ async def _handle_flow_request(flow_type: str):
                 initial_vector = raw.get("initial_vector", "")
                 decrypted_json = _aes_gcm_decrypt(encrypted_flow_data, aes_key, initial_vector)
                 payload = json.loads(decrypted_json)
+                log.info(f"Decrypted payload action: {payload.get('action')}, screen: {payload.get('screen')}")
             except Exception as exc:
                 log.exception(f"Decryption failed: {exc}")
                 return jsonify({"error_type": "DECRYPTION_FAILED"}), 421
@@ -577,7 +607,7 @@ async def _handle_flow_request(flow_type: str):
 
         action = payload.get("action", "")
         version = payload.get("version", "7.2")
-        log.info(f"Processing {flow_type} - action: {action}")
+        log.info(f"Processing {flow_type} - action: {action}, version: {version}")
 
         if action.lower() == "ping":
             resp_obj = {"version": version, "data": {"status": "active"}}
@@ -590,6 +620,8 @@ async def _handle_flow_request(flow_type: str):
                 resp_obj = await handle_product_recommendations_flow(payload, version)
             else:
                 return jsonify({"error_type": "UNKNOWN_FLOW_TYPE"}), 422
+
+        log.info(f"Returning response for {flow_type}: screen={resp_obj.get('screen')}")
 
         if is_encrypted and aes_key:
             response_json = json.dumps(resp_obj)

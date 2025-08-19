@@ -391,17 +391,16 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
                 features_text = "\n".join(f"• {ft}" for ft in features) if features else "• Standard features"
                 
                 discount = product.get("discount", "")
-                discount_text = f"\n\nSpecial Offer: {discount}" if discount else ""
+                discount_text = f"\nSpecial Offer: {discount}" if discount else ""
                 
                 details_text = (
-                    f"**{product['title']}**\n"
-                    f"{product.get('subtitle', '')}\n"
-                    f"{'='*30}\n\n"
-                    f"**Price:** {product.get('price', 'Contact for price')}\n"
-                    f"**Brand:** {product.get('brand', 'Premium Brand')}\n"
-                    f"**Rating:** {product.get('rating', 'N/A')}/5.0\n"
-                    f"**Availability:** {product.get('availability', 'Check availability')}\n\n"
-                    f"**Key Features:**\n{features_text}"
+                    f"{product['title']}\n"
+                    f"{product.get('subtitle', '')}\n\n"
+                    f"Price: {product.get('price', 'Contact for price')}\n"
+                    f"Brand: {product.get('brand', 'Premium Brand')}\n"
+                    f"Rating: {product.get('rating', 'N/A')}/5.0\n"
+                    f"Availability: {product.get('availability', 'Check availability')}\n\n"
+                    f"Key Features:\n{features_text}"
                     f"{discount_text}"
                 ).strip()
                 

@@ -300,9 +300,10 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
         }
 
     if action.upper() == "DATA_EXCHANGE" and (screen == "PRODUCT_LIST" or not screen):
-        # Ensure we capture both id-string AND object-form coming from the Dropdown
-        selected_product_id = _coerce_product_id(data.get("selected_product_id") or data.get("selected_product"))
-        log.info(f"[DATA_EXCHANGE] Product selected (coerced): {selected_product_id!r}")
+        # Accept string or {id,title} object from Dropdown (on-select update_data)
+        raw_selected = data.get("selected_product_id") or data.get("selected_product")
+        selected_product_id = _coerce_product_id(raw_selected)
+        log.info(f"[DATA_EXCHANGE] Product selected (raw={raw_selected!r}) → (coerced={selected_product_id!r})")
 
         products = get_dummy_products()
         product_options = [{"id": p["id"], "title": p["title"]} for p in products]
@@ -424,8 +425,9 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
             return {"version": version, "screen": "COMPLETED", "data": {"message": msg}}
 
     if action.upper() == "DATA_EXCHANGE" and (screen == "PRODUCT_LIST" or not screen):
-        selected_product_id = _coerce_product_id(data.get("selected_product_id") or data.get("selected_product"))
-        log.info(f"[DATA_EXCHANGE] (async) Product selected (coerced): {selected_product_id!r}")
+        raw_selected = data.get("selected_product_id") or data.get("selected_product")
+        selected_product_id = _coerce_product_id(raw_selected)
+        log.info(f"[DATA_EXCHANGE] (async) Product selected (raw={raw_selected!r}) → (coerced={selected_product_id!r})")
 
         products: List[Dict[str, Any]] = []
         if background_processor:

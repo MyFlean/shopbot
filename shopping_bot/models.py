@@ -170,7 +170,7 @@ class EnhancedBotResponse:
                     "flow_token": f"flow_{self.flow_payload.flow_type.value}",
                     "flow_id": self._get_flow_id(),
                     "flow_cta": "View Options",
-                    "flow_action": "navigate",
+                    "flow_action": "data_exchange",
                     "flow_action_payload": {
                         "screen": "PRODUCT_LIST",
                         "data": {

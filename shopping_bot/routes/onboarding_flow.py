@@ -273,16 +273,10 @@ def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") -> Dic
 # Product recommendation flow (FIXED for navigation)
 # ─────────────────────────────────────────────────────────────
 def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "3.0") -> Dict[str, Any]:
-    # Normalize action + input shapes
-    action_raw = payload.get("action", "")
-    action = action_raw.upper()
-    data = payload.get("data", {}) or {}
-    screen_hint = payload.get("screen") or ((payload.get("next", {}) or {}).get("name"))
+    action = (payload.get("action") or "").upper()
+    data = payload.get("data") or {}
     processing_id = data.get("processing_id") or payload.get("processing_id")
 
-    log.info(f"[PRODUCT FLOW] action={action_raw!r} screen_hint={screen_hint!r} data_keys={list(data.keys())}")
-
-    # INIT → send list screen
     if action == "INIT":
         products = get_dummy_products()
         product_options = [{"id": p["id"], "title": p["title"]} for p in products]
@@ -298,8 +292,46 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
             },
         }
 
-    # DATA_EXCHANGE (optional for this flow) → just refresh list (no selection is persisted server-side here)
+    # IMPORTANT: handle DETAILS via DATA_EXCHANGE
     if action == "DATA_EXCHANGE":
+        raw_pid = (data.get("product_id") or data.get("selected_product_id"))
+        product_id = _coerce_product_id(raw_pid)
+        if product_id:
+            products = get_dummy_products()
+            prod = get_product_by_id(product_id, products)
+            if not prod:
+                return {
+                    "version": version,
+                    "screen": "PRODUCT_DETAILS",
+                    "data": {
+                        "product_id": product_id,
+                        "product_details": "Product not found. Please go back and try again.",
+                        "processing_id": processing_id,
+                    },
+                }
+
+            features = prod.get("features", []) or []
+            features_text = "\n".join(f"• {f}" for f in features) if features else "• Standard features"
+            discount = prod.get("discount") or ""
+            discount_text = f"\n{discount}" if discount else ""
+            details_text = (
+                f"{prod.get('title','Product')}\n{prod.get('subtitle','')}\n\n"
+                f"Price: {prod.get('price','N/A')}\nBrand: {prod.get('brand','N/A')}\n"
+                f"Rating: {prod.get('rating','N/A')}/5.0\nStatus: {prod.get('availability','N/A')}\n\n"
+                f"Features:\n{features_text}{discount_text}"
+            ).strip() or "Details coming soon."
+
+            return {
+                "version": version,
+                "screen": "PRODUCT_DETAILS",
+                "data": {
+                    "product_id": product_id,
+                    "product_details": details_text,
+                    "processing_id": processing_id,
+                },
+            }
+
+        # no product id → re-render list
         products = get_dummy_products()
         product_options = [{"id": p["id"], "title": p["title"]} for p in products]
         return {
@@ -314,78 +346,14 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
             },
         }
 
-    # NAVIGATE → handle both shapes:
-    #   A) { action: "navigate", screen: "PRODUCT_DETAILS", data: {...} }
-    #   B) { action: "navigate", next: { name: "PRODUCT_DETAILS" }, payload: {...} }
-    if action == "NAVIGATE":
-        target = screen_hint or ""
-        if target == "PRODUCT_DETAILS":
-            # payload for product_id can be under data OR payload
-            nav_payload = payload.get("payload") or data or {}
-            raw_pid = nav_payload.get("product_id") or nav_payload.get("selected_product_id")
-            product_id = _coerce_product_id(raw_pid)
-            log.info(f"[PRODUCT FLOW] navigate→PRODUCT_DETAILS pid_raw={raw_pid!r} pid={product_id!r}")
+    # (Optional) keep supporting NAVIGATE for devices that do call the endpoint:
+    if action == "NAVIGATE" and (payload.get("screen") == "PRODUCT_DETAILS" or (payload.get("next") or {}).get("name") == "PRODUCT_DETAILS"):
+        nav = payload.get("payload") or data or {}
+        payload["action"] = "DATA_EXCHANGE"
+        payload["data"] = nav
+        return handle_product_recommendation_flow(payload, version)
 
-            products = get_dummy_products()
-            if not product_id and products:
-                product_id = products[0]["id"]
-
-            prod = get_product_by_id(product_id, products) if product_id else None
-            if not prod:
-                details_text = (
-                    "Product Not Available\n\n"
-                    "We couldn't find the product you selected.\n"
-                    "Please go back and try again."
-                )
-                return {
-                    "version": version,
-                    "screen": "PRODUCT_DETAILS",
-                    "data": {
-                        "product_id": product_id or "unknown",
-                        "product_details": details_text,
-                        "processing_id": processing_id,
-                    },
-                }
-
-            # Build a guaranteed non-empty details string
-            feats = prod.get("features", []) or []
-            features_text = "\n".join(f"• {ft}" for ft in feats) if feats else "• Standard features"
-            discount = prod.get("discount") or ""
-            discount_text = f"\n{discount}" if discount else ""
-            details_text = (
-                f"{prod.get('title','Product')}\n"
-                f"{prod.get('subtitle','')}\n\n"
-                f"Price: {prod.get('price','N/A')}\n"
-                f"Brand: {prod.get('brand','N/A')}\n"
-                f"Rating: {prod.get('rating','N/A')}/5.0\n"
-                f"Status: {prod.get('availability','N/A')}\n\n"
-                f"Features:\n{features_text}{discount_text}"
-            ).strip()
-
-            if not details_text:
-                details_text = "Details coming soon."
-
-            return {
-                "version": version,
-                "screen": "PRODUCT_DETAILS",
-                "data": {
-                    "product_id": product_id,
-                    "product_details": details_text,
-                    "processing_id": processing_id,
-                },
-            }
-
-        if target == "COMPLETED":
-            return {
-                "version": version,
-                "screen": "COMPLETED",
-                "data": {
-                    "message": "Thank you for browsing our products!",
-                    "processing_id": processing_id,
-                },
-            }
-
-    # Fallback → keep user on list
+    # fallback
     products = get_dummy_products()
     product_options = [{"id": p["id"], "title": p["title"]} for p in products]
     return {

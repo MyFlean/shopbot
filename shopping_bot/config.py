@@ -35,46 +35,39 @@ class BaseConfig:
 
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Background Processing Configuration
-    # ──────────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # Background Processing
+    # ─────────────────────────────────────────────────────────
     BACKGROUND_PROCESSING_TTL = int(os.getenv('BACKGROUND_PROCESSING_TTL', 7200))  # 2 hours
     
-    # Updated webhook URL for product recommendations flow
-    # Change this to your actual frontend URL when deploying
     FRONTEND_WEBHOOK_URL = os.getenv(
         'FRONTEND_WEBHOOK_URL', 
-        "https://ui-885484857389.asia-south2.run.app/backend-response"  # Your frontend endpoint
-        # "http://httpbin.org/post"  # Fallback for testing
+        "https://ui-885484857389.asia-south2.run.app/backend-response"
     )
     
-    # WhatsApp Flow IDs
+    # WhatsApp Flow IDs / Token
     WHATSAPP_FLOW_ID = os.getenv('WHATSAPP_FLOW_ID', '1093082415928891')
     WHATSAPP_PRODUCTS_FLOW_ID = os.getenv('WHATSAPP_PRODUCTS_FLOW_ID', 'your-products-flow-id')
     WHATSAPP_RESULTS_FLOW_ID = os.getenv('WHATSAPP_RESULTS_FLOW_ID', 'your-results-flow-id')
-    
-    # New: Product Recommendations Flow ID
     WHATSAPP_PRODUCT_RECOMMENDATIONS_FLOW_ID = os.getenv(
-        'WHATSAPP_PRODUCT_RECOMMENDATIONS_FLOW_ID', 
+        'WHATSAPP_PRODUCT_RECOMMENDATIONS_FLOW_ID',
         '799205369204924'
     )
+    # NEW: the Flow token issued by Meta for the published Flow
+    WHATSAPP_FLOW_TOKEN = os.getenv('WHATSAPP_FLOW_TOKEN', None)
 
 
 class DevelopmentConfig(BaseConfig):
     DEBUG: bool = True
-    
-    # For development, you might want to use httpbin for testing
     FRONTEND_WEBHOOK_URL = os.getenv(
         'FRONTEND_WEBHOOK_URL', 
-        "https://ui-885484857389.asia-south2.run.app/backend-response"  # Test endpoint for development
+        "https://ui-885484857389.asia-south2.run.app/backend-response"
     )
 
 
 class ProductionConfig(BaseConfig):
     DEBUG: bool = False
     REDIS_TTL_SECONDS: int = int(os.getenv("REDIS_TTL_SECONDS", 900))
-    
-    # Production webhook URL should be explicitly set
     FRONTEND_WEBHOOK_URL = os.getenv(
         'FRONTEND_WEBHOOK_URL', 
         "https://ui-885484857389.asia-south2.run.app/backend-response"
@@ -84,15 +77,13 @@ class ProductionConfig(BaseConfig):
 class TestingConfig(BaseConfig):
     TESTING: bool = True
     REDIS_DB: int = 15
-    
-    # For testing, use a mock webhook
     FRONTEND_WEBHOOK_URL = os.getenv(
         'FRONTEND_WEBHOOK_URL', 
         "https://ui-885484857389.asia-south2.run.app/backend-response"
     )
 
 
-def get_config() -> Type[BaseConfig]:
+def get_config() -> type[BaseConfig]:
     env = os.getenv("APP_ENV", os.getenv("FLASK_ENV", "development")).lower()
     mapping = {
         "development": DevelopmentConfig,

@@ -95,12 +95,8 @@ ONBOARDING_DATA = {
     "show_custom_society": False,
 }
 
-# ── NEW: helpers to extract IDs and resolve user's full name ───────────────────
 def _extract_ids(payload: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    """
-    Returns (user_id, session_id, wa_id) by checking top-level fields first,
-    then falling back to payload['data'].
-    """
+    """Returns (user_id, session_id, wa_id) from top-level or payload['data']."""
     user_id = payload.get("user_id")
     session_id = payload.get("session_id")
     wa_id = payload.get("wa_id")
@@ -111,14 +107,21 @@ def _extract_ids(payload: Dict[str, Any]) -> Tuple[Optional[str], Optional[str],
         wa_id = wa_id or data.get("wa_id")
     return user_id, session_id, wa_id
 
+def _coerce_product_id(val) -> str:
+    """Normalize product id from string/object/None → string id."""
+    try:
+        if isinstance(val, dict):
+            return str(val.get("id") or val.get("value") or val.get("product_id") or "").strip()
+        if val is None:
+            return ""
+        return str(val).strip()
+    except Exception:
+        return ""
+
 def _resolve_user_full_name(payload: Dict[str, Any]) -> str:
-    """
-    Pulls a friendly display name from backend context if available.
-    Fallbacks: payload-provided name → wa_id → 'there'
-    """
+    """Find a friendly display name from context; fallback to masked wa_id."""
     user_id, session_id, wa_id = _extract_ids(payload)
 
-    # If FE ever sends name directly
     data = payload.get("data") or {}
     direct_name = payload.get("user_full_name") or data.get("user_full_name")
     if direct_name and isinstance(direct_name, str) and direct_name.strip():
@@ -127,13 +130,10 @@ def _resolve_user_full_name(payload: Dict[str, Any]) -> str:
     try:
         ctx_mgr = current_app.extensions.get("ctx_mgr")
         if ctx_mgr and (user_id or wa_id):
-            # Prefer the (user_id, session_id) tuple if present; else derive a safe default
             sid = session_id or (user_id or wa_id or "default")
             uid = user_id or (wa_id or "anon")
             ctx = ctx_mgr.get_context(uid, sid)
 
-            # Common places we might store a name
-            # 1) ctx.session["user"]["full_name"/"name"/"first_name"]
             try:
                 user_blob = (ctx.session or {}).get("user") or {}
                 for k in ("full_name", "name", "first_name", "display_name"):
@@ -143,7 +143,6 @@ def _resolve_user_full_name(payload: Dict[str, Any]) -> str:
             except Exception:
                 pass
 
-            # 2) ctx.user_profile.name / full_name
             try:
                 prof = getattr(ctx, "user_profile", None)
                 for k in ("full_name", "name", "first_name", "display_name"):
@@ -153,7 +152,6 @@ def _resolve_user_full_name(payload: Dict[str, Any]) -> str:
             except Exception:
                 pass
 
-            # 3) Other common session buckets
             for bucket in ("profile", "whatsapp", "meta", "customer"):
                 try:
                     b = (ctx.session or {}).get(bucket) or {}
@@ -166,7 +164,6 @@ def _resolve_user_full_name(payload: Dict[str, Any]) -> str:
     except Exception as e:
         log.debug(f"Name resolution via context failed: {e}")
 
-    # 4) Fall back to masked wa_id or generic
     if wa_id:
         return f"user {str(wa_id)[-4:]}"
     return "there"
@@ -226,7 +223,6 @@ def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") -> Dic
     screen = payload.get("screen", "")
     data = payload.get("data", {}) or {}
 
-    # Always resolve name so we can inject it in every return path
     user_full_name = _resolve_user_full_name(payload)
     log.info(f"Onboarding flow - Action: {action}, Screen: {screen}, Resolved name: {user_full_name!r}")
 
@@ -238,16 +234,14 @@ def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") -> Dic
     if action.upper() == "DATA_EXCHANGE":
         log.info(f"Onboarding data exchange: {data}")
 
-        # Unify society keys: prefer `society`, accept `selected_society` as alias
         society_value = data.get("society") or data.get("selected_society")
 
         if society_value == "other":
             onboarding_data_with_custom = dict(ONBOARDING_DATA)
             onboarding_data_with_custom["show_custom_society"] = True
-            onboarding_data_with_custom["user_full_name"] = user_full_name  # preserve name
+            onboarding_data_with_custom["user_full_name"] = user_full_name
             return {"version": version, "screen": "ONBOARDING", "data": onboarding_data_with_custom}
 
-        # Validate complete form submission
         errors: Dict[str, str] = {}
 
         if not society_value:
@@ -264,14 +258,12 @@ def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") -> Dic
         if errors:
             merged = dict(ONBOARDING_DATA)
             merged["error"] = errors
-            merged["user_full_name"] = user_full_name  # preserve name on error re-render
+            merged["user_full_name"] = user_full_name
             return {"version": version, "screen": "ONBOARDING", "data": merged}
 
         log.info(f"Onboarding completed successfully with data: {data}")
-        # COMPLETE screen template doesn’t currently render the name, but keep shape consistent
         return {"version": version, "screen": "COMPLETE", "data": {"user_full_name": user_full_name}}
 
-    # Default
     default_data = dict(ONBOARDING_DATA)
     default_data["user_full_name"] = user_full_name
     return {"version": version, "screen": "ONBOARDING", "data": default_data}
@@ -307,9 +299,11 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
             },
         }
 
-    if action.upper() == "DATA_EXCHANGE" and screen == "PRODUCT_LIST":
-        selected_product_id = data.get("selected_product_id") or data.get("selected_product")
-        log.info(f"Product selected: {selected_product_id}")
+    if action.upper() == "DATA_EXCHANGE" and (screen == "PRODUCT_LIST" or not screen):
+        # Ensure we capture both id-string AND object-form coming from the Dropdown
+        selected_product_id = _coerce_product_id(data.get("selected_product_id") or data.get("selected_product"))
+        log.info(f"[DATA_EXCHANGE] Product selected (coerced): {selected_product_id!r}")
+
         products = get_dummy_products()
         product_options = [{"id": p["id"], "title": p["title"]} for p in products]
         return {
@@ -325,10 +319,15 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
             },
         }
 
-    if action.upper() == "NAVIGATE" and payload.get("next", {}).get("name") == "PRODUCT_DETAILS":
-        product_id = data.get("product_id") or data.get("selected_product_id")
-        log.info(f"Navigating to details for product: {product_id}")
+    if action.upper() == "NAVIGATE" and (payload.get("next", {}) or {}).get("name") == "PRODUCT_DETAILS":
+        # Accept product_id from payload OR the carried selected_product_id; coerce either way
+        product_id = _coerce_product_id(data.get("product_id") or data.get("selected_product_id"))
+        if not product_id:
+            log.warning("NAVIGATE called with empty product_id; defaulting to first product")
         products = get_dummy_products()
+        if not product_id and products:
+            product_id = products[0]["id"]
+
         product = get_product_by_id(product_id, products) if product_id else None
         if product:
             details_text = (
@@ -342,16 +341,28 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
             return {
                 "version": version,
                 "screen": "PRODUCT_DETAILS",
-                "data": {"product_id": product_id, "product_details": details_text, "processing_id": processing_id},
+                "data": {
+                    "product_id": product_id,
+                    "product_details": details_text or "Details coming soon.",
+                    "processing_id": processing_id,
+                },
             }
+
+        # Ensure we never return an empty TextBody binding
         return {
             "version": version,
             "screen": "PRODUCT_DETAILS",
-            "data": {"product_id": "unknown", "product_details": "Product details not available.", "processing_id": processing_id},
+            "data": {
+                "product_id": product_id or "unknown",
+                "product_details": "Product details not available.",
+                "processing_id": processing_id,
+            },
         }
 
+    # Safe default: keep user on list with current selection (if any)
     products = get_dummy_products()
     product_options = [{"id": p["id"], "title": p["title"]} for p in products]
+    selected_product_id = _coerce_product_id(data.get("selected_product_id") or data.get("selected_product"))
     return {
         "version": version,
         "screen": "PRODUCT_LIST",
@@ -360,7 +371,7 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
             "product_options": product_options,
             "header_text": "Product Recommendations",
             "footer_text": "Select a product to view details",
-            "selected_product_id": "",
+            "selected_product_id": selected_product_id or "",
             "processing_id": processing_id,
         },
     }
@@ -412,9 +423,9 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
             msg = (text_summary[:500] + "...") if text_summary and len(text_summary) > 500 else (text_summary or "No results found.")
             return {"version": version, "screen": "COMPLETED", "data": {"message": msg}}
 
-    if action.upper() == "DATA_EXCHANGE" and screen == "PRODUCT_LIST":
-        selected_product_id = data.get("selected_product_id") or data.get("selected_product")
-        log.info(f"Product selected: {selected_product_id}")
+    if action.upper() == "DATA_EXCHANGE" and (screen == "PRODUCT_LIST" or not screen):
+        selected_product_id = _coerce_product_id(data.get("selected_product_id") or data.get("selected_product"))
+        log.info(f"[DATA_EXCHANGE] (async) Product selected (coerced): {selected_product_id!r}")
 
         products: List[Dict[str, Any]] = []
         if background_processor:
@@ -439,9 +450,10 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
             },
         }
 
-    if action.upper() == "NAVIGATE" and payload.get("next", {}).get("name") == "PRODUCT_DETAILS":
-        product_id = data.get("product_id") or data.get("selected_product_id")
-        log.info(f"Navigating to details for product: {product_id}")
+    if action.upper() == "NAVIGATE" and (payload.get("next", {}) or {}).get("name") == "PRODUCT_DETAILS":
+        product_id = _coerce_product_id(data.get("product_id") or data.get("selected_product_id"))
+        if not product_id:
+            log.warning("(async) NAVIGATE with empty product_id; defaulting to first product")
 
         products: List[Dict[str, Any]] = []
         if background_processor:
@@ -451,6 +463,9 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
                 log.error(f"Failed to get products for navigation: {e}")
         if not products:
             products = get_dummy_products()
+
+        if not product_id and products:
+            product_id = products[0]["id"]
 
         product = get_product_by_id(product_id, products) if product_id else None
         if product:
@@ -464,9 +479,25 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
                 "Features:\n" + "\n".join(f"• {ft}" for ft in product.get("features", [])) + "\n\n"
                 f"{product.get('discount', '')}"
             ).strip()
-            return {"version": version, "screen": "PRODUCT_DETAILS", "data": {"product_id": product_id, "product_details": details_text, "processing_id": processing_id}}
+            return {
+                "version": version,
+                "screen": "PRODUCT_DETAILS",
+                "data": {
+                    "product_id": product_id,
+                    "product_details": details_text or "Details coming soon.",
+                    "processing_id": processing_id,
+                },
+            }
 
-        return {"version": version, "screen": "PRODUCT_DETAILS", "data": {"product_id": "unknown", "product_details": "Product details not available.", "processing_id": processing_id}}
+        return {
+            "version": version,
+            "screen": "PRODUCT_DETAILS",
+            "data": {
+                "product_id": product_id or "unknown",
+                "product_details": "Product details not available.",
+                "processing_id": processing_id,
+            },
+        }
 
     return {"version": version, "screen": "COMPLETED", "data": {"message": "Thank you for using our product recommendations!"}}
 

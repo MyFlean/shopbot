@@ -319,16 +319,16 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
                     features = []
                 
                 transformed_product = {
-                    "id": product.get("id", f"prod_{i}"),
-                    "title": product.get("title", "Product"),
-                    "subtitle": product.get("subtitle", ""),
-                    "price": price,
-                    "brand": product.get("brand", ""),
-                    "rating": product.get("rating"),
-                    "availability": product.get("availability", "In Stock"),
-                    "discount": product.get("discount", ""),
-                    "image": image,
-                    "features": features
+                "id": product.get("id", f"prod_{i}"),
+                "title": product.get("title", "Product"),
+                "subtitle": product.get("subtitle", ""),
+                "price": price,
+                "brand": product.get("brand") or "",  # Convert null to empty string
+                "rating": product.get("rating"),
+                "availability": product.get("availability", "In Stock"),
+                "discount": product.get("discount") or "",  # Convert null to empty string
+                "image": image,
+                "features": features
                 }
                 products.append(transformed_product)
                 

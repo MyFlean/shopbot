@@ -72,6 +72,7 @@ def _aes_gcm_encrypt(response: str, aes_key: bytes, initial_vector_b64: str) -> 
 # ─────────────────────────────────────────────────────────────
 # Static data and utilities
 # ─────────────────────────────────────────────────────────────
+
 ONBOARDING_DATA = {
     "societies": [
         {"id": "amrapali_sapphire", "title": "Amrapali Sapphire"},
@@ -79,18 +80,15 @@ ONBOARDING_DATA = {
         {"id": "other", "title": "Other"},
     ],
     "genders": [
-        {"id": "male", "title": "Male"},
-        {"id": "female", "title": "Female"},
-        {"id": "other", "title": "Other"},
-        {"id": "prefer_not_to_say", "title": "Prefer not to say"},
+        {"id": "male", "title": "👨 Male"},
+        {"id": "female", "title": "👩 Female"},
+        {"id": "other", "title": "🌈 Other"},
     ],
     "age_groups": [
-        {"id": "18_24", "title": "18-24 years"},
-        {"id": "25_34", "title": "25-34 years"},
-        {"id": "35_44", "title": "35-44 years"},
-        {"id": "45_54", "title": "45-54 years"},
-        {"id": "55_64", "title": "55-64 years"},
-        {"id": "65_plus", "title": "65+ years"},
+        {"id": "18_25", "title": "🎓 Young Explorer (18-25)"},
+        {"id": "26_35", "title": "🚀 Rising Star (26-35)"},
+        {"id": "36_45", "title": "💼 Prime Time (36-45)"},
+        {"id": "46_55", "title": "🏆 Experienced Pro (46-55)"},
     ],
     "show_custom_society": False,
 }

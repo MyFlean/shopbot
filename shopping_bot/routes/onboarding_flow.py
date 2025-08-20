@@ -384,6 +384,7 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
     processing_id = payload.get("flow_token") or data.get("processing_id")
     
     log.info(f"Product recommendations - Action: {action}, processing_id: {processing_id}")
+    log.info(f"Product recommendations Async - Action: {action}, full data: {data}")
     
     if not processing_id:
         # No processing_id = return empty state

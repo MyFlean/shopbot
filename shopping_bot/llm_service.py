@@ -31,6 +31,9 @@ Bugfixes (2025-08-18 later):
   from accidental `" slots"`).
 • Updated follow-up prompt example to quoted JSON keys with no stray spaces.
 • Extra validation around intent tool outputs.
+
+Additions (2025-08-19):
+• New tool + method: extract_es_params(ctx) – normalizes ES params via tool-calling.
 """
 
 from __future__ import annotations
@@ -198,6 +201,41 @@ STRUCTURED_ANSWER_TOOL = {
         },
         "required": ["response_type", "sections"]
     }
+}
+
+# NEW: ES params tool (emit_es_params)
+ES_PARAM_TOOL = {
+    "name": "emit_es_params",
+    "description": "Return normalized Elasticsearch params derived from ctx.session. Omit fields you cannot infer confidently.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "q": {"type": "string", "description": "Final search text."},
+            "size": {"type": "integer", "minimum": 1, "maximum": 50},
+            "category_group": {"type": "string"},
+            "brands": {"type": "array", "items": {"type": "string"}},
+            "dietary_terms": {"type": "array", "items": {"type": "string"}},
+            "price_min": {"type": "number"},
+            "price_max": {"type": "number"},
+            "protein_weight": {"type": "number"},
+            "phrase_boosts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "field": {"type": "string"},
+                        "phrase": {"type": "string"},
+                        "boost": {"type": "number"}
+                    },
+                    "required": ["field", "phrase"]
+                }
+            },
+            "field_boosts": {"type": "array", "items": {"type": "string"}},
+            "sort": {"type": "array", "items": {"type": "object"}},
+            "highlight": {"type": "object"},
+        },
+        # not requiring "q" so we can still merge with defaults later
+    },
 }
 
 
@@ -459,17 +497,17 @@ You are an e-commerce assistant.
 
 ### Instructions
 Respond with **only** a JSON object (no code fences) shaped like:
-{{
+{
   "response_type": "final_answer",
-  "sections": {{
+  "sections": {
     "+": "string",
     "ALT": "string",
     "-": "string",
     "BUY": "string",
     "OVERRIDE": "string",
     "INFO": "string"
-  }}
-}}
+  }
+}
 Always include all six keys; leave a key an empty string if you have no content.
 """
 
@@ -501,6 +539,23 @@ query_intent = {query_intent}   # e.g., order_status, price_inquiry, general_hel
 """
 
 
+# NEW: ES params prompt
+ES_PARAM_PROMPT = """
+You are a strict parameter normalizer.
+
+INPUT: a compact JSON view of the session context.
+TASK: Produce ONLY a tool call to emit_es_params with normalized Elasticsearch params.
+
+Rules:
+1) q: prefer assessment.original_query, else last_query, else empty string.
+2) size: default 20 if unknown; clamp between 1 and 50.
+3) category_group: default "f_and_b" if unknown.
+4) brands: if present as free text, split on commas/slashes; trim spaces; dedupe; preserve case.
+5) dietary_terms: uppercase each item; trim; dedupe.
+6) budget: map to price_min/price_max if present; ensure numbers.
+7) ranking.protein_weight → protein_weight (number).
+8) If a field is unknown or not confidently derivable, OMIT it (do not guess).
+"""
 
 # Enhanced answer generation prompt
 ENHANCED_ANSWER_GENERATION_PROMPT = """
@@ -660,7 +715,7 @@ class LLMService:
 
         return IntentResult(layer1, layer2, layer3)
     
-    # ---------------- SIMPLE REPLY ----------------
+# ---------------- SIMPLE REPLY ----------------
     async def generate_simple_reply(
         self,
         query: str,
@@ -670,26 +725,66 @@ class LLMService:
         intent_l3: str,
         query_intent: QueryIntent
     ) -> Dict[str, Any]:
-        prompt = SIMPLE_REPLY_PROMPT.format(
-            query=query,
-            intent_l3=intent_l3,
-            query_intent=query_intent.value,
-            permanent=json.dumps(ctx.permanent, ensure_ascii=False),
-            session=json.dumps(ctx.session, ensure_ascii=False),
-            fetched=json.dumps(fetched, ensure_ascii=False),
-        )
-        resp = self.anthropic.messages.create(
-            model=Cfg.LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.4,
-            max_tokens=400,
-        )
-        data = extract_json_block(resp.content[0].text)
-        if isinstance(data, dict) and data.get("message"):
-            return {"response_type": "final_answer", "message": data["message"]}
-        # fallback
-        return {"response_type": "final_answer", "message": resp.content[0].text.strip()}
-
+        # print(f"DEBUG: generate_simple_reply called with:")
+        # print(f"DEBUG:   query='{query}'")
+        # print(f"DEBUG:   intent_l3='{intent_l3}'")
+        # print(f"DEBUG:   query_intent={query_intent}")
+        # print(f"DEBUG:   fetched={fetched}")
+        
+        try:
+            prompt = SIMPLE_REPLY_PROMPT.format(
+                query=query,
+                intent_l3=intent_l3,
+                query_intent=query_intent.value,
+                permanent=json.dumps(ctx.permanent, ensure_ascii=False),
+                session=json.dumps(ctx.session, ensure_ascii=False),
+                fetched=json.dumps(fetched, ensure_ascii=False),
+            )
+            # print(f"DEBUG: Created prompt successfully")
+            
+            resp = self.anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.4,
+                max_tokens=400,
+            )
+            # print(f"DEBUG: Got response from Anthropic")
+            # print(f"DEBUG: resp.content[0].text = '{resp.content[0].text}'")
+            
+            # Try to extract JSON from the response
+            data = extract_json_block(resp.content[0].text)
+            # print(f"DEBUG: extract_json_block returned: {data}")
+            # print(f"DEBUG: data type: {type(data)}")
+            
+            # Ensure we always return a valid response structure
+            if isinstance(data, dict):
+                # print(f"DEBUG: data is dict, keys: {list(data.keys())}")
+                # If we got valid JSON, ensure it has the required fields
+                result = {
+                    "response_type": data.get("response_type", "final_answer"),
+                    "message": data.get("message", resp.content[0].text.strip())
+                }
+                # print(f"DEBUG: Returning dict result: {result}")
+                return result
+            else:
+                # print(f"DEBUG: data is not dict, using fallback")
+                # If JSON parsing failed, return the raw text as the message
+                result = {
+                    "response_type": "final_answer", 
+                    "message": resp.content[0].text.strip()
+                }
+                # print(f"DEBUG: Returning fallback result: {result}")
+                return result
+                
+        except Exception as e:
+            # print(f"DEBUG: Exception in generate_simple_reply: {e}")
+            import traceback
+            # print(f"DEBUG: Traceback: {traceback.format_exc()}")
+            # Return safe fallback
+            return {
+                "response_type": "final_answer",
+                "message": "Hello! I'm here to help you with shopping queries. What can I assist you with today?"
+            }
     # ---------------- FOLLOW-UP ----------------
     async def classify_follow_up(self, query: str, ctx: UserContext) -> FollowUpResult:
         history = ctx.session.get("history", [])
@@ -1177,9 +1272,9 @@ class LLMService:
 
         # Use Flow for specific intents
         flow_intents = [
-            "Product_Discovery",
-            "Recommendation",
             "Product_Comparison",
+            "Recommendation",
+            "Product_Discovery",
             "Specific_Product_Search"
         ]
         if intent_layer3 in flow_intents:
@@ -1230,6 +1325,155 @@ class LLMService:
         # Default to catalog
         return FlowType.PRODUCT_CATALOG
 
+    # ---------------- ES PARAMS (NEW) ----------------
+    # ---------------- ES PARAMS EXTRACTION (ENHANCED) ----------------
+    async def extract_es_params(self, ctx: UserContext) -> Dict[str, Any]:
+        """
+        Enhanced parameter extraction with better query understanding.
+        Focuses on food/product categorization and budget parsing.
+        """
+        session = ctx.session or {}
+        assessment = session.get("assessment", {})
+        
+        # Build context for LLM
+        context = {
+            "original_query": assessment.get("original_query", ""),
+            "user_answers": {
+                "budget": session.get("budget"),
+                "dietary_requirements": session.get("dietary_requirements"),
+                "product_category": session.get("product_category"),
+                "brands": session.get("brands"),
+            },
+            "session_data": {
+                "category_group": session.get("category_group"),
+                "last_query": session.get("last_query"),
+            }
+        }
+        
+        # Enhanced prompt for better parameter extraction
+        enhanced_prompt = f"""
+You are a search parameter extractor for an e-commerce platform. 
+
+USER CONTEXT:
+{json.dumps(context, ensure_ascii=False, indent=2)}
+
+TASK: Extract normalized Elasticsearch parameters for product search.
+
+RULES:
+1. q: Use the original_query or last_query as the main search text
+2. category_group: 
+   - "f_and_b" for food, beverages, snacks, bread, etc.
+   - "health_nutrition" for supplements, vitamins
+   - "personal_care" for cosmetics, hygiene
+   - Default to "f_and_b" if unclear
+3. dietary_terms: Extract terms like "GLUTEN FREE", "VEGAN", "ORGANIC" (UPPERCASE)
+4. price_min/price_max: Parse budget expressions:
+   - "100 rupees" → price_max: 100
+   - "under 200" → price_max: 200  
+   - "50-150" → price_min: 50, price_max: 150
+   - "0-200 rupees" → price_min: 0, price_max: 200
+5. brands: Extract brand names if mentioned
+6. size: Default 20, max 50
+
+EXAMPLES:
+- "gluten free bread under 100 rupees" → category_group: "f_and_b", dietary_terms: ["GLUTEN FREE"], price_max: 100
+- "organic snacks 50-200" → category_group: "f_and_b", dietary_terms: ["ORGANIC"], price_min: 50, price_max: 200
+
+Return ONLY the tool call to emit_es_params.
+"""
+        
+        try:
+            resp = self.anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": enhanced_prompt}],
+                tools=[ES_PARAM_TOOL],
+                tool_choice={"type": "tool", "name": "emit_es_params"},
+                temperature=0,
+                max_tokens=400,
+            )
+            
+            tool_use = pick_tool(resp, "emit_es_params")
+            if not tool_use:
+                return {}
+            
+            raw_params = tool_use.input or {}
+            cleaned_params = _strip_keys(raw_params) if isinstance(raw_params, dict) else {}
+            
+            # Post-process and validate
+            final_params = self._validate_and_clean_params(cleaned_params, context)
+            
+            return final_params
+            
+        except Exception as exc:
+            log.warning("Enhanced ES param extraction failed: %s", exc)
+            return {}
+    
+    def _validate_and_clean_params(self, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate and clean extracted parameters"""
+        cleaned = {}
+        
+        # Query text - fallback chain
+        q = params.get("q") or context.get("original_query") or context.get("session_data", {}).get("last_query") or ""
+        cleaned["q"] = str(q).strip()
+        
+        # Size with bounds
+        size = params.get("size", 20)
+        try:
+            size = int(size)
+            cleaned["size"] = max(1, min(50, size))
+        except:
+            cleaned["size"] = 20
+        
+        # Category group validation
+        category = params.get("category_group", "f_and_b")
+        valid_categories = ["f_and_b", "health_nutrition", "personal_care", "home_kitchen", "electronics"]
+        cleaned["category_group"] = category if category in valid_categories else "f_and_b"
+        
+        # Price validation
+        for price_field in ["price_min", "price_max"]:
+            if price_field in params:
+                try:
+                    price_val = float(params[price_field])
+                    if price_val >= 0:  # No negative prices
+                        cleaned[price_field] = price_val
+                except:
+                    pass
+        
+        # Ensure price_min <= price_max
+        if "price_min" in cleaned and "price_max" in cleaned:
+            if cleaned["price_min"] > cleaned["price_max"]:
+                # Swap them
+                cleaned["price_min"], cleaned["price_max"] = cleaned["price_max"], cleaned["price_min"]
+        
+        # List fields (brands, dietary_terms)
+        for list_field in ["brands", "dietary_terms"]:
+            if list_field in params:
+                items = params[list_field]
+                if isinstance(items, str):
+                    # Split string
+                    items = [item.strip() for item in items.replace(",", " ").split() if item.strip()]
+                elif isinstance(items, list):
+                    # Clean list
+                    items = [str(item).strip() for item in items if str(item).strip()]
+                else:
+                    items = []
+                
+                if items:
+                    # Special handling for dietary terms (uppercase)
+                    if list_field == "dietary_terms":
+                        items = [item.upper() for item in items]
+                    cleaned[list_field] = items
+        
+        # Protein weight (optional scoring boost)
+        if "protein_weight" in params:
+            try:
+                pw = float(params["protein_weight"])
+                if 0.1 <= pw <= 10.0:  # Reasonable range
+                    cleaned["protein_weight"] = pw
+            except:
+                pass
+        
+        return cleaned
 
 # ─────────────────────────────────────────────────────────────
 # Helper – map layer3 leaf to QueryIntent

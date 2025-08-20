@@ -5,22 +5,21 @@ class UserSlot(str, Enum):
     USER_PREFERENCES = "ASK_USER_PREFERENCES"
     USER_BUDGET = "ASK_USER_BUDGET"
     DELIVERY_ADDRESS = "ASK_DELIVERY_ADDRESS"
-    PRODUCT_NAME = "ASK_PRODUCT_NAME"
+    PRODUCT_CATEGORY = "ASK_PRODUCT_CATEGORY"
+    DIETARY_REQUIREMENTS = "ASK_DIETARY_REQUIREMENTS"
     USE_CASE = "ASK_USE_CASE"
-    PRODUCTS_TO_COMPARE = "ASK_PRODUCTS_TO_COMPARE"
     QUANTITY = "ASK_QUANTITY"
     ORDER_ID = "ASK_ORDER_ID"
-    MODIFICATION_TYPE = "ASK_MODIFICATION_TYPE"
-    RETURN_REASON = "ASK_RETURN_REASON"
 
 
 class BackendFunction(str, Enum):
-    FETCH_PRODUCT_INVENTORY = "FETCH_PRODUCT_INVENTORY"
-    FETCH_PURCHASE_HISTORY = "FETCH_PURCHASE_HISTORY"
-    FETCH_USER_PROFILE = "FETCH_USER_PROFILE"
-    FETCH_PRODUCT_DETAILS = "FETCH_PRODUCT_DETAILS"
-    FETCH_SIMILAR_PRODUCTS = "FETCH_SIMILAR_PRODUCTS"
-    FETCH_PRODUCT_REVIEWS = "FETCH_PRODUCT_REVIEWS"
+    # Primary function - all product searches go through this
+    SEARCH_PRODUCTS = "search_products"
+    
+    # Keep these for future user-specific data
+    FETCH_USER_PROFILE = "fetch_user_profile"
+    FETCH_PURCHASE_HISTORY = "fetch_purchase_history"
+    FETCH_ORDER_STATUS = "fetch_order_status"
 
 
 class QueryIntent(str, Enum):
@@ -35,10 +34,10 @@ class QueryIntent(str, Enum):
 
 class ResponseType(str, Enum):
     QUESTION = "question"
-    PROCESSING_STUB = "processing"      # NEW: used when core defers to background
+    PROCESSING_STUB = "processing"
     FINAL_ANSWER = "final_answer"
     ERROR = "error"
 
 
-# Backwards-compat alias used across the codebase
+# Backwards-compat alias
 ShoppingFunction = BackendFunction

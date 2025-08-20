@@ -322,9 +322,13 @@ class ShoppingBotCore:
         original_q = safe_get(a, "original_query", "")
         intent_l3 = ctx.session.get("intent_l3", "") or ""
 
+
+
         if intent_l3 == "Recommendation":
+
             answer_dict = await self.llm_service.generate_answer(original_q, ctx, fetched)
         else:
+            # print("DEBUG: Calling generate_simple_reply (non-Recommendation path)")
             answer_dict = await self.llm_service.generate_simple_reply(
                 original_q,
                 ctx,
@@ -333,11 +337,35 @@ class ShoppingBotCore:
                 query_intent=map_leaf_to_query_intent(intent_l3),
             )
 
-        resp_type = ResponseType(answer_dict.get("response_type", "final_answer"))
+        # # DEBUG: Check what we got back
+        # # print(f"DEBUG: answer_dict = {answer_dict}")
+        # # print(f"DEBUG: answer_dict type = {type(answer_dict)}")
+        # if isinstance(answer_dict, dict):
+        #     # print(f"DEBUG: answer_dict keys = {list(answer_dict.keys())}")
+        #     # print(f"DEBUG: 'response_type' in answer_dict = {'response_type' in answer_dict}")
+        #     # print(f"DEBUG: answer_dict.get('response_type') = {answer_dict.get('response_type')}")
+        # else:
+        #     # print("DEBUG: answer_dict is not a dict!")
+        #     # Emergency fallback
+        #     answer_dict = {
+        #         "response_type": "final_answer",
+        #         "message": "I can help you with shopping queries. Please provide more details."
+        #     }
+        #     # print(f"DEBUG: Using fallback answer_dict = {answer_dict}")
+
+        try:
+            resp_type = ResponseType(answer_dict.get("response_type", "final_answer"))
+            # print(f"DEBUG: Successfully created ResponseType: {resp_type}")
+        except Exception as e:
+            # print(f"DEBUG: Error creating ResponseType: {e}")
+            resp_type = ResponseType.FINAL_ANSWER
+            # print(f"DEBUG: Using fallback ResponseType: {resp_type}")
+
         message = answer_dict.get(
             "message",
             "I can help you with shopping queries. Please provide more details.",
         )
+        # print(f"DEBUG: Final message = '{message}'")
 
         # Clean up session
         snapshot_and_trim(ctx, base_query=original_q)
@@ -352,12 +380,13 @@ class ShoppingBotCore:
         if intent_l3 == "Recommendation" and "sections" in answer_dict:
             content["sections"] = answer_dict.get("sections")
 
+        # print(f"DEBUG: Returning BotResponse with content = {content}")
+
         return BotResponse(
             resp_type,
             content=content,
             functions_executed=list(fetched.keys()),
         )
-
     # ────────────────────────────────────────────────────────
     # Background policy helper (core-owned)
     # ────────────────────────────────────────────────────────

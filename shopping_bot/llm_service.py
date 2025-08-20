@@ -1218,7 +1218,7 @@ class LLMService:
             "flow_context": raw_response.get("flow_context", {"intent": "none"})
         }
 
-        # Process structured products
+        # Process structured products from LLM response
         raw_products = raw_response.get("structured_products", []) or []
         for product_data in raw_products:
             try:
@@ -1226,8 +1226,12 @@ class LLMService:
                 if product:
                     processed["structured_products"].append(product)
             except Exception as e:
-                log.warning(f"Failed to process product data: {e}")
+                log.warning(f"Failed to process LLM product data: {e}")
                 continue
+
+        # If no structured products from LLM, extract from ES results
+        if not processed["structured_products"]:
+            processed["structured_products"] = self._extract_products_from_es_data()
 
         # Validate sections have all 6 elements
         required_sections = ["+", "ALT", "-", "BUY", "OVERRIDE", "INFO"]
@@ -1236,6 +1240,79 @@ class LLMService:
                 processed["sections"][section] = ""
 
         return processed
+
+    def _extract_products_from_es_data(self) -> List[Dict[str, Any]]:
+        """Extract structured products from ES results stored in context"""
+        if not hasattr(self, '_current_fetched_data'):
+            return []
+        
+        fetched = self._current_fetched_data or {}
+        search_results = fetched.get('search_products', {})
+        
+        if not isinstance(search_results, dict):
+            return []
+        
+        products_list = search_results.get('products', [])
+        if not isinstance(products_list, list):
+            return []
+        
+        structured_products = []
+        
+        for i, product in enumerate(products_list[:6]):  # Limit to 6 for Flow
+            try:
+                # Extract from ES product structure
+                product_data = {
+                    "title": product.get("name") or product.get("title", f"Product {i+1}"),
+                    "subtitle": product.get("brand", ""),
+                    "price": f"₹{product.get('price', 'N/A')}",
+                    "rating": product.get("rating"),
+                    "image_url": product.get("image") or "https://via.placeholder.com/200x200?text=Product",
+                    "brand": product.get("brand", ""),
+                    "key_features": self._extract_features_from_es_product(product),
+                    "availability": "In Stock",
+                    "discount": product.get("discount", "")
+                }
+                
+                structured_products.append(product_data)
+                
+            except Exception as e:
+                log.warning(f"Failed to convert ES product {i}: {e}")
+                continue
+        
+        return structured_products
+
+    def _extract_features_from_es_product(self, product: Dict[str, Any]) -> List[str]:
+        """Extract key features from ES product data"""
+        features = []
+        
+        # Add protein info if available
+        protein = product.get("protein_g")
+        if protein and protein > 0:
+            features.append(f"Protein: {protein}g")
+        
+        # Add health claims
+        health_claims = product.get("health_claims", [])
+        if isinstance(health_claims, list):
+            features.extend(health_claims[:2])  # Max 2 health claims
+        
+        # Add dietary labels
+        dietary_labels = product.get("dietary_labels", [])
+        if isinstance(dietary_labels, list):
+            features.extend(dietary_labels[:2])  # Max 2 dietary labels
+        
+        # Add category if interesting
+        category_paths = product.get("category_paths", [])
+        if isinstance(category_paths, list) and category_paths:
+            last_cat = category_paths[-1] if category_paths else ""
+            if last_cat and last_cat not in ["f_and_b", "food"]:
+                features.append(last_cat.title())
+        
+        # Ensure we have at least one feature
+        if not features:
+            features.append("Quality Product")
+        
+        return features[:5]  # Max 5 features for Flow
+
 
     def _create_product_data(self, product_dict: Dict[str, Any]) -> Optional[ProductData]:
         """Create ProductData object from dictionary"""

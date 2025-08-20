@@ -372,100 +372,265 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
 # Product recommendations async (for real results)
 # ─────────────────────────────────────────────────────────────
 async def handle_product_recommendations_flow(payload: Dict[str, Any], version: str = "7.2") -> Dict[str, Any]:
-    """Async version for real product recommendations from BackgroundProcessor"""
-    action = payload.get("action", "")
-    screen = payload.get("screen", "")
+    """Handle product recommendations with real Redis data - NO POLLING"""
+    action = payload.get("action", "").upper()
     data = payload.get("data", {}) or {}
     
-    log.info(f"Product recommendations async - Action: {action}, Screen: {screen}")
+    # Extract processing_id from flow_token (primary) or data (fallback)
+    processing_id = payload.get("flow_token") or data.get("processing_id")
     
-    processing_id = data.get("processing_id") or payload.get("processing_id")
+    log.info(f"Product recommendations - Action: {action}, processing_id: {processing_id}")
+    
     if not processing_id:
-        log.warning("No processing_id for async flow, falling back to sync handler")
-        return handle_product_recommendation_flow(payload, version)
-    
-    background_processor = current_app.extensions.get("background_processor")
-    if not background_processor:
-        log.warning("No background processor available, using sync handler")
-        return handle_product_recommendation_flow(payload, version)
-    
-    # For INIT action, try to get real products
-    if action.upper() == "INIT":
-        try:
-            products = await background_processor.get_products_for_flow(processing_id)
-            if products:
-                log.info(f"Got {len(products)} real products from background processor")
-            else:
-                products = get_dummy_products()
-                log.info("Using dummy products as fallback")
-        except Exception as e:
-            log.error(f"Failed to get products: {e}")
-            products = get_dummy_products()
-        
-        product_options = [{"id": p["id"], "title": p.get("title", p.get("name", "Product"))} for p in products]
+        # No processing_id = return empty state
         return {
             "version": version,
             "screen": "PRODUCT_LIST",
             "data": {
-                "products": products,
-                "product_options": product_options,
-                "header_text": "Your Personalized Recommendations",
-                "footer_text": f"Found {len(products)} products for you",
-                "processing_id": processing_id,
-            },
+                "products": [],
+                "product_options": [],
+                "header_text": "No recommendations available",
+                "footer_text": "Please try again",
+                "processing_id": None
+            }
         }
     
-    # For NAVIGATE action, handle it the same way as sync
-    if action.upper() == "NAVIGATE":
-        # Get real products if available
-        try:
-            products = await background_processor.get_products_for_flow(processing_id)
-            if not products:
-                products = get_dummy_products()
-        except Exception:
-            products = get_dummy_products()
-        
-        # Use sync navigation logic with real products
-        temp_payload = dict(payload)
-        temp_data = temp_payload.get("data", {})
-        temp_data["_products_cache"] = products  # Pass products through
-        temp_payload["data"] = temp_data
-        
-        result = handle_product_recommendation_flow(temp_payload, version)
-        
-        # If navigating to PRODUCT_DETAILS, use real product data
-        if result.get("screen") == "PRODUCT_DETAILS":
-            product_id = result.get("data", {}).get("product_id")
-            if product_id:
-                product = get_product_by_id(product_id, products)
-                if product:
-                    # Rebuild details with real product data
-                    features = product.get("features", [])
-                    features_text = "\n".join(f"• {ft}" for ft in features) if features else "• Standard features"
-                    
-                    discount = product.get("discount", "")
-                    discount_text = f"\nSpecial Offer: {discount}" if discount else ""
-                    
-                    details_text = (
-                        f"{product.get('title', product.get('name', 'Product'))}\n"
-                        f"{product.get('subtitle', '')}\n"
-                        f"\n"
-                        f"Price: {product.get('price', 'Contact for price')}\n"
-                        f"Brand: {product.get('brand', 'Premium Brand')}\n"
-                        f"Rating: {product.get('rating', 'N/A')}/5.0\n"
-                        f"Availability: {product.get('availability', 'Check availability')}\n"
-                        f"\n"
-                        f"Key Features:\n{features_text}"
-                        f"{discount_text}"
-                    ).strip()
-                    
-                    result["data"]["product_details"] = details_text
-        
-        return result
+    background_processor = current_app.extensions.get("background_processor")
+    if not background_processor:
+        return {
+            "version": version,
+            "screen": "PRODUCT_LIST", 
+            "data": {
+                "products": [],
+                "product_options": [],
+                "header_text": "Service unavailable",
+                "footer_text": "Please try again later",
+                "processing_id": None
+            }
+        }
     
-    # For other actions, delegate to sync handler
-    return handle_product_recommendation_flow(payload, version)
-
+    if action == "INIT":
+        try:
+            # Get full Redis result
+            redis_result = await background_processor.get_processing_result(processing_id)
+            
+            if not redis_result:
+                return {
+                    "version": version,
+                    "screen": "PRODUCT_LIST",
+                    "data": {
+                        "products": [],
+                        "product_options": [],
+                        "header_text": "Results not found",
+                        "footer_text": "Please try a new search",
+                        "processing_id": None
+                    }
+                }
+            
+            flow_data = redis_result.get("flow_data", {})
+            raw_products = flow_data.get("products", [])
+            
+            # Transform Redis products to Meta format
+            products = []
+            for product in raw_products:
+                # Coerce price to string with ₹
+                price = product.get("price", "N/A")
+                if isinstance(price, (int, float)):
+                    price = f"₹{price}"
+                elif not isinstance(price, str):
+                    price = "Price on request"
+                
+                # Map image field
+                image = product.get("image") or product.get("image_url") or "https://via.placeholder.com/150x150?text=Product"
+                
+                # Cap features to 5
+                features = product.get("features", [])
+                if isinstance(features, list):
+                    features = features[:5]
+                else:
+                    features = []
+                
+                transformed_product = {
+                    "id": product.get("id", f"prod_{len(products)}"),
+                    "title": product.get("title", "Product"),
+                    "subtitle": product.get("subtitle", ""),
+                    "price": price,
+                    "brand": product.get("brand", ""),
+                    "rating": product.get("rating"),
+                    "availability": product.get("availability", "In Stock"),
+                    "discount": product.get("discount", ""),
+                    "image": image,
+                    "features": features
+                }
+                products.append(transformed_product)
+            
+            # Build product_options
+            product_options = [{"id": p["id"], "title": p["title"]} for p in products]
+            
+            # Get header/footer from Redis
+            header_text = flow_data.get("header_text", "Your Product Recommendations")
+            footer_text = flow_data.get("footer_text", f"Found {len(products)} options")
+            
+            return {
+                "version": version,
+                "screen": "PRODUCT_LIST",
+                "data": {
+                    "products": products,
+                    "product_options": product_options,
+                    "header_text": header_text,
+                    "footer_text": footer_text,
+                    "processing_id": None  # No polling
+                }
+            }
+            
+        except Exception as e:
+            log.error(f"Failed to get Redis data: {e}")
+            return {
+                "version": version,
+                "screen": "PRODUCT_LIST",
+                "data": {
+                    "products": [],
+                    "product_options": [],
+                    "header_text": "Error loading recommendations",
+                    "footer_text": "Please try again",
+                    "processing_id": None
+                }
+            }
+    
+    # Handle DATA_EXCHANGE (product selection)
+    if action == "DATA_EXCHANGE":
+        try:
+            # Get product_id from payload
+            raw_pid = data.get("product_id") or data.get("selected_product_id")
+            product_id = _coerce_product_id(raw_pid)
+            
+            if not product_id:
+                return {
+                    "version": version,
+                    "screen": "PRODUCT_LIST",
+                    "data": {
+                        "products": [],
+                        "product_options": [],
+                        "header_text": "Invalid selection",
+                        "footer_text": "Please select a product",
+                        "processing_id": None
+                    }
+                }
+            
+            # Get Redis data and find the product
+            redis_result = await background_processor.get_processing_result(processing_id)
+            if not redis_result:
+                return {
+                    "version": version,
+                    "screen": "PRODUCT_DETAILS",
+                    "data": {
+                        "product_id": product_id,
+                        "product_details": "Product details not available. Please go back and try again.",
+                        "processing_id": None
+                    }
+                }
+            
+            flow_data = redis_result.get("flow_data", {})
+            products = flow_data.get("products", [])
+            
+            # Find the selected product
+            selected_product = None
+            for product in products:
+                if product.get("id") == product_id:
+                    selected_product = product
+                    break
+            
+            if not selected_product:
+                return {
+                    "version": version,
+                    "screen": "PRODUCT_DETAILS",
+                    "data": {
+                        "product_id": product_id,
+                        "product_details": "Product not found. Please go back and try again.",
+                        "processing_id": None
+                    }
+                }
+            
+            # Build product details text
+            title = selected_product.get("title", "Product")
+            subtitle = selected_product.get("subtitle", "")
+            
+            # Handle price
+            price = selected_product.get("price", "N/A")
+            if isinstance(price, (int, float)):
+                price = f"₹{price}"
+            
+            brand = selected_product.get("brand", "N/A")
+            rating = selected_product.get("rating", "N/A")
+            availability = selected_product.get("availability", "Check availability")
+            
+            # Format features
+            features = selected_product.get("features", [])
+            if isinstance(features, list) and features:
+                features_text = "\n".join(f"• {f}" for f in features)
+            else:
+                features_text = "• Standard features"
+            
+            # Handle discount
+            discount = selected_product.get("discount", "")
+            discount_text = f"\nSpecial Offer: {discount}" if discount else ""
+            
+            details_text = (
+                f"{title}\n{subtitle}\n\n"
+                f"Price: {price}\n"
+                f"Brand: {brand}\n"
+                f"Rating: {rating}/5.0\n"
+                f"Status: {availability}\n\n"
+                f"Features:\n{features_text}"
+                f"{discount_text}"
+            ).strip()
+            
+            return {
+                "version": version,
+                "screen": "PRODUCT_DETAILS",
+                "data": {
+                    "product_id": product_id,
+                    "product_details": details_text,
+                    "processing_id": None
+                }
+            }
+            
+        except Exception as e:
+            log.error(f"Failed to process DATA_EXCHANGE: {e}")
+            return {
+                "version": version,
+                "screen": "PRODUCT_DETAILS",
+                "data": {
+                    "product_id": raw_pid or "unknown",
+                    "product_details": "Error loading product details. Please try again.",
+                    "processing_id": None
+                }
+            }
+    
+    # Handle NAVIGATE (legacy support)
+    if action == "NAVIGATE":
+        # Convert NAVIGATE to DATA_EXCHANGE and recurse
+        nav_payload = payload.get("payload") or data or {}
+        new_payload = {
+            "action": "DATA_EXCHANGE",
+            "data": nav_payload,
+            "flow_token": payload.get("flow_token"),
+            "version": version
+        }
+        return await handle_product_recommendations_flow(new_payload, version)
+    
+    # Fallback for unknown actions
+    return {
+        "version": version,
+        "screen": "PRODUCT_LIST",
+        "data": {
+            "products": [],
+            "product_options": [],
+            "header_text": "Unknown action",
+            "footer_text": "Please try again",
+            "processing_id": None
+        }
+    }
 # ─────────────────────────────────────────────────────────────
 # Unified Flow request handler
 # ─────────────────────────────────────────────────────────────

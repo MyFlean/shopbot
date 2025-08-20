@@ -118,6 +118,8 @@ class BackgroundProcessor:
     # ────────────────────────────────────────────────────────
     # Storage (schema kept for polling endpoints)
     # ────────────────────────────────────────────────────────
+
+
     async def _store_processing_result(
         self,
         processing_id: str,
@@ -165,8 +167,9 @@ class BackgroundProcessor:
         except Exception as e:  # noqa: BLE001
             log.warning("Result normalization error: %s", e)
 
-        if not products_data and text_content:
-            products_data = self._create_dummy_products_from_text(text_content)
+        # REMOVED: Dummy product fallback - let real products flow through
+        # if not products_data and text_content:
+        #     products_data = self._create_dummy_products_from_text(text_content)
 
         result_data = {
             "processing_id": processing_id,
@@ -205,6 +208,7 @@ class BackgroundProcessor:
                 await self._send_static_payloads(wa_id)
             except Exception as e:  # noqa: BLE001
                 log.warning("Failed sending static FE test payloads: %s", e)
+
 
     # ────────────────────────────────────────────────────────
     # Minimal FE notify

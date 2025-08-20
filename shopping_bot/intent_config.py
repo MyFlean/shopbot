@@ -7,6 +7,8 @@ This module serves as the single source of truth for:
 - Question generation hints and fallbacks
 - Category-specific hints
 - Function TTLs and other configuration
+
+Updated for simplified Elasticsearch-based architecture.
 """
 
 from datetime import timedelta
@@ -22,14 +24,14 @@ INTENT_MAPPING: Dict[str, Dict[str, Any]] = {
     # A1: Awareness & Discovery
     "Product_Discovery": {
         "query_intent": QueryIntent.PRODUCT_SEARCH,
-        "suggested_slots": [UserSlot.USER_PREFERENCES, UserSlot.USER_BUDGET],
-        "suggested_functions": [BackendFunction.FETCH_PRODUCT_INVENTORY],
+        "suggested_slots": [UserSlot.USER_PREFERENCES, UserSlot.USER_BUDGET, UserSlot.PRODUCT_CATEGORY],
+        "suggested_functions": [BackendFunction.SEARCH_PRODUCTS],
     },
     "Recommendation": {
         "query_intent": QueryIntent.RECOMMENDATION,
-        "suggested_slots": [UserSlot.USER_PREFERENCES, UserSlot.USER_BUDGET, UserSlot.USE_CASE],
+        "suggested_slots": [UserSlot.USER_PREFERENCES, UserSlot.USER_BUDGET, UserSlot.DIETARY_REQUIREMENTS],
         "suggested_functions": [
-            BackendFunction.FETCH_PRODUCT_INVENTORY,
+            BackendFunction.SEARCH_PRODUCTS,
             BackendFunction.FETCH_PURCHASE_HISTORY,
             BackendFunction.FETCH_USER_PROFILE,
         ],
@@ -38,53 +40,42 @@ INTENT_MAPPING: Dict[str, Dict[str, Any]] = {
     # B1: Consideration - Catalogue
     "Specific_Product_Search": {
         "query_intent": QueryIntent.PRODUCT_SEARCH,
-        "suggested_slots": [UserSlot.PRODUCT_NAME],
-        "suggested_functions": [
-            BackendFunction.FETCH_PRODUCT_INVENTORY,
-            BackendFunction.FETCH_PRODUCT_DETAILS,
-        ],
+        "suggested_slots": [UserSlot.PRODUCT_CATEGORY],
+        "suggested_functions": [BackendFunction.SEARCH_PRODUCTS],
     },
     "Product_Comparison": {
         "query_intent": QueryIntent.PRODUCT_COMPARISON,
-        "suggested_slots": [UserSlot.PRODUCTS_TO_COMPARE, UserSlot.USER_PREFERENCES],
-        "suggested_functions": [
-            BackendFunction.FETCH_PRODUCT_DETAILS,
-            BackendFunction.FETCH_PRODUCT_REVIEWS,
-        ],
+        "suggested_slots": [UserSlot.USER_PREFERENCES, UserSlot.USER_BUDGET],
+        "suggested_functions": [BackendFunction.SEARCH_PRODUCTS],
     },
     "Price_Inquiry": {
         "query_intent": QueryIntent.PRICE_INQUIRY,
-        "suggested_slots": [UserSlot.PRODUCT_NAME],
-        "suggested_functions": [BackendFunction.FETCH_PRODUCT_DETAILS],
+        "suggested_slots": [],
+        "suggested_functions": [BackendFunction.SEARCH_PRODUCTS],
     },
     
     # B2: Consideration - Logistics
     "Availability_Delivery_Inquiry": {
         "query_intent": QueryIntent.PRICE_INQUIRY,  # Reusing existing enum
-        "suggested_slots": [UserSlot.PRODUCT_NAME, UserSlot.DELIVERY_ADDRESS],
-        "suggested_functions": [
-            BackendFunction.FETCH_PRODUCT_INVENTORY,
-            BackendFunction.FETCH_PRODUCT_DETAILS,
-        ],
+        "suggested_slots": [UserSlot.DELIVERY_ADDRESS],
+        "suggested_functions": [BackendFunction.SEARCH_PRODUCTS],
     },
     
     # C1: Transaction
     "Purchase_Checkout": {
         "query_intent": QueryIntent.PURCHASE,
         "suggested_slots": [
-            UserSlot.PRODUCT_NAME,
             UserSlot.QUANTITY,
             UserSlot.DELIVERY_ADDRESS,
         ],
         "suggested_functions": [
-            BackendFunction.FETCH_PRODUCT_INVENTORY,
-            BackendFunction.FETCH_PRODUCT_DETAILS,
+            BackendFunction.SEARCH_PRODUCTS,
             BackendFunction.FETCH_USER_PROFILE,
         ],
     },
     "Order_Modification": {
         "query_intent": QueryIntent.PURCHASE,
-        "suggested_slots": [UserSlot.ORDER_ID, UserSlot.MODIFICATION_TYPE],
+        "suggested_slots": [UserSlot.ORDER_ID],
         "suggested_functions": [BackendFunction.FETCH_PURCHASE_HISTORY],
     },
     
@@ -96,11 +87,8 @@ INTENT_MAPPING: Dict[str, Dict[str, Any]] = {
     },
     "Returns_Refunds": {
         "query_intent": QueryIntent.ORDER_STATUS,
-        "suggested_slots": [UserSlot.ORDER_ID, UserSlot.RETURN_REASON],
-        "suggested_functions": [
-            BackendFunction.FETCH_PURCHASE_HISTORY,
-            BackendFunction.FETCH_PRODUCT_DETAILS,
-        ],
+        "suggested_slots": [UserSlot.ORDER_ID],
+        "suggested_functions": [BackendFunction.FETCH_PURCHASE_HISTORY],
     },
     
     # D2: Post-Purchase - Engagement
@@ -111,10 +99,10 @@ INTENT_MAPPING: Dict[str, Dict[str, Any]] = {
     },
     "Subscription_Reorder": {
         "query_intent": QueryIntent.PURCHASE,
-        "suggested_slots": [UserSlot.PRODUCT_NAME, UserSlot.QUANTITY],
+        "suggested_slots": [UserSlot.QUANTITY],
         "suggested_functions": [
             BackendFunction.FETCH_PURCHASE_HISTORY,
-            BackendFunction.FETCH_PRODUCT_DETAILS,
+            BackendFunction.SEARCH_PRODUCTS,
         ],
     },
     
@@ -144,13 +132,11 @@ SLOT_TO_SESSION_KEY: Dict[UserSlot, str] = {
    UserSlot.USER_PREFERENCES: "preferences",
    UserSlot.USER_BUDGET: "budget",
    UserSlot.DELIVERY_ADDRESS: "delivery_address",
-   UserSlot.PRODUCT_NAME: "product_name",
+   UserSlot.PRODUCT_CATEGORY: "product_category",
+   UserSlot.DIETARY_REQUIREMENTS: "dietary_requirements",
    UserSlot.USE_CASE: "use_case",
-   UserSlot.PRODUCTS_TO_COMPARE: "products_to_compare",
    UserSlot.QUANTITY: "quantity",
    UserSlot.ORDER_ID: "order_id",
-   UserSlot.MODIFICATION_TYPE: "modification_type",
-   UserSlot.RETURN_REASON: "return_reason",
 }
 
 
@@ -162,28 +148,55 @@ SLOT_QUESTIONS: Dict[UserSlot, Dict[str, Any]] = {
        "generation_hints": {
            "type": "budget_input",
            "should_include_options": True,
-           "option_count": 4,
+           "option_count": 3,
            "consider_factors": ["product_category", "price_range", "market_segment"],
            "adaptive": True,
        },
        "fallback": {
            "message": "What's your budget range?",
-           "type": "budget_input",
-           "options": ["Under ₹10k", "₹10k-₹30k", "₹30k-₹50k", "Above ₹50k"],
+           "type": "multi_choice",
+           "options": ["Under ₹100", "₹100-500", "Over ₹500"],
        }
    },
    UserSlot.USER_PREFERENCES: {
        "generation_hints": {
            "type": "preferences_input",
            "should_include_options": True,
-           "option_count": 5,
+           "option_count": 3,
            "consider_factors": ["product_type", "use_case", "category_specific_features"],
-           "allow_multiple": True,
+           "allow_multiple": False,
        },
        "fallback": {
            "message": "What features matter most to you?",
-           "type": "preferences_input",
+           "type": "multi_choice",
+           "options": ["Quality", "Brand reputation", "Value for money"],
            "hints": ["Consider size, brand, quality, features, etc."],
+       }
+   },
+   UserSlot.PRODUCT_CATEGORY: {
+       "generation_hints": {
+           "type": "category_input",
+           "should_include_options": True,
+           "option_count": 3,
+           "consider_factors": ["user_query", "context"],
+       },
+       "fallback": {
+           "message": "What type of product are you looking for?",
+           "type": "multi_choice",
+           "options": ["Food & Beverages", "Health & Nutrition", "Personal Care"],
+       }
+   },
+   UserSlot.DIETARY_REQUIREMENTS: {
+       "generation_hints": {
+           "type": "dietary_input",
+           "should_include_options": True,
+           "option_count": 3,
+           "consider_factors": ["health_goals", "restrictions"],
+       },
+       "fallback": {
+           "message": "Do you have any dietary requirements?",
+           "type": "multi_choice",
+           "options": ["Gluten Free", "Vegan", "No restrictions"],
        }
    },
    UserSlot.DELIVERY_ADDRESS: {
@@ -195,20 +208,8 @@ SLOT_QUESTIONS: Dict[UserSlot, Dict[str, Any]] = {
        },
        "fallback": {
            "message": "What's your delivery address?",
-           "type": "address_input",
+           "type": "text_input",
            "placeholder": "Enter your full address with PIN code",
-       }
-   },
-   UserSlot.PRODUCT_NAME: {
-       "generation_hints": {
-           "type": "product_input",
-           "suggest_from_inventory": True,
-           "include_autocomplete": True,
-       },
-       "fallback": {
-           "message": "Which product are you looking for?",
-           "type": "product_input",
-           "placeholder": "Enter product name or model",
        }
    },
    UserSlot.USE_CASE: {
@@ -219,20 +220,8 @@ SLOT_QUESTIONS: Dict[UserSlot, Dict[str, Any]] = {
        },
        "fallback": {
            "message": "What will you be using this for?",
-           "type": "text_input",
-           "hints": ["Personal use", "Gift", "Business", "Other"],
-       }
-   },
-   UserSlot.PRODUCTS_TO_COMPARE: {
-       "generation_hints": {
-           "type": "product_list_input",
-           "max_items": 4,
-           "suggest_popular_comparisons": True,
-       },
-       "fallback": {
-           "message": "Which products would you like to compare?",
-           "type": "product_list_input",
-           "placeholder": "Enter product names separated by commas",
+           "type": "multi_choice",
+           "options": ["Personal use", "Gift", "Daily consumption"],
        }
    },
    UserSlot.QUANTITY: {
@@ -244,9 +233,8 @@ SLOT_QUESTIONS: Dict[UserSlot, Dict[str, Any]] = {
        },
        "fallback": {
            "message": "How many would you like?",
-           "type": "quantity_input",
-           "min": 1,
-           "max": 100,
+           "type": "multi_choice",
+           "options": ["1", "2-5", "Bulk order"],
        }
    },
    UserSlot.ORDER_ID: {
@@ -257,44 +245,8 @@ SLOT_QUESTIONS: Dict[UserSlot, Dict[str, Any]] = {
        },
        "fallback": {
            "message": "What's your order ID?",
-           "type": "order_id_input",
+           "type": "text_input",
            "placeholder": "e.g., ORD-12345-67890",
-       }
-   },
-   UserSlot.MODIFICATION_TYPE: {
-       "generation_hints": {
-           "type": "modification_input",
-           "show_available_modifications": True,
-           "context_aware": True,
-       },
-       "fallback": {
-           "message": "What would you like to modify?",
-           "type": "modification_input",
-           "options": [
-               "Cancel order",
-               "Change delivery address",
-               "Change quantity",
-               "Update payment method",
-           ],
-       }
-   },
-   UserSlot.RETURN_REASON: {
-       "generation_hints": {
-           "type": "return_reason_input",
-           "include_policy_info": True,
-           "allow_other_option": True,
-       },
-       "fallback": {
-           "message": "Why would you like to return this item?",
-           "type": "return_reason_input",
-           "options": [
-               "Item defective or damaged",
-               "Wrong item received",
-               "Not as described",
-               "Changed my mind",
-               "Better price available",
-               "Other",
-           ],
        }
    },
 }
@@ -304,25 +256,20 @@ SLOT_QUESTIONS: Dict[UserSlot, Dict[str, Any]] = {
 # Category-Specific Question Hints
 # ─────────────────────────────────────────────────────────────
 CATEGORY_QUESTION_HINTS = {
-   "electronics": {
-       "budget_ranges": ["Under ₹20k", "₹20k-₹50k", "₹50k-₹1L", "Above ₹1L"],
-       "preference_options": ["Performance", "Battery life", "Camera quality", "Display", "Brand", "Storage"],
-       "common_use_cases": ["Daily use", "Gaming", "Professional work", "Photography", "Entertainment"],
+   "f_and_b": {
+       "budget_ranges": ["Under ₹100", "₹100-500", "₹500-1000", "Over ₹1000"],
+       "preference_options": ["Taste", "Brand", "Organic", "Nutritional value", "Package size", "Shelf life"],
+       "common_use_cases": ["Daily consumption", "Special occasions", "Health goals", "Family pack"],
    },
-   "fmcg": {
-       "budget_ranges": ["Under ₹100", "₹100-₹500", "₹500-₹1000", "Above ₹1000"],
-       "preference_options": ["Brand", "Organic", "Quantity/Size", "Fragrance", "Ingredients", "Eco-friendly"],
-       "common_use_cases": ["Personal use", "Family pack", "Travel size", "Bulk purchase"],
+   "health_nutrition": {
+       "budget_ranges": ["Under ₹500", "₹500-1500", "₹1500-3000", "Over ₹3000"],
+       "preference_options": ["Effectiveness", "Brand reputation", "Natural ingredients", "Doctor recommended", "No side effects"],
+       "common_use_cases": ["General wellness", "Specific health issue", "Fitness goals", "Medical need"],
    },
-   "fashion": {
-       "budget_ranges": ["Under ₹1000", "₹1000-₹3000", "₹3000-₹5000", "Above ₹5000"],
-       "preference_options": ["Size", "Color", "Material", "Brand", "Style", "Fit"],
-       "common_use_cases": ["Casual wear", "Formal/Office", "Party/Special occasion", "Sports/Active"],
-   },
-   "home_appliances": {
-       "budget_ranges": ["Under ₹5k", "₹5k-₹15k", "₹15k-₹30k", "Above ₹30k"],
-       "preference_options": ["Energy efficiency", "Brand", "Capacity", "Features", "Warranty", "Size"],
-       "common_use_cases": ["Small family", "Large family", "Commercial use", "Compact spaces"],
+   "personal_care": {
+       "budget_ranges": ["Under ₹200", "₹200-800", "₹800-2000", "Over ₹2000"],
+       "preference_options": ["Skin type", "Brand", "Natural ingredients", "Fragrance", "Dermatologist tested"],
+       "common_use_cases": ["Daily use", "Special occasions", "Sensitive skin", "Travel size"],
    },
    "general": {
        "budget_ranges": ["Low", "Medium", "High", "Premium"],
@@ -333,15 +280,13 @@ CATEGORY_QUESTION_HINTS = {
 
 
 # ─────────────────────────────────────────────────────────────
-# Function TTL Configuration
+# Function TTL Configuration (Simplified)
 # ─────────────────────────────────────────────────────────────
 FUNCTION_TTL: Dict[BackendFunction, timedelta] = {
-   BackendFunction.FETCH_PRODUCT_INVENTORY: timedelta(minutes=5),
-   BackendFunction.FETCH_PRODUCT_DETAILS: timedelta(minutes=30),
-   BackendFunction.FETCH_PRODUCT_REVIEWS: timedelta(hours=1),
-   BackendFunction.FETCH_SIMILAR_PRODUCTS: timedelta(hours=1),
+   BackendFunction.SEARCH_PRODUCTS: timedelta(minutes=5),
    BackendFunction.FETCH_USER_PROFILE: timedelta(minutes=15),
    BackendFunction.FETCH_PURCHASE_HISTORY: timedelta(minutes=10),
+   BackendFunction.FETCH_ORDER_STATUS: timedelta(minutes=5),
 }
 
 
@@ -359,7 +304,7 @@ def validate_config() -> List[str]:
        elif not isinstance(config["query_intent"], QueryIntent):
            errors.append(f"{intent} has invalid query_intent type")
    
-   # Check all suggested slots have questions (now checking for either hints or fallback)
+   # Check all suggested slots have questions
    for intent, config in INTENT_MAPPING.items():
        for slot in config.get("suggested_slots", []):
            if slot not in SLOT_QUESTIONS:

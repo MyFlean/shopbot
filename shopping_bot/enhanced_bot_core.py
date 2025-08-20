@@ -320,19 +320,52 @@ class EnhancedShoppingBotCore:
         intent_l3 = ctx.session.get("intent_l3", "") or ""
         query_intent = map_leaf_to_query_intent(intent_l3)
 
+        #print(f"DEBUG: About to generate answer for intent_l3='{intent_l3}'")
+        #print(f"DEBUG: original_q='{original_q}'")
+        #print(f"DEBUG: fetched keys={list(fetched.keys())}")
+        #print(f"DEBUG: query_intent={query_intent}")
+
         if intent_l3 == "Recommendation":
+            #print("DEBUG: Taking Recommendation path - calling _generate_enhanced_answer")
             # Generate enhanced (six core sections + structured if available)
             answer_dict = await self._generate_enhanced_answer(original_q, ctx, fetched)
         else:
+            #print("DEBUG: Taking non-Recommendation path - calling generate_simple_reply")
             # Non-Recommendation → SIMPLE REPLY
             answer_dict = await self.llm_service.generate_simple_reply(
                 original_q, ctx, fetched, intent_l3=intent_l3, query_intent=query_intent
             )
 
+        # DEBUG: Check what we got back
+        #print(f"DEBUG: answer_dict = {answer_dict}")
+        #print(f"DEBUG: answer_dict type = {type(answer_dict)}")
+        # if isinstance(answer_dict, dict):
+        #     #print(f"DEBUG: answer_dict keys = {list(answer_dict.keys())}")
+        #     #print(f"DEBUG: 'response_type' in answer_dict = {'response_type' in answer_dict}")
+        #     #print(f"DEBUG: answer_dict.get('response_type') = {answer_dict.get('response_type')}")
+        # else:
+        #     #print("DEBUG: answer_dict is not a dict!")
+        #     # Emergency fallback
+        #     answer_dict = {
+        #         "response_type": "final_answer",
+        #         "message": "I can help you with shopping queries. Please provide more details."
+        #     }
+        #     #print(f"DEBUG: Using fallback answer_dict = {answer_dict}")
+
+        #print("DEBUG: About to call _create_enhanced_response")
+
         # Create enhanced response (Flow only if Recommendation branch)
-        enhanced_response = await self._create_enhanced_response(
-            answer_dict, list(fetched.keys()), original_q, ctx
-        )
+        try:
+            enhanced_response = await self._create_enhanced_response(
+                answer_dict, list(fetched.keys()), original_q, ctx
+            )
+            #print(f"DEBUG: Successfully created enhanced_response")
+            #print(f"DEBUG: enhanced_response.response_type = {enhanced_response.response_type}")
+        except Exception as e:
+            #print(f"DEBUG: Error in _create_enhanced_response: {e}")
+            import traceback
+            #print(f"DEBUG: Traceback: {traceback.format_exc()}")
+            raise
 
         # Clean up
         snapshot_and_trim(ctx, base_query=original_q)
@@ -346,8 +379,8 @@ class EnhancedShoppingBotCore:
             enhanced_response.requires_flow,
         )
 
+        #print(f"DEBUG: Returning enhanced_response successfully")
         return enhanced_response
-
     # ────────────────────────────────────────────────────────
     # Enhanced response creation
     # ────────────────────────────────────────────────────────

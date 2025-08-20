@@ -169,53 +169,6 @@ def _resolve_user_full_name(payload: Dict[str, Any]) -> str:
         return f"user {str(wa_id)[-4:]}"
     return "there"
 
-def get_dummy_products() -> List[Dict[str, Any]]:
-    return [
-        {
-            "id": "prod_90459",
-            "title": "ASUS TUF Gaming A15",
-            "subtitle": "AMD Ryzen 5 7535HS, RTX 3050",
-            "price": "$699",
-            "brand": "ASUS",
-            "rating": 4.2,
-            "availability": "In Stock",
-            "discount": "Save $100",
-            "image": "https://via.placeholder.com/150x150/4CAF50/FFFFFF?text=ASUS",
-            "features": ["15.6\" 144Hz Display", "16GB RAM", "512GB SSD", "RTX 3050 Graphics"],
-        },
-        {
-            "id": "prod_97199",
-            "title": "Acer Nitro 5",
-            "subtitle": "Intel i5-12500H, RTX 3050 Ti",
-            "price": "$799",
-            "brand": "Acer",
-            "rating": 4.1,
-            "availability": "In Stock",
-            "discount": "",
-            "image": "https://via.placeholder.com/150x150/FF5722/FFFFFF?text=Acer",
-            "features": ["15.6\" 144Hz IPS", "16GB RAM", "512GB NVMe", "RTX 3050 Ti"],
-        },
-        {
-            "id": "prod_84521",
-            "title": "HP Pavilion Gaming",
-            "subtitle": "AMD Ryzen 7 5800H, GTX 1650",
-            "price": "$649",
-            "brand": "HP",
-            "rating": 3.9,
-            "availability": "In Stock",
-            "discount": "Save $50",
-            "image": "https://via.placeholder.com/150x150/9C27B0/FFFFFF?text=HP",
-            "features": ["15.6\" FHD Display", "8GB RAM", "256GB SSD", "GTX 1650 Graphics"],
-        },
-    ]
-
-def get_product_by_id(product_id: str, products_list: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
-    products_list = products_list or get_dummy_products()
-    for product in products_list:
-        if product["id"] == product_id:
-            return product
-    return None
-
 # ─────────────────────────────────────────────────────────────
 # Onboarding flow (sync)
 # ─────────────────────────────────────────────────────────────
@@ -225,7 +178,7 @@ def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") -> Dic
     data = payload.get("data", {}) or {}
 
     user_full_name = _resolve_user_full_name(payload)
-    log.info(f"Onboarding flow - Action: {action}, Screen: {screen}, Resolved name: {user_full_name!r}")
+    log.info(f"📝 ONBOARDING | action={action} screen={screen} user={user_full_name}")
 
     if action.upper() == "INIT":
         initial = dict(ONBOARDING_DATA)
@@ -233,7 +186,7 @@ def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") -> Dic
         return {"version": version, "screen": "ONBOARDING", "data": initial}
 
     if action.upper() == "DATA_EXCHANGE":
-        log.info(f"Onboarding data exchange: {data}")
+        log.info(f"📝 ONBOARDING_DATA | {data}")
 
         society_value = data.get("society") or data.get("selected_society")
 
@@ -262,7 +215,7 @@ def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") -> Dic
             merged["user_full_name"] = user_full_name
             return {"version": version, "screen": "ONBOARDING", "data": merged}
 
-        log.info(f"Onboarding completed successfully with data: {data}")
+        log.info(f"✅ ONBOARDING_COMPLETE | {data}")
         return {"version": version, "screen": "COMPLETE", "data": {"user_full_name": user_full_name}}
 
     default_data = dict(ONBOARDING_DATA)
@@ -270,124 +223,24 @@ def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") -> Dic
     return {"version": version, "screen": "ONBOARDING", "data": default_data}
 
 # ─────────────────────────────────────────────────────────────
-# Product recommendation flow (FIXED for navigation)
+# Product recommendations async (ONLY implementation - no sync fallback)
 # ─────────────────────────────────────────────────────────────
-def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "3.0") -> Dict[str, Any]:
-    action = (payload.get("action") or "").upper()
-    data = payload.get("data") or {}
-    processing_id = data.get("processing_id") or payload.get("processing_id")
-
-    log.info(f"Processing_ID/Flow Token recieved from Meta::::: {payload}")
-
-
-
-    if action == "INIT":
-        products = get_dummy_products()
-        product_options = [{"id": p["id"], "title": p["title"]} for p in products]
-        return {
-            "version": version,
-            "screen": "PRODUCT_LIST",
-            "data": {
-                "products": products,
-                "product_options": product_options,
-                "header_text": "Product Recommendations",
-                "footer_text": "Select a product to view details",
-                "processing_id": processing_id,
-            },
-        }
-
-    # IMPORTANT: handle DETAILS via DATA_EXCHANGE
-    if action == "DATA_EXCHANGE":
-        raw_pid = (data.get("product_id") or data.get("selected_product_id"))
-        product_id = _coerce_product_id(raw_pid)
-        if product_id:
-            products = get_dummy_products()
-            prod = get_product_by_id(product_id, products)
-            if not prod:
-                return {
-                    "version": version,
-                    "screen": "PRODUCT_DETAILS",
-                    "data": {
-                        "product_id": product_id,
-                        "product_details": "Product not found. Please go back and try again.",
-                        "processing_id": processing_id,
-                    },
-                }
-
-            features = prod.get("features", []) or []
-            features_text = "\n".join(f"• {f}" for f in features) if features else "• Standard features"
-            discount = prod.get("discount") or ""
-            discount_text = f"\n{discount}" if discount else ""
-            details_text = (
-                f"{prod.get('title','Product')}\n{prod.get('subtitle','')}\n\n"
-                f"Price: {prod.get('price','N/A')}\nBrand: {prod.get('brand','N/A')}\n"
-                f"Rating: {prod.get('rating','N/A')}/5.0\nStatus: {prod.get('availability','N/A')}\n\n"
-                f"Features:\n{features_text}{discount_text}"
-            ).strip() or "Details coming soon."
-
-            return {
-                "version": version,
-                "screen": "PRODUCT_DETAILS",
-                "data": {
-                    "product_id": product_id,
-                    "product_details": details_text,
-                    "processing_id": processing_id,
-                },
-            }
-
-        # no product id → re-render list
-        products = get_dummy_products()
-        product_options = [{"id": p["id"], "title": p["title"]} for p in products]
-        return {
-            "version": version,
-            "screen": "PRODUCT_LIST",
-            "data": {
-                "products": products,
-                "product_options": product_options,
-                "header_text": "Product Recommendations",
-                "footer_text": "Select a product to view details",
-                "processing_id": processing_id,
-            },
-        }
-
-    # (Optional) keep supporting NAVIGATE for devices that do call the endpoint:
-    if action == "NAVIGATE" and (payload.get("screen") == "PRODUCT_DETAILS" or (payload.get("next") or {}).get("name") == "PRODUCT_DETAILS"):
-        nav = payload.get("payload") or data or {}
-        payload["action"] = "DATA_EXCHANGE"
-        payload["data"] = nav
-        return handle_product_recommendation_flow(payload, version)
-
-    # fallback
-    products = get_dummy_products()
-    product_options = [{"id": p["id"], "title": p["title"]} for p in products]
-    return {
-        "version": version,
-        "screen": "PRODUCT_LIST",
-        "data": {
-            "products": products,
-            "product_options": product_options,
-            "header_text": "Product Recommendations",
-            "footer_text": "Select a product to view details",
-            "processing_id": processing_id,
-        },
-    }
-
-# ─────────────────────────────────────────────────────────────
-# Product recommendations async (for real results)
-# ─────────────────────────────────────────────────────────────
-async def handle_product_recommendations_flow(payload: Dict[str, Any], version: str = "7.2") -> Dict[str, Any]:
-    """Handle product recommendations with real Redis data - NO POLLING"""
+async def handle_product_recommendations_flow(payload: Dict[str, Any], version: str = "3.0") -> Dict[str, Any]:
+    """
+    ASYNC ONLY product recommendations handler with Redis data.
+    Removed all sync/dummy fallbacks.
+    """
     action = payload.get("action", "").upper()
     data = payload.get("data", {}) or {}
     
     # Extract processing_id from flow_token (primary) or data (fallback)
     processing_id = payload.get("flow_token") or data.get("processing_id")
     
-    log.info(f"Product recommendations - Action: {action}, processing_id: {processing_id}")
-    log.info(f"Product recommendations Async - Action: {action}, full data: {data}")
+    log.info(f"🚀 FLOW_ASYNC | action={action} processing_id={processing_id}")
+    log.info(f"📦 META_PAYLOAD_FULL | {json.dumps(payload, indent=2)}")
     
     if not processing_id:
-        # No processing_id = return empty state
+        log.warning("❌ NO_PROCESSING_ID | returning empty state")
         return {
             "version": version,
             "screen": "PRODUCT_LIST",
@@ -402,6 +255,7 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
     
     background_processor = current_app.extensions.get("background_processor")
     if not background_processor:
+        log.error("❌ NO_BACKGROUND_PROCESSOR | service unavailable")
         return {
             "version": version,
             "screen": "PRODUCT_LIST", 
@@ -416,10 +270,13 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
     
     if action == "INIT":
         try:
+            log.info(f"🔍 REDIS_LOOKUP | processing_id={processing_id}")
+            
             # Get full Redis result
             redis_result = await background_processor.get_processing_result(processing_id)
             
             if not redis_result:
+                log.warning(f"❌ REDIS_NOT_FOUND | processing_id={processing_id}")
                 return {
                     "version": version,
                     "screen": "PRODUCT_LIST",
@@ -432,12 +289,18 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
                     }
                 }
             
+            log.info(f"✅ REDIS_FOUND | keys={list(redis_result.keys())}")
+            
             flow_data = redis_result.get("flow_data", {})
             raw_products = flow_data.get("products", [])
             
+            log.info(f"📊 RAW_PRODUCTS | count={len(raw_products)}")
+            if raw_products:
+                log.info(f"📊 FIRST_PRODUCT | {json.dumps(raw_products[0], indent=2)}")
+            
             # Transform Redis products to Meta format
             products = []
-            for product in raw_products:
+            for i, product in enumerate(raw_products):
                 # Coerce price to string with ₹
                 price = product.get("price", "N/A")
                 if isinstance(price, (int, float)):
@@ -456,7 +319,7 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
                     features = []
                 
                 transformed_product = {
-                    "id": product.get("id", f"prod_{len(products)}"),
+                    "id": product.get("id", f"prod_{i}"),
                     "title": product.get("title", "Product"),
                     "subtitle": product.get("subtitle", ""),
                     "price": price,
@@ -468,6 +331,8 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
                     "features": features
                 }
                 products.append(transformed_product)
+                
+                log.info(f"🔄 TRANSFORM_{i} | {product.get('title')} → {price}")
             
             # Build product_options
             product_options = [{"id": p["id"], "title": p["title"]} for p in products]
@@ -476,7 +341,7 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
             header_text = flow_data.get("header_text", "Your Product Recommendations")
             footer_text = flow_data.get("footer_text", f"Found {len(products)} options")
             
-            return {
+            response_payload = {
                 "version": version,
                 "screen": "PRODUCT_LIST",
                 "data": {
@@ -484,12 +349,17 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
                     "product_options": product_options,
                     "header_text": header_text,
                     "footer_text": footer_text,
-                    "processing_id": None  # No polling
+                    "processing_id": None
                 }
             }
             
+            log.info(f"📤 META_RESPONSE | screen=PRODUCT_LIST products_count={len(products)}")
+            log.info(f"📤 META_RESPONSE_FULL | {json.dumps(response_payload, indent=2)}")
+            
+            return response_payload
+            
         except Exception as e:
-            log.error(f"Failed to get Redis data: {e}")
+            log.error(f"❌ INIT_ERROR | {e}", exc_info=True)
             return {
                 "version": version,
                 "screen": "PRODUCT_LIST",
@@ -509,7 +379,10 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
             raw_pid = data.get("product_id") or data.get("selected_product_id")
             product_id = _coerce_product_id(raw_pid)
             
+            log.info(f"🎯 PRODUCT_SELECT | raw_pid={raw_pid} product_id={product_id}")
+            
             if not product_id:
+                log.warning("❌ INVALID_PRODUCT_ID | returning error")
                 return {
                     "version": version,
                     "screen": "PRODUCT_LIST",
@@ -525,6 +398,7 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
             # Get Redis data and find the product
             redis_result = await background_processor.get_processing_result(processing_id)
             if not redis_result:
+                log.warning(f"❌ REDIS_NOT_FOUND_DETAILS | processing_id={processing_id}")
                 return {
                     "version": version,
                     "screen": "PRODUCT_DETAILS",
@@ -546,6 +420,7 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
                     break
             
             if not selected_product:
+                log.warning(f"❌ PRODUCT_NOT_FOUND | product_id={product_id}")
                 return {
                     "version": version,
                     "screen": "PRODUCT_DETAILS",
@@ -555,6 +430,8 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
                         "processing_id": None
                     }
                 }
+            
+            log.info(f"✅ PRODUCT_FOUND | {selected_product.get('title')}")
             
             # Build product details text
             title = selected_product.get("title", "Product")
@@ -590,7 +467,7 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
                 f"{discount_text}"
             ).strip()
             
-            return {
+            response_payload = {
                 "version": version,
                 "screen": "PRODUCT_DETAILS",
                 "data": {
@@ -600,8 +477,13 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
                 }
             }
             
+            log.info(f"📤 DETAILS_RESPONSE | {title} → {len(details_text)} chars")
+            log.info(f"📤 DETAILS_RESPONSE_FULL | {json.dumps(response_payload, indent=2)}")
+            
+            return response_payload
+            
         except Exception as e:
-            log.error(f"Failed to process DATA_EXCHANGE: {e}")
+            log.error(f"❌ DATA_EXCHANGE_ERROR | {e}", exc_info=True)
             return {
                 "version": version,
                 "screen": "PRODUCT_DETAILS",
@@ -614,6 +496,7 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
     
     # Handle NAVIGATE (legacy support)
     if action == "NAVIGATE":
+        log.info(f"🔄 NAVIGATE_CONVERT | converting to DATA_EXCHANGE")
         # Convert NAVIGATE to DATA_EXCHANGE and recurse
         nav_payload = payload.get("payload") or data or {}
         new_payload = {
@@ -625,6 +508,7 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
         return await handle_product_recommendations_flow(new_payload, version)
     
     # Fallback for unknown actions
+    log.warning(f"❌ UNKNOWN_ACTION | action={action}")
     return {
         "version": version,
         "screen": "PRODUCT_LIST",
@@ -636,6 +520,7 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
             "processing_id": None
         }
     }
+
 # ─────────────────────────────────────────────────────────────
 # Unified Flow request handler
 # ─────────────────────────────────────────────────────────────
@@ -655,15 +540,15 @@ async def _handle_flow_request(flow_type: str):
     try:
         raw = request.get_json(silent=True)
         if not raw or raw == {}:
-            log.info(f"Health check received for {flow_type}")
+            log.info(f"💚 HEALTH_CHECK | {flow_type}")
             return "", 200
 
-        log.info(f"Received {flow_type} request with keys: {list(raw.keys())}")
+        log.info(f"📨 RAW_REQUEST | {flow_type} keys={list(raw.keys())}")
 
         is_encrypted = "encrypted_flow_data" in raw
         aes_key = None
         if is_encrypted and _private_key:
-            log.info("Processing encrypted request")
+            log.info("🔐 DECRYPT_START | processing encrypted request")
             try:
                 encrypted_aes_key = raw.get("encrypted_aes_key", "")
                 aes_key = _rsa_decrypt(encrypted_aes_key)
@@ -671,42 +556,45 @@ async def _handle_flow_request(flow_type: str):
                 initial_vector = raw.get("initial_vector", "")
                 decrypted_json = _aes_gcm_decrypt(encrypted_flow_data, aes_key, initial_vector)
                 payload = json.loads(decrypted_json)
-                log.info(f"Decrypted payload action: {payload.get('action')}, screen: {payload.get('screen')}")
+                log.info(f"🔓 DECRYPT_SUCCESS | action={payload.get('action')} screen={payload.get('screen')}")
             except Exception as exc:
-                log.exception(f"Decryption failed: {exc}")
+                log.error(f"❌ DECRYPT_FAILED | {exc}", exc_info=True)
                 return jsonify({"error_type": "DECRYPTION_FAILED"}), 421
         else:
             if is_encrypted and not _private_key:
-                log.warning("Encrypted flow data received but no private key is configured.")
+                log.warning("🔑 NO_PRIVATE_KEY | encrypted data received but no key configured")
             payload = raw
 
         action = payload.get("action", "")
         version = str(payload.get("version") or "3.0") 
-        log.info(f"Processing {flow_type} - action: {action}, version: {version}")
+        log.info(f"🎬 FLOW_START | {flow_type} action={action} version={version}")
 
         if action.lower() == "ping":
             resp_obj = {"version": version, "data": {"status": "active"}}
         else:
             if flow_type == "onboarding":
                 resp_obj = handle_onboarding_flow(payload, version)
-            elif flow_type == "products":
-                resp_obj = handle_product_recommendations_flow(payload, version)
-            elif flow_type == "product_recommendations":
+            elif flow_type in ["products", "product_recommendations"]:
+                # Both routes use async handler - NO SYNC FALLBACK
                 resp_obj = await handle_product_recommendations_flow(payload, version)
             else:
+                log.error(f"❌ UNKNOWN_FLOW_TYPE | {flow_type}")
                 return jsonify({"error_type": "UNKNOWN_FLOW_TYPE"}), 422
 
-        log.info(f"Returning response for {flow_type}: screen={resp_obj.get('screen')}")
+        screen = resp_obj.get('screen', 'unknown')
+        log.info(f"✅ FLOW_COMPLETE | {flow_type} → screen={screen}")
 
         if is_encrypted and aes_key:
             response_json = json.dumps(resp_obj)
             encrypted_response = _aes_gcm_encrypt(response_json, aes_key, raw["initial_vector"])
+            log.info(f"🔐 ENCRYPT_RESPONSE | size={len(encrypted_response)} bytes")
             return encrypted_response, 200, {"Content-Type": "text/plain"}
         else:
+            log.info(f"📤 PLAIN_RESPONSE | size={len(json.dumps(resp_obj))} bytes")
             return jsonify(resp_obj), 200
 
     except Exception as e:
-        log.exception(f"Unexpected error in {flow_type} flow endpoint: {e}")
+        log.error(f"💥 FLOW_HANDLER_ERROR | {flow_type} failed: {e}", exc_info=True)
         return jsonify({"error_type": "INTERNAL_ERROR"}), 500
 
 # ─────────────────────────────────────────────────────────────

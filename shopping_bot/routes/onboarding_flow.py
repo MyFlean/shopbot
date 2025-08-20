@@ -690,7 +690,7 @@ async def _handle_flow_request(flow_type: str):
             if flow_type == "onboarding":
                 resp_obj = handle_onboarding_flow(payload, version)
             elif flow_type == "products":
-                resp_obj = handle_product_recommendation_flow(payload, version)
+                resp_obj = handle_product_recommendations_flow(payload, version)
             elif flow_type == "product_recommendations":
                 resp_obj = await handle_product_recommendations_flow(payload, version)
             else:

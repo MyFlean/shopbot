@@ -277,6 +277,10 @@ def handle_product_recommendation_flow(payload: Dict[str, Any], version: str = "
     data = payload.get("data") or {}
     processing_id = data.get("processing_id") or payload.get("processing_id")
 
+    log.info(f"Processing_ID/Flow Token recieved from Meta::::: {data}")
+
+
+
     if action == "INIT":
         products = get_dummy_products()
         product_options = [{"id": p["id"], "title": p["title"]} for p in products]

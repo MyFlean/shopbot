@@ -105,17 +105,26 @@ def _extract_ids(payload: Dict[str, Any]) -> Tuple[Optional[str], Optional[str],
         wa_id = wa_id or data.get("wa_id")
     return user_id, session_id, wa_id
 
-def _coerce_product_id(val) -> str:
-    """Normalize product id from string/object/None → string id."""
-    try:
-        if isinstance(val, dict):
-            # Handle dropdown selection objects
-            return str(val.get("id") or val.get("value") or val.get("product_id") or "").strip()
-        if val is None:
-            return ""
-        return str(val).strip()
-    except Exception:
-        return ""
+def _extract_flow_token(payload: Dict[str, Any]) -> Optional[str]:
+    """Extract flow_token from payload, data, or nested structures."""
+    # Check top level
+    flow_token = payload.get("flow_token")
+    if flow_token:
+        return flow_token
+    
+    # Check data level
+    data = payload.get("data", {}) or {}
+    flow_token = data.get("flow_token")
+    if flow_token:
+        return flow_token
+    
+    # Check payload level (from form submissions)
+    payload_data = payload.get("payload", {}) or {}
+    flow_token = payload_data.get("flow_token")
+    if flow_token:
+        return flow_token
+    
+    return None
 
 def _resolve_user_full_name(payload: Dict[str, Any]) -> str:
     """Find a friendly display name from context; fallback to masked wa_id."""
@@ -167,55 +176,252 @@ def _resolve_user_full_name(payload: Dict[str, Any]) -> str:
         return f"user {str(wa_id)[-4:]}"
     return "there"
 
+async def _save_user_data_to_redis(flow_token: str, user_data: Dict[str, Any]):
+    """Save user data to Redis using flow_token as key."""
+    if not flow_token:
+        log.warning("❌ NO_FLOW_TOKEN | Cannot save user data to Redis")
+        return False
+    
+    try:
+        background_processor = current_app.extensions.get("background_processor")
+        if not background_processor:
+            log.error("❌ NO_BACKGROUND_PROCESSOR | Cannot save to Redis")
+            return False
+        
+        # Get existing data if any
+        existing_data = await background_processor.get_processing_result(flow_token) or {}
+        
+        # Merge with new user data
+        if "user_data" not in existing_data:
+            existing_data["user_data"] = {}
+        
+        existing_data["user_data"].update(user_data)
+        existing_data["last_updated"] = None  # Add timestamp service here
+        
+        # Save back to Redis using the correct method
+        result_key = f"processing:{flow_token}:result"
+        background_processor.ctx_mgr._set_json(result_key, existing_data, ttl=background_processor.processing_ttl)
+        
+        log.info(f"✅ REDIS_SAVE | flow_token={flow_token} | data_keys={list(user_data.keys())}")
+        return True
+        
+    except Exception as e:
+        log.error(f"❌ REDIS_SAVE_ERROR | flow_token={flow_token} | error={e}", exc_info=True)
+        return False
+
+async def _trigger_webhook(flow_token: str, status: str, additional_data: Dict[str, Any] = None):
+    """Trigger webhook notification for flow events."""
+    webhook_url = os.getenv("FRONTEND_WEBHOOK_URL")
+    if not webhook_url:
+        log.warning("❌ NO_WEBHOOK_URL | Webhook not configured")
+        return False
+    
+    payload = {
+        "flowtoken": flow_token,
+        "status": status
+    }
+    
+    if additional_data:
+        payload.update(additional_data)
+    
+    # Log the payload we're sending
+    log.info(f"🔔 WEBHOOK_TRIGGER | flow_token={flow_token} | url={webhook_url} | payload={payload}")
+    
+    try:
+        import aiohttp
+        
+        # Check if SSL verification should be disabled for development
+        ssl_verify = os.getenv("WEBHOOK_SSL_VERIFY", "true").lower() != "false"
+        connector = None if ssl_verify else aiohttp.TCPConnector(ssl=False)
+        
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async with session.post(
+                webhook_url,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=10),
+                headers={"Content-Type": "application/json"}
+            ) as response:
+                response_text = await response.text()
+                if response.status == 200:
+                    log.info(f"✅ WEBHOOK_SUCCESS | flow_token={flow_token} | status={status} | response={response_text[:200]}")
+                    return True
+                else:
+                    log.warning(f"❌ WEBHOOK_FAILED | flow_token={flow_token} | status_code={response.status} | response={response_text[:200]}")
+                    return False
+                    
+    except Exception as e:
+        log.error(f"❌ WEBHOOK_ERROR | flow_token={flow_token} | error={e}", exc_info=True)
+        return False
+
+def _log_user_activity(activity_type: str, payload: Dict[str, Any], additional_data: Dict[str, Any] = None):
+    """Log user activity with flow_token and user identification."""
+    user_id, session_id, wa_id = _extract_ids(payload)
+    flow_token = _extract_flow_token(payload)
+    user_name = _resolve_user_full_name(payload)
+    
+    activity_log = {
+        "activity_type": activity_type,
+        "flow_token": flow_token,
+        "user_id": user_id,
+        "session_id": session_id,
+        "wa_id": wa_id,
+        "user_name": user_name,
+        "timestamp": None,  # Add timestamp service here
+    }
+    
+    if additional_data:
+        activity_log.update(additional_data)
+    
+    log.info(f"🔄 USER_ACTIVITY | {activity_type} | flow_token={flow_token} | user={user_name} | data={additional_data}")
+    
+    # TODO: Send to your analytics/tracking service
+    # analytics_service.track_user_activity(activity_log)
+    
+    return activity_log
+
+# Enhanced Onboarding flow (async) - All actions hit backend with Redis integration
 # ─────────────────────────────────────────────────────────────
-# Onboarding flow (sync)
-# ─────────────────────────────────────────────────────────────
-def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") -> Dict[str, Any]:
-    action = payload.get("action", "")
+async def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") -> Dict[str, Any]:
+    action = payload.get("action", "").upper()
     screen = payload.get("screen", "")
     data = payload.get("data", {}) or {}
+    flow_token = _extract_flow_token(payload)
 
     user_full_name = _resolve_user_full_name(payload)
-    log.info(f"📝 ONBOARDING | action={action} screen={screen} user={user_full_name}")
+    log.info(f"📝 ONBOARDING | action={action} screen={screen} user={user_full_name} flow_token={flow_token}")
 
-    if action.upper() == "INIT":
+    if action == "INIT":
+        # Log flow start
+        _log_user_activity("flow_started", payload, {"flow_type": "onboarding"})
+        
+        # Save initial user context to Redis
+        if flow_token:
+            user_context = {
+                "flow_type": "onboarding",
+                "user_full_name": user_full_name,
+                "user_id": payload.get("user_id"),
+                "wa_id": payload.get("wa_id"),
+                "session_id": payload.get("session_id"),
+                "flow_started": True
+            }
+            await _save_user_data_to_redis(flow_token, user_context)
+        
         initial = dict(ONBOARDING_DATA)
         initial["user_full_name"] = user_full_name
         return {"version": version, "screen": "ONBOARDING", "data": initial}
 
-    if action.upper() == "DATA_EXCHANGE":
-        log.info(f"📝 ONBOARDING_DATA | {data}")
+    if action == "DATA_EXCHANGE":
+        # Check action_type to differentiate between different data_exchange calls
+        action_type = data.get("action_type", "")
+        
+        if action_type == "submit_profile":
+            # This is the profile submission (previously "navigate")
+            log.info(f"📝 PROFILE_SUBMIT | {data}")
+            _log_user_activity("profile_submitted", payload, {
+                "society": data.get("society"),
+                "custom_society": data.get("custom_society"),
+                "gender": data.get("gender"),
+                "age_group": data.get("age_group")
+            })
 
-        society_value = data.get("society") or data.get("selected_society")
+            # Save profile data to Redis
+            if flow_token:
+                profile_data = {
+                    "society": data.get("society"),
+                    "custom_society": data.get("custom_society"),
+                    "gender": data.get("gender"),
+                    "age_group": data.get("age_group"),
+                    "profile_submitted": True
+                }
+                await _save_user_data_to_redis(flow_token, profile_data)
 
-        if society_value == "other":
-            onboarding_data_with_custom = dict(ONBOARDING_DATA)
-            onboarding_data_with_custom["show_custom_society"] = True
-            onboarding_data_with_custom["user_full_name"] = user_full_name
-            return {"version": version, "screen": "ONBOARDING", "data": onboarding_data_with_custom}
+            society_value = data.get("society") or data.get("selected_society")
 
-        errors: Dict[str, str] = {}
+            if society_value == "other":
+                onboarding_data_with_custom = dict(ONBOARDING_DATA)
+                onboarding_data_with_custom["show_custom_society"] = True
+                onboarding_data_with_custom["user_full_name"] = user_full_name
+                return {"version": version, "screen": "ONBOARDING", "data": onboarding_data_with_custom}
 
-        if not society_value:
-            errors["society"] = "Please select your society"
-        elif society_value == "other" and not data.get("custom_society", "").strip():
-            errors["custom_society"] = "Please enter your society name"
+            errors: Dict[str, str] = {}
 
-        if not data.get("gender"):
-            errors["gender"] = "Please select your gender"
+            if not society_value:
+                errors["society"] = "Please select your society"
+            elif society_value == "other" and not data.get("custom_society", "").strip():
+                errors["custom_society"] = "Please enter your society name"
 
-        if not data.get("age_group"):
-            errors["age_group"] = "Please select your age group"
+            if not data.get("gender"):
+                errors["gender"] = "Please select your gender"
 
-        if errors:
-            merged = dict(ONBOARDING_DATA)
-            merged["error"] = errors
-            merged["user_full_name"] = user_full_name
-            return {"version": version, "screen": "ONBOARDING", "data": merged}
+            if not data.get("age_group"):
+                errors["age_group"] = "Please select your age group"
 
-        log.info(f"✅ ONBOARDING_COMPLETE | {data}")
-        return {"version": version, "screen": "COMPLETE", "data": {"user_full_name": user_full_name}}
+            if errors:
+                merged = dict(ONBOARDING_DATA)
+                merged["error"] = errors
+                merged["user_full_name"] = user_full_name
+                return {"version": version, "screen": "ONBOARDING", "data": merged}
 
+            # Profile validation passed, move to complete screen
+            log.info(f"✅ PROFILE_VALIDATED | {data}")
+            _log_user_activity("profile_validated", payload, {"profile_data": data})
+            
+            # Save validation status to Redis
+            if flow_token:
+                await _save_user_data_to_redis(flow_token, {"profile_validated": True})
+            
+            return {"version": version, "screen": "COMPLETE", "data": {"user_full_name": user_full_name}}
+        
+        elif action_type == "complete_flow":
+            # This is the flow completion (previously "complete")
+            log.info(f"🎉 FLOW_COMPLETED | user={user_full_name}")
+            _log_user_activity("flow_completed", payload, {"flow_type": "onboarding"})
+            
+            # Save completion status to Redis
+            if flow_token:
+                completion_data = {
+                    "flow_completed": True,
+                    "completion_timestamp": None  # Add timestamp service here
+                }
+                await _save_user_data_to_redis(flow_token, completion_data)
+                
+                # Trigger webhook for flow closure
+                await _trigger_webhook(flow_token, "Flow_Closed", {
+                    "flow_type": "onboarding",
+                    "user_name": user_full_name
+                })
+            
+            # TODO: Add your completion logic here
+            # - Save final state to database
+            # - Trigger welcome notifications
+            # - Update user flags
+            # - etc.
+            
+            # Since this is terminal, we can return a simple acknowledgment
+            # or redirect to another flow/app
+            return {
+                "version": version, 
+                "screen": "COMPLETE", 
+                "data": {
+                    "user_full_name": user_full_name,
+                    "completion_status": "success",
+                    "message": "Thank you for completing the onboarding!"
+                }
+            }
+        
+        else:
+            # Unknown action_type in DATA_EXCHANGE
+            log.warning(f"❌ UNKNOWN_ACTION_TYPE | action_type={action_type}")
+            _log_user_activity("unknown_action", payload, {"action_type": action_type})
+            
+            default_data = dict(ONBOARDING_DATA)
+            default_data["user_full_name"] = user_full_name
+            return {"version": version, "screen": "ONBOARDING", "data": default_data}
+
+    # Fallback for any other actions
+    log.warning(f"❌ UNKNOWN_ACTION | action={action}")
+    _log_user_activity("unknown_action", payload, {"action": action})
+    
     default_data = dict(ONBOARDING_DATA)
     default_data["user_full_name"] = user_full_name
     return {"version": version, "screen": "ONBOARDING", "data": default_data}
@@ -519,6 +725,18 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
         }
     }
 
+def _coerce_product_id(val) -> str:
+    """Normalize product id from string/object/None → string id."""
+    try:
+        if isinstance(val, dict):
+            # Handle dropdown selection objects
+            return str(val.get("id") or val.get("value") or val.get("product_id") or "").strip()
+        if val is None:
+            return ""
+        return str(val).strip()
+    except Exception:
+        return ""
+
 # ─────────────────────────────────────────────────────────────
 # Unified Flow request handler
 # ─────────────────────────────────────────────────────────────
@@ -571,7 +789,7 @@ async def _handle_flow_request(flow_type: str):
             resp_obj = {"version": version, "data": {"status": "active"}}
         else:
             if flow_type == "onboarding":
-                resp_obj = handle_onboarding_flow(payload, version)
+                resp_obj = await handle_onboarding_flow(payload, version)
             elif flow_type in ["products", "product_recommendations"]:
                 # Both routes use async handler - NO SYNC FALLBACK
                 resp_obj = await handle_product_recommendations_flow(payload, version)

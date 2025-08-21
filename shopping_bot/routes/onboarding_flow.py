@@ -198,9 +198,8 @@ async def _save_user_data_to_redis(flow_token: str, user_data: Dict[str, Any]):
         existing_data["user_data"].update(user_data)
         existing_data["last_updated"] = None  # Add timestamp service here
         
-        # Save back to Redis using the correct method
-        result_key = f"processing:{flow_token}:result"
-        background_processor.ctx_mgr._set_json(result_key, existing_data, ttl=background_processor.processing_ttl)
+        # Save back to Redis
+        await background_processor.save_processing_result(flow_token, existing_data)
         
         log.info(f"✅ REDIS_SAVE | flow_token={flow_token} | data_keys={list(user_data.keys())}")
         return True
@@ -224,29 +223,20 @@ async def _trigger_webhook(flow_token: str, status: str, additional_data: Dict[s
     if additional_data:
         payload.update(additional_data)
     
-    # Log the payload we're sending
-    log.info(f"🔔 WEBHOOK_TRIGGER | flow_token={flow_token} | url={webhook_url} | payload={payload}")
-    
     try:
         import aiohttp
-        
-        # Check if SSL verification should be disabled for development
-        ssl_verify = os.getenv("WEBHOOK_SSL_VERIFY", "true").lower() != "false"
-        connector = None if ssl_verify else aiohttp.TCPConnector(ssl=False)
-        
-        async with aiohttp.ClientSession(connector=connector) as session:
+        async with aiohttp.ClientSession() as session:
             async with session.post(
                 webhook_url,
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=10),
                 headers={"Content-Type": "application/json"}
             ) as response:
-                response_text = await response.text()
                 if response.status == 200:
-                    log.info(f"✅ WEBHOOK_SUCCESS | flow_token={flow_token} | status={status} | response={response_text[:200]}")
+                    log.info(f"✅ WEBHOOK_SUCCESS | flow_token={flow_token} | status={status}")
                     return True
                 else:
-                    log.warning(f"❌ WEBHOOK_FAILED | flow_token={flow_token} | status_code={response.status} | response={response_text[:200]}")
+                    log.warning(f"❌ WEBHOOK_FAILED | flow_token={flow_token} | status_code={response.status}")
                     return False
                     
     except Exception as e:
@@ -397,15 +387,17 @@ async def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") 
             # - Update user flags
             # - etc.
             
-            # Since this is terminal, we can return a simple acknowledgment
-            # or redirect to another flow/app
+            # Return termination response to close the flow
+            log.info(f"🔚 TERMINATING_FLOW | flow_token={flow_token}")
             return {
-                "version": version, 
-                "screen": "COMPLETE", 
+                "version": version,
                 "data": {
-                    "user_full_name": user_full_name,
-                    "completion_status": "success",
-                    "message": "Thank you for completing the onboarding!"
+                    "extension_message_response": {
+                        "params": {
+                            "flow_token": flow_token or "",
+                            "completion_status": "success"
+                        }
+                    }
                 }
             }
         

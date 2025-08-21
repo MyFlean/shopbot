@@ -210,7 +210,7 @@ async def _save_user_data_to_redis(flow_token: str, user_data: Dict[str, Any]):
 
 async def _trigger_webhook(flow_token: str, status: str, additional_data: Dict[str, Any] = None):
     """Trigger webhook notification for flow events."""
-    webhook_url = os.getenv("FRONTEND_WEBHOOK_URL")
+    webhook_url = os.getenv("WEBHOOK_URL")
     if not webhook_url:
         log.warning("❌ NO_WEBHOOK_URL | Webhook not configured")
         return False

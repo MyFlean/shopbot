@@ -198,8 +198,9 @@ async def _save_user_data_to_redis(flow_token: str, user_data: Dict[str, Any]):
         existing_data["user_data"].update(user_data)
         existing_data["last_updated"] = None  # Add timestamp service here
         
-        # Save back to Redis
-        await background_processor.save_processing_result(flow_token, existing_data)
+        # Save back to Redis using the correct method
+        result_key = f"processing:{flow_token}:result"
+        background_processor.ctx_mgr._set_json(result_key, existing_data, ttl=background_processor.processing_ttl)
         
         log.info(f"✅ REDIS_SAVE | flow_token={flow_token} | data_keys={list(user_data.keys())}")
         return True
@@ -210,7 +211,7 @@ async def _save_user_data_to_redis(flow_token: str, user_data: Dict[str, Any]):
 
 async def _trigger_webhook(flow_token: str, status: str, additional_data: Dict[str, Any] = None):
     """Trigger webhook notification for flow events."""
-    webhook_url = os.getenv("WEBHOOK_URL")
+    webhook_url = os.getenv("FRONTEND_WEBHOOK_URL")
     if not webhook_url:
         log.warning("❌ NO_WEBHOOK_URL | Webhook not configured")
         return False
@@ -223,20 +224,29 @@ async def _trigger_webhook(flow_token: str, status: str, additional_data: Dict[s
     if additional_data:
         payload.update(additional_data)
     
+    # Log the payload we're sending
+    log.info(f"🔔 WEBHOOK_TRIGGER | flow_token={flow_token} | url={webhook_url} | payload={payload}")
+    
     try:
         import aiohttp
-        async with aiohttp.ClientSession() as session:
+        
+        # Check if SSL verification should be disabled for development
+        ssl_verify = os.getenv("WEBHOOK_SSL_VERIFY", "true").lower() != "false"
+        connector = None if ssl_verify else aiohttp.TCPConnector(ssl=False)
+        
+        async with aiohttp.ClientSession(connector=connector) as session:
             async with session.post(
                 webhook_url,
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=10),
                 headers={"Content-Type": "application/json"}
             ) as response:
+                response_text = await response.text()
                 if response.status == 200:
-                    log.info(f"✅ WEBHOOK_SUCCESS | flow_token={flow_token} | status={status}")
+                    log.info(f"✅ WEBHOOK_SUCCESS | flow_token={flow_token} | status={status} | response={response_text[:200]}")
                     return True
                 else:
-                    log.warning(f"❌ WEBHOOK_FAILED | flow_token={flow_token} | status_code={response.status}")
+                    log.warning(f"❌ WEBHOOK_FAILED | flow_token={flow_token} | status_code={response.status} | response={response_text[:200]}")
                     return False
                     
     except Exception as e:
@@ -381,16 +391,11 @@ async def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") 
                     "user_name": user_full_name
                 })
             
-            # TODO: Add your completion logic here
-            # - Save final state to database
-            # - Trigger welcome notifications
-            # - Update user flags
-            # - etc.
-            
-            # Return termination response to close the flow
+            # Return SUCCESS response to terminate the flow
             log.info(f"🔚 TERMINATING_FLOW | flow_token={flow_token}")
             return {
                 "version": version,
+                "screen": "SUCCESS",
                 "data": {
                     "extension_message_response": {
                         "params": {
@@ -410,7 +415,126 @@ async def handle_onboarding_flow(payload: Dict[str, Any], version: str = "7.2") 
             default_data["user_full_name"] = user_full_name
             return {"version": version, "screen": "ONBOARDING", "data": default_data}
 
-    # Fallback for any other actions
+    # Fallback for unknown actions
+    log.warning(f"❌ UNKNOWN_ACTION | action={action}")
+    return {
+        "version": version,
+        "screen": "PRODUCT_LIST",
+        "data": {
+            "products": [],
+            "product_options": [],
+            "header_text": "Unknown action",
+            "footer_text": "Please try again",
+            "processing_id": None
+        }
+    }
+
+def _coerce_product_id(val) -> str:
+    """Normalize product id from string/object/None → string id."""
+    try:
+        if isinstance(val, dict):
+            # Handle dropdown selection objects
+            return str(val.get("id") or val.get("value") or val.get("product_id") or "").strip()
+        if val is None:
+            return ""
+        return str(val).strip()
+    except Exception:
+        return ""
+
+# ─────────────────────────────────────────────────────────────
+# Unified Flow request handler
+# ─────────────────────────────────────────────────────────────
+@bp.post("/flow/onboarding")
+async def onboarding_flow():
+    return await _handle_flow_request("onboarding")
+
+@bp.post("/flow/products")
+async def product_flow():
+    return await _handle_flow_request("products")
+
+@bp.post("/flow/product_recommendations")
+async def product_recommendations_flow():
+    return await _handle_flow_request("product_recommendations")
+
+async def _handle_flow_request(flow_type: str):
+    try:
+        raw = request.get_json(silent=True)
+        if not raw or raw == {}:
+            log.info(f"💚 HEALTH_CHECK | {flow_type}")
+            return "", 200
+
+        log.info(f"📨 RAW_REQUEST | {flow_type} keys={list(raw.keys())}")
+
+        is_encrypted = "encrypted_flow_data" in raw
+        aes_key = None
+        if is_encrypted and _private_key:
+            log.info("🔐 DECRYPT_START | processing encrypted request")
+            try:
+                encrypted_aes_key = raw.get("encrypted_aes_key", "")
+                aes_key = _rsa_decrypt(encrypted_aes_key)
+                encrypted_flow_data = raw.get("encrypted_flow_data", "")
+                initial_vector = raw.get("initial_vector", "")
+                decrypted_json = _aes_gcm_decrypt(encrypted_flow_data, aes_key, initial_vector)
+                payload = json.loads(decrypted_json)
+                log.info(f"🔓 DECRYPT_SUCCESS | action={payload.get('action')} screen={payload.get('screen')}")
+            except Exception as exc:
+                log.error(f"❌ DECRYPT_FAILED | {exc}", exc_info=True)
+                return jsonify({"error_type": "DECRYPTION_FAILED"}), 421
+        else:
+            if is_encrypted and not _private_key:
+                log.warning("🔑 NO_PRIVATE_KEY | encrypted data received but no key configured")
+            payload = raw
+
+        action = payload.get("action", "")
+        version = str(payload.get("version") or "3.0") 
+        log.info(f"🎬 FLOW_START | {flow_type} action={action} version={version}")
+
+        if action.lower() == "ping":
+            resp_obj = {"version": version, "data": {"status": "active"}}
+        else:
+            if flow_type == "onboarding":
+                resp_obj = await handle_onboarding_flow(payload, version)
+            elif flow_type in ["products", "product_recommendations"]:
+                # Both routes use async handler - NO SYNC FALLBACK
+                resp_obj = await handle_product_recommendations_flow(payload, version)
+            else:
+                log.error(f"❌ UNKNOWN_FLOW_TYPE | {flow_type}")
+                return jsonify({"error_type": "UNKNOWN_FLOW_TYPE"}), 422
+
+        screen = resp_obj.get('screen', 'unknown')
+        log.info(f"✅ FLOW_COMPLETE | {flow_type} → screen={screen}")
+
+        if is_encrypted and aes_key:
+            response_json = json.dumps(resp_obj)
+            encrypted_response = _aes_gcm_encrypt(response_json, aes_key, raw["initial_vector"])
+            log.info(f"🔐 ENCRYPT_RESPONSE | size={len(encrypted_response)} bytes")
+            return encrypted_response, 200, {"Content-Type": "text/plain"}
+        else:
+            log.info(f"📤 PLAIN_RESPONSE | size={len(json.dumps(resp_obj))} bytes")
+            return jsonify(resp_obj), 200
+
+    except Exception as e:
+        log.error(f"💥 FLOW_HANDLER_ERROR | {flow_type} failed: {e}", exc_info=True)
+        return jsonify({"error_type": "INTERNAL_ERROR"}), 500
+
+# ─────────────────────────────────────────────────────────────
+# Health checks
+# ─────────────────────────────────────────────────────────────
+@bp.get("/flow/health")
+def health_check():
+    return jsonify({"status": "healthy", "endpoints": ["onboarding", "products", "product_recommendations"]}), 200
+
+@bp.get("/flow/onboarding/health")
+def onboarding_health():
+    return jsonify({"status": "healthy", "flow": "onboarding"}), 200
+
+@bp.get("/flow/products/health")
+def products_health():
+    return jsonify({"status": "healthy", "flow": "products"}), 200
+
+@bp.get("/flow/product_recommendations/health")
+def product_recommendations_health():
+    return jsonify({"status": "healthy", "flow": "product_recommendations"}), 200 any other actions
     log.warning(f"❌ UNKNOWN_ACTION | action={action}")
     _log_user_activity("unknown_action", payload, {"action": action})
     
@@ -703,123 +827,4 @@ async def handle_product_recommendations_flow(payload: Dict[str, Any], version: 
         }
         return await handle_product_recommendations_flow(new_payload, version)
     
-    # Fallback for unknown actions
-    log.warning(f"❌ UNKNOWN_ACTION | action={action}")
-    return {
-        "version": version,
-        "screen": "PRODUCT_LIST",
-        "data": {
-            "products": [],
-            "product_options": [],
-            "header_text": "Unknown action",
-            "footer_text": "Please try again",
-            "processing_id": None
-        }
-    }
-
-def _coerce_product_id(val) -> str:
-    """Normalize product id from string/object/None → string id."""
-    try:
-        if isinstance(val, dict):
-            # Handle dropdown selection objects
-            return str(val.get("id") or val.get("value") or val.get("product_id") or "").strip()
-        if val is None:
-            return ""
-        return str(val).strip()
-    except Exception:
-        return ""
-
-# ─────────────────────────────────────────────────────────────
-# Unified Flow request handler
-# ─────────────────────────────────────────────────────────────
-@bp.post("/flow/onboarding")
-async def onboarding_flow():
-    return await _handle_flow_request("onboarding")
-
-@bp.post("/flow/products")
-async def product_flow():
-    return await _handle_flow_request("products")
-
-@bp.post("/flow/product_recommendations")
-async def product_recommendations_flow():
-    return await _handle_flow_request("product_recommendations")
-
-async def _handle_flow_request(flow_type: str):
-    try:
-        raw = request.get_json(silent=True)
-        if not raw or raw == {}:
-            log.info(f"💚 HEALTH_CHECK | {flow_type}")
-            return "", 200
-
-        log.info(f"📨 RAW_REQUEST | {flow_type} keys={list(raw.keys())}")
-
-        is_encrypted = "encrypted_flow_data" in raw
-        aes_key = None
-        if is_encrypted and _private_key:
-            log.info("🔐 DECRYPT_START | processing encrypted request")
-            try:
-                encrypted_aes_key = raw.get("encrypted_aes_key", "")
-                aes_key = _rsa_decrypt(encrypted_aes_key)
-                encrypted_flow_data = raw.get("encrypted_flow_data", "")
-                initial_vector = raw.get("initial_vector", "")
-                decrypted_json = _aes_gcm_decrypt(encrypted_flow_data, aes_key, initial_vector)
-                payload = json.loads(decrypted_json)
-                log.info(f"🔓 DECRYPT_SUCCESS | action={payload.get('action')} screen={payload.get('screen')}")
-            except Exception as exc:
-                log.error(f"❌ DECRYPT_FAILED | {exc}", exc_info=True)
-                return jsonify({"error_type": "DECRYPTION_FAILED"}), 421
-        else:
-            if is_encrypted and not _private_key:
-                log.warning("🔑 NO_PRIVATE_KEY | encrypted data received but no key configured")
-            payload = raw
-
-        action = payload.get("action", "")
-        version = str(payload.get("version") or "3.0") 
-        log.info(f"🎬 FLOW_START | {flow_type} action={action} version={version}")
-
-        if action.lower() == "ping":
-            resp_obj = {"version": version, "data": {"status": "active"}}
-        else:
-            if flow_type == "onboarding":
-                resp_obj = await handle_onboarding_flow(payload, version)
-            elif flow_type in ["products", "product_recommendations"]:
-                # Both routes use async handler - NO SYNC FALLBACK
-                resp_obj = await handle_product_recommendations_flow(payload, version)
-            else:
-                log.error(f"❌ UNKNOWN_FLOW_TYPE | {flow_type}")
-                return jsonify({"error_type": "UNKNOWN_FLOW_TYPE"}), 422
-
-        screen = resp_obj.get('screen', 'unknown')
-        log.info(f"✅ FLOW_COMPLETE | {flow_type} → screen={screen}")
-
-        if is_encrypted and aes_key:
-            response_json = json.dumps(resp_obj)
-            encrypted_response = _aes_gcm_encrypt(response_json, aes_key, raw["initial_vector"])
-            log.info(f"🔐 ENCRYPT_RESPONSE | size={len(encrypted_response)} bytes")
-            return encrypted_response, 200, {"Content-Type": "text/plain"}
-        else:
-            log.info(f"📤 PLAIN_RESPONSE | size={len(json.dumps(resp_obj))} bytes")
-            return jsonify(resp_obj), 200
-
-    except Exception as e:
-        log.error(f"💥 FLOW_HANDLER_ERROR | {flow_type} failed: {e}", exc_info=True)
-        return jsonify({"error_type": "INTERNAL_ERROR"}), 500
-
-# ─────────────────────────────────────────────────────────────
-# Health checks
-# ─────────────────────────────────────────────────────────────
-@bp.get("/flow/health")
-def health_check():
-    return jsonify({"status": "healthy", "endpoints": ["onboarding", "products", "product_recommendations"]}), 200
-
-@bp.get("/flow/onboarding/health")
-def onboarding_health():
-    return jsonify({"status": "healthy", "flow": "onboarding"}), 200
-
-@bp.get("/flow/products/health")
-def products_health():
-    return jsonify({"status": "healthy", "flow": "products"}), 200
-
-@bp.get("/flow/product_recommendations/health")
-def product_recommendations_health():
-    return jsonify({"status": "healthy", "flow": "product_recommendations"}), 200
+ 

@@ -470,8 +470,8 @@ class FrontendNotifier:
             log.error(f"WEBHOOK_TIMEOUT | url={self.webhook_url}")
             return False
         except aiohttp.ClientError as e:
-            log.error(f"WEBHOOK_CLIENT_ERROR | url={self.webhook_url} | error={e}")
+            log.error(f"WEBHOOK_CLIENT_ERROR | url={self.webhook_url} | error={e} | error_type={type(e).__name__}")
             return False
         except Exception as e:
-            log.error(f"WEBHOOK_UNEXPECTED_ERROR | url={self.webhook_url} | error={e}", exc_info=True)
+            log.error(f"WEBHOOK_UNEXPECTED_ERROR | url={self.webhook_url} | error={e} | error_type={type(e).__name__}", exc_info=True)
             return False

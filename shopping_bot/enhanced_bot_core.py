@@ -155,14 +155,23 @@ class EnhancedShoppingBotCore:
         
         log.info(f"FOLLOW_UP_ENHANCED | user={ctx.user_id} | effective_l3={effective_l3}")
 
-        # If Recommendation, always defer to background
+        # If Recommendation, always defer to background — ensure minimal assessment (active phase)
         if effective_l3 == "Recommendation":
             ctx.session["needs_background"] = True
             a = ctx.session.get("assessment")
-            if a and a.get("original_query"):
-                a["phase"] = "processing"
+            if not a:
+                a = {
+                    "original_query": query,
+                    "intent": "Recommendation",
+                    "missing_data": [],
+                    "priority_order": [],
+                    "fulfilled": [],
+                    "currently_asking": None,
+                }
+                ctx.session["assessment"] = a
+            a["phase"] = "active"
             
-            # FIX: Save context immediately when deferring
+            # Save context immediately when deferring
             self.ctx_mgr.save_context(ctx)
             log.info(f"FOLLOW_UP_DEFER | user={ctx.user_id} | intent_l3={effective_l3}")
             

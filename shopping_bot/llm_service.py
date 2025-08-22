@@ -515,7 +515,7 @@ You are an e-commerce assistant that provides both textual answers and structure
 {fetched}
 
 ### Instructions
-Analyze the query and provide a comprehensive response with both textual content and structured product data.
+Analyze the query and provide a comprehensive response with both textual content and structured product data. 
 
 **For the sections object:**
 - "+": Core benefit/positive hook - why user will love these options

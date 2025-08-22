@@ -369,38 +369,98 @@ def compute_still_missing(assessment: Dict[str, Any], ctx: UserContext) -> List[
 # Session snapshotting (ENHANCED with better cleanup)
 # ────────────────────────────────────────────────────────────
 
-def snapshot_and_trim(ctx: UserContext, *, base_query: str) -> None:
+def snapshot_and_trim(ctx: UserContext, *, base_query: str, internal_actions: Dict[str, Any] = None, final_answer: Dict[str, Any] = None) -> None:
     """
-    ENHANCED: Append a snapshot of the finished interaction to ``ctx.session['history']``
-    and trim it to ``Cfg.HISTORY_MAX_SNAPSHOTS``.
-    FIX: Added better cleanup and state management.
+    ENHANCED: Append a structured conversation unit to ``ctx.session['conversation_history']``
+    with clear User_Query → Internal_Actions → Final_Answer format.
+    
+    Args:
+        ctx: User context
+        base_query: User's original query
+        internal_actions: Dict of internal processing details
+        final_answer: Dict of response details
     """
     try:
         log.info(f"SNAPSHOT_TRIM | user={ctx.user_id} | base_query='{base_query[:50]}...'")
         
-        # FIX: Create comprehensive snapshot
-        snapshot = {
-            "query": base_query,
-            "intent": ctx.session.get("intent_l3") or ctx.session.get("intent_override"),
-            "slots": {
-                k: ctx.session.get(k) for k in SLOT_TO_SESSION_KEY.values() if k in ctx.session
-            },
-            "fetched": {k: v.get("timestamp") if isinstance(v, dict) else str(v) for k, v in ctx.fetched_data.items()},
-            "finished_at": iso_now(),
-            "session_id": ctx.session_id,  # FIX: Track session
+        # Build internal_actions from context if not provided
+        if internal_actions is None:
+            assessment = ctx.session.get("assessment", {})
+            internal_actions = {
+                "intent_classified": ctx.session.get("intent_l3") or ctx.session.get("intent_override"),
+                "questions_asked": assessment.get("priority_order", []),
+                "user_responses": {
+                    k: ctx.session.get(k) for k in SLOT_TO_SESSION_KEY.values() 
+                    if k in ctx.session and ctx.session.get(k)
+                },
+                "fetchers_executed": list(ctx.fetched_data.keys()),
+                "fetched_data_summary": {
+                    k: {
+                        "timestamp": v.get("timestamp") if isinstance(v, dict) else iso_now(),
+                        "data_type": type(v.get("data") if isinstance(v, dict) else v).__name__,
+                        "has_products": bool(
+                            isinstance(v.get("data"), dict) and v.get("data", {}).get("products")
+                        ) if isinstance(v, dict) else False,
+                        "product_count": len(v.get("data", {}).get("products", [])) 
+                            if isinstance(v, dict) and isinstance(v.get("data"), dict) 
+                            and isinstance(v.get("data", {}).get("products"), list) else 0
+                    } for k, v in ctx.fetched_data.items()
+                },
+                "processing_metadata": {
+                    "session_phase": assessment.get("phase"),
+                    "completed_at": assessment.get("completed_at"),
+                    "missing_data": assessment.get("missing_data", []),
+                    "fulfilled": assessment.get("fulfilled", [])
+                }
+            }
+        
+        # Build final_answer from context if not provided
+        if final_answer is None:
+            final_answer = {
+                "response_type": "unknown",  # Will be filled by caller
+                "message_preview": "",  # Will be filled by caller
+                "has_sections": False,
+                "has_products": False,
+                "flow_triggered": False
+            }
+        
+        # Create structured conversation unit
+        conversation_unit = {
+            "user_query": base_query,
+            "internal_actions": internal_actions,
+            "final_answer": final_answer,
+            "timestamp": iso_now(),
+            "session_id": ctx.session_id,
+            "conversation_id": f"{ctx.user_id}_{ctx.session_id}_{len(ctx.session.get('conversation_history', []))}"
         }
         
-        history = ctx.session.setdefault("history", [])
-        history.append(snapshot)
+        # Store in new conversation_history key
+        conversation_history = ctx.session.setdefault("conversation_history", [])
+        conversation_history.append(conversation_unit)
         
-        # FIX: Enhanced trimming
-        original_len = len(history)
-        trim_history(history, Cfg.HISTORY_MAX_SNAPSHOTS)
+        # Also maintain legacy history for backward compatibility
+        legacy_snapshot = {
+            "query": base_query,
+            "intent": internal_actions.get("intent_classified"),
+            "slots": internal_actions.get("user_responses", {}),
+            "fetched": {k: v.get("timestamp", "") for k, v in internal_actions.get("fetched_data_summary", {}).items()},
+            "finished_at": iso_now(),
+            "session_id": ctx.session_id,
+        }
+        legacy_history = ctx.session.setdefault("history", [])
+        legacy_history.append(legacy_snapshot)
         
-        if len(history) < original_len:
-            log.debug(f"HISTORY_TRIMMED | user={ctx.user_id} | from={original_len} | to={len(history)}")
+        # Trim both histories
+        original_conv_len = len(conversation_history)
+        original_legacy_len = len(legacy_history)
         
-        log.info(f"SNAPSHOT_COMPLETE | user={ctx.user_id} | history_entries={len(history)}")
+        trim_history(conversation_history, Cfg.HISTORY_MAX_SNAPSHOTS)
+        trim_history(legacy_history, Cfg.HISTORY_MAX_SNAPSHOTS)
+        
+        if len(conversation_history) < original_conv_len:
+            log.debug(f"CONVERSATION_HISTORY_TRIMMED | user={ctx.user_id} | from={original_conv_len} | to={len(conversation_history)}")
+        
+        log.info(f"SNAPSHOT_COMPLETE | user={ctx.user_id} | conversation_entries={len(conversation_history)} | legacy_entries={len(legacy_history)}")
         
     except Exception as e:
         log.error(f"SNAPSHOT_ERROR | user={ctx.user_id} | error={e}", exc_info=True)

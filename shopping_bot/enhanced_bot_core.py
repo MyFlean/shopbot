@@ -41,6 +41,7 @@ from .bot_helpers import (
     is_user_slot,
     get_func_value,
     build_question,
+    SLOT_TO_SESSION_KEY,
 )
 from .flow_generator import FlowTemplateGenerator
 from .llm_service import map_leaf_to_query_intent
@@ -375,8 +376,8 @@ class EnhancedShoppingBotCore:
             answer_dict, list(fetched.keys()), original_q, ctx
         )
 
-        # FIX: Clean up and persist final state
-        self._finalize_assessment(a, ctx, original_q)
+        # FIX: Clean up and persist final state with structured history
+        self._finalize_assessment(a, ctx, original_q, enhanced_response)
 
         log.info(f"ASSESSMENT_COMPLETE | user={ctx.user_id} | response_type={enhanced_response.response_type.value} | requires_flow={enhanced_response.requires_flow}")
         self.smart_log.response_generated(
@@ -576,15 +577,66 @@ class EnhancedShoppingBotCore:
         except Exception as e:
             log.error(f"FOLLOW_UP_STORE_FAILED | user={ctx.user_id} | error={e}", exc_info=True)
 
-    def _finalize_assessment(self, assessment: Dict[str, Any], ctx: UserContext, original_query: str) -> None:
-        """Clean up assessment and persist final state."""
+    def _finalize_assessment(self, assessment: Dict[str, Any], ctx: UserContext, original_query: str, enhanced_response: EnhancedBotResponse = None) -> None:
+        """Clean up assessment and persist final state with structured conversation history."""
         try:
             # FIX: Mark assessment as completed
             assessment["phase"] = "completed"
             assessment["completed_at"] = datetime.now().isoformat()
             
-            # Clean up session state
-            snapshot_and_trim(ctx, base_query=original_query)
+            # Build detailed internal_actions for structured history
+            internal_actions = {
+                "intent_classified": ctx.session.get("intent_l3") or ctx.session.get("intent_override"),
+                "questions_asked": assessment.get("priority_order", []),
+                "user_responses": {
+                    k: ctx.session.get(k) for k in SLOT_TO_SESSION_KEY.values() 
+                    if k in ctx.session and ctx.session.get(k)
+                },
+                "fetchers_executed": list(ctx.fetched_data.keys()),
+                "fetched_data_details": {
+                    k: {
+                        "timestamp": v.get("timestamp") if isinstance(v, dict) else datetime.now().isoformat(),
+                        "data_type": type(v.get("data") if isinstance(v, dict) else v).__name__,
+                        "has_products": bool(
+                            isinstance(v.get("data"), dict) and v.get("data", {}).get("products")
+                        ) if isinstance(v, dict) else False,
+                        "product_count": len(v.get("data", {}).get("products", [])) 
+                            if isinstance(v, dict) and isinstance(v.get("data"), dict) 
+                            and isinstance(v.get("data", {}).get("products"), list) else 0,
+                        "products_summary": [
+                            {
+                                "title": p.get("title", "Unknown")[:50] + "..." if len(p.get("title", "")) > 50 else p.get("title", "Unknown"),
+                                "price": p.get("price"),
+                                "rating": p.get("rating")
+                            } for p in (v.get("data", {}).get("products", []) if isinstance(v, dict) and isinstance(v.get("data"), dict) else [])[:3]
+                        ] if isinstance(v, dict) and isinstance(v.get("data"), dict) and v.get("data", {}).get("products") else []
+                    } for k, v in ctx.fetched_data.items()
+                },
+                "processing_metadata": {
+                    "session_phase": assessment.get("phase"),
+                    "completed_at": assessment.get("completed_at"),
+                    "missing_data": assessment.get("missing_data", []),
+                    "fulfilled": assessment.get("fulfilled", []),
+                    "background_processing": ctx.session.get("needs_background", False)
+                }
+            }
+            
+            # Build final_answer details
+            final_answer = {
+                "response_type": enhanced_response.response_type.value if enhanced_response else "unknown",
+                "message_preview": (enhanced_response.content.get("message", "")[:100] + "..." 
+                                  if enhanced_response and len(enhanced_response.content.get("message", "")) > 100 
+                                  else enhanced_response.content.get("message", "") if enhanced_response else ""),
+                "has_sections": bool(enhanced_response and enhanced_response.content.get("sections")),
+                "sections_summary": list(enhanced_response.content.get("sections", {}).keys()) if enhanced_response and enhanced_response.content.get("sections") else [],
+                "has_products": bool(enhanced_response and enhanced_response.structured_products),
+                "product_count": len(enhanced_response.structured_products) if enhanced_response and enhanced_response.structured_products else 0,
+                "flow_triggered": enhanced_response.requires_flow if enhanced_response else False,
+                "functions_executed": enhanced_response.functions_executed if enhanced_response else []
+            }
+            
+            # Clean up session state with structured history
+            snapshot_and_trim(ctx, base_query=original_query, internal_actions=internal_actions, final_answer=final_answer)
             ctx.session.pop("assessment", None)
             ctx.session.pop("contextual_questions", None)
             ctx.session["needs_background"] = False
@@ -592,7 +644,7 @@ class EnhancedShoppingBotCore:
             # Save final context state
             self.ctx_mgr.save_context(ctx)
             
-            log.info(f"ASSESSMENT_FINALIZED | user={ctx.user_id} | original_query='{original_query[:50]}...'")
+            log.info(f"ASSESSMENT_FINALIZED | user={ctx.user_id} | original_query='{original_query[:50]}...' | structured_history=true")
             
         except Exception as e:
             log.error(f"ASSESSMENT_FINALIZE_FAILED | user={ctx.user_id} | error={e}", exc_info=True)

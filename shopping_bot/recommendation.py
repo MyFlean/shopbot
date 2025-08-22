@@ -9,6 +9,11 @@ Recommendation Engine Module for ShoppingBotCore
 
 Created: 2025-08-20
 Purpose: Modularize recommendation logic for better maintainability
+
+Fix (2025-08-22):
+• Switched to anthropic.AsyncAnthropic and awaited all .messages.create(...) calls
+• Robust tool-pick for Anthropic response content blocks
+• Defensive fallbacks when tool call is missing (JSON sniff + heuristic defaults)
 """
 
 from __future__ import annotations
@@ -16,8 +21,8 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, asdict
-from typing import Any, Dict, List, Optional, Union
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 from enum import Enum
 
 import anthropic
@@ -50,7 +55,6 @@ class RecommendationResponse:
     error_message: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization"""
         return {
             "response_type": self.response_type.value,
             "data": self.data,
@@ -69,12 +73,12 @@ class BaseRecommendationEngine(ABC):
     @abstractmethod
     async def extract_search_params(self, ctx: UserContext) -> RecommendationResponse:
         """Extract search parameters from user context"""
-        pass
+        raise NotImplementedError
     
     @abstractmethod
     def validate_params(self, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Validate and clean extracted parameters"""
-        pass
+        raise NotImplementedError
 
 
 # ─────────────────────────────────────────────────────────────
@@ -123,11 +127,21 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
     """Primary recommendation engine using Elasticsearch parameter extraction"""
     
     def __init__(self):
-        self.anthropic = anthropic.Anthropic(api_key=Cfg.ANTHROPIC_API_KEY)
+        # IMPORTANT: async client for awaitable calls
+        self._anthropic = anthropic.AsyncAnthropic(api_key=Cfg.ANTHROPIC_API_KEY)
         self._valid_categories = [
             "f_and_b", "health_nutrition", "personal_care", 
             "home_kitchen", "electronics"
         ]
+        # lightweight synonym mapping → category_group
+        self._category_alias = {
+            "food": "f_and_b",
+            "beverages": "f_and_b",
+            "snacks": "f_and_b",
+            "beauty": "personal_care",
+            "cosmetics": "personal_care",
+            "supplements": "health_nutrition",
+        }
     
     async def extract_search_params(self, ctx: UserContext) -> RecommendationResponse:
         """
@@ -140,7 +154,7 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             
             # Build context for LLM
             context = {
-                "original_query": assessment.get("original_query", ""),
+                "original_query": assessment.get("original_query", "") or session.get("last_query", "") or "",
                 "user_answers": {
                     "budget": session.get("budget"),
                     "dietary_requirements": session.get("dietary_requirements"),
@@ -153,21 +167,20 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 }
             }
             
-            # Enhanced prompt for better parameter extraction
-            enhanced_prompt = self._build_extraction_prompt(context)
-            
-            resp = await self._call_anthropic_for_params(enhanced_prompt)
-            
-            if not resp:
+            prompt = self._build_extraction_prompt(context)
+            params_from_llm = await self._call_anthropic_for_params(prompt)
+
+            if params_from_llm is None:
+                # Defensive fallback
+                fallback = self._heuristic_defaults(context)
                 return RecommendationResponse(
-                    response_type=RecommendationResponseType.ERROR,
-                    data={},
-                    error_message="Failed to get response from LLM"
+                    response_type=RecommendationResponseType.ES_PARAMS,
+                    data=fallback,
+                    metadata={"extraction_method": "fallback_heuristic", "context_keys": list(context.keys())},
+                    error_message="LLM did not return a tool-call; used heuristics."
                 )
             
-            # Post-process and validate
-            final_params = self.validate_params(resp, context)
-            
+            final_params = self.validate_params(params_from_llm, context)
             return RecommendationResponse(
                 response_type=RecommendationResponseType.ES_PARAMS,
                 data=final_params,
@@ -221,7 +234,7 @@ Return ONLY the tool call to emit_es_params.
     async def _call_anthropic_for_params(self, prompt: str) -> Optional[Dict[str, Any]]:
         """Make the Anthropic API call for parameter extraction"""
         try:
-            resp = await self.anthropic.messages.create(
+            resp = await self._anthropic.messages.create(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[ES_PARAM_TOOL],
@@ -230,14 +243,20 @@ Return ONLY the tool call to emit_es_params.
                 max_tokens=400,
             )
             
-            # Extract tool use (using the same helper function from original code)
             tool_use = self._pick_tool(resp, "emit_es_params")
             if not tool_use:
+                # Attempt soft fallback: sometimes models emit raw JSON in text
+                raw_text = (resp.content[0].text if resp.content and getattr(resp.content[0], "text", None) else "") or ""
+                try:
+                    parsed = json.loads(raw_text)
+                    if isinstance(parsed, dict):
+                        return self._strip_keys(parsed)
+                except Exception:
+                    pass
                 return None
             
-            raw_params = tool_use.input or {}
+            raw_params = getattr(tool_use, "input", {}) or {}
             cleaned_params = self._strip_keys(raw_params) if isinstance(raw_params, dict) else {}
-            
             return cleaned_params
             
         except Exception as exc:
@@ -246,7 +265,7 @@ Return ONLY the tool call to emit_es_params.
     
     def validate_params(self, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Validate and clean extracted parameters"""
-        cleaned = {}
+        cleaned: Dict[str, Any] = {}
         
         # Query text - fallback chain
         q = params.get("q") or context.get("original_query") or context.get("session_data", {}).get("last_query") or ""
@@ -257,11 +276,12 @@ Return ONLY the tool call to emit_es_params.
         try:
             size = int(size)
             cleaned["size"] = max(1, min(50, size))
-        except:
+        except Exception:
             cleaned["size"] = 20
         
-        # Category group validation
-        category = params.get("category_group", "f_and_b")
+        # Category group validation + aliasing
+        category = params.get("category_group") or context.get("user_answers", {}).get("product_category") or context.get("session_data", {}).get("category_group") or "f_and_b"
+        category = self._category_alias.get(str(category).lower(), category)
         cleaned["category_group"] = category if category in self._valid_categories else "f_and_b"
         
         # Price validation
@@ -269,32 +289,27 @@ Return ONLY the tool call to emit_es_params.
             if price_field in params:
                 try:
                     price_val = float(params[price_field])
-                    if price_val >= 0:  # No negative prices
+                    if price_val >= 0:
                         cleaned[price_field] = price_val
-                except:
+                except Exception:
                     pass
         
         # Ensure price_min <= price_max
-        if "price_min" in cleaned and "price_max" in cleaned:
-            if cleaned["price_min"] > cleaned["price_max"]:
-                # Swap them
-                cleaned["price_min"], cleaned["price_max"] = cleaned["price_max"], cleaned["price_min"]
+        if "price_min" in cleaned and "price_max" in cleaned and cleaned["price_min"] > cleaned["price_max"]:
+            cleaned["price_min"], cleaned["price_max"] = cleaned["price_max"], cleaned["price_min"]
         
         # List fields (brands, dietary_terms)
         for list_field in ["brands", "dietary_terms"]:
             if list_field in params:
                 items = params[list_field]
                 if isinstance(items, str):
-                    # Split string
                     items = [item.strip() for item in items.replace(",", " ").split() if item.strip()]
                 elif isinstance(items, list):
-                    # Clean list
                     items = [str(item).strip() for item in items if str(item).strip()]
                 else:
                     items = []
                 
                 if items:
-                    # Special handling for dietary terms (uppercase)
                     if list_field == "dietary_terms":
                         items = [item.upper() for item in items]
                     cleaned[list_field] = items
@@ -303,12 +318,23 @@ Return ONLY the tool call to emit_es_params.
         if "protein_weight" in params:
             try:
                 pw = float(params["protein_weight"])
-                if 0.1 <= pw <= 10.0:  # Reasonable range
+                if 0.1 <= pw <= 10.0:
                     cleaned["protein_weight"] = pw
-            except:
+            except Exception:
                 pass
         
         return cleaned
+    
+    def _heuristic_defaults(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Conservative fallback when LLM tool output is unavailable."""
+        product_category = (context.get("user_answers", {}) or {}).get("product_category")
+        session_category = (context.get("session_data", {}) or {}).get("category_group")
+        category = product_category or session_category or "f_and_b"
+        category = self._category_alias.get(str(category).lower(), category)
+        if category not in self._valid_categories:
+            category = "f_and_b"
+        q = context.get("original_query") or (context.get("session_data", {}) or {}).get("last_query") or ""
+        return {"q": str(q).strip(), "category_group": category, "size": 20}
     
     def _strip_keys(self, obj: Any) -> Any:
         """Recursively trim whitespace around dict keys"""
@@ -323,12 +349,22 @@ Return ONLY the tool call to emit_es_params.
         return obj
     
     def _pick_tool(self, resp, tool_name: str):
-        """Extract tool use from Anthropic response - placeholder for actual implementation"""
-        # This should use the same logic as the original pick_tool function
-        # from bot_helpers module
-        for content in resp.content:
-            if hasattr(content, 'name') and content.name == tool_name:
-                return content
+        """
+        Extract tool use from Anthropic response.
+        Works with SDK content blocks (type == 'tool_use') and is defensive.
+        """
+        try:
+            for block in (resp.content or []):
+                # New SDK objects: .type == "tool_use", .name, .input
+                btype = getattr(block, "type", None)
+                bname = getattr(block, "name", None)
+                if btype == "tool_use" and bname == tool_name:
+                    return block
+                # Extremely defensive: dict-like fallback
+                if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == tool_name:
+                    return block
+        except Exception:
+            pass
         return None
 
 
@@ -341,24 +377,20 @@ class RecommendationEngineFactory:
     
     _engines = {
         "elasticsearch": ElasticsearchRecommendationEngine,
-        # Future engines can be added here:
-        # "ml_based": MLRecommendationEngine,
-        # "hybrid": HybridRecommendationEngine,
+        # "ml_based": MLRecommendationEngine,  # future
+        # "hybrid": HybridRecommendationEngine,  # future
     }
     
     @classmethod
-    def create_engine(self, engine_type: str = "elasticsearch") -> BaseRecommendationEngine:
-        """Create a recommendation engine instance"""
-        if engine_type not in self._engines:
+    def create_engine(cls, engine_type: str = "elasticsearch") -> BaseRecommendationEngine:
+        if engine_type not in cls._engines:
             log.warning(f"Unknown engine type {engine_type}, defaulting to elasticsearch")
             engine_type = "elasticsearch"
-        
-        engine_class = self._engines[engine_type]
+        engine_class = cls._engines[engine_type]
         return engine_class()
     
     @classmethod
     def register_engine(cls, name: str, engine_class: type):
-        """Register a new engine type"""
         cls._engines[name] = engine_class
 
 
@@ -374,11 +406,9 @@ class RecommendationService:
         Extract ES parameters - maintains original interface for backward compatibility
         """
         response = await self.engine.extract_search_params(ctx)
-        
         if response.response_type == RecommendationResponseType.ERROR:
             log.error(f"Recommendation engine error: {response.error_message}")
             return {}
-        
         return response.data
     
     async def get_recommendations(self, ctx: UserContext) -> RecommendationResponse:
@@ -398,8 +428,7 @@ class RecommendationService:
 # Compatibility Layer
 # ─────────────────────────────────────────────────────────────
 
-# Global service instance for backward compatibility
-_recommendation_service = None
+_recommendation_service: Optional[RecommendationService] = None
 
 def get_recommendation_service() -> RecommendationService:
     """Get the global recommendation service instance"""
@@ -418,14 +447,11 @@ def set_recommendation_engine(engine_type: str):
 
 
 # ─────────────────────────────────────────────────────────────
-# Future Extension Points
+# Future Extension Points (stubs kept for API compatibility)
 # ─────────────────────────────────────────────────────────────
 
 class MLRecommendationEngine(BaseRecommendationEngine):
-    """Future ML-based recommendation engine"""
-    
     async def extract_search_params(self, ctx: UserContext) -> RecommendationResponse:
-        # Placeholder for ML-based parameter extraction
         return RecommendationResponse(
             response_type=RecommendationResponseType.ERROR,
             data={},
@@ -433,20 +459,15 @@ class MLRecommendationEngine(BaseRecommendationEngine):
         )
     
     def validate_params(self, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
-        # Placeholder for ML-based validation
         return params
 
 
 class HybridRecommendationEngine(BaseRecommendationEngine):
-    """Future hybrid recommendation engine combining multiple approaches"""
-    
     def __init__(self):
         self.elasticsearch_engine = ElasticsearchRecommendationEngine()
         # self.ml_engine = MLRecommendationEngine()
     
     async def extract_search_params(self, ctx: UserContext) -> RecommendationResponse:
-        # Placeholder for hybrid approach
-        # Could combine ES and ML results
         return await self.elasticsearch_engine.extract_search_params(ctx)
     
     def validate_params(self, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:

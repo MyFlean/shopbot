@@ -22,12 +22,14 @@ from flask import Blueprint, Flask
 
 
 def register_routes(app: Flask) -> None:
-    """
-    Dynamically import every sub-module inside this package
-    and attach its `bp` Blueprint to *app*.
-    """
-    for finder, name, _ in pkgutil.iter_modules(__path__):  # type: ignore[name-defined]
-        module: ModuleType = importlib.import_module(f"{__name__}.{name}")
-        bp: Blueprint | None = getattr(module, "bp", None)
-        if isinstance(bp, Blueprint):
-            app.register_blueprint(bp)
+    for finder, name, _ in pkgutil.iter_modules(__path__):
+        print(f"DEBUG: Trying to import {name}")
+        try:
+            module: ModuleType = importlib.import_module(f"{__name__}.{name}")
+            bp: Blueprint | None = getattr(module, "bp", None)
+            print(f"DEBUG: Module {name} bp = {bp}")
+            if isinstance(bp, Blueprint):
+                app.register_blueprint(bp)
+                print(f"DEBUG: Registered blueprint {name}")
+        except Exception as e:
+            print(f"DEBUG: Failed to import {name}: {e}")

@@ -1,3 +1,13 @@
+"""
+Background Processor - FIXED VERSION
+====================================
+Fixes:
+1. Always write processing result BEFORE setting status to completed
+2. Never emit processing status after completion  
+3. Return immediately after spawning background work (no await)
+4. Proper error handling with failed status
+5. Enhanced logging for debugging
+"""
 from __future__ import annotations
 
 import asyncio
@@ -30,37 +40,81 @@ class BackgroundProcessor:
         query: str,
         user_id: str,
         session_id: str,
+        wa_id: Optional[str] = None,
         notification_callback: Optional[callable] = None,
     ) -> str:
         """
         Execute heavy work, persist the full result for polling,
-        and ping FE with a *minimal* button-show payload.
+        and ping FE with a minimal button-show payload.
+        
+        FIX: This method now properly handles the async workflow:
+        1. Set initial processing status
+        2. Execute work WITHOUT blocking the caller
+        3. Always write result BEFORE setting completed status
+        4. Handle errors properly with failed status
         """
         processing_id = f"bg_{user_id}_{session_id}_{int(datetime.now().timestamp())}"
-        await self._set_processing_status(processing_id, "processing", {"query": query})
+        
+        # FIX: Set initial status immediately
+        await self._set_processing_status(processing_id, "processing", {
+            "query": query,
+            "user_id": user_id,
+            "session_id": session_id,
+            "wa_id": wa_id
+        })
+        log.info(f"BACKGROUND_START | processing_id={processing_id} | query='{query[:50]}...'")
 
+        # FIX: Spawn background task and return immediately (don't await here)
+        asyncio.create_task(self._execute_background_work(
+            processing_id, query, user_id, session_id, wa_id, notification_callback
+        ))
+        
+        log.info(f"BACKGROUND_SPAWNED | processing_id={processing_id} | returning immediately")
+        return processing_id
+
+    async def _execute_background_work(
+        self,
+        processing_id: str,
+        query: str,
+        user_id: str,
+        session_id: str,
+        wa_id: Optional[str],
+        notification_callback: Optional[callable],
+    ) -> None:
+        """
+        FIX: Separate method for actual background execution.
+        This ensures the original caller returns immediately while work continues.
+        """
         ctx = None
         try:
+            log.info(f"BACKGROUND_EXEC_START | processing_id={processing_id}")
+            
+            # Get context and mark assessment phase
             ctx = self.ctx_mgr.get_context(user_id, session_id)
-
-            # Mark assessment phase
             if "assessment" in ctx.session:
                 ctx.session["assessment"]["phase"] = "processing"
                 self.ctx_mgr.save_context(ctx)
+                log.info(f"ASSESSMENT_PHASE_MARKED | processing_id={processing_id}")
 
-            log.info("Starting background processing for %s", processing_id)
-
-            # Do the real work
+            # Execute the actual work
+            log.info(f"CORE_PROCESSING_START | processing_id={processing_id}")
             result = await self.enhanced_bot.process_query(query, ctx, enable_flows=True)
+            log.info(f"CORE_PROCESSING_COMPLETE | processing_id={processing_id} | response_type={result.response_type.value}")
 
-            # Defensive: if core still returned PROCESSING_STUB here, force a sync run
+            # FIX: If core still returned PROCESSING_STUB, force sync completion
             if getattr(result, "response_type", None) == ResponseType.PROCESSING_STUB:
-                log.info("Core returned PROCESSING_STUB in background for %s – forcing sync", processing_id)
+                log.warning(f"CORE_STUB_IN_BACKGROUND | processing_id={processing_id} | forcing sync")
                 ctx.session["needs_background"] = False
+                
+                # FIX: Mark assessment as done to prevent loops
+                if "assessment" in ctx.session:
+                    ctx.session["assessment"]["phase"] = "done"
+                
                 self.ctx_mgr.save_context(ctx)
                 result = await self.enhanced_bot.process_query(query, ctx, enable_flows=True)
+                log.info(f"CORE_FORCED_SYNC | processing_id={processing_id} | new_response_type={result.response_type.value}")
 
-            # Normalize + store full result for polling APIs
+            # FIX: CRITICAL - Store result FIRST, then update status
             await self._store_processing_result(
                 processing_id=processing_id,
                 result=result,
@@ -68,57 +122,98 @@ class BackgroundProcessor:
                 user_id=user_id,
                 session_id=session_id,
             )
+            log.info(f"RESULT_STORED | processing_id={processing_id}")
 
-            # Minimal FE notify (COMPLETED)
-            wa_id = self._resolve_wa_id(ctx, user_id)
-            await self._notify_fe_minimal(processing_id, user_id, wa_id, status="completed")
+            # FIX: Mark assessment as complete and save context
+            if "assessment" in ctx.session:
+                ctx.session["assessment"]["phase"] = "done"
+                ctx.session["assessment"]["completed_at"] = datetime.now().isoformat()
+            
+            # FIX: Mark session as not needing background work
+            ctx.session["needs_background"] = False
+            self.ctx_mgr.save_context(ctx)
+            log.info(f"SESSION_UPDATED | processing_id={processing_id} | needs_background=false")
 
-            log.info("Background processing completed for %s", processing_id)
-            return processing_id
+            # FIX: Only AFTER result is stored, set status to completed
+            await self._set_processing_status(processing_id, "completed", {
+                "result_available": True,
+                "execution_time": "computed_if_needed"
+            })
+            log.info(f"STATUS_COMPLETED | processing_id={processing_id}")
 
-        except Exception as e:  # noqa: BLE001
-            await self._set_processing_status(processing_id, "failed", {"error": str(e)})
+            # Notify FE with minimal payload
+            wa_id_resolved = self._resolve_wa_id(ctx, user_id) if wa_id is None else wa_id
+            await self._notify_fe_minimal(processing_id, user_id, wa_id_resolved, status="completed")
+            log.info(f"FE_NOTIFIED | processing_id={processing_id} | wa_id={wa_id_resolved}")
 
-            # Try to notify FE even on failure (best effort)
+        except Exception as e:
+            # FIX: Proper error handling with failed status
+            log.error(f"BACKGROUND_EXEC_FAILED | processing_id={processing_id} | error={str(e)}", exc_info=True)
+            
+            # Set status to failed with error details
+            await self._set_processing_status(processing_id, "failed", {
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "failed_at": datetime.now().isoformat()
+            })
+
+            # Try to notify FE even on failure
             try:
-                wa_id = self._resolve_wa_id(ctx, user_id) if ctx else os.getenv("FE_TEST_WA_ID", "917398580865")
-                await self._notify_fe_minimal(processing_id, user_id, wa_id, status="failed")
-            except Exception:
-                pass
-
-            log.exception("Background processing failed for %s", processing_id)
-            raise
+                wa_id_resolved = self._resolve_wa_id(ctx, user_id) if wa_id is None else wa_id
+                if not wa_id_resolved:
+                    wa_id_resolved = os.getenv("FE_TEST_WA_ID", "917398580865")
+                await self._notify_fe_minimal(processing_id, user_id, wa_id_resolved, status="failed")
+                log.info(f"FE_NOTIFIED_FAILURE | processing_id={processing_id}")
+            except Exception as notify_error:
+                log.error(f"FE_NOTIFY_FAILED | processing_id={processing_id} | error={notify_error}")
 
     async def get_processing_status(self, processing_id: str) -> Dict[str, Any]:
+        """Get processing status from Redis."""
         key = f"processing:{processing_id}:status"
         status_data = self.ctx_mgr._get_json(key, default={})
+        log.debug(f"STATUS_LOOKUP | processing_id={processing_id} | status={status_data.get('status', 'not_found')}")
         return status_data or {"status": "not_found"}
 
     async def get_processing_result(self, processing_id: str) -> Optional[Dict[str, Any]]:
+        """Get processing result from Redis."""
         key = f"processing:{processing_id}:result"
-        return self.ctx_mgr._get_json(key, default=None)
+        result = self.ctx_mgr._get_json(key, default=None)
+        log.debug(f"RESULT_LOOKUP | processing_id={processing_id} | found={result is not None}")
+        return result
 
     async def get_products_for_flow(self, processing_id: str) -> List[Dict[str, Any]]:
+        """Extract products from processing result for Flow display."""
         result = await self.get_processing_result(processing_id)
         if not result:
+            log.warning(f"PRODUCTS_LOOKUP_EMPTY | processing_id={processing_id}")
             return []
-        return result.get("flow_data", {}).get("products", []) or []
+        
+        products = result.get("flow_data", {}).get("products", []) or []
+        log.info(f"PRODUCTS_LOOKUP | processing_id={processing_id} | count={len(products)}")
+        return products
 
     async def get_text_summary_for_flow(self, processing_id: str) -> str:
+        """Extract text summary from processing result."""
         result = await self.get_processing_result(processing_id)
         if not result:
+            log.warning(f"TEXT_LOOKUP_EMPTY | processing_id={processing_id}")
             return "No results available."
+        
         text_content = result.get("text_content", "") or ""
         sections = result.get("sections", {}) or {}
-        full_text = text_content
+        
         if sections:
-            full_text = (full_text + "\n\n" if full_text else "") + self._format_sections_as_text(sections)
+            formatted_sections = self._format_sections_as_text(sections)
+            full_text = (text_content + "\n\n" + formatted_sections) if text_content else formatted_sections
+        else:
+            full_text = text_content
+            
+        log.debug(f"TEXT_LOOKUP | processing_id={processing_id} | length={len(full_text)}")
         return full_text or "Results processed successfully."
 
     # ────────────────────────────────────────────────────────
-    # Storage (schema kept for polling endpoints)
+    # FIX: Enhanced result storage with proper error handling
     # ────────────────────────────────────────────────────────
-
 
     async def _store_processing_result(
         self,
@@ -128,6 +223,12 @@ class BackgroundProcessor:
         user_id: str,
         session_id: str,
     ) -> None:
+        """
+        FIX: Enhanced result storage with comprehensive logging and error handling.
+        """
+        log.info(f"RESULT_STORE_START | processing_id={processing_id}")
+        
+        # Initialize default values
         products_data: List[Dict[str, Any]] = []
         text_content = ""
         sections: Dict[str, Any] = {}
@@ -136,22 +237,35 @@ class BackgroundProcessor:
         requires_flow = False
 
         try:
+            # Extract response type
             rtype = getattr(result, "response_type", "final_answer")
             response_type = rtype.value if hasattr(rtype, "value") else str(rtype)
+            log.debug(f"RESULT_EXTRACT_TYPE | processing_id={processing_id} | response_type={response_type}")
 
+            # Extract content
             content = getattr(result, "content", {}) or {}
-            text_content = content.get("message", "") if isinstance(content, dict) else str(content)
-            sections = content.get("sections", {}) if isinstance(content, dict) else {}
+            if isinstance(content, dict):
+                text_content = content.get("message", "")
+                sections = content.get("sections", {})
+            else:
+                text_content = str(content)
+            log.debug(f"RESULT_EXTRACT_CONTENT | processing_id={processing_id} | text_len={len(text_content)} | sections_count={len(sections)}")
 
+            # Extract functions executed
             functions_executed = getattr(result, "functions_executed", []) or []
+            log.debug(f"RESULT_EXTRACT_FUNCTIONS | processing_id={processing_id} | functions={functions_executed}")
 
+            # Extract Flow data if present
             if hasattr(result, "requires_flow"):
                 requires_flow = bool(getattr(result, "requires_flow", False))
                 flow_payload = getattr(result, "flow_payload", None)
+                
                 if requires_flow and flow_payload and hasattr(flow_payload, "products"):
+                    log.info(f"RESULT_EXTRACT_FLOW | processing_id={processing_id} | products_count={len(flow_payload.products or [])}")
+                    
                     for i, p in enumerate(flow_payload.products or []):
-                        products_data.append(
-                            {
+                        try:
+                            product_data = {
                                 "id": getattr(p, "product_id", f"prod_{i}"),
                                 "title": getattr(p, "title", "Product"),
                                 "subtitle": getattr(p, "subtitle", ""),
@@ -163,14 +277,15 @@ class BackgroundProcessor:
                                 "image": getattr(p, "image_url", "https://via.placeholder.com/200x200?text=Product"),
                                 "features": getattr(p, "key_features", []),
                             }
-                        )
-        except Exception as e:  # noqa: BLE001
-            log.warning("Result normalization error: %s", e)
+                            products_data.append(product_data)
+                            log.debug(f"PRODUCT_EXTRACTED | processing_id={processing_id} | product_{i}={product_data['title']}")
+                        except Exception as product_error:
+                            log.warning(f"PRODUCT_EXTRACT_ERROR | processing_id={processing_id} | product_{i} | error={product_error}")
 
-        # REMOVED: Dummy product fallback - let real products flow through
-        # if not products_data and text_content:
-        #     products_data = self._create_dummy_products_from_text(text_content)
+        except Exception as extract_error:
+            log.error(f"RESULT_EXTRACT_ERROR | processing_id={processing_id} | error={extract_error}", exc_info=True)
 
+        # Build complete result data
         result_data = {
             "processing_id": processing_id,
             "user_id": user_id,
@@ -190,195 +305,108 @@ class BackgroundProcessor:
             },
         }
 
-        # Persist for polling APIs
-        result_key = f"processing:{processing_id}:result"
-        self.ctx_mgr._set_json(result_key, result_data, ttl=self.processing_ttl)
-
-        # Update status
-        await self._set_processing_status(
-            processing_id,
-            "completed",
-            {"products_count": len(products_data), "has_flow": requires_flow, "text_length": len(text_content)},
-        )
-
-        # Optional: send legacy static test payloads only if explicitly enabled
-        if os.getenv("FE_TEST_STATIC_PAYLOADS", "false").lower() == "true":
-            try:
-                wa_id = self._resolve_wa_id(self.ctx_mgr.get_context(user_id, session_id), user_id)
-                await self._send_static_payloads(wa_id)
-            except Exception as e:  # noqa: BLE001
-                log.warning("Failed sending static FE test payloads: %s", e)
-
+        # FIX: Store result with proper error handling
+        try:
+            result_key = f"processing:{processing_id}:result"
+            self.ctx_mgr._set_json(result_key, result_data, ttl=self.processing_ttl)
+            log.info(f"RESULT_STORE_SUCCESS | processing_id={processing_id} | key={result_key} | products={len(products_data)}")
+        except Exception as store_error:
+            log.error(f"RESULT_STORE_FAILED | processing_id={processing_id} | error={store_error}", exc_info=True)
+            raise  # Re-raise to trigger failure status
 
     # ────────────────────────────────────────────────────────
-    # Minimal FE notify
+    # FIX: Enhanced status management
     # ────────────────────────────────────────────────────────
+
+    async def _set_processing_status(self, processing_id: str, status: str, metadata: Dict[str, Any]) -> None:
+        """
+        FIX: Enhanced status setting with atomic operations and logging.
+        """
+        try:
+            status_key = f"processing:{processing_id}:status"
+            payload = {
+                "processing_id": processing_id,
+                "status": status,
+                "timestamp": datetime.now().isoformat(),
+                "metadata": metadata or {},
+            }
+            
+            self.ctx_mgr._set_json(status_key, payload, ttl=self.processing_ttl)
+            log.info(f"STATUS_SET | processing_id={processing_id} | status={status} | metadata_keys={list(metadata.keys())}")
+            
+        except Exception as e:
+            log.error(f"STATUS_SET_FAILED | processing_id={processing_id} | status={status} | error={e}", exc_info=True)
+            raise
+
+    # ────────────────────────────────────────────────────────
+    # Minimal FE notify (unchanged but enhanced logging)
+    # ────────────────────────────────────────────────────────
+    
     async def _notify_fe_minimal(self, processing_id: str, user_id: str, wa_id: str, status: str) -> None:
-        """
-        Send the minimal payload to FE:
-        processing_id, flow_id, wa_id, status, user_id, timestamp
-        """
+        """Send minimal payload to FE with enhanced logging."""
         payload = {
             "processing_id": processing_id,
             "flow_id": getattr(Cfg, "WHATSAPP_FLOW_ID", "") or "",
             "wa_id": str(wa_id or ""),
-            "status": status,  # "completed" or "failed"
+            "status": status,
             "user_id": user_id,
             "timestamp": datetime.now().isoformat(),
         }
+        
+        log.info(f"FE_NOTIFY_START | processing_id={processing_id} | status={status} | wa_id={wa_id}")
         notifier = FrontendNotifier()
-        await notifier.post_json(payload)
+        success = await notifier.post_json(payload)
+        
+        if success:
+            log.info(f"FE_NOTIFY_SUCCESS | processing_id={processing_id}")
+        else:
+            log.warning(f"FE_NOTIFY_FAILED | processing_id={processing_id}")
 
-    # ────────────────────────────────────────────────────────
-    # Helpers
-    # ────────────────────────────────────────────────────────
     def _resolve_wa_id(self, ctx, user_id: str) -> str:
-        """
-        Pull wa_id from context set by /chat; fallback to env or empty string.
-        """
+        """Pull wa_id from context with enhanced logging."""
         try:
             if ctx and isinstance(ctx.session, dict):
                 if "wa_id" in ctx.session and ctx.session["wa_id"]:
-                    return str(ctx.session["wa_id"])
+                    wa_id = str(ctx.session["wa_id"])
+                    log.debug(f"WA_ID_FROM_SESSION | user_id={user_id} | wa_id={wa_id}")
+                    return wa_id
+                
                 user_bucket = ctx.session.get("user") or {}
                 if user_bucket.get("wa_id"):
-                    return str(user_bucket["wa_id"])
-        except Exception:
-            pass
-        # Fallback (dev)
-        return os.getenv("FE_TEST_WA_ID", "917398580865")
-
-    async def _send_static_payloads(self, wa_id: str) -> None:
-        # For one-off testing; disabled unless FE_TEST_STATIC_PAYLOADS=true
-        now_iso = datetime.now().isoformat()
-        samples = [
-            {
-                "wa_id": wa_id,
-                "content": {
-                    "message": (
-                        "Alternatives: I'd be happy to help you find shoes, but unfortunately we don't have any "
-                        "shoes currently available in our inventory that match your budget of under ₹10k. You might "
-                        "want to check back later as our inventory updates regularly, or consider expanding your "
-                        "search criteria.\n\n"
-                        "*Watch-outs:* No shoes are currently available in our inventory within your specified "
-                        "budget range.\n\n"
-                        "*Extra info:* Based on your preferences for size-focused shoes under ₹10k, I searched our "
-                        "current inventory but found no matching products available at this time."
-                    ),
-                    "sections": {
-                        "+": "",
-                        "-": "No shoes are currently available in our inventory within your specified budget range.",
-                        "ALT": (
-                            "I'd be happy to help you find shoes, but unfortunately we don't have any shoes currently "
-                            "available in our inventory that match your budget of under ₹10k. You might want to check "
-                            "back later as our inventory updates regularly, or consider expanding your search criteria."
-                        ),
-                        "BUY": "",
-                        "INFO": (
-                            "Based on your preferences for size-focused shoes under ₹10k, I searched our current "
-                            "inventory but found no matching products available at this time."
-                        ),
-                        "OVERRIDE": ""
-                    }
-                },
-                "functions_executed": ["FETCH_PRODUCT_INVENTORY"],
-                "response_type": "final_answer",
-                "timestamp": now_iso
-            },
-            {
-                "wa_id": wa_id,
-                "content": {
-                    "hints": ["Consider size, brand, quality, features, etc."],
-                    "message": "What features matter most to you?",
-                    "options": [
-                        {
-                            "label": "Consider size, brand, quality, features, etc.",
-                            "value": "Consider size, brand, quality, features, etc."
-                        },
-                        {"label": "Other", "value": "Other"}
-                    ],
-                    "type": "multi_choice"
-                },
-                "functions_executed": [],
-                "response_type": "question",
-                "timestamp": now_iso
-            }
-        ]
-        notifier = FrontendNotifier()
-        for p in samples:
-            await notifier.post_json(p)
-
-    async def _set_processing_status(self, processing_id: str, status: str, metadata: Dict[str, Any]) -> None:
-        status_key = f"processing:{processing_id}:status"
-        payload = {
-            "processing_id": processing_id,
-            "status": status,
-            "timestamp": datetime.now().isoformat(),
-            "metadata": metadata or {},
-        }
-        self.ctx_mgr._set_json(status_key, payload, ttl=self.processing_ttl)
+                    wa_id = str(user_bucket["wa_id"])
+                    log.debug(f"WA_ID_FROM_USER_BUCKET | user_id={user_id} | wa_id={wa_id}")
+                    return wa_id
+        except Exception as e:
+            log.warning(f"WA_ID_RESOLVE_ERROR | user_id={user_id} | error={e}")
+        
+        # Fallback
+        fallback = os.getenv("FE_TEST_WA_ID", "917398580865")
+        log.debug(f"WA_ID_FALLBACK | user_id={user_id} | wa_id={fallback}")
+        return fallback
 
     def _format_sections_as_text(self, sections: Dict[str, str]) -> str:
+        """Format sections dict as readable text."""
         formatted = []
         order = ["MAIN", "ALT", "+", "INFO", "TIPS", "LINKS"]
         names = {
             "MAIN": "Main Information",
-            "ALT": "Alternative Options",
+            "ALT": "Alternative Options", 
             "+": "Additional Benefits",
             "INFO": "Important Information",
             "TIPS": "Tips & Recommendations",
             "LINKS": "Useful Links",
         }
+        
         for key in order:
             val = (sections.get(key) or "").strip()
             if val:
                 formatted.append(f"{names[key]}:\n{val}")
+        
         return "\n\n".join(formatted)
-
-    def _create_dummy_products_from_text(self, text_content: str) -> List[Dict[str, Any]]:
-        tl = text_content.lower()
-        if any(w in tl for w in ["laptop", "computer", "gaming"]):
-            return [{
-                "id": "prod_laptop_1",
-                "title": "Gaming Laptop Recommendation",
-                "subtitle": "Based on your query analysis",
-                "price": "$899",
-                "brand": "Recommended",
-                "rating": 4.5,
-                "availability": "Available",
-                "discount": "",
-                "image": "https://via.placeholder.com/200x200/4CAF50/FFFFFF?text=Laptop",
-                "features": ["High Performance", "Good Value", "Recommended Choice"],
-            }]
-        if any(w in tl for w in ["phone", "mobile", "smartphone"]):
-            return [{
-                "id": "prod_phone_1",
-                "title": "Smartphone Recommendation",
-                "subtitle": "Based on your query analysis",
-                "price": "$699",
-                "brand": "Recommended",
-                "rating": 4.3,
-                "availability": "Available",
-                "discount": "",
-                "image": "https://via.placeholder.com/200x200/2196F3/FFFFFF?text=Phone",
-                "features": ["Latest Features", "Great Camera", "Long Battery Life"],
-            }]
-        return [{
-            "id": "prod_general_1",
-            "title": "Product Recommendation",
-            "subtitle": "Based on your analysis",
-            "price": "Contact for price",
-            "brand": "Various",
-            "rating": 4.0,
-            "availability": "Available",
-            "discount": "",
-            "image": "https://via.placeholder.com/200x200/9C27B0/FFFFFF?text=Product",
-            "features": ["Quality Product", "Good Value", "Recommended"],
-        }]
 
 
 class FrontendNotifier:
-    """Webhook poster with explicit, compact logs of the outbound payload and FE response."""
+    """Enhanced webhook poster with detailed logging."""
 
     def __init__(self, webhook_url: Optional[str] = None):
         self.webhook_url = webhook_url or getattr(Cfg, "FRONTEND_WEBHOOK_URL", None)
@@ -402,22 +430,20 @@ class FrontendNotifier:
         return f"{s[:self.max_log_bytes]}... (truncated {len(s) - self.max_log_bytes} bytes)"
 
     async def post_json(self, payload: Dict[str, Any]) -> bool:
-        """POST JSON to FE webhook; returns True on 2xx, logging payload & response."""
+        """POST JSON to FE webhook with comprehensive logging."""
         if not self.webhook_url:
-            log.warning("No FRONTEND_WEBHOOK_URL configured – skipping webhook. Payload: %s", payload)
+            log.warning(f"WEBHOOK_NO_URL | payload={payload}")
             return False
 
-        # Log exactly what we are sending
+        # Prepare JSON payload
         try:
             payload_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        except Exception:
-            payload_json = str(payload)
+        except Exception as e:
+            log.error(f"WEBHOOK_JSON_ERROR | error={e} | payload={payload}")
+            return False
 
         if self.log_payloads:
-            log.info(
-                "FE webhook POST url=%s insecure=%s timeout=%ss payload=%s",
-                self.webhook_url, self.insecure, self.timeout, self._truncate(payload_json)
-            )
+            log.info(f"WEBHOOK_POST | url={self.webhook_url} | payload={self._truncate(payload_json)}")
 
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         connector = aiohttp.TCPConnector(ssl=False) if self.insecure else None
@@ -426,34 +452,26 @@ class FrontendNotifier:
             async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
                 async with session.post(
                     self.webhook_url,
-                    data=payload_json,  # send the exact json string we logged
+                    data=payload_json,
                     headers={"Content-Type": "application/json"},
                 ) as resp:
                     text = await resp.text()
+                    
                     if self.log_response:
-                        log.info(
-                            "FE webhook response status=%s reason=%s body=%s",
-                            resp.status, getattr(resp, "reason", ""), self._truncate(text or "")
-                        )
+                        log.info(f"WEBHOOK_RESPONSE | status={resp.status} | body={self._truncate(text or '')}")
+                    
                     if 200 <= resp.status < 300:
                         return True
-                    log.warning("Frontend notification failed: %s - %s", resp.status, text)
+                    
+                    log.warning(f"WEBHOOK_BAD_STATUS | status={resp.status} | response={text}")
                     return False
 
         except asyncio.TimeoutError:
-            log.error("Frontend notification timeout to %s", self.webhook_url)
+            log.error(f"WEBHOOK_TIMEOUT | url={self.webhook_url}")
             return False
         except aiohttp.ClientError as e:
-            msg = str(e)
-            if "CERTIFICATE_VERIFY_FAILED" in msg:
-                log.error(
-                    "SSL verification failed posting to %s (%s). "
-                    "For dev/ngrok set FRONTEND_WEBHOOK_INSECURE=true to bypass verify.",
-                    self.webhook_url, e
-                )
-            else:
-                log.error("HTTP client error posting to %s (%s).", self.webhook_url, e)
+            log.error(f"WEBHOOK_CLIENT_ERROR | url={self.webhook_url} | error={e}")
             return False
-        except Exception as e:  # noqa: BLE001
-            log.error("Failed to send frontend notification: %s", e)
+        except Exception as e:
+            log.error(f"WEBHOOK_UNEXPECTED_ERROR | url={self.webhook_url} | error={e}", exc_info=True)
             return False

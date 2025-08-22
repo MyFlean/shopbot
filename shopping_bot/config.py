@@ -46,12 +46,12 @@ class BaseConfig:
     )
     
     # WhatsApp Flow IDs / Token
-    WHATSAPP_FLOW_ID = os.getenv('WHATSAPP_FLOW_ID', '1093082415928891')
+    WHATSAPP_FLOW_ID = os.getenv('WHATSAPP_FLOW_ID', '4091028167879394')
     WHATSAPP_PRODUCTS_FLOW_ID = os.getenv('WHATSAPP_PRODUCTS_FLOW_ID', 'your-products-flow-id')
     WHATSAPP_RESULTS_FLOW_ID = os.getenv('WHATSAPP_RESULTS_FLOW_ID', 'your-results-flow-id')
     WHATSAPP_PRODUCT_RECOMMENDATIONS_FLOW_ID = os.getenv(
         'WHATSAPP_PRODUCT_RECOMMENDATIONS_FLOW_ID',
-        '799205369204924'
+        '1115844810650644'
     )
     # NEW: the Flow token issued by Meta for the published Flow
     WHATSAPP_FLOW_TOKEN = os.getenv('WHATSAPP_FLOW_TOKEN', None)

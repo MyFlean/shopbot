@@ -2,7 +2,7 @@
 """
 LLM service module for ShoppingBotCore
 ──────────────────────────────────────
-• Handles all Anthropic calls
+• Handles all Anthropic calls (ASYNC)
 • Defines tool schemas
 • Holds all prompt templates
 • Parses / normalises results
@@ -39,6 +39,10 @@ Modularization (2025-08-20):
 • Extracted ES parameter logic to recommendation.py module
 • Maintained backward compatibility through delegation
 • Added support for extensible recommendation engines
+
+Fix (2025-08-22):
+• Switched to anthropic.AsyncAnthropic and awaited all .messages.create(...) calls
+• Removed any accidental awaits on non-async helpers
 """
 
 from __future__ import annotations
@@ -67,7 +71,7 @@ from .models import (
 from .utils.helpers import extract_json_block
 from .bot_helpers import pick_tool, string_to_function, sections_to_text
 
-# Import the new recommendation service
+# Import the new recommendation service (async)
 from .recommendation import get_recommendation_service
 
 Cfg = get_config()
@@ -434,23 +438,6 @@ CRITICAL REQUIREMENTS for options:
 4. NO examples prefixed with "e.g." or similar
 5. Options should be directly selectable answers
 6. Make options relevant to the query context and product category
-
-Examples of GOOD options:
-- For budget: ["Under $100", "$100-500", "Over $500"]
-- For size: ["Small", "Medium", "Large"]
-- For brand preference: ["Premium brands", "Popular brands", "Budget-friendly"]
-- For features: ["Basic features", "Standard features", "Advanced features"]
-- For style: ["Modern", "Classic", "Trendy"]
-
-Examples of BAD options (AVOID):
-- ["Consider your budget, quality needs, etc.", "Think about features", "Other"]
-- ["e.g. Nike, Adidas", "Such as wireless, waterproof", "etc."]
-
-Guidelines:
-- Make questions specific to the query context
-- Use category-appropriate option ranges
-- Questions should feel conversational and helpful
-- Each question must have exactly 3 options that are clear choices
 """
 
 ANSWER_GENERATION_PROMPT = """
@@ -583,10 +570,8 @@ def _strip_keys(obj: Any) -> Any:
             if key == " slots":
                 key = "slots"
             if key == "intent" and "intent_override" not in obj:
-                # some models emit "intent" instead of "intent_override"
                 pass
             new[key] = _strip_keys(v)
-        # If we had " intent_override" etc., ensure canonical keys exist
         if " intent_override" in obj and "intent_override" not in new:
             new["intent_override"] = _strip_keys(obj[" intent_override"])
         if " slots" in obj and "slots" not in new:
@@ -618,9 +603,12 @@ class LLMService:
     """Service class for all LLM interactions."""
 
     def __init__(self) -> None:
-        self.anthropic = anthropic.Anthropic(api_key=Cfg.ANTHROPIC_API_KEY)
+        # ASYNC Anthropic client
+        self.anthropic = anthropic.AsyncAnthropic(api_key=Cfg.ANTHROPIC_API_KEY)
         # Initialize recommendation service
         self._recommendation_service = get_recommendation_service()
+        # Used for product extraction fallback
+        self._current_fetched_data: Dict[str, Any] = {}
 
     # ---------------- INTENT ----------------
     async def classify_intent(self, query: str, ctx: Optional[UserContext] = None) -> IntentResult:
@@ -645,7 +633,7 @@ class LLMService:
             recent_context=json.dumps(recent_context, ensure_ascii=False),
             query=query.strip(),
         )
-        resp = self.anthropic.messages.create(
+        resp = await self.anthropic.messages.create(
             model=Cfg.LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
             tools=[INTENT_CLASSIFICATION_TOOL],
@@ -665,7 +653,6 @@ class LLMService:
         layer2 = args.get("layer2") or "E2"
         layer3 = args.get("layer3") or "General_Help"
 
-        # Validate against our taxonomy; fall back to safe defaults
         if layer3 not in INTENT_MAPPING:
             layer1, layer2, layer3 = "E", "E2", "General_Help"
 
@@ -691,7 +678,7 @@ class LLMService:
                 fetched=json.dumps(fetched, ensure_ascii=False),
             )
             
-            resp = self.anthropic.messages.create(
+            resp = await self.anthropic.messages.create(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.4,
@@ -699,25 +686,21 @@ class LLMService:
             )
             
             # Try to extract JSON from the response
-            data = extract_json_block(resp.content[0].text)
+            text_block = getattr(resp.content[0], "text", "") if resp.content else ""
+            data = extract_json_block(text_block)
             
-            # Ensure we always return a valid response structure
             if isinstance(data, dict):
-                # If we got valid JSON, ensure it has the required fields
-                result = {
+                return {
                     "response_type": data.get("response_type", "final_answer"),
-                    "message": data.get("message", resp.content[0].text.strip())
+                    "message": data.get("message", text_block.strip())
                 }
-                return result
             else:
-                # If JSON parsing failed, return the raw text as the message
-                result = {
+                return {
                     "response_type": "final_answer", 
-                    "message": resp.content[0].text.strip()
+                    "message": text_block.strip()
                 }
-                return result
                 
-        except Exception as e:
+        except Exception:
             # Return safe fallback
             return {
                 "response_type": "final_answer",
@@ -738,7 +721,7 @@ class LLMService:
         )
 
         try:
-            resp = self.anthropic.messages.create(
+            resp = await self.anthropic.messages.create(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[FOLLOW_UP_TOOL],
@@ -754,17 +737,15 @@ class LLMService:
             ipt = _strip_keys(ipt_raw) if isinstance(ipt_raw, dict) else {}
 
             patch_dict = _safe_get(ipt, "patch", {}) or {}
-            # normalize common mistakes
             if "slots" not in patch_dict and " slots" in patch_dict:
                 patch_dict["slots"] = patch_dict.get(" slots", {})
-            # ensure slots dict and strip its keys too
             slots_dict = patch_dict.get("slots") or {}
             if isinstance(slots_dict, dict):
                 slots_dict = { (k.strip() if isinstance(k, str) else k): v for k, v in slots_dict.items() }
             else:
                 slots_dict = {}
 
-            intent_override = patch_dict.get("intent_override") or patch_dict.get("intent")  # tolerate "intent"
+            intent_override = patch_dict.get("intent_override") or patch_dict.get("intent")
             reset_context = bool(patch_dict.get("reset_context", False))
 
             patch = FollowUpPatch(
@@ -793,7 +774,7 @@ class LLMService:
             fetched_keys=list(ctx.fetched_data.keys()),
         )
         try:
-            resp = self.anthropic.messages.create(
+            resp = await self.anthropic.messages.create(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[DELTA_ASSESS_TOOL],
@@ -805,7 +786,6 @@ class LLMService:
             if not tool_use:
                 return []
             items_raw = tool_use.input.get("fetch_functions", [])
-            # normalize possible stray whitespace values
             items = []
             for it in items_raw:
                 try:
@@ -847,7 +827,7 @@ class LLMService:
             suggested_functions=suggested_functions,
         )
 
-        resp = self.anthropic.messages.create(
+        resp = await self.anthropic.messages.create(
             model=Cfg.LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
             tools=[assessment_tool],
@@ -858,7 +838,6 @@ class LLMService:
 
         tool_use = pick_tool(resp, "assess_requirements")
         if not tool_use:
-            # Defensive empty assessment
             return RequirementAssessment(
                 intent=intent, missing_data=[], rationale={}, priority_order=[]
             )
@@ -910,7 +889,6 @@ class LLMService:
         if not slots_needed:
             return {}
 
-        # Get product category from session if available
         product_category = ctx.session.get("product_category", "general products")
 
         # Build slot hints
@@ -923,8 +901,6 @@ class LLMService:
 
         # Get category-specific hints
         category_hints = CATEGORY_QUESTION_HINTS.get(product_category, "Focus on the most relevant attributes for the user's query.")
-
-        # Prepare slots needed description
         slots_needed_desc = ", ".join([slot.value for slot in slots_needed])
 
         prompt = CONTEXTUAL_QUESTIONS_PROMPT.format(
@@ -938,7 +914,7 @@ class LLMService:
 
         try:
             questions_tool = build_questions_tool(slots_needed)
-            resp = self.anthropic.messages.create(
+            resp = await self.anthropic.messages.create(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[questions_tool],
@@ -960,20 +936,17 @@ class LLMService:
             for slot_value, question_data in questions_data.items():
                 options = question_data.get("options", [])
 
-                # Convert string options to proper format if needed
                 if isinstance(options, list) and len(options) >= 3:
                     formatted_options = []
-                    for opt in options[:3]:  # Take first 3
+                    for opt in options[:3]:
                         if isinstance(opt, str):
                             clean_opt = opt.strip()
-                            # Skip options that look like instructions
                             if any(phrase in clean_opt.lower() for phrase in ["consider", "think about", "e.g.", "such as", "etc."]):
                                 continue
                             formatted_options.append({"label": clean_opt, "value": clean_opt})
                         elif isinstance(opt, dict) and "label" in opt and "value" in opt:
                             formatted_options.append(opt)
 
-                    # If we don't have enough good options, add generic ones
                     while len(formatted_options) < 3:
                         if len(formatted_options) == 0:
                             formatted_options.append({"label": "Yes", "value": "Yes"})
@@ -990,21 +963,18 @@ class LLMService:
                         "hints": question_data.get("hints", [])
                     }
                 else:
-                    # Fallback if options are malformed
                     processed_questions[slot_value] = self._generate_fallback_question(slot_value)
 
             return processed_questions
 
         except Exception as exc:
             log.warning("Contextual question generation failed: %s", exc)
-            # Return fallback questions for all slots
             return {slot.value: self._generate_fallback_question(slot.value) for slot in slots_needed}
 
     def _generate_fallback_question(self, slot_value: str) -> Dict[str, Any]:
         """Generate a fallback question with proper options."""
         slot_name = slot_value.lower().replace("ask_", "").replace("_", " ")
 
-        # Provide sensible default options based on slot type
         if "budget" in slot_name or "price" in slot_name:
             options = [
                 {"label": "Budget-friendly", "value": "Budget-friendly"},
@@ -1063,16 +1033,16 @@ class LLMService:
             fetched=fetched,
         )
 
-        resp = self.anthropic.messages.create(
+        resp = await self.anthropic.messages.create(
             model=Cfg.LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
-            max_tokens=Cfg.LLM_MAX_TOKENS,
+            max_tokens=getattr(Cfg, "LLM_MAX_TOKENS", 1200),
         )
 
-        data = extract_json_block(resp.content[0].text)
+        text_block = getattr(resp.content[0], "text", "") if resp.content else ""
+        data = extract_json_block(text_block)
 
-        # Happy-path: six-section answer
         if isinstance(data, dict) and data.get("response_type") == "final_answer" and "sections" in data:
             text = sections_to_text(data["sections"])
             return {
@@ -1081,13 +1051,12 @@ class LLMService:
                 "sections": data["sections"],
             }
 
-        # Fallback to older contract if LLM ignores new schema
         if isinstance(data, dict) and "response_type" in data and "message" in data:
             return data
 
         return {
             "response_type": "final_answer",
-            "message": resp.content[0].text.strip(),
+            "message": text_block.strip(),
         }
 
     # ---------------- ENHANCED ANSWER GENERATION ----------------
@@ -1107,6 +1076,9 @@ class LLMService:
             - structured_products: List[Dict] (for Flow generation)
             - flow_context: Dict (Flow metadata)
         """
+        # Keep fetched snapshot available for ES fallback extraction
+        self._current_fetched_data = fetched or {}
+
         prompt = ENHANCED_ANSWER_GENERATION_PROMPT.format(
             query=query,
             permanent=ctx.permanent,
@@ -1115,7 +1087,7 @@ class LLMService:
         )
 
         try:
-            resp = self.anthropic.messages.create(
+            resp = await self.anthropic.messages.create(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[STRUCTURED_ANSWER_TOOL],
@@ -1126,17 +1098,14 @@ class LLMService:
 
             tool_use = pick_tool(resp, "generate_structured_answer")
             if not tool_use:
-                # Fallback to base generate_answer method
                 log.warning("No structured answer tool found, falling back to base service")
                 return await self.generate_answer(query, ctx, fetched)
 
             result_raw = tool_use.input or {}
             result = _strip_keys(result_raw) if isinstance(result_raw, dict) else {}
 
-            # Validate and process the structured response
             processed_result = self._process_structured_response(result)
 
-            # Generate text message from sections
             if processed_result.get("sections"):
                 text_message = sections_to_text(processed_result["sections"])
                 processed_result["message"] = text_message
@@ -1145,7 +1114,6 @@ class LLMService:
 
         except Exception as exc:
             log.error(f"Enhanced answer generation failed: {exc}")
-            # Fallback to base generate_answer method
             return await self.generate_answer(query, ctx, fetched)
 
     def _process_structured_response(self, raw_response: Dict[str, Any]) -> Dict[str, Any]:
@@ -1182,9 +1150,6 @@ class LLMService:
 
     def _extract_products_from_es_data(self) -> List[Dict[str, Any]]:
         """Extract structured products from ES results stored in context"""
-        if not hasattr(self, '_current_fetched_data'):
-            return []
-        
         fetched = self._current_fetched_data or {}
         search_results = fetched.get('search_products', {})
         
@@ -1199,7 +1164,6 @@ class LLMService:
         
         for i, product in enumerate(products_list[:6]):  # Limit to 6 for Flow
             try:
-                # Extract from ES product structure
                 product_data = {
                     "title": product.get("name") or product.get("title", f"Product {i+1}"),
                     "subtitle": product.get("brand", ""),
@@ -1211,9 +1175,7 @@ class LLMService:
                     "availability": "In Stock",
                     "discount": product.get("discount", "")
                 }
-                
                 structured_products.append(product_data)
-                
             except Exception as e:
                 log.warning(f"Failed to convert ES product {i}: {e}")
                 continue
@@ -1224,33 +1186,28 @@ class LLMService:
         """Extract key features from ES product data"""
         features = []
         
-        # Add protein info if available
         protein = product.get("protein_g")
         if protein and protein > 0:
             features.append(f"Protein: {protein}g")
         
-        # Add health claims
         health_claims = product.get("health_claims", [])
         if isinstance(health_claims, list):
-            features.extend(health_claims[:2])  # Max 2 health claims
+            features.extend(health_claims[:2])
         
-        # Add dietary labels
         dietary_labels = product.get("dietary_labels", [])
         if isinstance(dietary_labels, list):
-            features.extend(dietary_labels[:2])  # Max 2 dietary labels
+            features.extend(dietary_labels[:2])
         
-        # Add category if interesting
         category_paths = product.get("category_paths", [])
         if isinstance(category_paths, list) and category_paths:
             last_cat = category_paths[-1] if category_paths else ""
             if last_cat and last_cat not in ["f_and_b", "food"]:
                 features.append(last_cat.title())
         
-        # Ensure we have at least one feature
         if not features:
             features.append("Quality Product")
         
-        return features[:5]  # Max 5 features for Flow
+        return features[:5]
 
     def _create_product_data(self, product_dict: Dict[str, Any]) -> Optional[ProductData]:
         """Create ProductData object from dictionary"""
@@ -1281,11 +1238,9 @@ class LLMService:
         structured_products: List[ProductData]
     ) -> bool:
         """Determine if this response should use a Flow"""
-        # Use Flow if we have structured products
         if structured_products and len(structured_products) >= 2:
             return True
 
-        # Use Flow for specific intents
         flow_intents = [
             "Product_Comparison",
             "Recommendation",
@@ -1295,7 +1250,6 @@ class LLMService:
         if intent_layer3 in flow_intents:
             return True
 
-        # Check query for Flow-indicating keywords
         flow_keywords = [
             "alternatives", "options", "compare", "similar",
             "recommend", "suggest", "show me", "what about"
@@ -1315,7 +1269,6 @@ class LLMService:
         """Determine appropriate Flow type"""
         from .models import FlowType
 
-        # Check explicit flow context
         context_intent = flow_context.get("intent", "none")
         if context_intent == "recommendation":
             return FlowType.RECOMMENDATION
@@ -1324,20 +1277,17 @@ class LLMService:
         elif context_intent == "catalog":
             return FlowType.PRODUCT_CATALOG
 
-        # Infer from intent
         if intent_layer3 == "Product_Comparison":
             return FlowType.COMPARISON
         elif intent_layer3 in ["Recommendation", "Product_Discovery"]:
             return FlowType.RECOMMENDATION
 
-        # Infer from query
         query_lower = query.lower()
         if any(word in query_lower for word in ["compare", "vs", "versus", "difference"]):
             return FlowType.COMPARISON
         elif any(word in query_lower for word in ["recommend", "suggest", "best", "should i"]):
             return FlowType.RECOMMENDATION
 
-        # Default to catalog
         return FlowType.PRODUCT_CATALOG
 
     # ---------------- ES PARAMS (DELEGATED TO RECOMMENDATION SERVICE) ----------------
@@ -1352,17 +1302,12 @@ class LLMService:
             # Store current fetched data for product extraction fallback
             self._current_fetched_data = ctx.fetched_data
             
-            # Delegate to recommendation service
+            # Delegate to recommendation service (async)
             params = await self._recommendation_service.extract_es_params(ctx)
-            
-            # Log the extraction for debugging
             log.debug(f"ES params extracted via recommendation service: {params}")
-            
             return params
-            
         except Exception as exc:
             log.warning("ES param extraction via recommendation service failed: %s", exc)
-            # Return empty dict as fallback (maintains original behavior)
             return {}
     
     # ---------------- RECOMMENDATION SERVICE INTEGRATION ----------------

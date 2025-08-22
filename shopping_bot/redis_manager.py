@@ -173,14 +173,11 @@ class RedisContextManager:
             )
 
     def save_context(self, ctx: UserContext) -> bool:
-        """
-        Enhanced context saving with debouncing and atomic operations.
-        Returns True if saved, False if skipped/failed.
-        """
+        """Enhanced context saving with Redis Cluster compatibility."""
         try:
             # FIX: Check if we should skip this save
             if self._should_skip_save(ctx):
-                return True  # Considered successful (debounced)
+                return True
 
             if not self._check_connection_health():
                 log.error(f"CONTEXT_SAVE_UNHEALTHY | user={ctx.user_id} | session={ctx.session_id}")
@@ -188,42 +185,69 @@ class RedisContextManager:
 
             log.debug(f"CONTEXT_SAVE_START | user={ctx.user_id} | session={ctx.session_id}")
 
-            # FIX: Use pipeline for atomic operations
-            with self.redis.pipeline() as pipe:
-                try:
-                    # Set all three keys atomically
-                    permanent_key = f"user:{ctx.user_id}:permanent"
-                    session_key = f"session:{ctx.session_id}"
-                    fetched_key = f"session:{ctx.session_id}:fetched"
-                    
-                    # Permanent data (no TTL)
-                    pipe.set(permanent_key, json.dumps(ctx.permanent))
-                    
-                    # Session data (with TTL)
-                    if self.ttl:
-                        pipe.setex(session_key, int(self.ttl.total_seconds()), json.dumps(ctx.session))
-                        pipe.setex(fetched_key, int(self.ttl.total_seconds()), json.dumps(ctx.fetched_data))
-                    else:
-                        pipe.set(session_key, json.dumps(ctx.session))
-                        pipe.set(fetched_key, json.dumps(ctx.fetched_data))
-                    
-                    # Execute pipeline atomically
-                    results = pipe.execute()
-                    
-                    # Verify all operations succeeded
-                    if all(results):
-                        log.info(f"CONTEXT_SAVED | user={ctx.user_id} | session={ctx.session_id} | permanent_size={len(json.dumps(ctx.permanent))} | session_size={len(json.dumps(ctx.session))} | fetched_size={len(json.dumps(ctx.fetched_data))}")
-                        return True
-                    else:
-                        log.error(f"CONTEXT_SAVE_PARTIAL_FAILURE | user={ctx.user_id} | session={ctx.session_id} | results={results}")
-                        return False
-                        
-                except redis.WatchError:
-                    log.warning(f"CONTEXT_SAVE_WATCH_ERROR | user={ctx.user_id} | session={ctx.session_id}")
-                    return False
-                    
+            # FIX: For Redis Cluster, save keys individually instead of pipeline
+            try:
+                # Check if this is a Redis Cluster
+                if hasattr(self.redis, 'cluster_nodes') or 'cluster' in str(type(self.redis)).lower():
+                    return self._save_context_cluster_safe(ctx)
+                else:
+                    return self._save_context_pipeline(ctx)
+            except Exception as e:
+                # Fallback to individual operations if pipeline fails
+                log.warning(f"PIPELINE_FAILED | user={ctx.user_id} | error={e} | falling_back")
+                return self._save_context_cluster_safe(ctx)
+
         except Exception as e:
             log.error(f"CONTEXT_SAVE_ERROR | user={ctx.user_id} | session={ctx.session_id} | error={e}", exc_info=True)
+            return False
+
+    def _save_context_pipeline(self, ctx: UserContext) -> bool:
+        """Pipeline version for single Redis instance"""
+        with self.redis.pipeline() as pipe:
+            # Your existing pipeline code here
+            permanent_key = f"user:{ctx.user_id}:permanent"
+            session_key = f"session:{ctx.session_id}"
+            fetched_key = f"session:{ctx.session_id}:fetched"
+            
+            pipe.set(permanent_key, json.dumps(ctx.permanent))
+            
+            if self.ttl:
+                pipe.setex(session_key, int(self.ttl.total_seconds()), json.dumps(ctx.session))
+                pipe.setex(fetched_key, int(self.ttl.total_seconds()), json.dumps(ctx.fetched_data))
+            else:
+                pipe.set(session_key, json.dumps(ctx.session))
+                pipe.set(fetched_key, json.dumps(ctx.fetched_data))
+            
+            results = pipe.execute()
+            return all(results)
+
+    def _save_context_cluster_safe(self, ctx: UserContext) -> bool:
+        """Cluster-safe version using individual operations"""
+        try:
+            # Save each key individually for Redis Cluster compatibility
+            permanent_key = f"user:{ctx.user_id}:permanent"
+            session_key = f"session:{ctx.session_id}"
+            fetched_key = f"session:{ctx.session_id}:fetched"
+            
+            # Permanent data (no TTL)
+            result1 = self.redis.set(permanent_key, json.dumps(ctx.permanent))
+            
+            # Session data (with TTL)
+            if self.ttl:
+                result2 = self.redis.setex(session_key, int(self.ttl.total_seconds()), json.dumps(ctx.session))
+                result3 = self.redis.setex(fetched_key, int(self.ttl.total_seconds()), json.dumps(ctx.fetched_data))
+            else:
+                result2 = self.redis.set(session_key, json.dumps(ctx.session))
+                result3 = self.redis.set(fetched_key, json.dumps(ctx.fetched_data))
+            
+            success = all([result1, result2, result3])
+            if success:
+                log.info(f"CONTEXT_SAVED_CLUSTER | user={ctx.user_id} | session={ctx.session_id}")
+            
+            return success
+            
+        except Exception as e:
+            log.error(f"CLUSTER_SAVE_ERROR | user={ctx.user_id} | error={e}")
             return False
 
     def merge_fetched_data(self, session_id: str, new_data: Dict[str, Any]) -> bool:

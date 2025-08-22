@@ -629,8 +629,16 @@ class EnhancedShoppingBotCore:
                                   else enhanced_response.content.get("message", "") if enhanced_response else ""),
                 "has_sections": bool(enhanced_response and enhanced_response.content.get("sections")),
                 "sections_summary": list(enhanced_response.content.get("sections", {}).keys()) if enhanced_response and enhanced_response.content.get("sections") else [],
-                "has_products": bool(enhanced_response and enhanced_response.structured_products),
-                "product_count": len(enhanced_response.structured_products) if enhanced_response and enhanced_response.structured_products else 0,
+                "has_products": bool(
+                    enhanced_response 
+                    and enhanced_response.flow_payload 
+                    and getattr(enhanced_response.flow_payload, "products", None)
+                ),
+                "product_count": (
+                    len(enhanced_response.flow_payload.products)
+                    if enhanced_response and enhanced_response.flow_payload and enhanced_response.flow_payload.products
+                    else 0
+                ),
                 "flow_triggered": enhanced_response.requires_flow if enhanced_response else False,
                 "functions_executed": enhanced_response.functions_executed if enhanced_response else []
             }

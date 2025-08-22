@@ -11,6 +11,9 @@ Fixes:
 from __future__ import annotations
 
 import asyncio
+import time
+import random
+from urllib.parse import urlparse
 import logging
 import os
 import json
@@ -86,20 +89,24 @@ class BackgroundProcessor:
         This ensures the original caller returns immediately while work continues.
         """
         ctx = None
+        t0 = time.perf_counter()
         try:
             log.info(f"BACKGROUND_EXEC_START | processing_id={processing_id}")
             
             # Get context and mark assessment phase
+            t_ctx0 = time.perf_counter()
             ctx = self.ctx_mgr.get_context(user_id, session_id)
             if "assessment" in ctx.session:
                 ctx.session["assessment"]["phase"] = "processing"
                 self.ctx_mgr.save_context(ctx)
                 log.info(f"ASSESSMENT_PHASE_MARKED | processing_id={processing_id}")
+            log.info(f"TIMING | processing_id={processing_id} | step=context_load_and_mark | duration_ms={(time.perf_counter()-t_ctx0)*1000:.1f}")
 
             # Execute the actual work
+            t_core0 = time.perf_counter()
             log.info(f"CORE_PROCESSING_START | processing_id={processing_id}")
             result = await self.enhanced_bot.process_query(query, ctx, enable_flows=True)
-            log.info(f"CORE_PROCESSING_COMPLETE | processing_id={processing_id} | response_type={result.response_type.value}")
+            log.info(f"CORE_PROCESSING_COMPLETE | processing_id={processing_id} | response_type={result.response_type.value} | duration_ms={(time.perf_counter()-t_core0)*1000:.1f}")
 
             # FIX: If core still returned PROCESSING_STUB, force sync completion
             if getattr(result, "response_type", None) == ResponseType.PROCESSING_STUB:
@@ -111,10 +118,12 @@ class BackgroundProcessor:
                     ctx.session["assessment"]["phase"] = "done"
                 
                 self.ctx_mgr.save_context(ctx)
+                t_core_forced0 = time.perf_counter()
                 result = await self.enhanced_bot.process_query(query, ctx, enable_flows=True)
-                log.info(f"CORE_FORCED_SYNC | processing_id={processing_id} | new_response_type={result.response_type.value}")
+                log.info(f"CORE_FORCED_SYNC | processing_id={processing_id} | new_response_type={result.response_type.value} | duration_ms={(time.perf_counter()-t_core_forced0)*1000:.1f}")
 
             # FIX: CRITICAL - Store result FIRST, then update status
+            t_store0 = time.perf_counter()
             await self._store_processing_result(
                 processing_id=processing_id,
                 result=result,
@@ -122,7 +131,7 @@ class BackgroundProcessor:
                 user_id=user_id,
                 session_id=session_id,
             )
-            log.info(f"RESULT_STORED | processing_id={processing_id}")
+            log.info(f"RESULT_STORED | processing_id={processing_id} | duration_ms={(time.perf_counter()-t_store0)*1000:.1f}")
 
             # FIX: Mark assessment as complete and save context
             if "assessment" in ctx.session:
@@ -131,20 +140,25 @@ class BackgroundProcessor:
             
             # FIX: Mark session as not needing background work
             ctx.session["needs_background"] = False
+            t_ctxsave0 = time.perf_counter()
             self.ctx_mgr.save_context(ctx)
-            log.info(f"SESSION_UPDATED | processing_id={processing_id} | needs_background=false")
+            log.info(f"SESSION_UPDATED | processing_id={processing_id} | needs_background=false | duration_ms={(time.perf_counter()-t_ctxsave0)*1000:.1f}")
 
             # FIX: Only AFTER result is stored, set status to completed
+            t_status0 = time.perf_counter()
             await self._set_processing_status(processing_id, "completed", {
                 "result_available": True,
                 "execution_time": "computed_if_needed"
             })
-            log.info(f"STATUS_COMPLETED | processing_id={processing_id}")
+            log.info(f"STATUS_COMPLETED | processing_id={processing_id} | duration_ms={(time.perf_counter()-t_status0)*1000:.1f}")
 
             # Notify FE with minimal payload
             wa_id_resolved = self._resolve_wa_id(ctx, user_id) if wa_id is None else wa_id
+            t_notify0 = time.perf_counter()
             await self._notify_fe_minimal(processing_id, user_id, wa_id_resolved, status="completed")
-            log.info(f"FE_NOTIFIED | processing_id={processing_id} | wa_id={wa_id_resolved}")
+            log.info(f"FE_NOTIFIED | processing_id={processing_id} | wa_id={wa_id_resolved} | duration_ms={(time.perf_counter()-t_notify0)*1000:.1f}")
+
+            log.info(f"TIMING | processing_id={processing_id} | step=total_background | duration_ms={(time.perf_counter()-t0)*1000:.1f}")
 
         except Exception as e:
             # FIX: Proper error handling with failed status
@@ -331,8 +345,9 @@ class BackgroundProcessor:
                 "metadata": metadata or {},
             }
             
+            t0 = time.perf_counter()
             self.ctx_mgr._set_json(status_key, payload, ttl=self.processing_ttl)
-            log.info(f"STATUS_SET | processing_id={processing_id} | status={status} | metadata_keys={list(metadata.keys())}")
+            log.info(f"STATUS_SET | processing_id={processing_id} | status={status} | metadata_keys={list(metadata.keys())} | duration_ms={(time.perf_counter()-t0)*1000:.1f}")
             
         except Exception as e:
             log.error(f"STATUS_SET_FAILED | processing_id={processing_id} | status={status} | error={e}", exc_info=True)
@@ -416,6 +431,16 @@ class FrontendNotifier:
         except Exception:
             self.timeout = 10
 
+        # Retries
+        try:
+            self.max_retries = int(os.getenv("FE_WEBHOOK_MAX_RETRIES", "3"))
+        except Exception:
+            self.max_retries = 3
+        try:
+            self.retry_base_ms = int(os.getenv("FE_WEBHOOK_RETRY_BASE_MS", "250"))
+        except Exception:
+            self.retry_base_ms = 250
+
         # Logging controls
         self.log_payloads = os.getenv("FE_WEBHOOK_LOG_PAYLOADS", "true").lower() == "true"
         self.log_response = os.getenv("FE_WEBHOOK_LOG_RESPONSE", "true").lower() == "true"
@@ -424,13 +449,25 @@ class FrontendNotifier:
         except Exception:
             self.max_log_bytes = 8192
 
+        # Derived
+        self._parsed = urlparse(self.webhook_url) if self.webhook_url else None
+        log.info(
+            "FE_WEBHOOK_INIT | url=%s | host=%s | insecure=%s | timeout_s=%s | max_retries=%s | retry_base_ms=%s",
+            self.webhook_url,
+            (self._parsed.hostname if self._parsed else None),
+            self.insecure,
+            self.timeout,
+            self.max_retries,
+            self.retry_base_ms,
+        )
+
     def _truncate(self, s: str) -> str:
         if len(s) <= self.max_log_bytes:
             return s
         return f"{s[:self.max_log_bytes]}... (truncated {len(s) - self.max_log_bytes} bytes)"
 
     async def post_json(self, payload: Dict[str, Any]) -> bool:
-        """POST JSON to FE webhook with comprehensive logging."""
+        """POST JSON to FE webhook with comprehensive logging and retries."""
         if not self.webhook_url:
             log.warning(f"WEBHOOK_NO_URL | payload={payload}")
             return False
@@ -448,30 +485,133 @@ class FrontendNotifier:
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         connector = aiohttp.TCPConnector(ssl=False) if self.insecure else None
 
-        try:
-            async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-                async with session.post(
-                    self.webhook_url,
-                    data=payload_json,
-                    headers={"Content-Type": "application/json"},
-                ) as resp:
-                    text = await resp.text()
-                    
-                    if self.log_response:
-                        log.info(f"WEBHOOK_RESPONSE | status={resp.status} | body={self._truncate(text or '')}")
-                    
-                    if 200 <= resp.status < 300:
-                        return True
-                    
-                    log.warning(f"WEBHOOK_BAD_STATUS | status={resp.status} | response={text}")
-                    return False
+        # Trace callbacks for deep visibility
+        trace_config = aiohttp.TraceConfig()
 
-        except asyncio.TimeoutError:
-            log.error(f"WEBHOOK_TIMEOUT | url={self.webhook_url}")
-            return False
-        except aiohttp.ClientError as e:
-            log.error(f"WEBHOOK_CLIENT_ERROR | url={self.webhook_url} | error={e} | error_type={type(e).__name__}")
-            return False
-        except Exception as e:
-            log.error(f"WEBHOOK_UNEXPECTED_ERROR | url={self.webhook_url} | error={e} | error_type={type(e).__name__}", exc_info=True)
-            return False
+        @trace_config.on_request_start.append
+        async def on_request_start(session, context, params):  # noqa: ANN001
+            log.info(
+                "AIOHTTP_REQUEST_START | method=%s | url=%s | headers=%s",
+                params.method,
+                params.url,
+                self._truncate(str(params.headers)),
+            )
+
+        @trace_config.on_request_end.append
+        async def on_request_end(session, context, params):  # noqa: ANN001
+            log.info(
+                "AIOHTTP_REQUEST_END | method=%s | url=%s | elapsed_ms=unknown",
+                params.method,
+                params.url,
+            )
+
+        @trace_config.on_connection_create_start.append
+        async def on_conn_start(session, context, params):  # noqa: ANN001
+            log.info("AIOHTTP_CONN_CREATE_START | host=%s | port=%s | ssl=%s", params.host, params.port, params.ssl)
+
+        @trace_config.on_connection_create_end.append
+        async def on_conn_end(session, context, params):  # noqa: ANN001
+            log.info("AIOHTTP_CONN_CREATE_END | connection=%s", params.transport)
+
+        # Retry loop
+        start_overall = time.perf_counter()
+        for attempt in range(1, self.max_retries + 1):
+            attempt_start = time.perf_counter()
+            try:
+                async with aiohttp.ClientSession(timeout=timeout, connector=connector, trace_configs=[trace_config]) as session:
+                    async with session.post(
+                        self.webhook_url,
+                        json=payload,
+                        headers={"Content-Type": "application/json"},
+                    ) as resp:
+                        text = await resp.text()
+                        headers_str = self._truncate(str(dict(resp.headers)))
+                        log.info(
+                            "WEBHOOK_RESPONSE | status=%s | attempt=%s/%s | elapsed_ms=%.1f | headers=%s | body=%s",
+                            resp.status,
+                            attempt,
+                            self.max_retries,
+                            (time.perf_counter() - attempt_start) * 1000,
+                            headers_str,
+                            self._truncate(text or ""),
+                        )
+                        if 200 <= resp.status < 300:
+                            log.info(
+                                "WEBHOOK_SUCCESS | total_elapsed_ms=%.1f | attempts=%s",
+                                (time.perf_counter() - start_overall) * 1000,
+                                attempt,
+                            )
+                            return True
+
+                        # Non-2xx
+                        if attempt < self.max_retries:
+                            delay = (self.retry_base_ms * (2 ** (attempt - 1))) / 1000.0
+                            jitter = random.uniform(0, delay * 0.2)
+                            sleep_for = delay + jitter
+                            log.warning(
+                                "WEBHOOK_BAD_STATUS | status=%s | attempt=%s/%s | retry_in_ms=%.0f",
+                                resp.status,
+                                attempt,
+                                self.max_retries,
+                                sleep_for * 1000,
+                            )
+                            await asyncio.sleep(sleep_for)
+                            continue
+                        else:
+                            log.warning("WEBHOOK_GIVING_UP | status=%s | attempts=%s", resp.status, attempt)
+                            return False
+
+            except asyncio.TimeoutError:
+                if attempt < self.max_retries:
+                    delay = (self.retry_base_ms * (2 ** (attempt - 1))) / 1000.0
+                    jitter = random.uniform(0, delay * 0.2)
+                    sleep_for = delay + jitter
+                    log.error(
+                        "WEBHOOK_TIMEOUT | attempt=%s/%s | retry_in_ms=%.0f | url=%s",
+                        attempt,
+                        self.max_retries,
+                        sleep_for * 1000,
+                        self.webhook_url,
+                    )
+                    await asyncio.sleep(sleep_for)
+                    continue
+                else:
+                    log.error("WEBHOOK_TIMEOUT_FINAL | attempts=%s | url=%s", attempt, self.webhook_url)
+                    return False
+            except aiohttp.ClientError as e:
+                if attempt < self.max_retries:
+                    delay = (self.retry_base_ms * (2 ** (attempt - 1))) / 1000.0
+                    jitter = random.uniform(0, delay * 0.2)
+                    sleep_for = delay + jitter
+                    log.error(
+                        "WEBHOOK_CLIENT_ERROR | attempt=%s/%s | retry_in_ms=%.0f | error=%s | type=%s",
+                        attempt,
+                        self.max_retries,
+                        sleep_for * 1000,
+                        e,
+                        type(e).__name__,
+                    )
+                    await asyncio.sleep(sleep_for)
+                    continue
+                else:
+                    log.error(
+                        "WEBHOOK_CLIENT_ERROR_FINAL | attempts=%s | error=%s | type=%s",
+                        attempt,
+                        e,
+                        type(e).__name__,
+                    )
+                    return False
+            except Exception as e:
+                log.error(
+                    "WEBHOOK_UNEXPECTED_ERROR | attempt=%s/%s | url=%s | error=%s | type=%s",
+                    attempt,
+                    self.max_retries,
+                    self.webhook_url,
+                    e,
+                    type(e).__name__,
+                    exc_info=True,
+                )
+                return False
+
+        # Should not reach here
+        return False

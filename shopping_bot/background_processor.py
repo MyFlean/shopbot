@@ -390,7 +390,7 @@ class BackgroundProcessor:
         """Send minimal payload to FE with enhanced logging."""
         payload = {
             "processing_id": processing_id,
-            "flow_id": getattr(Cfg, "WHATSAPP_FLOW_ID", "") or "",
+            "flow_id": getattr(Cfg, "WHATSAPP_PRODUCT_RECOMMENDATIONS_FLOW_ID", "") or "",
             "wa_id": str(wa_id or ""),
             "status": status,
             "user_id": user_id,

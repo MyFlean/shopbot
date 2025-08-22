@@ -89,10 +89,21 @@ class ShoppingBotCore:
             or ""
         )
         if effective_l3 == "Recommendation":
+            # Ensure a minimal assessment exists and is in an allow-processing phase
             ctx.session["needs_background"] = True
             a = ctx.session.get("assessment")
-            if a:
-                a["phase"] = "processing"
+            if not a:
+                a = {
+                    "original_query": query,
+                    "intent": "Recommendation",
+                    "missing_data": [],
+                    "priority_order": [],
+                    "fulfilled": [],
+                    "currently_asking": None,
+                }
+                ctx.session["assessment"] = a
+            # Keep phase active so enhanced core proceeds in background
+            a["phase"] = "active"
             self.ctx_mgr.save_context(ctx)
             self.smart_log.flow_decision(
                 ctx.user_id, "DEFER_TO_BACKGROUND_FOLLOW_UP", {"intent_l3": effective_l3}

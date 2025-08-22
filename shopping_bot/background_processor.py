@@ -536,11 +536,21 @@ class FrontendNotifier:
 
         @trace_config.on_connection_create_start.append
         async def on_conn_start(session, context, params):  # noqa: ANN001
-            log.info("AIOHTTP_CONN_CREATE_START | host=%s | port=%s | ssl=%s", params.host, params.port, params.ssl)
+            # aiohttp >=3.9 doesn't expose host/port here; just note the event
+            try:
+                host = getattr(params, "host", "?")
+                port = getattr(params, "port", "?")
+                sslv = getattr(params, "ssl", "?")
+                log.info("AIOHTTP_CONN_CREATE_START | host=%s | port=%s | ssl=%s", host, port, sslv)
+            except Exception:
+                log.info("AIOHTTP_CONN_CREATE_START")
 
         @trace_config.on_connection_create_end.append
         async def on_conn_end(session, context, params):  # noqa: ANN001
-            log.info("AIOHTTP_CONN_CREATE_END | connection=%s", params.transport)
+            try:
+                log.info("AIOHTTP_CONN_CREATE_END | connection=%s", getattr(params, "transport", "?"))
+            except Exception:
+                log.info("AIOHTTP_CONN_CREATE_END")
 
         # Retry loop
         start_overall = time.perf_counter()

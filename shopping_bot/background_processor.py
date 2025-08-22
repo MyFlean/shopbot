@@ -122,9 +122,10 @@ class BackgroundProcessor:
             t_ctx0 = time.perf_counter()
             ctx = self.ctx_mgr.get_context(user_id, session_id)
             if "assessment" in ctx.session:
-                ctx.session["assessment"]["phase"] = "processing"
+                # Keep phase 'active' so the core is allowed to proceed. We finalize to 'done' later.
+                ctx.session["assessment"]["phase"] = "active"
                 self.ctx_mgr.save_context(ctx)
-                log.info(f"ASSESSMENT_PHASE_MARKED | processing_id={processing_id}")
+                log.info(f"ASSESSMENT_PHASE_MARKED_ACTIVE | processing_id={processing_id}")
             log.info(f"TIMING | processing_id={processing_id} | step=context_load_and_mark | duration_ms={(time.perf_counter()-t_ctx0)*1000:.1f}")
 
             # Execute the actual work

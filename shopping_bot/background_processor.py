@@ -45,6 +45,7 @@ class BackgroundProcessor:
         session_id: str,
         wa_id: Optional[str] = None,
         notification_callback: Optional[callable] = None,
+        inline: bool = False,
     ) -> str:
         """
         Execute heavy work, persist the full result for polling,
@@ -67,10 +68,34 @@ class BackgroundProcessor:
         })
         log.info(f"BACKGROUND_START | processing_id={processing_id} | query='{query[:50]}...'")
 
-        # FIX: Spawn background task and return immediately (don't await here)
-        asyncio.create_task(self._execute_background_work(
-            processing_id, query, user_id, session_id, wa_id, notification_callback
-        ))
+        # Pragmatic option: execute inline (no 202 path). Useful to avoid lifecycle issues.
+        if inline:
+            log.info(f"BACKGROUND_INLINE_EXEC | processing_id={processing_id} | starting inline execution")
+            await self._execute_background_work(
+                processing_id, query, user_id, session_id, wa_id, notification_callback
+            )
+        else:
+            # FIX: Spawn background work outside the request's task lifecycle to avoid cancellations
+            # Toggle with env BACKGROUND_TASK_MODE=create_task|executor (default: executor)
+            spawn_mode = os.getenv("BACKGROUND_TASK_MODE", "executor").lower()
+            if spawn_mode == "create_task":
+                log.info(f"BACKGROUND_SPAWN_MODE | processing_id={processing_id} | mode=create_task")
+                asyncio.create_task(self._execute_background_work(
+                    processing_id, query, user_id, session_id, wa_id, notification_callback
+                ))
+            else:
+                log.info(f"BACKGROUND_SPAWN_MODE | processing_id={processing_id} | mode=executor")
+                loop = asyncio.get_running_loop()
+
+                def _runner() -> None:
+                    try:
+                        asyncio.run(self._execute_background_work(
+                            processing_id, query, user_id, session_id, wa_id, notification_callback
+                        ))
+                    except Exception as e:  # noqa: BLE001
+                        log.error(f"BACKGROUND_EXECUTOR_ERROR | processing_id={processing_id} | error={e}", exc_info=True)
+
+                loop.run_in_executor(None, _runner)
         
         log.info(f"BACKGROUND_SPAWNED | processing_id={processing_id} | returning immediately")
         return processing_id
@@ -160,6 +185,10 @@ class BackgroundProcessor:
 
             log.info(f"TIMING | processing_id={processing_id} | step=total_background | duration_ms={(time.perf_counter()-t0)*1000:.1f}")
 
+        except asyncio.CancelledError as e:
+            # Explicitly log cancellations (some frameworks cancel child tasks on response end)
+            log.error(f"BACKGROUND_EXEC_CANCELLED | processing_id={processing_id} | error={e}", exc_info=True)
+            raise
         except Exception as e:
             # FIX: Proper error handling with failed status
             log.error(f"BACKGROUND_EXEC_FAILED | processing_id={processing_id} | error={str(e)}", exc_info=True)

@@ -159,7 +159,7 @@ async def chat() -> Response:
                 "response_type": "error"
             }), 500
 
-        # FIX: Handle PROCESSING_STUB - start background work and return immediately
+        # FIX: Handle PROCESSING_STUB - pragmatic inline processing (no 202, single FE emit)
         if bot_resp.response_type == ResponseType.PROCESSING_STUB:
             if not background_processor:
                 log.error(f"BACKGROUND_UNAVAILABLE | user={user_id}")
@@ -173,28 +173,29 @@ async def chat() -> Response:
                 # Get original query from assessment if available
                 original_q = ctx.session.get("assessment", {}).get("original_query", message)
                 
-                log.info(f"BACKGROUND_START | user={user_id} | original_query='{original_q[:50]}...'")
-                
-                # FIX: Start background work with proper signature
+                log.info(f"BACKGROUND_INLINE_START | user={user_id} | original_query='{original_q[:50]}...'")
+
+                # Pragmatic approach: run the full background flow inline and notify FE once on completion
                 processing_id = await background_processor.process_query_background(
                     query=original_q,
                     user_id=user_id,
                     session_id=session_id,
-                    wa_id=wa_id,  # Now supported in fixed background processor
+                    wa_id=wa_id,
                     notification_callback=None,
+                    inline=True,
                 )
-                
-                elapsed_time = asyncio.get_event_loop().time() - request_start_time
-                log.info(f"BACKGROUND_SPAWNED | user={user_id} | processing_id={processing_id} | elapsed_time={elapsed_time:.3f}s")
 
-                # FIX: Return minimal stub immediately (no text to user)
+                elapsed_time = asyncio.get_event_loop().time() - request_start_time
+                log.info(f"BACKGROUND_INLINE_DONE | user={user_id} | processing_id={processing_id} | elapsed_time={elapsed_time:.3f}s")
+
+                # Return a simple acknowledgment; FE has been notified exactly once
                 return jsonify({
-                    "response_type": "processing",
+                    "response_type": "processing_completed",
                     "processing_id": processing_id,
-                    "status": "processing",
-                    "suppress_user_channel": True,   # Hint: don't synthesize user-visible text
+                    "status": "completed",
+                    "suppress_user_channel": True,
                     "elapsed_time": f"{elapsed_time:.3f}s"
-                }), 202
+                }), 200
 
             except Exception as e:
                 log.error(f"BACKGROUND_SPAWN_ERROR | user={user_id} | error={e}", exc_info=True)

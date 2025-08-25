@@ -1076,8 +1076,9 @@ class LLMService:
             - structured_products: List[Dict] (for Flow generation)
             - flow_context: Dict (Flow metadata)
         """
-        # Keep fetched snapshot available for ES fallback extraction
+        # Keep fetched snapshot available for ES fallback extraction and attach ctx for session fallback
         self._current_fetched_data = fetched or {}
+        self._ctx_for_fallback = ctx
 
         prompt = ENHANCED_ANSWER_GENERATION_PROMPT.format(
             query=query,
@@ -1154,11 +1155,32 @@ class LLMService:
         search_results = fetched.get('search_products', {})
         
         if not isinstance(search_results, dict):
-            return []
+            search_results = {}
         
         products_list = search_results.get('products', [])
         if not isinstance(products_list, list):
-            return []
+            products_list = []
+
+        # Session fallback: use last_recommendation if no current-turn products
+        if not products_list:
+            try:
+                sess = getattr(self, "_ctx_for_fallback", None)
+                sess = sess.session if sess else {}
+                lr = (sess or {}).get("last_recommendation", {}) or {}
+                lr_products = lr.get("products", []) or []
+                if isinstance(lr_products, list) and lr_products:
+                    products_list = [
+                        {
+                            "title": p.get("title"),
+                            "brand": p.get("brand"),
+                            "price": (p.get("price") or "N/A").lstrip("₹"),
+                            "image": p.get("image_url"),
+                            "rating": p.get("rating"),
+                        }
+                        for p in lr_products if isinstance(p, dict)
+                    ]
+            except Exception:
+                pass
         
         structured_products = []
         

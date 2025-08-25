@@ -636,6 +636,7 @@ class EnhancedShoppingBotCore:
                 "message_preview": (enhanced_response.content.get("message", "")[:100] + "..." 
                                   if enhanced_response and len(enhanced_response.content.get("message", "")) > 100 
                                   else enhanced_response.content.get("message", "") if enhanced_response else ""),
+                "message_full": enhanced_response.content.get("message", "") if enhanced_response else "",
                 "has_sections": bool(enhanced_response and enhanced_response.content.get("sections")),
                 "sections_summary": list(enhanced_response.content.get("sections", {}).keys()) if enhanced_response and enhanced_response.content.get("sections") else [],
                 "has_products": bool(
@@ -652,6 +653,30 @@ class EnhancedShoppingBotCore:
                 "functions_executed": enhanced_response.functions_executed if enhanced_response else []
             }
             
+            # Persist a compact last_recommendation snapshot for follow-ups (no refetch reuse)
+            try:
+                if enhanced_response and enhanced_response.flow_payload and enhanced_response.flow_payload.products:
+                    products_snapshot = []
+                    for p in enhanced_response.flow_payload.products[:8]:
+                        try:
+                            products_snapshot.append({
+                                "title": getattr(p, "title", None),
+                                "brand": getattr(p, "brand", None),
+                                "price": getattr(p, "price", None),
+                                "image_url": getattr(p, "image_url", None),
+                                "rating": getattr(p, "rating", None),
+                            })
+                        except Exception:
+                            continue
+                    ctx.session["last_recommendation"] = {
+                        "query": original_query,
+                        "as_of": datetime.now().isoformat(),
+                        "products": products_snapshot,
+                    }
+                    log.info(f"LAST_RECOMMENDATION_STORED | user={ctx.user_id} | count={len(products_snapshot)}")
+            except Exception as e:
+                log.warning(f"LAST_RECOMMENDATION_STORE_FAILED | user={ctx.user_id} | error={e}")
+
             # Clean up session state with structured history
             snapshot_and_trim(ctx, base_query=original_query, internal_actions=internal_actions, final_answer=final_answer)
             ctx.session.pop("assessment", None)

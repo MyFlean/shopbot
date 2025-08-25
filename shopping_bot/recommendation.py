@@ -301,7 +301,7 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 )
             
             # 3) Normalise params via dedicated LLM tool
-            final_params = await self._normalise_es_params(params_from_llm, context, constructed_q)
+            final_params = await self._normalise_es_params(params_from_llm, context, constructed_q, current_user_text)
             # Guard against UNKNOWN/blank q after normalisation
             try:
                 qval = str(final_params.get("q", "")).strip()
@@ -310,6 +310,24 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                     final_params["q"] = constructed_q
             except Exception:
                 final_params["q"] = constructed_q
+
+            # Deterministic budget inference fallback for follow-ups like "cheaper"/"premium"
+            try:
+                intent_text = (current_user_text or "").lower()
+                has_price = ("price_min" in final_params) or ("price_max" in final_params)
+                if not has_price:
+                    if any(w in intent_text for w in ["cheap", "cheaper", "budget", "affordable", "lower price", "less expensive"]):
+                        inferred = self._derive_price_from_history(context, mode="cheaper")
+                        if inferred is not None:
+                            final_params["price_max"] = inferred
+                            log.info(f"ES_BUDGET_FALLBACK_FROM_HISTORY | price_max={inferred}")
+                    elif any(w in intent_text for w in ["premium", "expensive", "higher price", "luxury"]):
+                        inferred = self._derive_price_from_history(context, mode="premium")
+                        if inferred is not None:
+                            final_params["price_min"] = inferred
+                            log.info(f"ES_BUDGET_FALLBACK_FROM_HISTORY | price_min={inferred}")
+            except Exception as exc:
+                log.warning(f"ES_BUDGET_FALLBACK_ERROR | error={exc}")
 
             # 4) Optional F&B classification to attach category/subcategory
             fb_meta = await self._fb_category_classify(constructed_q)
@@ -411,7 +429,7 @@ Return ONLY the tool call to emit_es_params.
             log.error(f"Anthropic API call failed: {exc}")
             return None
     
-    async def _normalise_es_params(self, params: Dict[str, Any], context: Dict[str, Any], constructed_q: str) -> Dict[str, Any]:
+    async def _normalise_es_params(self, params: Dict[str, Any], context: Dict[str, Any], constructed_q: str, current_user_text: str) -> Dict[str, Any]:
         """LLM-driven normalisation of ES params (currencies, ranges, spelling, business rules)."""
         NORMALISE_PARAMS_TOOL = {
             "name": "normalise_es_params",
@@ -435,13 +453,58 @@ Return ONLY the tool call to emit_es_params.
             }
         }
 
+        # Extract last recommendation prices for LLM context
+        try:
+            lr_prices = []
+            lr = context.get("last_recommendation", {}) or {}
+            for p in (lr.get("products", []) or [])[:12]:
+                val = p.get("price")
+                if isinstance(val, (int, float)):
+                    lr_prices.append(float(val))
+                elif isinstance(val, str):
+                    cleaned = ''.join(ch for ch in val if (ch.isdigit() or ch=='.'))
+                    if cleaned:
+                        lr_prices.append(float(cleaned))
+        except Exception:
+            lr_prices = []
+
+        # Provide richer context to the LLM normaliser beyond prices
+        try:
+            convo_hist = [
+                {
+                    "user_query": (h or {}).get("user_query"),
+                    "bot_reply": ((h or {}).get("final_answer", {}) or {}).get("message_full")
+                }
+                for h in (context.get("conversation_history", []) or [])[-3:]
+            ]
+            last_params_hint = (context.get("debug", {}) or {}).get("last_search_params", {}) or {}
+        except Exception:
+            convo_hist = []
+            last_params_hint = {}
+
         prompt = (
-            "You are normalising ES parameters.\n\n"
-            f"Original context keys: {list(context.keys())}\n"
+            "You are normalising ES parameters using prior conversation context.\n\n"
+            f"CURRENT_USER_TEXT: {current_user_text}\n"
             f"Constructed query: {constructed_q}\n"
-            f"Current params: {json.dumps(params, ensure_ascii=False)}\n\n"
-            "Rules: clamp size to [1,50]; ensure price_min<=price_max; uppercase dietary terms;\n"
-            "if dietary_terms == ['ANY'] then drop dietary_terms; set q=constructed query if current q is empty;"
+            f"Current params (pre-normalisation): {json.dumps(params, ensure_ascii=False)}\n"
+            f"Recent turns (user↔bot): {json.dumps(convo_hist, ensure_ascii=False)}\n"
+            f"Last search params hint: {json.dumps(last_params_hint, ensure_ascii=False)}\n"
+            f"Recent prices from last_recommendation (if any): {lr_prices}\n\n"
+            "General rules:\n"
+            "- Clamp size to [1,50]; ensure price_min<=price_max; uppercase dietary terms.\n"
+            "- If dietary_terms == ['ANY'] then DROP dietary_terms.\n"
+            "- If q is empty or placeholder, set q to the constructed query.\n"
+            "- Use conversation context (last turns, last_search_params, last_recommendation) to infer missing constraints when user implies a delta (e.g., brand/color/dietary/price).\n"
+            "- For 'cheaper/budget' with no explicit price → infer price_max from historical prices (e.g., 0.8×median or 25th percentile, rounded to 10/50).\n"
+            "- For 'premium/more expensive' with no explicit price → infer price_min similarly (e.g., 1.2×median or 75th percentile).\n"
+            "- If user implies brand or color changes in CURRENT_USER_TEXT or last turn, reflect that in brands or append to q (phrase boosts allowed).\n"
+            "- Optionally add phrase_boosts (e.g., title:\"blue chips\" boost 2.0) and field_boosts (brand^2, title^1.5) when signals exist.\n"
+            "- Keep outputs as a clean JSON object for the normalise_es_params tool.\n\n"
+            "Examples:\n"
+            "- Text: 'cheaper options' + prices [120, 90, 60, 45] → set price_max ≈ 50.\n"
+            "- Text: 'premium choices' + prices [120, 90, 60, 45] → set price_min ≈ 110.\n"
+            "- Text: 'show me Lays only' → brands=['Lays'] and/or phrase_boosts on brand/title.\n"
+            "- Text: 'make them VEGAN' → dietary_terms=['VEGAN'].\n"
         )
 
         try:
@@ -496,7 +559,55 @@ Return ONLY the tool call to emit_es_params.
         if isinstance(norm.get("sort"), list):
             out["sort"] = norm["sort"]
 
+        # Log fields inferred compared to input
+        try:
+            added = [k for k in out.keys() if k not in params]
+            changed = [k for k in out.keys() if k in params and out[k] != params[k]]
+            if added or changed:
+                log.info(f"ES_INFERRED_FROM_CONTEXT | added={added} | changed={changed}")
+        except Exception:
+            pass
         return out
+
+    def _derive_price_from_history(self, context: Dict[str, Any], mode: str) -> Optional[float]:
+        """Compute a price threshold from last_recommendation: cheaper→price_max; premium→price_min."""
+        try:
+            lr = context.get("last_recommendation", {}) or {}
+            vals: List[float] = []
+            for p in (lr.get("products", []) or [])[:20]:
+                raw = p.get("price")
+                num = None
+                if isinstance(raw, (int, float)):
+                    num = float(raw)
+                elif isinstance(raw, str):
+                    cleaned = ''.join(ch for ch in raw if (ch.isdigit() or ch=='.'))
+                    if cleaned:
+                        num = float(cleaned)
+                if num is not None and num > 0:
+                    vals.append(num)
+            if not vals:
+                return None
+            vals.sort()
+            n = len(vals)
+            median = vals[n//2] if n % 2 == 1 else (vals[n//2 - 1] + vals[n//2]) / 2
+            p25 = vals[max(0, int(0.25 * (n-1)))]
+            p75 = vals[max(0, int(0.75 * (n-1)))]
+            if mode == "cheaper":
+                target = min(p25, 0.8 * median)
+                return self._round_price(target, down=True)
+            if mode == "premium":
+                target = max(p75, 1.2 * median)
+                return self._round_price(target, down=False)
+        except Exception:
+            return None
+        return None
+
+    def _round_price(self, value: float, down: bool = True) -> float:
+        """Round price to a sensible step: 10 for <500; 50 for 500-2000; 100 for >2000."""
+        step = 10 if value < 500 else (50 if value < 2000 else 100)
+        if down:
+            return float(max(step, (int(value // step)) * step))
+        return float(((int((value + step - 1) // step)) * step))
 
     async def _construct_search_query(self, context: Dict[str, Any], current_user_text: str) -> str:
         """LLM tool to construct a context-aware search phrase from context (query + slots)."""

@@ -121,18 +121,49 @@ class SmartLogger:
         self._clean_log("info", "🔍", "DATA_OPS", status, 
                        req=req_id, functions=operations)
     
-    def response_generated(self, user_id: str, response_type: str, has_sections: bool = False):
+    def response_generated(self, user_id: str, response_type: str, has_sections: bool = False, elapsed_time: float = None):
         """Log successful response generation"""
         if not self._should_log(LogLevel.MINIMAL):
             return
             
         req_id = self._request_contexts.get(user_id, "unknown")
-        self._clean_log("info", "✅", "RESPONSE", response_type, 
-                       req=req_id, sections=has_sections)
+        extras = {"req": req_id, "sections": has_sections}
+        if elapsed_time is not None:
+            extras["time"] = f"{elapsed_time:.3f}s"
+        
+        self._clean_log("info", "✅", "RESPONSE", response_type, **extras)
         
         # Clean up request context
         self._request_contexts.pop(user_id, None)
     
+    def memory_operation(self, user_id: str, operation: str, details: Dict[str, Any] = None):
+        """Log memory/context operations like last_recommendation storage"""
+        if not self._should_log(LogLevel.STANDARD):
+            return
+            
+        req_id = self._request_contexts.get(user_id, "unknown")
+        self._clean_log("info", "💾", "MEMORY", operation, req=req_id, **(details or {}))
+    
+    def follow_up_decision(self, user_id: str, decision: str, effective_intent: str = None, reason: str = None):
+        """Log follow-up classification and handling decisions"""
+        if not self._should_log(LogLevel.STANDARD):
+            return
+            
+        req_id = self._request_contexts.get(user_id, "unknown")
+        extras = {"req": req_id, "intent": effective_intent}
+        if reason:
+            extras["reason"] = reason
+        
+        self._clean_log("info", "🔄", "FOLLOW_UP", decision, **extras)
+    
+    def background_decision(self, user_id: str, mode: str, reason: str = None):
+        """Log sync vs async processing decisions"""
+        if not self._should_log(LogLevel.STANDARD):
+            return
+            
+        req_id = self._request_contexts.get(user_id, "unknown")
+        self._clean_log("info", "⚙️", "PROCESSING", mode, req=req_id, reason=reason)
+
     # ═══════════════════════════════════════════════════════════
     # DETAILED EVENTS (Only at DETAILED level and above)
     # ═══════════════════════════════════════════════════════════

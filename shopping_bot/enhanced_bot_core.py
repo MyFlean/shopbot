@@ -70,7 +70,8 @@ class EnhancedShoppingBotCore:
         self.flow_generator = FlowTemplateGenerator()
 
         # Feature flags
-        self.flow_enabled = True
+        # Tie flow availability to async flag so memory path is consistent in sync-only mode
+        self.flow_enabled = Cfg.ENABLE_ASYNC
         self.enhanced_llm_enabled = True
 
     # ────────────────────────────────────────────────────────
@@ -155,8 +156,8 @@ class EnhancedShoppingBotCore:
         
         log.info(f"FOLLOW_UP_ENHANCED | user={ctx.user_id} | effective_l3={effective_l3}")
 
-        # If Recommendation, always defer to background — ensure minimal assessment (active phase)
-        if effective_l3 == "Recommendation":
+        # If Recommendation, defer only if async is enabled; otherwise complete synchronously
+        if effective_l3 == "Recommendation" and Cfg.ENABLE_ASYNC:
             ctx.session["needs_background"] = True
             a = ctx.session.get("assessment")
             if not a:
@@ -183,7 +184,7 @@ class EnhancedShoppingBotCore:
                 content={"message": "Processing your request…"},
             )
 
-        # Non-Recommendation: delta fetch + simple reply
+        # Non-Recommendation or Recommendation in forced-sync mode: delta fetch + reply
         fetch_list = await self.llm_service.assess_delta_requirements(query, ctx, fu.patch)
         if fetch_list:
             log.info(f"FOLLOW_UP_FETCHERS | user={ctx.user_id} | fetchers={[f.value for f in fetch_list]}")
@@ -192,9 +193,12 @@ class EnhancedShoppingBotCore:
         # FIX: Execute fetchers with proper persistence
         fetched = await self._execute_fetchers_with_persistence(fetch_list, ctx)
 
-        # Generate simple reply for non-Recommendation
-        answer_dict = await self.llm_service.generate_simple_reply(
-            query, ctx, fetched, intent_l3=effective_l3, query_intent=effective_qi
+        # Generate answer (enhanced for Recommendation; simple otherwise)
+        if effective_l3 == "Recommendation":
+            answer_dict = await self._generate_enhanced_answer(query, ctx, fetched)
+        else:
+            answer_dict = await self.llm_service.generate_simple_reply(
+                query, ctx, fetched, intent_l3=effective_l3, query_intent=effective_qi
         )
 
         enhanced_response = await self._create_enhanced_response(
@@ -327,7 +331,7 @@ class EnhancedShoppingBotCore:
             return BotResponse(ResponseType.QUESTION, build_question(func, ctx))
 
         # Ask-loop is done. If background is needed (Recommendation only) and backend work remains
-        needs_bg = bool(ctx.session.get("needs_background"))
+        needs_bg = bool(ctx.session.get("needs_background")) and Cfg.ENABLE_ASYNC
         if fetch_later and needs_bg:
             a["phase"] = "processing"
             log.info(f"DEFER_TO_BACKGROUND | user={ctx.user_id} | fetchers={[get_func_value(f) for f in fetch_later]}")
@@ -370,7 +374,7 @@ class EnhancedShoppingBotCore:
 
         log.info(f"GENERATE_ANSWER | user={ctx.user_id} | intent_l3={intent_l3} | original_q='{original_q[:50]}...'")
 
-        # Generate answer based on intent
+        # Generate answer based on intent; force sync path when async disabled
         if intent_l3 == "Recommendation":
             log.info(f"GENERATE_ENHANCED | user={ctx.user_id} | using enhanced answer generation")
             answer_dict = await self._generate_enhanced_answer(original_q, ctx, fetched)
@@ -655,8 +659,9 @@ class EnhancedShoppingBotCore:
             
             # Persist a compact last_recommendation snapshot for follow-ups (no refetch reuse)
             try:
+                products_snapshot = []
+                # Prefer Flow products
                 if enhanced_response and enhanced_response.flow_payload and enhanced_response.flow_payload.products:
-                    products_snapshot = []
                     for p in enhanced_response.flow_payload.products[:8]:
                         try:
                             products_snapshot.append({
@@ -668,12 +673,33 @@ class EnhancedShoppingBotCore:
                             })
                         except Exception:
                             continue
+                # Fallback: derive from fetched ES results when no Flow
+                if not products_snapshot:
+                    try:
+                        fetched_entry = (ctx.fetched_data or {}).get("search_products")
+                        data_block = fetched_entry.get("data") if isinstance(fetched_entry, dict) and fetched_entry.get("data") else fetched_entry
+                        items = (data_block or {}).get("products", []) if isinstance(data_block, dict) else []
+                        for it in items[:8]:
+                            try:
+                                products_snapshot.append({
+                                    "title": (it or {}).get("name"),
+                                    "brand": (it or {}).get("brand"),
+                                    "price": (it or {}).get("price"),
+                                    "image_url": (it or {}).get("image"),
+                                    "rating": (it or {}).get("rating"),
+                                })
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+
+                if products_snapshot:
                     ctx.session["last_recommendation"] = {
                         "query": original_query,
                         "as_of": datetime.now().isoformat(),
                         "products": products_snapshot,
                     }
-                    log.info(f"LAST_RECOMMENDATION_STORED | user={ctx.user_id} | count={len(products_snapshot)}")
+                    self.smart_log.memory_operation(ctx.user_id, "last_recommendation_stored", {"count": len(products_snapshot)})
             except Exception as e:
                 log.warning(f"LAST_RECOMMENDATION_STORE_FAILED | user={ctx.user_id} | error={e}")
 
@@ -718,10 +744,19 @@ class EnhancedShoppingBotCore:
         requires_flow = False
 
         # Flow is gated strictly to current session intent being Recommendation
-        if self.flow_enabled and resp_type == ResponseType.FINAL_ANSWER:
+        # and only when async/flows are enabled
+        if self.flow_enabled and Cfg.ENABLE_ASYNC and resp_type == ResponseType.FINAL_ANSWER:
             flow_payload = await self._create_flow_payload(answer_dict, query, ctx)
             requires_flow = flow_payload is not None
             log.info(f"FLOW_PAYLOAD_CREATED | user={ctx.user_id} | requires_flow={requires_flow}")
+
+        # If flow is not created (flows disabled), carry structured_products in content for sync FE payload
+        if not requires_flow:
+            try:
+                if isinstance(answer_dict.get("structured_products"), list) and answer_dict.get("structured_products"):
+                    base_content["structured_products"] = answer_dict.get("structured_products")
+            except Exception:
+                pass
 
         return EnhancedBotResponse(
             response_type=resp_type,

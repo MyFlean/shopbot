@@ -493,6 +493,8 @@ query_intent = {query_intent}   # e.g., order_status, price_inquiry, general_hel
 
 ### Instructions
 - Write ONE clear, concise reply tailored to the intent above.
+- IMPORTANT: If the user is asking about previous products (e.g., "which was cheapest", "show again", "which one"), check the SESSION ANSWERS for 'last_recommendation' which contains previous product data with titles, brands, and prices.
+- If you find previous products in last_recommendation, use that data to answer follow-up questions about them.
 - Be actionable and specific, but brief (1–3 sentences).
 - Do NOT return the six-section structure.
 - Output JSON ONLY (no code fences): {{"response_type":"final_answer","message":"..."}}

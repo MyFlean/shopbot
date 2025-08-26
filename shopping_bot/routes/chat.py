@@ -10,11 +10,16 @@ from dataclasses import asdict, is_dataclass
 from enum import Enum
 
 from flask import Blueprint, current_app, jsonify, request, Response
+from shopping_bot.config import get_config
 from shopping_bot.enums import ResponseType
 from shopping_bot.models import UserContext
+from shopping_bot.utils.smart_logger import get_smart_logger
+from shopping_bot.fe_payload import build_envelope
 
 log = logging.getLogger(__name__)
+smart_log = get_smart_logger("chat_routes")
 bp = Blueprint("chat", __name__)
+Cfg = get_config()
 
 # ─────────────────────────────────────────────────────────────
 # Utilities: make any object JSON-safe (dataclasses, Enums, etc.)
@@ -145,28 +150,70 @@ async def chat() -> Response:
             log.info(f"BOT_PROCESSING_START | user={user_id} | using_enhanced={bool(enhanced_bot)}")
             
             if enhanced_bot:
-                bot_resp = await enhanced_bot.process_query(message, ctx, enable_flows=True)
+                bot_resp = await enhanced_bot.process_query(message, ctx, enable_flows=Cfg.ENABLE_ASYNC)
             else:
                 bot_resp = await base_bot.process_query(message, ctx)
                 
             log.info(f"BOT_PROCESSING_COMPLETE | user={user_id} | response_type={bot_resp.response_type.value}")
             
+            # Debug: Log bot response structure
+            log.debug(f"BOT_RESPONSE_DEBUG | user={user_id} | response_type={bot_resp.response_type} | content_type={type(bot_resp.content)} | content_keys={list(bot_resp.content.keys()) if isinstance(bot_resp.content, dict) else 'not_dict'}")
+            
         except Exception as e:
             log.error(f"BOT_PROCESSING_ERROR | user={user_id} | error={e}", exc_info=True)
             return jsonify({
-                "error": "Bot processing failed",
-                "details": str(e),
-                "response_type": "error"
+                "wa_id": wa_id,
+                "session_id": session_id,
+                "response_type": "error",
+                "content": {"message": "Bot processing failed"},
+                "meta": {"elapsed_time": f"{elapsed_time:.3f}s"}
             }), 500
 
-        # FIX: Handle PROCESSING_STUB - pragmatic inline processing (no 202, single FE emit)
+        # FIX: Handle PROCESSING_STUB - respect ENABLE_ASYNC flag
         if bot_resp.response_type == ResponseType.PROCESSING_STUB:
+            if not Cfg.ENABLE_ASYNC:
+                smart_log.background_decision(user_id, "FORCE_SYNC", "ENABLE_ASYNC=false")
+                # Force synchronous completion path: execute background inline and then return final payload
+                try:
+                    original_q = ctx.session.get("assessment", {}).get("original_query", message)
+                    log.info(f"FORCE_SYNC_MODE | user={user_id} | original_query='{original_q[:50]}...'")
+                    processing_id = await background_processor.process_query_background(
+                        query=original_q,
+                        user_id=user_id,
+                        session_id=session_id,
+                        wa_id=wa_id,
+                        notification_callback=None,
+                        inline=True,
+                    )
+                    elapsed_time = asyncio.get_event_loop().time() - request_start_time
+                    log.info(f"FORCE_SYNC_DONE | user={user_id} | processing_id={processing_id} | elapsed_time={elapsed_time:.3f}s")
+                    return jsonify({
+                        "wa_id": wa_id,
+                        "session_id": session_id,
+                        "response_type": "processing",
+                        "content": {"message": "Processing completed"},
+                        "meta": {
+                            "elapsed_time": f"{elapsed_time:.3f}s",
+                            "processing_id": processing_id
+                        }
+                    }), 200
+                except Exception as e:
+                    log.error(f"FORCE_SYNC_FAILED | user={user_id} | error={e}", exc_info=True)
+                    return jsonify({
+                        "wa_id": wa_id,
+                        "session_id": session_id,
+                        "response_type": "error",
+                        "content": {"message": "Synchronous completion failed"},
+                        "meta": {"elapsed_time": f"{elapsed_time:.3f}s"}
+                    }), 500
             if not background_processor:
                 log.error(f"BACKGROUND_UNAVAILABLE | user={user_id}")
                 return jsonify({
-                    "error": "Background processor unavailable",
-                    "fallback": "Please retry shortly.",
-                    "response_type": "error"
+                    "wa_id": wa_id,
+                    "session_id": session_id,
+                    "response_type": "error",
+                    "content": {"message": "Background processor unavailable"},
+                    "meta": {"elapsed_time": f"{elapsed_time:.3f}s"}
                 }), 503
 
             try:
@@ -190,19 +237,24 @@ async def chat() -> Response:
 
                 # Return a simple acknowledgment; FE has been notified exactly once
                 return jsonify({
-                    "response_type": "processing_completed",
-                    "processing_id": processing_id,
-                    "status": "completed",
-                    "suppress_user_channel": True,
-                    "elapsed_time": f"{elapsed_time:.3f}s"
+                    "wa_id": wa_id,
+                    "session_id": session_id,
+                    "response_type": "processing",
+                    "content": {"message": "Processing completed"},
+                    "meta": {
+                        "elapsed_time": f"{elapsed_time:.3f}s",
+                        "processing_id": processing_id
+                    }
                 }), 200
 
             except Exception as e:
                 log.error(f"BACKGROUND_SPAWN_ERROR | user={user_id} | error={e}", exc_info=True)
                 return jsonify({
-                    "error": "Failed to start background processing",
-                    "details": str(e),
-                    "response_type": "error"
+                    "wa_id": wa_id,
+                    "session_id": session_id,
+                    "response_type": "error",
+                    "content": {"message": "Failed to start background processing"},
+                    "meta": {"elapsed_time": f"{elapsed_time:.3f}s"}
                 }), 500
 
         # FIX: Handle responses that require Flow but somehow didn't defer
@@ -216,45 +268,66 @@ async def chat() -> Response:
             
             # For other channels, suppress
             return jsonify({
-                "response_type": "flow_only",
-                "status": "ok",
-                "suppress_user_channel": True,
-                "message": "Content available via interactive elements"
+                "wa_id": wa_id,
+                "session_id": session_id,
+                "response_type": "processing",
+                "content": {"message": "Content available via interactive elements"},
+                "meta": {"elapsed_time": f"{elapsed_time:.3f}s"}
             }), 200
 
-        # FIX: Normal sync path - return canonical payload
+        # Standard sync path → stable FE envelope
         try:
-            resp_payload = {
-                "response_type": bot_resp.response_type.value,
-                "content": bot_resp.content,
-                "functions_executed": getattr(bot_resp, "functions_executed", []),
-                "requires_flow": False,
-                "flow_payload": None,
-                "timestamp": getattr(bot_resp, "timestamp", None),
-            }
-            
             elapsed_time = asyncio.get_event_loop().time() - request_start_time
-            resp_payload["elapsed_time"] = f"{elapsed_time:.3f}s"
+
+            # Validate bot response before building envelope
+            if not hasattr(bot_resp, 'response_type'):
+                log.error(f"INVALID_BOT_RESPONSE | user={user_id} | missing response_type | bot_resp={type(bot_resp)}")
+                raise ValueError("Bot response missing response_type")
             
-            log.info(f"CHAT_SYNC_RESPONSE | user={user_id} | response_type={bot_resp.response_type.value} | elapsed_time={elapsed_time:.3f}s")
+            if not hasattr(bot_resp, 'content'):
+                log.warning(f"BOT_RESPONSE_NO_CONTENT | user={user_id} | setting empty content")
+                bot_content = {}
+            else:
+                bot_content = bot_resp.content or {}
+
+            envelope = build_envelope(
+                wa_id=wa_id,
+                session_id=session_id,
+                bot_resp_type=bot_resp.response_type,
+                content=bot_content,
+                ctx=ctx,
+                elapsed_time_seconds=elapsed_time,
+                mode_async_enabled=getattr(Cfg, "ENABLE_ASYNC", False),
+                timestamp=getattr(bot_resp, "timestamp", None),
+                functions_executed=getattr(bot_resp, "functions_executed", []),
+            )
+
+            smart_log.response_generated(user_id, envelope.get('response_type'), False, elapsed_time)
             
-            return jsonify(_to_json_safe(resp_payload)), 200
+            log.info(
+                f"CHAT_SYNC_RESPONSE | user={user_id} | ui_type={envelope.get('response_type')} | elapsed_time={elapsed_time:.3f}s"
+            )
+            return jsonify(envelope), 200
             
         except Exception as e:
             log.error(f"RESPONSE_SERIALIZATION_ERROR | user={user_id} | error={e}", exc_info=True)
             return jsonify({
-                "error": "Response serialization failed",
+                "wa_id": wa_id,
+                "session_id": session_id,
                 "response_type": "error",
-                "details": str(e)
+                "content": {"message": "Response serialization failed"},
+                "meta": {"elapsed_time": f"{elapsed_time:.3f}s"}
             }), 500
 
     except Exception as exc:
         elapsed_time = asyncio.get_event_loop().time() - request_start_time
         log.error(f"CHAT_ENDPOINT_ERROR | elapsed_time={elapsed_time:.3f}s | error={exc}", exc_info=True)
         return jsonify({
-            "error": "Internal server error",
-            "details": str(exc),
-            "response_type": "error"
+            "wa_id": wa_id,
+            "session_id": session_id,
+            "response_type": "error",
+            "content": {"message": "Internal server error"},
+            "meta": {"elapsed_time": f"{elapsed_time:.3f}s"}
         }), 500
 
 
@@ -312,25 +385,31 @@ async def _handle_cli_fallback(bot_resp, ctx: UserContext, user_id: str, channel
                 fallback_text = message or "I can help you find products. Please provide more details about what you're looking for."
         
         cli_response = {
+            "wa_id": ctx.session.get("wa_id"),
+            "session_id": ctx.session_id,
             "response_type": "final_answer",
             "content": {"message": fallback_text},
-            "functions_executed": getattr(bot_resp, "functions_executed", []),
-            "requires_flow": False,
-            "flow_payload": None,
-            "cli_fallback": True,
-            "original_response_type": getattr(bot_resp, "response_type", ResponseType.FINAL_ANSWER).value
+            "meta": {
+                "functions_executed": getattr(bot_resp, "functions_executed", []),
+                "cli_fallback": True,
+                "original_response_type": getattr(bot_resp, "response_type", ResponseType.FINAL_ANSWER).value
+            }
         }
         
         log.info(f"CLI_FALLBACK_SUCCESS | user={user_id} | text_length={len(fallback_text)}")
-        return jsonify(_to_json_safe(cli_response)), 200
+        return jsonify(cli_response), 200
         
     except Exception as e:
         log.error(f"CLI_FALLBACK_ERROR | user={user_id} | error={e}", exc_info=True)
         return jsonify({
+            "wa_id": ctx.session.get("wa_id") if ctx else None,
+            "session_id": ctx.session_id if ctx else "unknown",
             "response_type": "final_answer", 
             "content": {"message": "I can help you with shopping queries. Please provide more details."},
-            "cli_fallback": True,
-            "fallback_error": str(e)
+            "meta": {
+                "cli_fallback": True,
+                "fallback_error": str(e)
+            }
         }), 200
 
 

@@ -55,7 +55,8 @@ class ShoppingBotCore:
             # Follow-up first (LLM decides; latest-turn dominance is in the prompt)
             fu = await self.llm_service.classify_follow_up(query, ctx)
             if fu.is_follow_up and not fu.patch.reset_context:
-                self.smart_log.flow_decision(ctx.user_id, "HANDLE_FOLLOW_UP")
+                effective_l3 = fu.patch.intent_override or ctx.session.get("intent_l3", "")
+                self.smart_log.follow_up_decision(ctx.user_id, "HANDLE_FOLLOW_UP", effective_l3, fu.reason)
                 self._apply_follow_up_patch(fu.patch, ctx)
                 return await self._handle_follow_up(query, ctx, fu)
 
@@ -88,7 +89,7 @@ class ShoppingBotCore:
             or ctx.session.get("intent_override")
             or ""
         )
-        if effective_l3 == "Recommendation":
+        if effective_l3 == "Recommendation" and Cfg.ENABLE_ASYNC:
             # Ensure a minimal assessment exists and is in an allow-processing phase
             ctx.session["needs_background"] = True
             a = ctx.session.get("assessment")
@@ -113,7 +114,7 @@ class ShoppingBotCore:
                 content={"message": "Processing your request…"},
             )
 
-        # Otherwise do the normal delta fetch + SIMPLE reply (no six sections)
+        # Otherwise do the normal delta fetch + reply (no deferral)
         fetch_list = await self.llm_service.assess_delta_requirements(query, ctx, fu.patch)
         if fetch_list:
             self.smart_log.data_operations(ctx.user_id, [f.value for f in fetch_list])
@@ -151,6 +152,9 @@ class ShoppingBotCore:
         )
         resp_type = ResponseType(answer_dict.get("response_type", "final_answer"))
 
+        # Store last_recommendation for follow-ups if products were fetched
+        self._store_last_recommendation(query, ctx, fetched)
+        
         snapshot_and_trim(ctx, base_query=query)
         self.ctx_mgr.save_context(ctx)
         self.smart_log.response_generated(ctx.user_id, resp_type.value, False)
@@ -273,7 +277,7 @@ class ShoppingBotCore:
             return BotResponse(ResponseType.QUESTION, build_question(func, ctx))
 
         # Done asking. If Recommendation (needs_background) and backend work remains, defer.
-        needs_bg = bool(ctx.session.get("needs_background"))
+        needs_bg = bool(ctx.session.get("needs_background")) and Cfg.ENABLE_ASYNC
         if fetch_later and needs_bg:
             a["phase"] = "processing"
             self.smart_log.flow_decision(
@@ -378,6 +382,9 @@ class ShoppingBotCore:
         )
         # print(f"DEBUG: Final message = '{message}'")
 
+        # Store last_recommendation for follow-ups if products were fetched
+        self._store_last_recommendation(original_q, ctx, fetched)
+        
         # Clean up session
         snapshot_and_trim(ctx, base_query=original_q)
         ctx.session.pop("assessment", None)
@@ -410,3 +417,42 @@ class ShoppingBotCore:
             return str(intent).lower() in {"queryintent.recommendation"}
         except Exception:
             return False
+
+    def _store_last_recommendation(self, query: str, ctx: UserContext, fetched: Dict[str, Any]) -> None:
+        """Store a compact last_recommendation snapshot for follow-ups."""
+        try:
+            products_snapshot = []
+            
+            # Extract products from search_products fetch result
+            if "search_products" in fetched:
+                search_data = fetched["search_products"]
+                # Handle both direct data and nested structure
+                if isinstance(search_data, dict):
+                    products = search_data.get("data", {}).get("products", []) if "data" in search_data else search_data.get("products", [])
+                elif isinstance(search_data, list):
+                    products = search_data
+                else:
+                    products = []
+                
+                for product in (products or [])[:8]:  # Limit to 8 products
+                    try:
+                        products_snapshot.append({
+                            "title": product.get("name") or product.get("title", "Unknown Product"),
+                            "brand": product.get("brand", ""),
+                            "price": product.get("price"),
+                            "image_url": product.get("image", ""),
+                            "rating": product.get("rating"),
+                        })
+                    except Exception:
+                        continue
+            
+            if products_snapshot:
+                from datetime import datetime
+                ctx.session["last_recommendation"] = {
+                    "query": query,
+                    "as_of": datetime.now().isoformat(),
+                    "products": products_snapshot,
+                }
+                self.smart_log.memory_operation(ctx.user_id, "last_recommendation_stored", {"count": len(products_snapshot)})
+        except Exception as e:
+            log.warning(f"LAST_RECOMMENDATION_STORE_FAILED | user={ctx.user_id} | error={e}")

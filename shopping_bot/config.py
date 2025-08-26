@@ -38,6 +38,8 @@ class BaseConfig:
     # ─────────────────────────────────────────────────────────
     # Background Processing
     # ─────────────────────────────────────────────────────────
+    # If ENABLE_ASYNC is false, the system will always return synchronously
+    ENABLE_ASYNC: bool = os.getenv("ENABLE_ASYNC", "false").lower() in {"1", "true", "yes", "on"}
     BACKGROUND_PROCESSING_TTL = int(os.getenv('BACKGROUND_PROCESSING_TTL', 7200))  # 2 hours
     
     FRONTEND_WEBHOOK_URL = os.getenv(

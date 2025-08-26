@@ -2,47 +2,10 @@
 """
 LLM service module for ShoppingBotCore
 ──────────────────────────────────────
-• Handles all Anthropic calls (ASYNC)
-• Defines tool schemas
-• Holds all prompt templates
-• Parses / normalises results
-
-Changes (2025-07-31):
-• ANSWER_GENERATION_PROMPT now instructs the model to return a six-section
-  object ( + / ALT / – / BUY / OVERRIDE / INFO ).
-• generate_answer() converts that dict -> formatted text via
-  bot_helpers.sections_to_text().
-• Improved build_questions_tool to generate proper discrete options
-
-Enhanced (Flow Support):
-• Added structured product data generation
-• Enhanced answer generation with Flow support
-• Product data extraction and validation
-
-Updates (2025-08-18):
-• Intent classification is now explicitly RECENCY-WEIGHTED and LLM-only:
-  - Latest turn dominates; history used only for disambiguation
-  - If no shopping signal in the latest message, classify as E2→General_Help
-• classify_intent now accepts optional ctx to pass a compact recent-context
-  summary to the prompt (still LLM-driven; no hardcoded rules).
-
-Bugfixes (2025-08-18 later):
-• Harden follow-up parsing to trim whitespace in tool-input keys (avoids KeyError
-  from accidental `" slots"`).
-• Updated follow-up prompt example to quoted JSON keys with no stray spaces.
-• Extra validation around intent tool outputs.
-
-Additions (2025-08-19):
-• New tool + method: extract_es_params(ctx) – normalizes ES params via tool-calling.
-
-Modularization (2025-08-20):
-• Extracted ES parameter logic to recommendation.py module
-• Maintained backward compatibility through delegation
-• Added support for extensible recommendation engines
-
-Fix (2025-08-22):
-• Switched to anthropic.AsyncAnthropic and awaited all .messages.create(...) calls
-• Removed any accidental awaits on non-async helpers
+UNIFIED PRODUCT RESPONSE GENERATION
+- All product intents use the same structured response format
+- Each product gets a one-liner description
+- Clean, consistent output structure
 """
 
 from __future__ import annotations
@@ -69,9 +32,8 @@ from .models import (
     ProductData,
 )
 from .utils.helpers import extract_json_block
-from .bot_helpers import pick_tool, string_to_function, sections_to_text
+from .bot_helpers import pick_tool, string_to_function
 
-# Import the new recommendation service (async)
 from .recommendation import get_recommendation_service
 
 Cfg = get_config()
@@ -79,7 +41,7 @@ log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────
-# Tool definitions (ES_PARAM_TOOL moved to recommendation.py)
+# Tool definitions
 # ─────────────────────────────────────────────────────────────
 
 INTENT_CLASSIFICATION_TOOL = {
@@ -149,72 +111,62 @@ DELTA_ASSESS_TOOL = {
     },
 }
 
-# Enhanced tool for structured product generation
-STRUCTURED_ANSWER_TOOL = {
-    "name": "generate_structured_answer",
-    "description": "Generate structured answer with product data for Flow rendering",
+# Unified product response tool
+PRODUCT_RESPONSE_TOOL = {
+    "name": "generate_product_response",
+    "description": "Generate structured response with product recommendations and descriptions",
     "input_schema": {
         "type": "object",
         "properties": {
             "response_type": {
                 "type": "string",
-                "enum": ["final_answer", "question", "error"],
-                "description": "Type of response"
+                "enum": ["final_answer"],
+                "description": "Always final_answer for product responses"
             },
-            "sections": {
-                "type": "object",
-                "properties": {
-                    "+": {"type": "string", "description": "Core benefit / positive hook"},
-                    "ALT": {"type": "string", "description": "Alternatives text summary"},
-                    "-": {"type": "string", "description": "Drawbacks / caveats"},
-                    "BUY": {"type": "string", "description": "Purchase CTA"},
-                    "OVERRIDE": {"type": "string", "description": "How user can tweak / override"},
-                    "INFO": {"type": "string", "description": "Extra facts"}
-                },
-                "required": ["+", "ALT", "-", "BUY", "OVERRIDE", "INFO"]
+            "summary_message": {
+                "type": "string",
+                "description": "Overall summary addressing the user's query"
             },
-            "structured_products": {
+            "products": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "title": {"type": "string", "description": "Product name"},
-                        "subtitle": {"type": "string", "description": "Brief description or brand"},
+                        "id": {"type": "string", "description": "Product ID from search results"},
+                        "text": {"type": "string", "description": "Product name/title"},
+                        "description": {"type": "string", "description": "One-liner on why to buy this product"},
                         "price": {"type": "string", "description": "Price with currency"},
-                        "rating": {"type": "number", "minimum": 0, "maximum": 5},
-                        "image_url": {"type": "string", "description": "Product image URL"},
-                        "brand": {"type": "string", "description": "Brand name"},
-                        "key_features": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "maxItems": 5,
-                            "description": "Top 5 key features"
-                        },
-                        "availability": {"type": "string", "description": "Stock status"},
-                        "discount": {"type": "string", "description": "Discount info if any"}
+                        "special_features": {"type": "string", "description": "Key differentiators"}
                     },
-                    "required": ["title", "subtitle", "price"]
+                    "required": ["text", "description"]
                 },
                 "maxItems": 10,
-                "description": "Structured product data for Flow rendering"
-            },
-            "flow_context": {
-                "type": "object",
-                "properties": {
-                    "intent": {
-                        "type": "string",
-                        "enum": ["recommendation", "comparison", "catalog", "none"],
-                        "description": "Recommended Flow type"
-                    },
-                    "header_text": {"type": "string", "description": "Flow header text"},
-                    "reason": {"type": "string", "description": "Why these products are suggested"}
-                }
+                "description": "Product list with compelling descriptions"
             }
         },
-        "required": ["response_type", "sections"]
+        "required": ["response_type", "summary_message", "products"]
     }
 }
 
+# Non-product response tool
+SIMPLE_RESPONSE_TOOL = {
+    "name": "generate_simple_response",
+    "description": "Generate simple text response for non-product queries",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "response_type": {
+                "type": "string",
+                "enum": ["final_answer", "error"],
+            },
+            "message": {
+                "type": "string",
+                "description": "Response message"
+            }
+        },
+        "required": ["response_type", "message"]
+    }
+}
 
 def build_assessment_tool() -> Dict[str, Any]:
     """Build the requirements assessment tool dynamically."""
@@ -252,7 +204,7 @@ def build_assessment_tool() -> Dict[str, Any]:
 
 
 def build_questions_tool(slots_needed: List[UserSlot]) -> Dict[str, Any]:
-    """Build the contextual questions generation tool dynamically with improved option generation."""
+    """Build the contextual questions generation tool dynamically."""
     slot_properties = {}
     for slot in slots_needed:
         slot_properties[slot.value] = {
@@ -272,23 +224,14 @@ def build_questions_tool(slots_needed: List[UserSlot]) -> Dict[str, Any]:
                     "items": {"type": "string"},
                     "minItems": 3,
                     "maxItems": 3,
-                    "description": "Exactly 3 discrete, actionable options (no instructional text or 'e.g.' examples)"
-                },
-                "placeholder": {
-                    "type": "string",
-                    "description": "Optional placeholder text"
-                },
-                "hints": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional helpful hints"
+                    "description": "Exactly 3 discrete, actionable options"
                 },
             },
             "required": ["message", "type", "options"],
         }
     return {
         "name": "generate_questions",
-        "description": "Generate contextual questions for user slots with proper discrete options",
+        "description": "Generate contextual questions for user slots",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -303,7 +246,7 @@ def build_questions_tool(slots_needed: List[UserSlot]) -> Dict[str, Any]:
 
 
 # ─────────────────────────────────────────────────────────────
-# Prompt templates (RECENCY-WEIGHTED, LLM-ONLY)
+# Prompt templates
 # ─────────────────────────────────────────────────────────────
 
 INTENT_CLASSIFICATION_PROMPT = """
@@ -312,12 +255,6 @@ You are an e-commerce intent classifier.
 GOAL:
 Classify the user's **latest message** into the 3-layer hierarchy. The latest message DOMINATES.
 Use recent history ONLY to disambiguate when the latest message is substantive.
-
-DECISION RULES (LLM-only, no heuristics):
-1) If the latest message contains no shopping signal (no product/category/need/budget/feature verbs), choose layer3 = "General_Help" under E2.Support.
-2) Do NOT infer "Recommendation" from greetings, acknowledgements, or meta chat (e.g., "hi", "hello", "thanks", "ok", emoji, "hmm", "continue", "go on").
-3) Prefer specificity when the latest message is substantive; otherwise return "General_Help".
-4) If the prior task appears unfinished AND the latest message directly refines it (adds a constraint), that is handled by follow-up detection (a separate step). Only classify a NEW intent here.
 
 ### Intent Hierarchy:
 A. Awareness_Discovery
@@ -339,24 +276,16 @@ E. Account_Support
    E2. Support     → [Technical_Support, General_Help]
 
 INPUTS:
-- Recent context (summarized): {recent_context}
+- Recent context: {recent_context}
 - Latest user message: "{query}"
 
-OUTPUT:
-Return ONLY a tool call to classify_intent with layer1/layer2/layer3 from the hierarchy above.
-If evidence is insufficient, return E2 → General_Help.
+Return ONLY a tool call to classify_intent.
 """
 
 FOLLOW_UP_PROMPT_TEMPLATE = """
 You are determining if the user's NEW message should be treated as a follow-up.
 
-PRINCIPLES:
-1) The latest message dominates. Treat recent history as context, but do not force a follow-up if the latest message is non-substantive (greeting/ack/meta).
-2) A follow-up must directly refine or modify the last completed request (add a constraint, change a parameter, ask for a tweak).
-3) If the user wishes to start fresh, set reset_context = true.
-4) Keep patch.slots to ONLY the precise deltas needed.
-
-### Last snapshot (most recent completed interaction):
+### Last snapshot:
 {last_snapshot}
 
 ### Current session slots:
@@ -365,34 +294,24 @@ PRINCIPLES:
 ### New user message:
 "{query}"
 
-Return a tool call to classify_follow_up with:
-- is_follow_up (bool)
-- reason (short)
-- patch: {{"slots": {{ … }}, "intent_override"?: "Recommendation" | "Product_Discovery" | "General_Help" | string, "reset_context"?: bool}}
+Return a tool call to classify_follow_up.
 """
 
 DELTA_ASSESS_PROMPT = """
-You are determining ONLY which backend functions (FETCH_*) must run after a follow-up patch.
-Do NOT include any ASK_* user slots. If nothing is needed, return an empty list.
+Determine which backend functions must run after a follow-up patch.
 
-### Query:
-"{query}"
-
-### Patch (changed slots, etc.):
-{patch}
-
+### Query: "{query}"
+### Patch: {patch}
 ### Current Context Keys:
 - permanent: {perm_keys}
 - session: {sess_keys}
 - fetched: {fetched_keys}
 
-### Notes:
-- Consider TTLs: if cached data is still fresh, no need to re-fetch.
-- Only include fetches whose inputs changed.
+Return ONLY backend FETCH_* functions needed, not ASK_* slots.
 """
 
 REQUIREMENTS_ASSESSMENT_PROMPT = """
-You are analyzing an e-commerce query to determine what information is needed.
+Analyze what information is needed for this e-commerce query.
 
 Query: "{query}"
 Intent Category: {intent}
@@ -407,16 +326,11 @@ Typical requirements for {layer3}:
 - Slots: {suggested_slots}
 - Functions: {suggested_functions}
 
-Analyze the query and context to determine:
-1. What user information (ASK_*) do we still need?
-2. What backend data (FETCH_*) should we retrieve?
-3. In what order should we collect this information?
-
-Consider the specific query details - not all typical requirements may be needed, and some atypical ones might be required based on the query specifics.
+Determine what user information (ASK_*) and backend data (FETCH_*) are needed.
 """
 
 CONTEXTUAL_QUESTIONS_PROMPT = """
-Generate contextual questions for a shopping query with EXACTLY 3 discrete options for each question.
+Generate contextual questions for a shopping query with EXACTLY 3 discrete options for each.
 
 Original Query: "{query}"
 Intent: {intent_l3}
@@ -428,119 +342,76 @@ Question Generation Hints:
 Category-Specific Hints:
 {category_hints}
 
-Generate natural, contextual questions for these information needs:
-{slots_needed}
+Generate questions for: {slots_needed}
 
-CRITICAL REQUIREMENTS for options:
-1. Provide EXACTLY 3 discrete, actionable options per question
-2. Each option should be a short, specific choice (1-4 words max)
-3. NO instructional text like "Consider..." or "Think about..."
-4. NO examples prefixed with "e.g." or similar
-5. Options should be directly selectable answers
-6. Make options relevant to the query context and product category
+Requirements:
+- EXACTLY 3 discrete, actionable options per question
+- Each option should be 1-4 words max
+- NO instructional text or examples
 """
 
-ANSWER_GENERATION_PROMPT = """
+# Unified product response prompt
+PRODUCT_RESPONSE_PROMPT = """
+You are an e-commerce assistant helping users find products.
+
+### USER QUERY
+{query}
+
+### INTENT
+{intent_l3}
+
+### USER CONTEXT
+Session: {session}
+Permanent: {permanent}
+
+### PRODUCT SEARCH RESULTS
+{products_json}
+
+### INSTRUCTIONS
+Create a helpful response with:
+
+1. **summary_message**: A natural, conversational summary that:
+   - Addresses the user's specific query
+   - Mentions how many products were found
+   - Highlights the best options briefly
+   - Is 1-3 sentences long
+
+2. **products**: For each relevant product (up to 10):
+   - text: The exact product name from results
+   - description: A compelling one-liner about why this product is worth buying
+   - price: The price with currency (e.g., "₹60")
+   - special_features: Key differentiators (e.g., "High protein, organic")
+
+Focus on actual product attributes from the search results.
+Make descriptions specific and benefit-focused.
+If no products found, provide helpful message with empty products array.
+
+Return ONLY a tool call to generate_product_response.
+"""
+
+# Simple response prompt for non-product queries
+SIMPLE_RESPONSE_PROMPT = """
 You are an e-commerce assistant.
 
 ### USER QUERY
 {query}
 
-### USER PROFILE
-{permanent}
-
-### SESSION ANSWERS
-{session}
-
-### FETCHED DATA
-{fetched}
-
-### Instructions
-Respond with **only** a JSON object (no code fences) shaped like:
-{
-  "response_type": "final_answer",
-  "sections": {
-    "+": "string",
-    "ALT": "string",
-    "-": "string",
-    "BUY": "string",
-    "OVERRIDE": "string",
-    "INFO": "string"
-  }
-}
-Always include all six keys; leave a key an empty string if you have no content.
-"""
-
-
-SIMPLE_REPLY_PROMPT = """
-You are an e-commerce assistant.
-
-### USER QUERY
-{query}
-
-### INTERPRETED INTENT
+### INTENT
 layer3 = {intent_l3}
-query_intent = {query_intent}   # e.g., order_status, price_inquiry, general_help, etc.
+query_intent = {query_intent}
 
-### USER PROFILE
+### USER CONTEXT
 {permanent}
-
-### SESSION ANSWERS
 {session}
 
-### FETCHED DATA
+### DATA
 {fetched}
 
 ### Instructions
-- Write ONE clear, concise reply tailored to the intent above.
-- IMPORTANT: If the user is asking about previous products (e.g., "which was cheapest", "show again", "which one"), check the SESSION ANSWERS for 'last_recommendation' which contains previous product data with titles, brands, and prices.
-- If you find previous products in last_recommendation, use that data to answer follow-up questions about them.
-- Be actionable and specific, but brief (1–3 sentences).
-- Do NOT return the six-section structure.
-- Output JSON ONLY (no code fences): {{"response_type":"final_answer","message":"..."}}
-"""
+Write ONE clear, concise reply for this {query_intent} query.
+Be specific and actionable (1-3 sentences).
 
-# Enhanced answer generation prompt
-ENHANCED_ANSWER_GENERATION_PROMPT = """
-You are an e-commerce assistant that provides both textual answers and structured product data.
-
-### USER QUERY
-{query}
-
-### USER PROFILE
-{permanent}
-
-### SESSION ANSWERS  
-{session}
-
-### FETCHED DATA
-{fetched}
-
-### Instructions
-Analyze the query and provide a comprehensive response with both textual content and structured product data. 
-
-**For the sections object:**
-- "+": Core benefit/positive hook - why user will love these options
-- "ALT": Brief text summary of alternatives (keep concise since structured data is separate)
-- "-": Watch-outs, limitations, or things to consider
-- "BUY": Clear purchase guidance and next steps
-- "OVERRIDE": How user can customize or modify the recommendations
-- "INFO": Additional useful information (specs, ratings, etc.)
-
-**For structured_products array (if recommending products):**
-- Include 3-8 relevant products with complete data
-- Ensure all products have realistic prices, ratings, and features
-- Use placeholder image URLs if real ones aren't available
-- Make sure titles are clear and descriptive
-- Include key differentiating features for each product
-
-**For flow_context:**
-- "recommendation" - if personalizing based on user preferences
-- "comparison" - if showing similar products to compare
-- "catalog" - if showing general product options
-- "none" - if no products are being suggested
-
-Focus on providing actionable, helpful information that guides the user toward a good purchasing decision.
+Return ONLY a tool call to generate_simple_response.
 """
 
 
@@ -556,28 +427,16 @@ class IntentResult:
 
 
 # ─────────────────────────────────────────────────────────────
-# Internal helpers (normalization / safety)
+# Helper functions
 # ─────────────────────────────────────────────────────────────
 
 def _strip_keys(obj: Any) -> Any:
-    """
-    Recursively trim whitespace around dict keys (e.g., " slots" -> "slots").
-    Also normalizes common accidental variants in follow-up payloads.
-    """
+    """Recursively trim whitespace around dict keys."""
     if isinstance(obj, dict):
         new: Dict[str, Any] = {}
         for k, v in obj.items():
             key = k.strip() if isinstance(k, str) else k
-            # normalize a couple of accidental variants we've seen
-            if key == " slots":
-                key = "slots"
-            if key == "intent" and "intent_override" not in obj:
-                pass
             new[key] = _strip_keys(v)
-        if " intent_override" in obj and "intent_override" not in new:
-            new["intent_override"] = _strip_keys(obj[" intent_override"])
-        if " slots" in obj and "slots" not in new:
-            new["slots"] = _strip_keys(obj[" slots"])
         return new
     if isinstance(obj, list):
         return [_strip_keys(x) for x in obj]
@@ -585,9 +444,7 @@ def _strip_keys(obj: Any) -> Any:
 
 
 def _safe_get(d: Dict[str, Any], key: str, default: Any = None) -> Any:
-    """
-    Get value by key, trying both exact and stripped variants.
-    """
+    """Get value by key, trying both exact and stripped variants."""
     if key in d:
         return d[key]
     if isinstance(key, str):
@@ -605,19 +462,12 @@ class LLMService:
     """Service class for all LLM interactions."""
 
     def __init__(self) -> None:
-        # ASYNC Anthropic client
         self.anthropic = anthropic.AsyncAnthropic(api_key=Cfg.ANTHROPIC_API_KEY)
-        # Initialize recommendation service
         self._recommendation_service = get_recommendation_service()
-        # Used for product extraction fallback
-        self._current_fetched_data: Dict[str, Any] = {}
 
     # ---------------- INTENT ----------------
     async def classify_intent(self, query: str, ctx: Optional[UserContext] = None) -> IntentResult:
-        """
-        Classify intent with latest-turn dominance.
-        Pass a compact recent-context summary (if available) for disambiguation.
-        """
+        """Classify intent with latest-turn dominance."""
         recent_context: Dict[str, Any] = {}
         try:
             if ctx:
@@ -628,13 +478,14 @@ class LLMService:
                         "last_intent_l3": last.get("intent"),
                         "last_slots": {k: v for k, v in (last.get("slots") or {}).items() if v},
                     }
-        except Exception as exc:  # noqa: BLE001
-            log.debug("Failed to build recent_context for intent: %s", exc)
+        except Exception as exc:
+            log.debug("Failed to build recent_context: %s", exc)
 
         prompt = INTENT_CLASSIFICATION_PROMPT.format(
             recent_context=json.dumps(recent_context, ensure_ascii=False),
             query=query.strip(),
         )
+        
         resp = await self.anthropic.messages.create(
             model=Cfg.LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
@@ -643,24 +494,194 @@ class LLMService:
             temperature=0.2,
             max_tokens=120,
         )
+        
         tool_use = pick_tool(resp, "classify_intent")
         if not tool_use:
-            # Defensive default
             return IntentResult("E", "E2", "General_Help")
 
-        args_raw = tool_use.input or {}
-        args = _strip_keys(args_raw) if isinstance(args_raw, dict) else {}
-
-        layer1 = args.get("layer1") or "E"
-        layer2 = args.get("layer2") or "E2"
-        layer3 = args.get("layer3") or "General_Help"
+        args = _strip_keys(tool_use.input or {})
+        layer1 = args.get("layer1", "E")
+        layer2 = args.get("layer2", "E2")
+        layer3 = args.get("layer3", "General_Help")
 
         if layer3 not in INTENT_MAPPING:
             layer1, layer2, layer3 = "E", "E2", "General_Help"
 
         return IntentResult(layer1, layer2, layer3)
-    
-    # ---------------- SIMPLE REPLY ----------------
+
+    # ---------------- UNIFIED RESPONSE GENERATION ----------------
+    async def generate_response(
+        self,
+        query: str,
+        ctx: UserContext,
+        fetched: Dict[str, Any],
+        intent_l3: str,
+        query_intent: QueryIntent
+    ) -> Dict[str, Any]:
+        """
+        Unified response generation - determines if product or simple response needed.
+        """
+        # Product-related intents that should show products
+        product_intents = {
+            "Product_Discovery", "Recommendation", 
+            "Specific_Product_Search", "Product_Comparison"
+        }
+        
+        # Check if we have product search results
+        has_products = self._has_product_results(fetched)
+        
+        if intent_l3 in product_intents and has_products:
+            return await self._generate_product_response(query, ctx, fetched, intent_l3)
+        else:
+            return await self._generate_simple_response(query, ctx, fetched, intent_l3, query_intent)
+
+    def _has_product_results(self, fetched: Dict[str, Any]) -> bool:
+        """Check if fetched data contains product results."""
+        if 'search_products' in fetched:
+            search_data = fetched['search_products']
+            if isinstance(search_data, dict):
+                data = search_data.get('data', search_data)
+                return bool(data.get('products'))
+        return False
+
+    async def _generate_product_response(
+        self,
+        query: str,
+        ctx: UserContext,
+        fetched: Dict[str, Any],
+        intent_l3: str
+    ) -> Dict[str, Any]:
+        """Generate structured product response with descriptions."""
+        # Extract products from fetched data
+        products_data = []
+        if 'search_products' in fetched:
+            search_data = fetched['search_products']
+            if isinstance(search_data, dict):
+                data = search_data.get('data', search_data)
+                products_data = data.get('products', [])[:10]  # Limit to 10
+        
+        if not products_data:
+            return {
+                "response_type": "final_answer",
+                "summary_message": "I couldn't find any products matching your search. Please try different keywords.",
+                "products": []
+            }
+        
+        prompt = PRODUCT_RESPONSE_PROMPT.format(
+            query=query,
+            intent_l3=intent_l3,
+            session=json.dumps(ctx.session, ensure_ascii=False),
+            permanent=json.dumps(ctx.permanent, ensure_ascii=False),
+            products_json=json.dumps(products_data, ensure_ascii=False)
+        )
+        
+        try:
+            resp = await self.anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[PRODUCT_RESPONSE_TOOL],
+                tool_choice={"type": "tool", "name": "generate_product_response"},
+                temperature=0.7,
+                max_tokens=1500,
+            )
+            
+            tool_use = pick_tool(resp, "generate_product_response")
+            if not tool_use:
+                # Fallback
+                return self._create_fallback_product_response(products_data, query)
+            
+            result = _strip_keys(tool_use.input or {})
+            
+            # Ensure product IDs are included
+            for i, product in enumerate(result.get("products", [])):
+                if "id" not in product and i < len(products_data):
+                    product["id"] = f"prod_{hash(products_data[i].get('name', ''))%1000000}"
+            
+            return result
+            
+        except Exception as exc:
+            log.error(f"Product response generation failed: {exc}")
+            return self._create_fallback_product_response(products_data, query)
+
+    def _create_fallback_product_response(self, products_data: List[Dict], query: str) -> Dict[str, Any]:
+        """Create a fallback product response if LLM fails."""
+        products = []
+        for p in products_data[:5]:
+            products.append({
+                "id": f"prod_{hash(p.get('name', ''))%1000000}",
+                "text": p.get("name", "Product"),
+                "description": f"Quality product at {p.get('price', 'great price')}",
+                "price": f"₹{p.get('price', 'N/A')}",
+                "special_features": ""
+            })
+        
+        return {
+            "response_type": "final_answer",
+            "summary_message": f"I found {len(products_data)} products for '{query}'.",
+            "products": products
+        }
+
+    async def _generate_simple_response(
+        self,
+        query: str,
+        ctx: UserContext,
+        fetched: Dict[str, Any],
+        intent_l3: str,
+        query_intent: QueryIntent
+    ) -> Dict[str, Any]:
+        """Generate simple text response for non-product queries."""
+        prompt = SIMPLE_RESPONSE_PROMPT.format(
+            query=query,
+            intent_l3=intent_l3,
+            query_intent=query_intent.value,
+            permanent=json.dumps(ctx.permanent, ensure_ascii=False),
+            session=json.dumps(ctx.session, ensure_ascii=False),
+            fetched=json.dumps(fetched, ensure_ascii=False),
+        )
+        
+        try:
+            resp = await self.anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[SIMPLE_RESPONSE_TOOL],
+                tool_choice={"type": "tool", "name": "generate_simple_response"},
+                temperature=0.4,
+                max_tokens=400,
+            )
+            
+            tool_use = pick_tool(resp, "generate_simple_response")
+            if not tool_use:
+                return {
+                    "response_type": "final_answer",
+                    "message": "I can help you with shopping queries. What are you looking for?"
+                }
+            
+            result = _strip_keys(tool_use.input or {})
+            return result
+            
+        except Exception:
+            return {
+                "response_type": "final_answer",
+                "message": "I can help you with shopping queries. What are you looking for?"
+            }
+
+    # ---------------- COMPATIBILITY METHODS ----------------
+    async def generate_answer(
+        self,
+        query: str,
+        ctx: UserContext,
+        fetched: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Compatibility method - now routes to unified response generation.
+        Used specifically for Recommendation intent.
+        """
+        return await self.generate_response(
+            query, ctx, fetched, 
+            intent_l3="Recommendation",
+            query_intent=QueryIntent.RECOMMENDATION
+        )
+
     async def generate_simple_reply(
         self,
         query: str,
@@ -670,47 +691,16 @@ class LLMService:
         intent_l3: str,
         query_intent: QueryIntent
     ) -> Dict[str, Any]:
-        try:
-            prompt = SIMPLE_REPLY_PROMPT.format(
-                query=query,
-                intent_l3=intent_l3,
-                query_intent=query_intent.value,
-                permanent=json.dumps(ctx.permanent, ensure_ascii=False),
-                session=json.dumps(ctx.session, ensure_ascii=False),
-                fetched=json.dumps(fetched, ensure_ascii=False),
-            )
-            
-            resp = await self.anthropic.messages.create(
-                model=Cfg.LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.4,
-                max_tokens=400,
-            )
-            
-            # Try to extract JSON from the response
-            text_block = getattr(resp.content[0], "text", "") if resp.content else ""
-            data = extract_json_block(text_block)
-            
-            if isinstance(data, dict):
-                return {
-                    "response_type": data.get("response_type", "final_answer"),
-                    "message": data.get("message", text_block.strip())
-                }
-            else:
-                return {
-                    "response_type": "final_answer", 
-                    "message": text_block.strip()
-                }
-                
-        except Exception:
-            # Return safe fallback
-            return {
-                "response_type": "final_answer",
-                "message": "Hello! I'm here to help you with shopping queries. What can I assist you with today?"
-            }
+        """
+        Compatibility method - now routes to unified response generation.
+        """
+        return await self.generate_response(
+            query, ctx, fetched, intent_l3, query_intent
+        )
 
     # ---------------- FOLLOW-UP ----------------
     async def classify_follow_up(self, query: str, ctx: UserContext) -> FollowUpResult:
+        """Classify if query is a follow-up."""
         history = ctx.session.get("history", [])
         if not history:
             return FollowUpResult(False, FollowUpPatch(slots={}))
@@ -735,32 +725,22 @@ class LLMService:
             if not tool_use:
                 return FollowUpResult(False, FollowUpPatch(slots={}))
 
-            ipt_raw = tool_use.input or {}
-            ipt = _strip_keys(ipt_raw) if isinstance(ipt_raw, dict) else {}
-
+            ipt = _strip_keys(tool_use.input or {})
             patch_dict = _safe_get(ipt, "patch", {}) or {}
-            if "slots" not in patch_dict and " slots" in patch_dict:
-                patch_dict["slots"] = patch_dict.get(" slots", {})
-            slots_dict = patch_dict.get("slots") or {}
-            if isinstance(slots_dict, dict):
-                slots_dict = { (k.strip() if isinstance(k, str) else k): v for k, v in slots_dict.items() }
-            else:
-                slots_dict = {}
-
-            intent_override = patch_dict.get("intent_override") or patch_dict.get("intent")
-            reset_context = bool(patch_dict.get("reset_context", False))
-
+            slots_dict = patch_dict.get("slots", {})
+            
             patch = FollowUpPatch(
                 slots=slots_dict,
-                intent_override=intent_override,
-                reset_context=reset_context,
+                intent_override=patch_dict.get("intent_override"),
+                reset_context=bool(patch_dict.get("reset_context", False)),
             )
+            
             return FollowUpResult(
                 bool(ipt.get("is_follow_up", False)),
                 patch,
                 ipt.get("reason", ""),
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("Follow-up classification failed: %s", exc)
             return FollowUpResult(False, FollowUpPatch(slots={}))
 
@@ -768,6 +748,7 @@ class LLMService:
     async def assess_delta_requirements(
         self, query: str, ctx: UserContext, patch: FollowUpPatch
     ) -> List[BackendFunction]:
+        """Assess what needs to be fetched for a follow-up."""
         prompt = DELTA_ASSESS_PROMPT.format(
             query=query,
             patch=json.dumps(patch.__dict__, ensure_ascii=False),
@@ -775,6 +756,7 @@ class LLMService:
             sess_keys=list(ctx.session.keys()),
             fetched_keys=list(ctx.fetched_data.keys()),
         )
+        
         try:
             resp = await self.anthropic.messages.create(
                 model=Cfg.LLM_MODEL,
@@ -787,21 +769,16 @@ class LLMService:
             tool_use = pick_tool(resp, "assess_delta_requirements")
             if not tool_use:
                 return []
+            
             items_raw = tool_use.input.get("fetch_functions", [])
-            items = []
+            out: List[BackendFunction] = []
             for it in items_raw:
                 try:
-                    items.append(it.strip() if isinstance(it, str) else it)
-                except Exception:
-                    pass
-            out: List[BackendFunction] = []
-            for it in items:
-                try:
-                    out.append(BackendFunction(it))
+                    out.append(BackendFunction(it.strip() if isinstance(it, str) else it))
                 except ValueError:
                     pass
             return out
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("Delta assess failed: %s", exc)
             return []
 
@@ -813,6 +790,7 @@ class LLMService:
         layer3: str,
         ctx: UserContext,
     ) -> RequirementAssessment:
+        """Assess what data is needed for the query."""
         assessment_tool = build_assessment_tool()
         intent_config = INTENT_MAPPING.get(layer3, {})
         suggested_slots = [s.value for s in intent_config.get("suggested_slots", [])]
@@ -844,8 +822,7 @@ class LLMService:
                 intent=intent, missing_data=[], rationale={}, priority_order=[]
             )
 
-        args_raw = tool_use.input or {}
-        args = _strip_keys(args_raw) if isinstance(args_raw, dict) else {}
+        args = _strip_keys(tool_use.input or {})
         missing_items = args.get("missing_data", []) or []
         priority_items = args.get("priority_order", []) or []
 
@@ -887,13 +864,12 @@ class LLMService:
         intent_l3: str,
         ctx: UserContext,
     ) -> Dict[str, Dict[str, Any]]:
-        """Generate contextual questions with improved option generation."""
+        """Generate contextual questions."""
         if not slots_needed:
             return {}
 
         product_category = ctx.session.get("product_category", "general products")
 
-        # Build slot hints
         slot_hints_lines = []
         for slot in slots_needed:
             hint_config = SLOT_QUESTIONS.get(slot, {})
@@ -901,8 +877,7 @@ class LLMService:
                 slot_hints_lines.append(f"- {slot.value}: {hint_config['hint']}")
         slot_hints = "\n".join(slot_hints_lines) if slot_hints_lines else "No specific hints available."
 
-        # Get category-specific hints
-        category_hints = CATEGORY_QUESTION_HINTS.get(product_category, "Focus on the most relevant attributes for the user's query.")
+        category_hints = CATEGORY_QUESTION_HINTS.get(product_category, "Focus on relevant attributes.")
         slots_needed_desc = ", ".join([slot.value for slot in slots_needed])
 
         prompt = CONTEXTUAL_QUESTIONS_PROMPT.format(
@@ -927,426 +902,51 @@ class LLMService:
 
             tool_use = pick_tool(resp, "generate_questions")
             if not tool_use:
-                log.warning("No generate_questions tool use found")
                 return {}
 
-            questions_data_raw = tool_use.input.get("questions", {}) or {}
-            questions_data = _strip_keys(questions_data_raw) if isinstance(questions_data_raw, dict) else {}
-
-            # Process the questions to ensure proper format
+            questions_data = _strip_keys(tool_use.input.get("questions", {}) or {})
+            
             processed_questions = {}
             for slot_value, question_data in questions_data.items():
                 options = question_data.get("options", [])
-
-                if isinstance(options, list) and len(options) >= 3:
-                    formatted_options = []
-                    for opt in options[:3]:
-                        if isinstance(opt, str):
-                            clean_opt = opt.strip()
-                            if any(phrase in clean_opt.lower() for phrase in ["consider", "think about", "e.g.", "such as", "etc."]):
-                                continue
-                            formatted_options.append({"label": clean_opt, "value": clean_opt})
-                        elif isinstance(opt, dict) and "label" in opt and "value" in opt:
-                            formatted_options.append(opt)
-
-                    while len(formatted_options) < 3:
-                        if len(formatted_options) == 0:
-                            formatted_options.append({"label": "Yes", "value": "Yes"})
-                        elif len(formatted_options) == 1:
-                            formatted_options.append({"label": "No", "value": "No"})
-                        else:
-                            formatted_options.append({"label": "Other", "value": "Other"})
-
-                    processed_questions[slot_value] = {
-                        "message": question_data.get("message", f"Please provide your {slot_value.lower().replace('_', ' ')}"),
-                        "type": "multi_choice",
-                        "options": formatted_options[:3],
-                        "placeholder": question_data.get("placeholder", ""),
-                        "hints": question_data.get("hints", [])
-                    }
-                else:
-                    processed_questions[slot_value] = self._generate_fallback_question(slot_value)
-
-            return processed_questions
-
-        except Exception as exc:
-            log.warning("Contextual question generation failed: %s", exc)
-            return {slot.value: self._generate_fallback_question(slot.value) for slot in slots_needed}
-
-    def _generate_fallback_question(self, slot_value: str) -> Dict[str, Any]:
-        """Generate a fallback question with proper options."""
-        slot_name = slot_value.lower().replace("ask_", "").replace("_", " ")
-
-        if "budget" in slot_name or "price" in slot_name:
-            options = [
-                {"label": "Budget-friendly", "value": "Budget-friendly"},
-                {"label": "Mid-range", "value": "Mid-range"},
-                {"label": "Premium", "value": "Premium"}
-            ]
-        elif "size" in slot_name:
-            options = [
-                {"label": "Small", "value": "Small"},
-                {"label": "Medium", "value": "Medium"},
-                {"label": "Large", "value": "Large"}
-            ]
-        elif "brand" in slot_name:
-            options = [
-                {"label": "Popular brands", "value": "Popular brands"},
-                {"label": "Premium brands", "value": "Premium brands"},
-                {"label": "Any brand", "value": "Any brand"}
-            ]
-        elif "color" in slot_name:
-            options = [
-                {"label": "Dark colors", "value": "Dark colors"},
-                {"label": "Light colors", "value": "Light colors"},
-                {"label": "Bright colors", "value": "Bright colors"}
-            ]
-        else:
-            options = [
-                {"label": "Important", "value": "Important"},
-                {"label": "Somewhat important", "value": "Somewhat important"},
-                {"label": "Not important", "value": "Not important"}
-            ]
-
-        return {
-            "message": f"What's your preference for {slot_name}?",
-            "type": "multi_choice",
-            "options": options,
-            "placeholder": "",
-            "hints": []
-        }
-
-    # ---------------- ANSWER GENERATION ----------------
-    async def generate_answer(
-        self,
-        query: str,
-        ctx: UserContext,
-        fetched: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """
-        Generate final answer.
-        • Preferred path: model returns six-section dict.
-        • Fallback: old {response_type,message} format.
-        """
-        prompt = ANSWER_GENERATION_PROMPT.format(
-            query=query,
-            permanent=ctx.permanent,
-            session=ctx.session,
-            fetched=fetched,
-        )
-
-        resp = await self.anthropic.messages.create(
-            model=Cfg.LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
-            max_tokens=getattr(Cfg, "LLM_MAX_TOKENS", 1200),
-        )
-
-        text_block = getattr(resp.content[0], "text", "") if resp.content else ""
-        data = extract_json_block(text_block)
-
-        if isinstance(data, dict) and data.get("response_type") == "final_answer" and "sections" in data:
-            text = sections_to_text(data["sections"])
-            return {
-                "response_type": "final_answer",
-                "message": text,
-                "sections": data["sections"],
-            }
-
-        if isinstance(data, dict) and "response_type" in data and "message" in data:
-            return data
-
-        return {
-            "response_type": "final_answer",
-            "message": text_block.strip(),
-        }
-
-    # ---------------- ENHANCED ANSWER GENERATION ----------------
-    async def generate_enhanced_answer(
-        self,
-        query: str,
-        ctx: UserContext,
-        fetched: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """
-        Generate enhanced answer with structured product data for Flow support.
-
-        Returns:
-            Dict containing:
-            - response_type: str
-            - sections: Dict[str, str] (Flean's 6 elements)
-            - structured_products: List[Dict] (for Flow generation)
-            - flow_context: Dict (Flow metadata)
-        """
-        # Keep fetched snapshot available for ES fallback extraction and attach ctx for session fallback
-        self._current_fetched_data = fetched or {}
-        self._ctx_for_fallback = ctx
-
-        prompt = ENHANCED_ANSWER_GENERATION_PROMPT.format(
-            query=query,
-            permanent=ctx.permanent,
-            session=ctx.session,
-            fetched=fetched,
-        )
-
-        try:
-            resp = await self.anthropic.messages.create(
-                model=Cfg.LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                tools=[STRUCTURED_ANSWER_TOOL],
-                tool_choice={"type": "tool", "name": "generate_structured_answer"},
-                temperature=0.7,
-                max_tokens=2000,
-            )
-
-            tool_use = pick_tool(resp, "generate_structured_answer")
-            if not tool_use:
-                log.warning("No structured answer tool found, falling back to base service")
-                return await self.generate_answer(query, ctx, fetched)
-
-            result_raw = tool_use.input or {}
-            result = _strip_keys(result_raw) if isinstance(result_raw, dict) else {}
-
-            processed_result = self._process_structured_response(result)
-
-            if processed_result.get("sections"):
-                text_message = sections_to_text(processed_result["sections"])
-                processed_result["message"] = text_message
-
-            return processed_result
-
-        except Exception as exc:
-            log.error(f"Enhanced answer generation failed: {exc}")
-            return await self.generate_answer(query, ctx, fetched)
-
-    def _process_structured_response(self, raw_response: Dict[str, Any]) -> Dict[str, Any]:
-        """Process and validate the structured response"""
-        processed = {
-            "response_type": raw_response.get("response_type", "final_answer"),
-            "sections": raw_response.get("sections", {}),
-            "structured_products": [],
-            "flow_context": raw_response.get("flow_context", {"intent": "none"})
-        }
-
-        # Process structured products from LLM response
-        raw_products = raw_response.get("structured_products", []) or []
-        for product_data in raw_products:
-            try:
-                product = self._create_product_data(product_data)
-                if product:
-                    processed["structured_products"].append(product)
-            except Exception as e:
-                log.warning(f"Failed to process LLM product data: {e}")
-                continue
-
-        # If no structured products from LLM, extract from ES results
-        if not processed["structured_products"]:
-            processed["structured_products"] = self._extract_products_from_es_data()
-
-        # Validate sections have all 6 elements
-        required_sections = ["+", "ALT", "-", "BUY", "OVERRIDE", "INFO"]
-        for section in required_sections:
-            if section not in processed["sections"]:
-                processed["sections"][section] = ""
-
-        return processed
-
-    def _extract_products_from_es_data(self) -> List[Dict[str, Any]]:
-        """Extract structured products from ES results stored in context"""
-        fetched = self._current_fetched_data or {}
-        search_results = fetched.get('search_products', {})
-        
-        if not isinstance(search_results, dict):
-            search_results = {}
-        
-        products_list = search_results.get('products', [])
-        if not isinstance(products_list, list):
-            products_list = []
-
-        # Session fallback: use last_recommendation if no current-turn products
-        if not products_list:
-            try:
-                sess = getattr(self, "_ctx_for_fallback", None)
-                sess = sess.session if sess else {}
-                lr = (sess or {}).get("last_recommendation", {}) or {}
-                lr_products = lr.get("products", []) or []
-                if isinstance(lr_products, list) and lr_products:
-                    products_list = [
-                        {
-                            "title": p.get("title"),
-                            "brand": p.get("brand"),
-                            "price": (p.get("price") or "N/A").lstrip("₹"),
-                            "image": p.get("image_url"),
-                            "rating": p.get("rating"),
-                        }
-                        for p in lr_products if isinstance(p, dict)
-                    ]
-            except Exception:
-                pass
-        
-        structured_products = []
-        
-        for i, product in enumerate(products_list[:6]):  # Limit to 6 for Flow
-            try:
-                product_data = {
-                    "title": product.get("name") or product.get("title", f"Product {i+1}"),
-                    "subtitle": product.get("brand", ""),
-                    "price": f"₹{product.get('price', 'N/A')}",
-                    "rating": product.get("rating"),
-                    "image_url": product.get("image") or "https://via.placeholder.com/200x200?text=Product",
-                    "brand": product.get("brand", ""),
-                    "key_features": self._extract_features_from_es_product(product),
-                    "availability": "In Stock",
-                    "discount": product.get("discount", "")
+                
+                formatted_options = []
+                for opt in options[:3]:
+                    if isinstance(opt, str):
+                        formatted_options.append({"label": opt.strip(), "value": opt.strip()})
+                    elif isinstance(opt, dict) and "label" in opt and "value" in opt:
+                        formatted_options.append(opt)
+                
+                while len(formatted_options) < 3:
+                    formatted_options.append({"label": "Other", "value": "Other"})
+                
+                processed_questions[slot_value] = {
+                    "message": question_data.get("message", f"What's your {slot_value.lower().replace('_', ' ')}?"),
+                    "type": "multi_choice",
+                    "options": formatted_options[:3]
                 }
-                structured_products.append(product_data)
-            except Exception as e:
-                log.warning(f"Failed to convert ES product {i}: {e}")
-                continue
-        
-        return structured_products
-
-    def _extract_features_from_es_product(self, product: Dict[str, Any]) -> List[str]:
-        """Extract key features from ES product data"""
-        features = []
-        
-        protein = product.get("protein_g")
-        if protein and protein > 0:
-            features.append(f"Protein: {protein}g")
-        
-        health_claims = product.get("health_claims", [])
-        if isinstance(health_claims, list):
-            features.extend(health_claims[:2])
-        
-        dietary_labels = product.get("dietary_labels", [])
-        if isinstance(dietary_labels, list):
-            features.extend(dietary_labels[:2])
-        
-        category_paths = product.get("category_paths", [])
-        if isinstance(category_paths, list) and category_paths:
-            last_cat = category_paths[-1] if category_paths else ""
-            if last_cat and last_cat not in ["f_and_b", "food"]:
-                features.append(last_cat.title())
-        
-        if not features:
-            features.append("Quality Product")
-        
-        return features[:5]
-
-    def _create_product_data(self, product_dict: Dict[str, Any]) -> Optional[ProductData]:
-        """Create ProductData object from dictionary"""
-        try:
-            return ProductData(
-                product_id=f"prod_{hash(product_dict.get('title', ''))%100000}",
-                title=product_dict["title"],
-                subtitle=product_dict["subtitle"],
-                price=product_dict["price"],
-                rating=product_dict.get("rating"),
-                image_url=product_dict.get("image_url", "https://via.placeholder.com/200x200?text=Product"),
-                brand=product_dict.get("brand"),
-                key_features=product_dict.get("key_features", []),
-                availability=product_dict.get("availability", "In Stock"),
-                discount=product_dict.get("discount")
-            )
-        except KeyError as e:
-            log.error(f"Missing required product field: {e}")
-            return None
-        except Exception as e:
-            log.error(f"Error creating ProductData: {e}")
-            return None
-
-    def should_use_flow(
-        self,
-        query: str,
-        intent_layer3: str,
-        structured_products: List[ProductData]
-    ) -> bool:
-        """Determine if this response should use a Flow"""
-        if structured_products and len(structured_products) >= 2:
-            return True
-
-        flow_intents = [
-            "Product_Comparison",
-            "Recommendation",
-            "Product_Discovery",
-            "Specific_Product_Search"
-        ]
-        if intent_layer3 in flow_intents:
-            return True
-
-        flow_keywords = [
-            "alternatives", "options", "compare", "similar",
-            "recommend", "suggest", "show me", "what about"
-        ]
-        query_lower = query.lower()
-        if any(keyword in query_lower for keyword in flow_keywords):
-            return True
-
-        return False
-
-    def determine_flow_type(
-        self,
-        flow_context: Dict[str, Any],
-        intent_layer3: str,
-        query: str
-    ) -> str:
-        """Determine appropriate Flow type"""
-        from .models import FlowType
-
-        context_intent = flow_context.get("intent", "none")
-        if context_intent == "recommendation":
-            return FlowType.RECOMMENDATION
-        elif context_intent == "comparison":
-            return FlowType.COMPARISON
-        elif context_intent == "catalog":
-            return FlowType.PRODUCT_CATALOG
-
-        if intent_layer3 == "Product_Comparison":
-            return FlowType.COMPARISON
-        elif intent_layer3 in ["Recommendation", "Product_Discovery"]:
-            return FlowType.RECOMMENDATION
-
-        query_lower = query.lower()
-        if any(word in query_lower for word in ["compare", "vs", "versus", "difference"]):
-            return FlowType.COMPARISON
-        elif any(word in query_lower for word in ["recommend", "suggest", "best", "should i"]):
-            return FlowType.RECOMMENDATION
-
-        return FlowType.PRODUCT_CATALOG
-
-    # ---------------- ES PARAMS (DELEGATED TO RECOMMENDATION SERVICE) ----------------
-    async def extract_es_params(self, ctx: UserContext) -> Dict[str, Any]:
-        """
-        Enhanced parameter extraction with better query understanding.
-        
-        **MODULARIZED**: This method now delegates to the recommendation service
-        while maintaining full backward compatibility.
-        """
-        try:
-            # Store current fetched data for product extraction fallback
-            self._current_fetched_data = ctx.fetched_data
             
-            # Delegate to recommendation service (async)
+            return processed_questions
+            
+        except Exception as exc:
+            log.warning("Question generation failed: %s", exc)
+            return {}
+
+    # ---------------- ES PARAMS ----------------
+    async def extract_es_params(self, ctx: UserContext) -> Dict[str, Any]:
+        """Extract ES parameters via recommendation service."""
+        try:
             params = await self._recommendation_service.extract_es_params(ctx)
-            log.debug(f"ES params extracted via recommendation service: {params}")
+            log.debug(f"ES params extracted: {params}")
             return params
         except Exception as exc:
-            log.warning("ES param extraction via recommendation service failed: %s", exc)
+            log.warning("ES param extraction failed: %s", exc)
             return {}
-    
-    # ---------------- RECOMMENDATION SERVICE INTEGRATION ----------------
-    def switch_recommendation_engine(self, engine_type: str):
-        """Switch to a different recommendation engine"""
-        self._recommendation_service.switch_engine(engine_type)
-        log.info(f"LLMService: Switched recommendation engine to {engine_type}")
-    
-    async def get_recommendation_response(self, ctx: UserContext):
-        """Get full recommendation response with metadata"""
-        return await self._recommendation_service.get_recommendations(ctx)
 
 
 # ─────────────────────────────────────────────────────────────
-# Helper – map layer3 leaf to QueryIntent (unchanged)
+# Helper function
 # ─────────────────────────────────────────────────────────────
+
 def map_leaf_to_query_intent(leaf: str) -> QueryIntent:
     return INTENT_MAPPING.get(leaf, {}).get("query_intent", QueryIntent.GENERAL_HELP)

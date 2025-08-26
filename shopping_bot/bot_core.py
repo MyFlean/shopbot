@@ -1,11 +1,11 @@
 """
-Brain of the WhatsApp shopping bot – baseline core (no Flow building here).
+Brain of the WhatsApp shopping bot – baseline core.
 
-FINAL POLICY
-------------
-• Only layer3 == "Recommendation" defers to background (enhanced core handles Flow).
-• All other intents are synchronous text (QUESTION / simple FINAL_ANSWER; no six-section formatting).
-• Follow-ups that land on "Recommendation" also defer (no sync text).
+UPDATED POLICY
+--------------
+• ALL product intents use unified response generation
+• Structured product responses with descriptions
+• Clean separation between product and non-product responses
 """
 from __future__ import annotations
 
@@ -33,6 +33,12 @@ from .llm_service import LLMService, map_leaf_to_query_intent
 Cfg = get_config()
 log = logging.getLogger(__name__)
 
+# Intents that should return structured product responses
+PRODUCT_INTENTS = {
+    "product_discovery", "recommendation", 
+    "specific_product_search", "product_comparison"
+}
+
 
 class ShoppingBotCore:
     def __init__(self, context_mgr: RedisContextManager) -> None:
@@ -47,20 +53,22 @@ class ShoppingBotCore:
         self.smart_log.query_start(ctx.user_id, query, bool(ctx.session))
 
         try:
-            # Continue assessment if in progress
+            # 1) Continue existing assessment
             if "assessment" in ctx.session:
                 self.smart_log.flow_decision(ctx.user_id, "CONTINUE_ASSESSMENT")
                 return await self._continue_assessment(query, ctx)
 
-            # Follow-up first (LLM decides; latest-turn dominance is in the prompt)
+            # 2) Classify as follow-up
             fu = await self.llm_service.classify_follow_up(query, ctx)
             if fu.is_follow_up and not fu.patch.reset_context:
                 effective_l3 = fu.patch.intent_override or ctx.session.get("intent_l3", "")
-                self.smart_log.follow_up_decision(ctx.user_id, "HANDLE_FOLLOW_UP", effective_l3, fu.reason)
+                self.smart_log.follow_up_decision(
+                    ctx.user_id, "HANDLE_FOLLOW_UP", effective_l3, fu.reason
+                )
                 self._apply_follow_up_patch(fu.patch, ctx)
                 return await self._handle_follow_up(query, ctx, fu)
 
-            # Reset or new assessment
+            # 3) New or reset
             if fu.patch.reset_context:
                 self.smart_log.flow_decision(ctx.user_id, "RESET_CONTEXT")
                 self._reset_session_only(ctx)
@@ -69,7 +77,7 @@ class ShoppingBotCore:
 
             return await self._start_new_assessment(query, ctx)
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self.smart_log.error_occurred(
                 ctx.user_id, type(exc).__name__, "process_query", str(exc)
             )
@@ -79,31 +87,29 @@ class ShoppingBotCore:
             )
 
     # ────────────────────────────────────────────────────────
-    # Follow-up path (with Recommendation deferral)
+    # Follow-up path
     # ────────────────────────────────────────────────────────
     async def _handle_follow_up(self, query: str, ctx: UserContext, fu) -> BotResponse:
-        # If follow-up changes/lands on Recommendation → defer
+        # Determine effective L3
         effective_l3 = (
             fu.patch.intent_override
             or ctx.session.get("intent_l3")
             or ctx.session.get("intent_override")
             or ""
         )
+
+        # Defer if Recommendation and async enabled
         if effective_l3 == "Recommendation" and Cfg.ENABLE_ASYNC:
-            # Ensure a minimal assessment exists and is in an allow-processing phase
             ctx.session["needs_background"] = True
-            a = ctx.session.get("assessment")
-            if not a:
-                a = {
-                    "original_query": query,
-                    "intent": "Recommendation",
-                    "missing_data": [],
-                    "priority_order": [],
-                    "fulfilled": [],
-                    "currently_asking": None,
-                }
-                ctx.session["assessment"] = a
-            # Keep phase active so enhanced core proceeds in background
+            a = ctx.session.get("assessment") or {
+                "original_query": query,
+                "intent": "Recommendation",
+                "missing_data": [],
+                "priority_order": [],
+                "fulfilled": [],
+                "currently_asking": None,
+            }
+            ctx.session["assessment"] = a
             a["phase"] = "active"
             self.ctx_mgr.save_context(ctx)
             self.smart_log.flow_decision(
@@ -114,7 +120,7 @@ class ShoppingBotCore:
                 content={"message": "Processing your request…"},
             )
 
-        # Otherwise do the normal delta fetch + reply (no deferral)
+        # Delta-fetch-and-reply
         fetch_list = await self.llm_service.assess_delta_requirements(query, ctx, fu.patch)
         if fetch_list:
             self.smart_log.data_operations(ctx.user_id, [f.value for f in fetch_list])
@@ -133,7 +139,7 @@ class ShoppingBotCore:
                 self.smart_log.performance_metric(
                     ctx.user_id, func.value, data_size=len(str(result)) if result else 0
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self.smart_log.warning(ctx.user_id, "DATA_FETCH_FAILED", f"{func.value}: {exc}")
                 fetched[func.value] = {"error": str(exc)}
 
@@ -142,32 +148,42 @@ class ShoppingBotCore:
                 ctx.user_id, [f.value for f in fetch_list], success_count
             )
 
-        # Non-Recommendation → single-message reply
-        answer_dict = await self.llm_service.generate_simple_reply(
+        # Generate unified response
+        answer_dict = await self.llm_service.generate_response(
             query,
             ctx,
             fetched,
             intent_l3=effective_l3,
             query_intent=map_leaf_to_query_intent(effective_l3),
         )
+
         resp_type = ResponseType(answer_dict.get("response_type", "final_answer"))
 
-        # Store last_recommendation for follow-ups if products were fetched
+        # Store snapshot for follow-ups
         self._store_last_recommendation(query, ctx, fetched)
-        
-        snapshot_and_trim(ctx, base_query=query)
+
+        # Final-answer summary for memory
+        final_answer_summary = {
+            "response_type": resp_type.value,
+            "message_preview": str(answer_dict.get("summary_message", answer_dict.get("message", "")))[:300],
+            "has_sections": False,
+            "has_products": bool(answer_dict.get("products")),
+            "flow_triggered": False,
+        }
+
+        snapshot_and_trim(ctx, base_query=query, final_answer=final_answer_summary)
         self.ctx_mgr.save_context(ctx)
         self.smart_log.response_generated(ctx.user_id, resp_type.value, False)
 
         return BotResponse(
             resp_type,
-            content={
-                "message": answer_dict.get("message", ""),
-                # no sections for non-Recommendation
-            },
+            content=answer_dict,
             functions_executed=list(fetched.keys()),
         )
 
+    # ────────────────────────────────────────────────────────
+    # Session helpers
+    # ────────────────────────────────────────────────────────
     def _apply_follow_up_patch(self, patch, ctx: UserContext) -> None:
         changes = {}
         for k, v in patch.slots.items():
@@ -192,7 +208,6 @@ class ShoppingBotCore:
     # New assessment
     # ────────────────────────────────────────────────────────
     async def _start_new_assessment(self, query: str, ctx: UserContext) -> BotResponse:
-        # Classify intent (latest-turn dominance handled in LLM prompt)
         result = await self.llm_service.classify_intent(query, ctx)
         intent = map_leaf_to_query_intent(result.layer3)
 
@@ -200,7 +215,6 @@ class ShoppingBotCore:
             ctx.user_id, (result.layer1, result.layer2, result.layer3), intent.value
         )
 
-        # Save taxonomy + core-owned background decision (Recommendation only)
         ctx.session.update(
             intent_l1=result.layer1,
             intent_l2=result.layer2,
@@ -214,7 +228,6 @@ class ShoppingBotCore:
             {"needs_background": needs_bg, "intent": intent.value, "intent_l3": result.layer3},
         )
 
-        # Assess requirements
         assessment = await self.llm_service.assess_requirements(
             query, intent, result.layer3, ctx
         )
@@ -227,14 +240,12 @@ class ShoppingBotCore:
             ctx.user_id, missing_data_names, ask_first_names
         )
 
-        # Generate contextual questions if needed
         if user_slots:
             contextual_questions = await self.llm_service.generate_contextual_questions(
                 user_slots, query, result.layer3, ctx
             )
             ctx.session["contextual_questions"] = contextual_questions
 
-        # Initialize assessment session
         ctx.session["assessment"] = {
             "original_query": query,
             "intent": intent.value,
@@ -253,7 +264,6 @@ class ShoppingBotCore:
     async def _continue_assessment(self, query: str, ctx: UserContext) -> BotResponse:
         a = ctx.session["assessment"]
 
-        # Store user's answer if not the original query
         if query != a["original_query"]:
             store_user_answer(query, a, ctx)
             self.smart_log.context_change(
@@ -261,12 +271,10 @@ class ShoppingBotCore:
                 {"for": a.get("currently_asking"), "answer_len": len(query)}
             )
 
-        # Compute what's still missing
         still_missing = compute_still_missing(a, ctx)
         ask_first = [f for f in still_missing if is_user_slot(f)]
         fetch_later = [f for f in still_missing if not is_user_slot(f)]
 
-        # Need to ask user → QUESTION
         if ask_first:
             func = ask_first[0]
             func_value = get_func_value(func)
@@ -276,7 +284,6 @@ class ShoppingBotCore:
             self.ctx_mgr.save_context(ctx)
             return BotResponse(ResponseType.QUESTION, build_question(func, ctx))
 
-        # Done asking. If Recommendation (needs_background) and backend work remains, defer.
         needs_bg = bool(ctx.session.get("needs_background")) and Cfg.ENABLE_ASYNC
         if fetch_later and needs_bg:
             a["phase"] = "processing"
@@ -290,7 +297,6 @@ class ShoppingBotCore:
                 content={"message": "Processing your request…"}
             )
 
-        # Otherwise complete synchronously
         self.smart_log.flow_decision(
             ctx.user_id, "COMPLETE_ASSESSMENT", f"{len(fetch_later)} fetches needed"
         )
@@ -324,8 +330,10 @@ class ShoppingBotCore:
                 self.smart_log.performance_metric(
                     ctx.user_id, func.value, data_size=len(str(result)) if result else 0
                 )
-            except Exception as exc:  # noqa: BLE001
-                self.smart_log.warning(ctx.user_id, "DATA_FETCH_FAILED", f"{func.value}: {exc}")
+            except Exception as exc:
+                self.smart_log.warning(
+                    ctx.user_id, "DATA_FETCH_FAILED", f"{func.value}: {exc}"
+                )
                 fetched[func.value] = {"error": str(exc)}
 
         if backend_fetchers:
@@ -333,126 +341,103 @@ class ShoppingBotCore:
                 ctx.user_id, [f.value for f in backend_fetchers], success_count
             )
 
-        # Generate final answer: six-section ONLY for Recommendation; otherwise simple reply
+        # Generate unified response
         original_q = safe_get(a, "original_query", "")
         intent_l3 = ctx.session.get("intent_l3", "") or ""
-
-
-
-        if intent_l3 == "Recommendation":
-
-            answer_dict = await self.llm_service.generate_answer(original_q, ctx, fetched)
-        else:
-            # print("DEBUG: Calling generate_simple_reply (non-Recommendation path)")
-            answer_dict = await self.llm_service.generate_simple_reply(
-                original_q,
-                ctx,
-                fetched,
-                intent_l3=intent_l3,
-                query_intent=map_leaf_to_query_intent(intent_l3),
-            )
-
-        # # DEBUG: Check what we got back
-        # # print(f"DEBUG: answer_dict = {answer_dict}")
-        # # print(f"DEBUG: answer_dict type = {type(answer_dict)}")
-        # if isinstance(answer_dict, dict):
-        #     # print(f"DEBUG: answer_dict keys = {list(answer_dict.keys())}")
-        #     # print(f"DEBUG: 'response_type' in answer_dict = {'response_type' in answer_dict}")
-        #     # print(f"DEBUG: answer_dict.get('response_type') = {answer_dict.get('response_type')}")
-        # else:
-        #     # print("DEBUG: answer_dict is not a dict!")
-        #     # Emergency fallback
-        #     answer_dict = {
-        #         "response_type": "final_answer",
-        #         "message": "I can help you with shopping queries. Please provide more details."
-        #     }
-        #     # print(f"DEBUG: Using fallback answer_dict = {answer_dict}")
-
-        try:
-            resp_type = ResponseType(answer_dict.get("response_type", "final_answer"))
-            # print(f"DEBUG: Successfully created ResponseType: {resp_type}")
-        except Exception as e:
-            # print(f"DEBUG: Error creating ResponseType: {e}")
-            resp_type = ResponseType.FINAL_ANSWER
-            # print(f"DEBUG: Using fallback ResponseType: {resp_type}")
-
-        message = answer_dict.get(
-            "message",
-            "I can help you with shopping queries. Please provide more details.",
+        
+        answer_dict = await self.llm_service.generate_response(
+            original_q,
+            ctx,
+            fetched,
+            intent_l3=intent_l3,
+            query_intent=map_leaf_to_query_intent(intent_l3),
         )
-        # print(f"DEBUG: Final message = '{message}'")
+
+        resp_type = ResponseType(answer_dict.get("response_type", "final_answer"))
 
         # Store last_recommendation for follow-ups if products were fetched
         self._store_last_recommendation(original_q, ctx, fetched)
-        
-        # Clean up session
-        snapshot_and_trim(ctx, base_query=original_q)
+
+        # Final-answer summary → memory
+        final_answer_summary = {
+            "response_type": resp_type.value,
+            "message_preview": str(answer_dict.get("summary_message", answer_dict.get("message", "")))[:300],
+            "has_sections": False,
+            "has_products": bool(answer_dict.get("products")),
+            "flow_triggered": False,
+        }
+
+        snapshot_and_trim(ctx, base_query=original_q, final_answer=final_answer_summary)
         ctx.session.pop("assessment", None)
         ctx.session.pop("contextual_questions", None)
         self.ctx_mgr.save_context(ctx)
 
         self.smart_log.response_generated(ctx.user_id, resp_type.value, False)
 
-        # For non-Recommendation we intentionally omit sections
-        content = {"message": message}
-        if intent_l3 == "Recommendation" and "sections" in answer_dict:
-            content["sections"] = answer_dict.get("sections")
-
-        # print(f"DEBUG: Returning BotResponse with content = {content}")
-
         return BotResponse(
-            resp_type,
-            content=content,
-            functions_executed=list(fetched.keys()),
+            resp_type, 
+            content=answer_dict,
+            functions_executed=list(fetched.keys())
         )
+
     # ────────────────────────────────────────────────────────
-    # Background policy helper (core-owned)
+    # Background policy helper
     # ────────────────────────────────────────────────────────
     def _needs_background(self, intent) -> bool:
-        """
-        Defer ONLY for Recommendation (to trigger Flow pipeline).
-        All other intents are synchronous text.
-        """
         try:
             return str(intent).lower() in {"queryintent.recommendation"}
         except Exception:
             return False
 
-    def _store_last_recommendation(self, query: str, ctx: UserContext, fetched: Dict[str, Any]) -> None:
-        """Store a compact last_recommendation snapshot for follow-ups."""
+    # ────────────────────────────────────────────────────────
+    # Store last recommendation snippet for follow-ups
+    # ────────────────────────────────────────────────────────
+    def _store_last_recommendation(
+        self, query: str, ctx: UserContext, fetched: Dict[str, Any]
+    ) -> None:
         try:
             products_snapshot = []
-            
-            # Extract products from search_products fetch result
+
             if "search_products" in fetched:
                 search_data = fetched["search_products"]
-                # Handle both direct data and nested structure
                 if isinstance(search_data, dict):
-                    products = search_data.get("data", {}).get("products", []) if "data" in search_data else search_data.get("products", [])
+                    products = (
+                        search_data.get("data", {}).get("products", [])
+                        if "data" in search_data
+                        else search_data.get("products", [])
+                    )
                 elif isinstance(search_data, list):
                     products = search_data
                 else:
                     products = []
-                
-                for product in (products or [])[:8]:  # Limit to 8 products
+
+                for product in (products or [])[:8]:
                     try:
-                        products_snapshot.append({
-                            "title": product.get("name") or product.get("title", "Unknown Product"),
-                            "brand": product.get("brand", ""),
-                            "price": product.get("price"),
-                            "image_url": product.get("image", ""),
-                            "rating": product.get("rating"),
-                        })
+                        products_snapshot.append(
+                            {
+                                "title": product.get("name")
+                                or product.get("title", "Unknown Product"),
+                                "brand": product.get("brand", ""),
+                                "price": product.get("price"),
+                                "image_url": product.get("image", ""),
+                                "rating": product.get("rating"),
+                            }
+                        )
                     except Exception:
                         continue
-            
+
             if products_snapshot:
-                from datetime import datetime
                 ctx.session["last_recommendation"] = {
                     "query": query,
                     "as_of": datetime.now().isoformat(),
                     "products": products_snapshot,
                 }
-                self.smart_log.memory_operation(ctx.user_id, "last_recommendation_stored", {"count": len(products_snapshot)})
+                self.smart_log.memory_operation(
+                    ctx.user_id,
+                    "last_recommendation_stored",
+                    {"count": len(products_snapshot)},
+                )
         except Exception as e:
-            log.warning(f"LAST_RECOMMENDATION_STORE_FAILED | user={ctx.user_id} | error={e}")
+            log.warning(
+                f"LAST_RECOMMENDATION_STORE_FAILED | user={ctx.user_id} | error={e}"
+            )

@@ -1,44 +1,34 @@
 """
-Helper utilities for ShoppingBotCore - UPDATED WITH FIXES
-──────────────────────────────────────────────────────────
-FIXES APPLIED:
-- Enhanced user answer storage with permanent persistence (Issue #5)
-- Improved compute_still_missing logic for Redis data (Issue #4)
-- Added assessment state management and cleanup (Issue #8)
-- Added missing error handling and logging
+Helper utilities for ShoppingBotCore
 
-PRESERVED:
-- All original helpers and six-element answer spec
-- Existing question processing and options handling
-- Original function signatures and behavior
+FIXES (cumulative)
+──────────────────
+• Permanent user-answer persistence
+• Redis-aware compute_still_missing
+• Assessment validation helpers
+• Conversation memory snapshot with *final-answer summary* in both
+  conversation_history and legacy history
+• Misc logging & option sanity helpers
 """
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Union, Optional
+from typing import Any, Dict, List, Union
 
 from .config import get_config
 from .enums import BackendFunction, UserSlot
 from .intent_config import FUNCTION_TTL, SLOT_QUESTIONS, SLOT_TO_SESSION_KEY
-from .utils.helpers import iso_now, trim_history, safe_get  # noqa: F401
+from .utils.helpers import iso_now, trim_history
 from .models import UserContext
 
 Cfg = get_config()
 log = logging.getLogger(__name__)
 
 # ────────────────────────────────────────────────────────────
-# Flean – six core elements (UNCHANGED)
+# Flean – six core elements (unchanged)
 # ────────────────────────────────────────────────────────────
-KEY_ELEMENTS: List[str] = [
-    "+",          # Core benefit / positive hook
-    "ALT",        # Alternatives
-    "-",          # Drawbacks / caveats
-    "BUY",        # Purchase CTA
-    "OVERRIDE",   # How user can tweak / override
-    "INFO",       # Extra facts (nutrition, rating, etc.)
-]
+KEY_ELEMENTS: List[str] = ["+", "ALT", "-", "BUY", "OVERRIDE", "INFO"]
 _LABELS = {
     "+": "Why you'll love it",
     "ALT": "Alternatives",
@@ -49,7 +39,7 @@ _LABELS = {
 }
 
 # ────────────────────────────────────────────────────────────
-# Public exports (UNCHANGED)
+# Public API
 # ────────────────────────────────────────────────────────────
 __all__ = [
     "already_have_data",
@@ -63,60 +53,52 @@ __all__ = [
     "pick_tool",
     "ensure_proper_options",
     "sections_to_text",
+    "validate_assessment_state",
+    "get_user_display_name",
 ]
 
 # ────────────────────────────────────────────────────────────
-# Question option validator (UNCHANGED)
+# Option validator (unchanged logic, simplified)
 # ────────────────────────────────────────────────────────────
-
 def ensure_proper_options(q: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Ensure question has proper multi_choice format with exactly 3 options.
-    This is a simplified version that doesn't do complex parsing since
-    the LLM now provides proper options directly.
-    """
+    """Ensure question has 3 well-formed options."""
     q["type"] = "multi_choice"
-    
-    options = q.get("options", [])
-    
-    # If we already have proper options format, use them
-    if isinstance(options, list) and len(options) >= 3:
-        # Ensure each option is in proper format
-        formatted_options = []
-        for opt in options[:3]:  # Take first 3
-            if isinstance(opt, dict) and "label" in opt and "value" in opt:
-                formatted_options.append(opt)
+    opts = q.get("options", [])
+    if isinstance(opts, list) and len(opts) >= 3:
+        formatted: list[dict] = []
+        for opt in opts[:3]:
+            if isinstance(opt, dict) and {"label", "value"} <= set(opt):
+                formatted.append(opt)
             elif isinstance(opt, str):
-                formatted_options.append({"label": opt, "value": opt})
-        
-        if len(formatted_options) == 3:
-            q["options"] = formatted_options
+                formatted.append({"label": opt, "value": opt})
+        if len(formatted) == 3:
+            q["options"] = formatted
             return q
-    
-    # Fallback: generate default options
+
     q["options"] = [
         {"label": "Yes", "value": "Yes"},
         {"label": "No", "value": "No"},
-        {"label": "Maybe", "value": "Maybe"}
+        {"label": "Maybe", "value": "Maybe"},
     ]
     return q
 
+
 # ────────────────────────────────────────────────────────────
-# Six-section answer formatter (UNCHANGED)
+# Section formatter
 # ────────────────────────────────────────────────────────────
 def sections_to_text(sections: Dict[str, str]) -> str:
-    """Convert the six-element dict into WhatsApp-friendly text."""
-    lines: List[str] = []
+    lines: list[str] = []
     for key in KEY_ELEMENTS:
         txt = sections.get(key, "").strip()
         if txt:
             lines.append(f"*{_LABELS[key]}:* {txt}")
     return "\n\n".join(lines)
 
+
 # ────────────────────────────────────────────────────────────
-# Primitive converters / inspectors (UNCHANGED)
+# Primitive inspectors
 # ────────────────────────────────────────────────────────────
-def string_to_function(f_str: str) -> Union[BackendFunction, UserSlot, None]:
+def string_to_function(f_str: str) -> BackendFunction | UserSlot | None:
     try:
         return UserSlot(f_str)
     except ValueError:
@@ -126,426 +108,245 @@ def string_to_function(f_str: str) -> Union[BackendFunction, UserSlot, None]:
             return None
 
 
-def is_user_slot(func: Union[BackendFunction, UserSlot, str]) -> bool:
-    return isinstance(func, UserSlot) or (
-        isinstance(func, str) and func.startswith("ASK_")
-    )
+def is_user_slot(func: BackendFunction | UserSlot | str) -> bool:
+    return isinstance(func, UserSlot) or (isinstance(func, str) and func.startswith("ASK_"))
 
 
-def get_func_value(func: Union[BackendFunction, UserSlot, str]) -> str:
-    if isinstance(func, (BackendFunction, UserSlot)):
-        return func.value
-    return str(func)
+def get_func_value(func: BackendFunction | UserSlot | str) -> str:
+    return func.value if isinstance(func, (BackendFunction, UserSlot)) else str(func)
+
 
 # ────────────────────────────────────────────────────────────
-# Data-availability helpers (ENHANCED for Redis integration)
+# Data-availability helper (Redis-aware)
 # ────────────────────────────────────────────────────────────
 def already_have_data(func_str: str, ctx: UserContext) -> bool:
-    """
-    ENHANCED: Now also checks fetched_data for backend functions
-    to work properly with Redis persistence.
-    """
     try:
         slot = UserSlot(func_str)
         session_key = SLOT_TO_SESSION_KEY.get(slot, slot.name.lower())
-        
-        # FIX: Check both session and permanent storage
+
+        # delivery_address special-case
         if slot == UserSlot.DELIVERY_ADDRESS:
-            has_data = (session_key in ctx.session or 
-                       session_key in ctx.permanent or
-                       "delivery_address" in ctx.permanent)
-            if has_data:
-                log.debug(f"ALREADY_HAVE_SLOT | user={ctx.user_id} | slot={func_str} | found=true")
-            return has_data
-        
-        has_data = session_key in ctx.session
-        if has_data:
-            log.debug(f"ALREADY_HAVE_SLOT | user={ctx.user_id} | slot={func_str} | found=true")
-        return has_data
-        
+            return (
+                session_key in ctx.session
+                or session_key in ctx.permanent
+                or "delivery_address" in ctx.permanent
+            )
+
+        return session_key in ctx.session
     except ValueError:
         pass
 
-    # FIX: Enhanced backend function checking with Redis data
+    # backend function
     try:
         func = BackendFunction(func_str)
-        
-        # Check in fetched_data (in-memory)
         rec = ctx.fetched_data.get(func.value)
-        if rec:
-            # Check if data is still valid (TTL)
-            try:
-                ts = datetime.fromisoformat(rec["timestamp"])
-                ttl = FUNCTION_TTL.get(func, timedelta(minutes=5))
-                is_valid = datetime.now() - ts < ttl
-                
-                if is_valid:
-                    log.debug(f"ALREADY_HAVE_FUNC | user={ctx.user_id} | func={func_str} | source=fetched_data")
-                    return True
-                else:
-                    log.debug(f"ALREADY_HAVE_FUNC_EXPIRED | user={ctx.user_id} | func={func_str}")
-            except Exception as e:
-                log.warning(f"ALREADY_HAVE_FUNC_TIME_ERROR | user={ctx.user_id} | func={func_str} | error={e}")
-        
-        log.debug(f"ALREADY_HAVE_FUNC | user={ctx.user_id} | func={func_str} | found=false")
-        return False
-        
+        if not rec:
+            return False
+        ts = datetime.fromisoformat(rec["timestamp"])
+        ttl = FUNCTION_TTL.get(func, timedelta(minutes=5))
+        return datetime.now() - ts < ttl
     except ValueError:
-        pass
-    
-    return False
+        return False
+
 
 # ────────────────────────────────────────────────────────────
-# Question generation (UNCHANGED but with enhanced logging)
+# Question generation helper
 # ────────────────────────────────────────────────────────────
-def build_question(func: Union[BackendFunction, UserSlot, str], ctx: UserContext) -> Dict[str, Any]:
-    """
-    Build a question for the given function/slot.
-    Now simplified since contextual questions from LLM should have proper options.
-    """
-    func_value = get_func_value(func)
-    log.info(f"BUILD_QUESTION | user={ctx.user_id} | func={func_value}")
-    
-    # First, try to get contextual question from LLM
-    contextual_q = ctx.session.get("contextual_questions", {}).get(func_value)
-    if contextual_q:
-        log.info(f"CONTEXTUAL_QUESTION | user={ctx.user_id} | func={func_value}")
-        # Just ensure it has proper format, no complex parsing
-        return ensure_proper_options(contextual_q)
+def build_question(func: BackendFunction | UserSlot | str, ctx: UserContext) -> Dict[str, Any]:
+    func_val = get_func_value(func)
+    log.info(f"BUILD_QUESTION | user={ctx.user_id} | func={func_val}")
 
-    # Fallback to predefined questions
+    contextual = ctx.session.get("contextual_questions", {}).get(func_val)
+    if contextual:
+        return ensure_proper_options(contextual)
+
     if isinstance(func, UserSlot):
         cfg = SLOT_QUESTIONS.get(func, {})
         if "fallback" in cfg:
-            fallback_q = cfg["fallback"].copy()
-            log.info(f"PREDEFINED_QUESTION | user={ctx.user_id} | func={func_value}")
-            return ensure_proper_options(fallback_q)
-    
+            return ensure_proper_options(cfg["fallback"].copy())
+
     try:
-        slot = UserSlot(func_value)
+        slot = UserSlot(func_val)
         cfg = SLOT_QUESTIONS.get(slot, {})
         if "fallback" in cfg:
-            fallback_q = cfg["fallback"].copy()
-            log.info(f"SLOT_QUESTION | user={ctx.user_id} | func={func_value}")
-            return ensure_proper_options(fallback_q)
+            return ensure_proper_options(cfg["fallback"].copy())
     except ValueError:
         pass
 
-    # Generate basic question for ASK_* slots
-    if func_value.startswith("ASK_"):
-        slot_name = func_value[4:].lower().replace("_", " ")
-        q = {
-            "message": f"Could you tell me your {slot_name}?",
-            "type": "multi_choice",
-            "options": []
-        }
-        log.info(f"GENERATED_QUESTION | user={ctx.user_id} | func={func_value}")
-        return ensure_proper_options(q)
+    if func_val.startswith("ASK_"):
+        slot_name = func_val[4:].lower().replace("_", " ")
+        return ensure_proper_options(
+            {"message": f"Could you tell me your {slot_name}?", "type": "multi_choice", "options": []}
+        )
 
-    # Ultimate fallback
-    q = {
-        "message": "Could you provide more details?",
-        "type": "multi_choice",
-        "options": []
-    }
-    log.info(f"FALLBACK_QUESTION | user={ctx.user_id} | func={func_value}")
-    return ensure_proper_options(q)
+    return ensure_proper_options(
+        {"message": "Could you provide more details?", "type": "multi_choice", "options": []}
+    )
 
 
+# ────────────────────────────────────────────────────────────
+# Store user answer (session + permanent)
+# ────────────────────────────────────────────────────────────
 def store_user_answer(text: str, assessment: Dict[str, Any], ctx: UserContext) -> None:
-    """
-    ENHANCED: Persist *text* as the answer to the slot currently being asked.
-    FIX: Now also stores to permanent user profile for cross-session persistence.
-    """
     target = assessment.get("currently_asking")
     if not target:
-        log.warning(f"STORE_ANSWER_NO_TARGET | user={ctx.user_id} | text='{text[:30]}...'")
+        log.warning(f"STORE_ANSWER_NO_TARGET | user={ctx.user_id}")
         return
 
-    log.info(f"STORE_ANSWER | user={ctx.user_id} | target={target} | text='{text[:50]}...'")
+    log.info(f"STORE_ANSWER | user={ctx.user_id} | slot={target}")
 
-    # Determine session‑key
     try:
         slot = UserSlot(target)
         session_key = SLOT_TO_SESSION_KEY.get(slot, slot.name.lower())
     except ValueError:
         session_key = target[4:].lower() if target.startswith("ASK_") else target
 
-    # Store in session (existing behavior)
     ctx.session[session_key] = text
-    log.debug(f"SESSION_ANSWER | user={ctx.user_id} | key={session_key} | stored=true")
-    
-    # FIX: Enhanced permanent storage for delivery address and other key data
+
+    # save to permanent profile snapshot
+    ctx.permanent.setdefault("user_answers", {})[target] = {
+        "value": text,
+        "timestamp": iso_now(),
+        "session_id": ctx.session_id,
+    }
+    ctx.permanent["last_updated"] = iso_now()
+    ctx.permanent["last_session"] = ctx.session_id
+
     if target == UserSlot.DELIVERY_ADDRESS.value:
         ctx.permanent["delivery_address"] = text
-        log.info(f"PERMANENT_ADDRESS | user={ctx.user_id} | stored=true")
-    
-    # FIX: Store all user answers in permanent profile with metadata
-    try:
-        if "user_answers" not in ctx.permanent:
-            ctx.permanent["user_answers"] = {}
-        
-        ctx.permanent["user_answers"][target] = {
-            "value": text,
-            "timestamp": datetime.now().isoformat(),
-            "session_id": ctx.session_id
-        }
-        
-        # FIX: Map to common profile fields for easy access
-        profile_mappings = {
-            "ASK_USER_PREFERENCES": "preferences",
-            "ASK_USER_BUDGET": "budget",
-            "ASK_DELIVERY_ADDRESS": "address",
-            "ASK_PRODUCT_CATEGORY": "preferred_category",
-        }
-        
-        if target in profile_mappings:
-            if "profile" not in ctx.permanent:
-                ctx.permanent["profile"] = {}
-            
-            profile_key = profile_mappings[target]
-            ctx.permanent["profile"][profile_key] = text
-            log.info(f"PROFILE_MAPPED | user={ctx.user_id} | target={target} | profile_key={profile_key}")
-        
-        # Update metadata
-        ctx.permanent["last_updated"] = datetime.now().isoformat()
-        ctx.permanent["last_session"] = ctx.session_id
-        
-        log.info(f"PERMANENT_ANSWER | user={ctx.user_id} | target={target} | stored=true")
-        
-    except Exception as e:
-        log.error(f"PERMANENT_STORE_ERROR | user={ctx.user_id} | target={target} | error={e}", exc_info=True)
 
-    # Mark as fulfilled
-    if "fulfilled" not in assessment:
-        assessment["fulfilled"] = []
-    
-    assessment["fulfilled"].append(target)
+    assessment.setdefault("fulfilled", []).append(target)
     assessment["currently_asking"] = None
-    
-    log.info(f"ASSESSMENT_UPDATED | user={ctx.user_id} | target={target} | fulfilled_count={len(assessment['fulfilled'])}")
+
 
 # ────────────────────────────────────────────────────────────
-# Assessment helpers (ENHANCED for Redis integration)
+# Compute unmet reqs
 # ────────────────────────────────────────────────────────────
+def compute_still_missing(
+    assessment: Dict[str, Any], ctx: UserContext
+) -> List[BackendFunction | UserSlot]:
+    out: list[BackendFunction | UserSlot] = []
+    for f_str in assessment.get("priority_order", []):
+        if f_str in assessment.get("fulfilled", []):
+            continue
+        if already_have_data(f_str, ctx):
+            assessment["fulfilled"].append(f_str)
+            continue
+        func = string_to_function(f_str)
+        if func:
+            out.append(func)
+    return out
 
-def compute_still_missing(assessment: Dict[str, Any], ctx: UserContext) -> List[Union[BackendFunction, UserSlot]]:
+
+# ────────────────────────────────────────────────────────────
+# Memory snapshotter  ⭐ UPDATED ⭐
+# ────────────────────────────────────────────────────────────
+def snapshot_and_trim(
+    ctx: UserContext,
+    *,
+    base_query: str,
+    internal_actions: Dict[str, Any] | None = None,
+    final_answer: Dict[str, Any] | None = None,
+) -> None:
     """
-    ENHANCED: Return ordered list of unmet requirements for *assessment*.
-    FIX: Now properly works with Redis-persisted fetched data.
-    """
-    try:
-        out: List[Union[BackendFunction, UserSlot]] = []
-        priority_order = assessment.get("priority_order", [])
-        fulfilled = assessment.get("fulfilled", [])
-        
-        log.debug(f"COMPUTE_MISSING | user={ctx.user_id} | priority_order={priority_order} | fulfilled={fulfilled}")
-        
-        for f_str in priority_order:
-            if f_str in fulfilled:
-                log.debug(f"ALREADY_FULFILLED | user={ctx.user_id} | func={f_str}")
-                continue
-                
-            if already_have_data(f_str, ctx):
-                # FIX: Mark as fulfilled if we found the data
-                assessment["fulfilled"].append(f_str)
-                log.debug(f"FOUND_EXISTING_DATA | user={ctx.user_id} | func={f_str}")
-                continue
-                
-            func = string_to_function(f_str)
-            if func:
-                out.append(func)
-                log.debug(f"STILL_MISSING | user={ctx.user_id} | func={f_str}")
-        
-        log.info(f"COMPUTE_MISSING_RESULT | user={ctx.user_id} | still_missing={[get_func_value(f) for f in out]}")
-        return out
-        
-    except Exception as e:
-        log.error(f"COMPUTE_MISSING_ERROR | user={ctx.user_id} | error={e}", exc_info=True)
-        # Fallback to basic behavior
-        return []
-
-# ────────────────────────────────────────────────────────────
-# Session snapshotting (ENHANCED with better cleanup)
-# ────────────────────────────────────────────────────────────
-
-def snapshot_and_trim(ctx: UserContext, *, base_query: str, internal_actions: Dict[str, Any] = None, final_answer: Dict[str, Any] = None) -> None:
-    """
-    ENHANCED: Append a structured conversation unit to ``ctx.session['conversation_history']``
-    with clear User_Query → Internal_Actions → Final_Answer format.
-    
-    Args:
-        ctx: User context
-        base_query: User's original query
-        internal_actions: Dict of internal processing details
-        final_answer: Dict of response details
+    Record a full turn into both new `conversation_history` and legacy `history`.
     """
     try:
-        log.info(f"SNAPSHOT_TRIM | user={ctx.user_id} | base_query='{base_query[:50]}...'")
-        
-        # Build internal_actions from context if not provided
         if internal_actions is None:
             assessment = ctx.session.get("assessment", {})
             internal_actions = {
                 "intent_classified": ctx.session.get("intent_l3") or ctx.session.get("intent_override"),
                 "questions_asked": assessment.get("priority_order", []),
                 "user_responses": {
-                    k: ctx.session.get(k) for k in SLOT_TO_SESSION_KEY.values() 
-                    if k in ctx.session and ctx.session.get(k)
+                    k: ctx.session.get(k)
+                    for k in SLOT_TO_SESSION_KEY.values()
+                    if k in ctx.session
                 },
                 "fetchers_executed": list(ctx.fetched_data.keys()),
                 "fetched_data_summary": {
                     k: {
-                        "timestamp": v.get("timestamp") if isinstance(v, dict) else iso_now(),
-                        "data_type": type(v.get("data") if isinstance(v, dict) else v).__name__,
+                        "timestamp": v.get("timestamp", iso_now()),
                         "has_products": bool(
-                            isinstance(v.get("data"), dict) and v.get("data", {}).get("products")
-                        ) if isinstance(v, dict) else False,
-                        "product_count": len(v.get("data", {}).get("products", [])) 
-                            if isinstance(v, dict) and isinstance(v.get("data"), dict) 
-                            and isinstance(v.get("data", {}).get("products"), list) else 0
-                    } for k, v in ctx.fetched_data.items()
+                            isinstance(v, dict)
+                            and isinstance(v.get("data"), dict)
+                            and v["data"].get("products")
+                        ),
+                    }
+                    for k, v in ctx.fetched_data.items()
                 },
-                "processing_metadata": {
-                    "session_phase": assessment.get("phase"),
-                    "completed_at": assessment.get("completed_at"),
-                    "missing_data": assessment.get("missing_data", []),
-                    "fulfilled": assessment.get("fulfilled", [])
-                }
             }
-        
-        # Build final_answer from context if not provided
-        if final_answer is None:
-            final_answer = {
-                "response_type": "unknown",  # Will be filled by caller
-                "message_preview": "",  # Will be filled by caller
-                "has_sections": False,
-                "has_products": False,
-                "flow_triggered": False
-            }
-        
-        # Create structured conversation unit
-        conversation_unit = {
+
+        final_answer = final_answer or {
+            "response_type": "unknown",
+            "message_preview": "",
+            "has_sections": False,
+            "has_products": False,
+            "flow_triggered": False,
+        }
+
+        # ---- new structured history
+        conv_unit = {
             "user_query": base_query,
             "internal_actions": internal_actions,
             "final_answer": final_answer,
             "timestamp": iso_now(),
             "session_id": ctx.session_id,
-            "conversation_id": f"{ctx.user_id}_{ctx.session_id}_{len(ctx.session.get('conversation_history', []))}"
         }
-        
-        # Store in new conversation_history key
-        conversation_history = ctx.session.setdefault("conversation_history", [])
-        conversation_history.append(conversation_unit)
-        
-        # Also maintain legacy history for backward compatibility
+        ctx.session.setdefault("conversation_history", []).append(conv_unit)
+
+        # ---- legacy snapshot (keep minimal set + NEW final answer fields)
         legacy_snapshot = {
             "query": base_query,
             "intent": internal_actions.get("intent_classified"),
             "slots": internal_actions.get("user_responses", {}),
-            "fetched": {k: v.get("timestamp", "") for k, v in internal_actions.get("fetched_data_summary", {}).items()},
+            "fetched": {k: v["timestamp"] for k, v in internal_actions.get("fetched_data_summary", {}).items()},
             "finished_at": iso_now(),
             "session_id": ctx.session_id,
+            # new fields
+            "response_type": final_answer.get("response_type"),
+            "message_preview": final_answer.get("message_preview"),
+            "has_sections": final_answer.get("has_sections"),
+            "has_products": final_answer.get("has_products"),
+            "flow_triggered": final_answer.get("flow_triggered"),
         }
-        legacy_history = ctx.session.setdefault("history", [])
-        legacy_history.append(legacy_snapshot)
-        
-        # Trim both histories
-        original_conv_len = len(conversation_history)
-        original_legacy_len = len(legacy_history)
-        
-        trim_history(conversation_history, Cfg.HISTORY_MAX_SNAPSHOTS)
-        trim_history(legacy_history, Cfg.HISTORY_MAX_SNAPSHOTS)
-        
-        if len(conversation_history) < original_conv_len:
-            log.debug(f"CONVERSATION_HISTORY_TRIMMED | user={ctx.user_id} | from={original_conv_len} | to={len(conversation_history)}")
-        
-        log.info(f"SNAPSHOT_COMPLETE | user={ctx.user_id} | conversation_entries={len(conversation_history)} | legacy_entries={len(legacy_history)}")
-        
+        ctx.session.setdefault("history", []).append(legacy_snapshot)
+
+        trim_history(ctx.session["conversation_history"], Cfg.HISTORY_MAX_SNAPSHOTS)
+        trim_history(ctx.session["history"], Cfg.HISTORY_MAX_SNAPSHOTS)
     except Exception as e:
         log.error(f"SNAPSHOT_ERROR | user={ctx.user_id} | error={e}", exc_info=True)
 
-# ────────────────────────────────────────────────────────────
-# Misc. (UNCHANGED)
-# ────────────────────────────────────────────────────────────
 
+# ────────────────────────────────────────────────────────────
+# Misc helpers (unchanged)
+# ────────────────────────────────────────────────────────────
 def pick_tool(resp: Any, name: str):  # noqa: ANN401
-    """Return the first ``tool_use`` block with *name* from the Anthropic
-    response *resp*."""
     for c in resp.content:
         if getattr(c, "type", None) == "tool_use" and getattr(c, "name", None) == name:
             return c
     return None
 
-# ────────────────────────────────────────────────────────────
-# FIX: Additional helper functions for enhanced functionality
-# ────────────────────────────────────────────────────────────
 
+# ────────────────────────────────────────────────────────────
+# Assessment/ display helpers
+# ────────────────────────────────────────────────────────────
 def validate_assessment_state(assessment: Dict[str, Any], ctx: UserContext) -> Dict[str, Any]:
-    """
-    FIX: Validate and repair assessment state to prevent corruption.
-    """
-    try:
-        log.debug(f"VALIDATE_ASSESSMENT | user={ctx.user_id}")
+    required = {"priority_order", "fulfilled"}
+    added = []
+    for f in required:
+        if f not in assessment:
+            assessment[f] = [] if f == "fulfilled" else assessment.get("missing_data", [])
+            added.append(f)
+    if added:
+        log.warning(f"ASSESSMENT_REPAIRED | user={ctx.user_id} | added={added}")
+    return assessment
 
-        # Ensure required fields exist
-        required_fields = ["priority_order", "fulfilled"]
-        for field in required_fields:
-            if field not in assessment:
-                if field == "fulfilled":
-                    assessment[field] = []
-                elif field == "priority_order":
-                    assessment[field] = assessment.get("missing_data", [])
-                    
-                log.warning(f"ASSESSMENT_FIELD_MISSING | user={ctx.user_id} | field={field} | repaired=true")
-
-        # Ensure fulfilled is a list
-        if not isinstance(assessment.get("fulfilled"), list):
-            assessment["fulfilled"] = []
-            log.warning(f"ASSESSMENT_FULFILLED_FIXED | user={ctx.user_id}")
-
-        return assessment
-
-    except Exception as e:
-        log.error(f"VALIDATE_ASSESSMENT_ERROR | user={ctx.user_id} | error={e}", exc_info=True)
-        return assessment
 
 def get_user_display_name(ctx: UserContext) -> str:
-    """
-    FIX: Get user display name from various sources with fallbacks.
-    """
-    try:
-        # Try session user data first
-        user_data = ctx.session.get("user", {})
-        for name_field in ["full_name", "name", "first_name", "display_name"]:
-            if name_field in user_data and user_data[name_field]:
-                name = str(user_data[name_field]).strip()
-                if name:
-                    return name.split()[0]  # First name only
-
-        # Try permanent profile data
-        profile_data = ctx.permanent.get("profile", {})
-        for name_field in ["full_name", "name", "first_name", "display_name"]:
-            if name_field in profile_data and profile_data[name_field]:
-                name = str(profile_data[name_field]).strip()
-                if name:
-                    return name.split()[0]  # First name only
-
-        # Try wa_id as fallback
-        wa_id = ctx.session.get("wa_id")
-        if wa_id:
-            return f"user {str(wa_id)[-4:]}"
-
-        return "there"
-
-    except Exception as e:
-        log.warning(f"GET_DISPLAY_NAME_ERROR | user={ctx.user_id} | error={e}")
-        return "there"
-
-# ────────────────────────────────────────────────────────────
-# FIX: Add these to __all__ exports
-# ────────────────────────────────────────────────────────────
-__all__.extend([
-    "validate_assessment_state",
-    "get_user_display_name",
-])
+    for bucket in (ctx.session.get("user", {}), ctx.permanent.get("profile", {})):
+        for k in ("full_name", "name", "first_name", "display_name"):
+            if bucket.get(k):
+                return str(bucket[k]).split()[0]
+    # fallback ⇒ last 4 digits of wa_id
+    wa = ctx.session.get("wa_id")
+    return f"user {str(wa)[-4:]}" if wa else "there"

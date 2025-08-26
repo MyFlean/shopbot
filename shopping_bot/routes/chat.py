@@ -21,6 +21,15 @@ smart_log = get_smart_logger("chat_routes")
 bp = Blueprint("chat", __name__)
 Cfg = get_config()
 
+
+def _elapsed_since(start_ts: float) -> float:
+    loop = asyncio.get_event_loop()
+    try:
+        return loop.time() - start_ts
+    except Exception:
+        return 0.0
+
+
 # ─────────────────────────────────────────────────────────────
 # Utilities: make any object JSON-safe (dataclasses, Enums, etc.)
 # ─────────────────────────────────────────────────────────────
@@ -47,31 +56,25 @@ def _to_json_safe(obj: Any) -> Any:
 
 
 # ─────────────────────────────────────────────────────────────
-# POST /chat - FIXED VERSION with comprehensive error handling
+# Health ping
 # ─────────────────────────────────────────────────────────────
-
 @bp.get("/chat/test")
 def chat_test():
     return {"test": "working"}
 
 
-    
+# ─────────────────────────────────────────────────────────────
+# POST /chat - FIXED VERSION with comprehensive error handling
+# ─────────────────────────────────────────────────────────────
 @bp.post("/chat")
 async def chat() -> Response:
     """
     Fixed chat endpoint with proper async handling and comprehensive logging.
-    
-    FIXES:
-    - Proper await statements for all async operations
-    - Immediate return for background processing (no blocking)
-    - Guard against duplicate processing
-    - Enhanced error handling and logging
-    - CLI text fallback support
     """
     request_start_time = asyncio.get_event_loop().time()
-    
+
     try:
-        # FIX: Proper request data extraction with validation
+        # Parse JSON
         try:
             data: Dict[str, Any] = request.get_json(force=True)
             if not data:
@@ -81,7 +84,7 @@ async def chat() -> Response:
             log.error(f"CHAT_JSON_PARSE_ERROR | error={e}")
             return jsonify({"error": "Invalid JSON format"}), 400
 
-        # Validate required fields
+        # Validate input
         missing = [k for k in ("user_id", "message") if k not in data]
         if missing:
             log.warning(f"CHAT_MISSING_FIELDS | missing={missing}")
@@ -91,15 +94,17 @@ async def chat() -> Response:
         session_id = str(data.get("session_id", user_id))
         message = str(data["message"]).strip()
         wa_id = data.get("wa_id")
-        channel = str(data.get("channel", "api")).lower()  # For CLI support
+        channel = str(data.get("channel", "api")).lower()
 
         if not message:
             log.warning(f"CHAT_EMPTY_MESSAGE | user={user_id}")
             return jsonify({"error": "Message cannot be empty"}), 400
 
-        log.info(f"CHAT_REQUEST | user={user_id} | session={session_id} | channel={channel} | message='{message[:50]}...' | wa_id={wa_id}")
+        log.info(
+            f"CHAT_REQUEST | user={user_id} | session={session_id} | channel={channel} | message='{message[:50]}...' | wa_id={wa_id}"
+        )
 
-        # FIX: Resolve dependencies with proper error handling
+        # Resolve deps
         try:
             ctx_mgr = current_app.extensions["ctx_mgr"]
             background_processor = current_app.extensions.get("background_processor")
@@ -113,27 +118,40 @@ async def chat() -> Response:
             log.error("CHAT_NO_BOT_CORE | neither enhanced nor base bot available")
             return jsonify({"error": "Bot core not initialized"}), 500
 
-        # FIX: Get context with error handling
+        # Load context
         try:
             ctx = ctx_mgr.get_context(user_id, session_id)
-            log.info(f"CONTEXT_LOADED | user={user_id} | session={session_id} | has_assessment={bool(ctx.session.get('assessment'))}")
+            log.info(
+                f"CONTEXT_LOADED | user={user_id} | session={session_id} | has_assessment={bool(ctx.session.get('assessment'))}"
+            )
         except Exception as e:
-            log.error(f"CONTEXT_LOAD_ERROR | user={user_id} | session={session_id} | error={e}")
+            log.error(
+                f"CONTEXT_LOAD_ERROR | user={user_id} | session={session_id} | error={e}"
+            )
             return jsonify({"error": "Failed to load user context"}), 500
 
-        # FIX: Guard against duplicate processing
+        # Duplicate guard
         if "assessment" in ctx.session:
             current_phase = ctx.session["assessment"].get("phase")
             if current_phase == "processing":
-                log.warning(f"DUPLICATE_PROCESSING_BLOCKED | user={user_id} | phase={current_phase}")
-                return jsonify({
-                    "response_type": "processing",
-                    "status": "already_processing", 
-                    "message": "Still working on your previous request. Please wait...",
-                    "suppress_user_channel": True,
-                }), 202
+                log.warning(
+                    f"DUPLICATE_PROCESSING_BLOCKED | user={user_id} | phase={current_phase}"
+                )
+                elapsed_time = _elapsed_since(request_start_time)
+                return (
+                    jsonify(
+                        {
+                            "response_type": "processing",
+                            "status": "already_processing",
+                            "message": "Still working on your previous request. Please wait...",
+                            "suppress_user_channel": True,
+                            "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
+                        }
+                    ),
+                    202,
+                )
 
-        # FIX: Persist wa_id in context with proper error handling
+        # Persist wa_id (best-effort)
         if wa_id:
             try:
                 ctx.session["wa_id"] = str(wa_id)
@@ -143,40 +161,57 @@ async def chat() -> Response:
                 ctx_mgr.save_context(ctx)
                 log.info(f"WA_ID_PERSISTED | user={user_id} | wa_id={wa_id}")
             except Exception as e:
-                log.warning(f"WA_ID_PERSIST_FAILED | user={user_id} | wa_id={wa_id} | error={e}")
+                log.warning(
+                    f"WA_ID_PERSIST_FAILED | user={user_id} | wa_id={wa_id} | error={e}"
+                )
 
-        # FIX: Ask the core with proper await and error handling
+        # Call the core
         try:
-            log.info(f"BOT_PROCESSING_START | user={user_id} | using_enhanced={bool(enhanced_bot)}")
-            
+            log.info(
+                f"BOT_PROCESSING_START | user={user_id} | using_enhanced={bool(enhanced_bot)}"
+            )
+
             if enhanced_bot:
-                bot_resp = await enhanced_bot.process_query(message, ctx, enable_flows=Cfg.ENABLE_ASYNC)
+                bot_resp = await enhanced_bot.process_query(
+                    message, ctx, enable_flows=Cfg.ENABLE_ASYNC
+                )
             else:
                 bot_resp = await base_bot.process_query(message, ctx)
-                
-            log.info(f"BOT_PROCESSING_COMPLETE | user={user_id} | response_type={bot_resp.response_type.value}")
-            
-            # Debug: Log bot response structure
-            log.debug(f"BOT_RESPONSE_DEBUG | user={user_id} | response_type={bot_resp.response_type} | content_type={type(bot_resp.content)} | content_keys={list(bot_resp.content.keys()) if isinstance(bot_resp.content, dict) else 'not_dict'}")
-            
-        except Exception as e:
-            log.error(f"BOT_PROCESSING_ERROR | user={user_id} | error={e}", exc_info=True)
-            return jsonify({
-                "wa_id": wa_id,
-                "session_id": session_id,
-                "response_type": "error",
-                "content": {"message": "Bot processing failed"},
-                "meta": {"elapsed_time": f"{elapsed_time:.3f}s"}
-            }), 500
 
-        # FIX: Handle PROCESSING_STUB - respect ENABLE_ASYNC flag
+            log.info(
+                f"BOT_PROCESSING_COMPLETE | user={user_id} | response_type={bot_resp.response_type.value}"
+            )
+            log.debug(
+                f"BOT_RESPONSE_DEBUG | user={user_id} | content_type={type(bot_resp.content)} | keys={list(bot_resp.content.keys()) if isinstance(bot_resp.content, dict) else 'n/a'}"
+            )
+
+        except Exception as e:
+            elapsed_time = _elapsed_since(request_start_time)
+            log.error(f"BOT_PROCESSING_ERROR | user={user_id} | error={e}", exc_info=True)
+            return (
+                jsonify(
+                    {
+                        "wa_id": wa_id,
+                        "session_id": session_id,
+                        "response_type": "error",
+                        "content": {"message": "Bot processing failed"},
+                        "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
+                    }
+                ),
+                500,
+            )
+
+        # PROCESSING_STUB handling
         if bot_resp.response_type == ResponseType.PROCESSING_STUB:
             if not Cfg.ENABLE_ASYNC:
                 smart_log.background_decision(user_id, "FORCE_SYNC", "ENABLE_ASYNC=false")
-                # Force synchronous completion path: execute background inline and then return final payload
                 try:
-                    original_q = ctx.session.get("assessment", {}).get("original_query", message)
-                    log.info(f"FORCE_SYNC_MODE | user={user_id} | original_query='{original_q[:50]}...'")
+                    original_q = ctx.session.get("assessment", {}).get(
+                        "original_query", message
+                    )
+                    log.info(
+                        f"FORCE_SYNC_MODE | user={user_id} | original_query='{original_q[:50]}...'"
+                    )
                     processing_id = await background_processor.process_query_background(
                         query=original_q,
                         user_id=user_id,
@@ -185,44 +220,67 @@ async def chat() -> Response:
                         notification_callback=None,
                         inline=True,
                     )
-                    elapsed_time = asyncio.get_event_loop().time() - request_start_time
-                    log.info(f"FORCE_SYNC_DONE | user={user_id} | processing_id={processing_id} | elapsed_time={elapsed_time:.3f}s")
-                    return jsonify({
-                        "wa_id": wa_id,
-                        "session_id": session_id,
-                        "response_type": "processing",
-                        "content": {"message": "Processing completed"},
-                        "meta": {
-                            "elapsed_time": f"{elapsed_time:.3f}s",
-                            "processing_id": processing_id
-                        }
-                    }), 200
+                    elapsed_time = _elapsed_since(request_start_time)
+                    log.info(
+                        f"FORCE_SYNC_DONE | user={user_id} | processing_id={processing_id} | elapsed_time={elapsed_time:.3f}s"
+                    )
+                    return (
+                        jsonify(
+                            {
+                                "wa_id": wa_id,
+                                "session_id": session_id,
+                                "response_type": "processing",
+                                "content": {"message": "Processing completed"},
+                                "meta": {
+                                    "elapsed_time": f"{elapsed_time:.3f}s",
+                                    "processing_id": processing_id,
+                                },
+                            }
+                        ),
+                        200,
+                    )
                 except Exception as e:
-                    log.error(f"FORCE_SYNC_FAILED | user={user_id} | error={e}", exc_info=True)
-                    return jsonify({
-                        "wa_id": wa_id,
-                        "session_id": session_id,
-                        "response_type": "error",
-                        "content": {"message": "Synchronous completion failed"},
-                        "meta": {"elapsed_time": f"{elapsed_time:.3f}s"}
-                    }), 500
+                    elapsed_time = _elapsed_since(request_start_time)
+                    log.error(
+                        f"FORCE_SYNC_FAILED | user={user_id} | error={e}", exc_info=True
+                    )
+                    return (
+                        jsonify(
+                            {
+                                "wa_id": wa_id,
+                                "session_id": session_id,
+                                "response_type": "error",
+                                "content": {"message": "Synchronous completion failed"},
+                                "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
+                            }
+                        ),
+                        500,
+                    )
+
             if not background_processor:
+                elapsed_time = _elapsed_since(request_start_time)
                 log.error(f"BACKGROUND_UNAVAILABLE | user={user_id}")
-                return jsonify({
-                    "wa_id": wa_id,
-                    "session_id": session_id,
-                    "response_type": "error",
-                    "content": {"message": "Background processor unavailable"},
-                    "meta": {"elapsed_time": f"{elapsed_time:.3f}s"}
-                }), 503
+                return (
+                    jsonify(
+                        {
+                            "wa_id": wa_id,
+                            "session_id": session_id,
+                            "response_type": "error",
+                            "content": {"message": "Background processor unavailable"},
+                            "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
+                        }
+                    ),
+                    503,
+                )
 
             try:
-                # Get original query from assessment if available
-                original_q = ctx.session.get("assessment", {}).get("original_query", message)
-                
-                log.info(f"BACKGROUND_INLINE_START | user={user_id} | original_query='{original_q[:50]}...'")
+                original_q = ctx.session.get("assessment", {}).get(
+                    "original_query", message
+                )
+                log.info(
+                    f"BACKGROUND_INLINE_START | user={user_id} | original_query='{original_q[:50]}...'"
+                )
 
-                # Pragmatic approach: run the full background flow inline and notify FE once on completion
                 processing_id = await background_processor.process_query_background(
                     query=original_q,
                     user_id=user_id,
@@ -232,63 +290,80 @@ async def chat() -> Response:
                     inline=True,
                 )
 
-                elapsed_time = asyncio.get_event_loop().time() - request_start_time
-                log.info(f"BACKGROUND_INLINE_DONE | user={user_id} | processing_id={processing_id} | elapsed_time={elapsed_time:.3f}s")
+                elapsed_time = _elapsed_since(request_start_time)
+                log.info(
+                    f"BACKGROUND_INLINE_DONE | user={user_id} | processing_id={processing_id} | elapsed_time={elapsed_time:.3f}s"
+                )
 
-                # Return a simple acknowledgment; FE has been notified exactly once
-                return jsonify({
-                    "wa_id": wa_id,
-                    "session_id": session_id,
-                    "response_type": "processing",
-                    "content": {"message": "Processing completed"},
-                    "meta": {
-                        "elapsed_time": f"{elapsed_time:.3f}s",
-                        "processing_id": processing_id
-                    }
-                }), 200
+                return (
+                    jsonify(
+                        {
+                            "wa_id": wa_id,
+                            "session_id": session_id,
+                            "response_type": "processing",
+                            "content": {"message": "Processing completed"},
+                            "meta": {
+                                "elapsed_time": f"{elapsed_time:.3f}s",
+                                "processing_id": processing_id,
+                            },
+                        }
+                    ),
+                    200,
+                )
 
             except Exception as e:
-                log.error(f"BACKGROUND_SPAWN_ERROR | user={user_id} | error={e}", exc_info=True)
-                return jsonify({
-                    "wa_id": wa_id,
-                    "session_id": session_id,
-                    "response_type": "error",
-                    "content": {"message": "Failed to start background processing"},
-                    "meta": {"elapsed_time": f"{elapsed_time:.3f}s"}
-                }), 500
+                elapsed_time = _elapsed_since(request_start_time)
+                log.error(
+                    f"BACKGROUND_SPAWN_ERROR | user={user_id} | error={e}",
+                    exc_info=True,
+                )
+                return (
+                    jsonify(
+                        {
+                            "wa_id": wa_id,
+                            "session_id": session_id,
+                            "response_type": "error",
+                            "content": {"message": "Failed to start background processing"},
+                            "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
+                        }
+                    ),
+                    500,
+                )
 
-        # FIX: Handle responses that require Flow but somehow didn't defer
+        # Flow-only gating
         requires_flow = bool(getattr(bot_resp, "requires_flow", False))
         if requires_flow:
             log.warning(f"UNEXPECTED_FLOW_SYNC | user={user_id} | suppressing text")
-            
-            # FIX: For CLI/test channels, provide text fallback
+
+            elapsed_time = _elapsed_since(request_start_time)
+
             if channel in ["cli", "test"]:
                 return await _handle_cli_fallback(bot_resp, ctx, user_id, channel)
-            
-            # For other channels, suppress
-            return jsonify({
-                "wa_id": wa_id,
-                "session_id": session_id,
-                "response_type": "processing",
-                "content": {"message": "Content available via interactive elements"},
-                "meta": {"elapsed_time": f"{elapsed_time:.3f}s"}
-            }), 200
 
-        # Standard sync path → stable FE envelope
+            return (
+                jsonify(
+                    {
+                        "wa_id": wa_id,
+                        "session_id": session_id,
+                        "response_type": "processing",
+                        "content": {"message": "Content available via interactive elements"},
+                        "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
+                    }
+                ),
+                200,
+            )
+
+        # Standard sync path → FE envelope
         try:
-            elapsed_time = asyncio.get_event_loop().time() - request_start_time
+            elapsed_time = _elapsed_since(request_start_time)
 
-            # Validate bot response before building envelope
-            if not hasattr(bot_resp, 'response_type'):
-                log.error(f"INVALID_BOT_RESPONSE | user={user_id} | missing response_type | bot_resp={type(bot_resp)}")
+            if not hasattr(bot_resp, "response_type"):
+                log.error(
+                    f"INVALID_BOT_RESPONSE | user={user_id} | missing response_type | bot_resp={type(bot_resp)}"
+                )
                 raise ValueError("Bot response missing response_type")
-            
-            if not hasattr(bot_resp, 'content'):
-                log.warning(f"BOT_RESPONSE_NO_CONTENT | user={user_id} | setting empty content")
-                bot_content = {}
-            else:
-                bot_content = bot_resp.content or {}
+
+            bot_content = bot_resp.content or {}
 
             envelope = build_envelope(
                 wa_id=wa_id,
@@ -302,88 +377,100 @@ async def chat() -> Response:
                 functions_executed=getattr(bot_resp, "functions_executed", []),
             )
 
-            smart_log.response_generated(user_id, envelope.get('response_type'), False, elapsed_time)
-            
+            smart_log.response_generated(
+                user_id, envelope.get("response_type"), False, elapsed_time
+            )
+
             log.info(
                 f"CHAT_SYNC_RESPONSE | user={user_id} | ui_type={envelope.get('response_type')} | elapsed_time={elapsed_time:.3f}s"
             )
             return jsonify(envelope), 200
-            
+
         except Exception as e:
-            log.error(f"RESPONSE_SERIALIZATION_ERROR | user={user_id} | error={e}", exc_info=True)
-            return jsonify({
-                "wa_id": wa_id,
-                "session_id": session_id,
-                "response_type": "error",
-                "content": {"message": "Response serialization failed"},
-                "meta": {"elapsed_time": f"{elapsed_time:.3f}s"}
-            }), 500
+            elapsed_time = _elapsed_since(request_start_time)
+            log.error(
+                f"RESPONSE_SERIALIZATION_ERROR | user={user_id} | error={e}", exc_info=True
+            )
+            return (
+                jsonify(
+                    {
+                        "wa_id": wa_id,
+                        "session_id": session_id,
+                        "response_type": "error",
+                        "content": {"message": "Response serialization failed"},
+                        "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
+                    }
+                ),
+                500,
+            )
 
     except Exception as exc:
-        elapsed_time = asyncio.get_event_loop().time() - request_start_time
-        log.error(f"CHAT_ENDPOINT_ERROR | elapsed_time={elapsed_time:.3f}s | error={exc}", exc_info=True)
-        return jsonify({
-            "wa_id": wa_id,
-            "session_id": session_id,
-            "response_type": "error",
-            "content": {"message": "Internal server error"},
-            "meta": {"elapsed_time": f"{elapsed_time:.3f}s"}
-        }), 500
+        elapsed_time = _elapsed_since(request_start_time)
+        log.error(
+            f"CHAT_ENDPOINT_ERROR | elapsed_time={elapsed_time:.3f}s | error={exc}",
+            exc_info=True,
+        )
+        return (
+            jsonify(
+                {
+                    "wa_id": None,
+                    "session_id": None,
+                    "response_type": "error",
+                    "content": {"message": "Internal server error"},
+                    "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
+                }
+            ),
+            500,
+        )
 
 
 # ─────────────────────────────────────────────────────────────
-# FIX: CLI text fallback for flow_only responses 
+# CLI text fallback for flow_only responses
 # ─────────────────────────────────────────────────────────────
 async def _handle_cli_fallback(bot_resp, ctx: UserContext, user_id: str, channel: str) -> Response:
     """
-    FIX: Provide text fallback for CLI/test channels when Flow is produced.
-    This addresses issue #9 from the diagnostic.
+    Provide text fallback for CLI/test channels when Flow is produced.
     """
     try:
         log.info(f"CLI_FALLBACK | user={user_id} | channel={channel}")
-        
-        # Try to get fetched data for text generation
+
         fetched_data = ctx.fetched_data or {}
-        
-        # Check if we have product search results
         products = []
         for key in ["search_products", "SEARCH_PRODUCTS"]:
             if key in fetched_data:
                 data = fetched_data[key].get("data", {})
                 if isinstance(data, dict) and "products" in data:
-                    products = data["products"][:5]  # Top 5 for CLI
+                    products = data["products"][:5]
                     break
-        
+
         if products:
-            # Generate text summary of products
             lines = ["Here are the top options I found:"]
             for i, product in enumerate(products, 1):
-                title = product.get("title", "Product")
+                title = product.get("title") or product.get("name") or "Product"
                 price = product.get("price", "Price on request")
                 lines.append(f"{i}. {title} - {price}")
-            
             fallback_text = "\n".join(lines)
-            log.info(f"CLI_PRODUCTS_FALLBACK | user={user_id} | products_count={len(products)}")
-            
+            log.info(
+                f"CLI_PRODUCTS_FALLBACK | user={user_id} | products_count={len(products)}"
+            )
         else:
-            # Check if there's a current question to ask
             assessment = ctx.session.get("assessment", {})
             currently_asking = assessment.get("currently_asking")
-            
             if currently_asking:
                 contextual_questions = ctx.session.get("contextual_questions", {})
-                question_text = contextual_questions.get(currently_asking, {}).get("message", "")
-                if question_text:
-                    fallback_text = question_text
-                    log.info(f"CLI_QUESTION_FALLBACK | user={user_id} | asking={currently_asking}")
-                else:
-                    fallback_text = f"I need to know: {currently_asking.replace('ASK_', '').replace('_', ' ').lower()}"
+                question_text = (
+                    contextual_questions.get(currently_asking, {}).get("message", "")
+                )
+                fallback_text = question_text or f"I need: {currently_asking.replace('ASK_', '').replace('_', ' ').lower()}"
             else:
-                # Generic fallback
                 content = getattr(bot_resp, "content", {})
-                message = content.get("message", "") if isinstance(content, dict) else str(content)
-                fallback_text = message or "I can help you find products. Please provide more details about what you're looking for."
-        
+                message = (
+                    content.get("message", "")
+                    if isinstance(content, dict)
+                    else str(content)
+                )
+                fallback_text = message or "I can help you find products. Please provide more details."
+
         cli_response = {
             "wa_id": ctx.session.get("wa_id"),
             "session_id": ctx.session_id,
@@ -392,135 +479,135 @@ async def _handle_cli_fallback(bot_resp, ctx: UserContext, user_id: str, channel
             "meta": {
                 "functions_executed": getattr(bot_resp, "functions_executed", []),
                 "cli_fallback": True,
-                "original_response_type": getattr(bot_resp, "response_type", ResponseType.FINAL_ANSWER).value
-            }
+                "original_response_type": getattr(bot_resp, "response_type", ResponseType.FINAL_ANSWER).value,
+            },
         }
-        
-        log.info(f"CLI_FALLBACK_SUCCESS | user={user_id} | text_length={len(fallback_text)}")
+
+        log.info(
+            f"CLI_FALLBACK_SUCCESS | user={user_id} | text_length={len(fallback_text)}"
+        )
         return jsonify(cli_response), 200
-        
+
     except Exception as e:
         log.error(f"CLI_FALLBACK_ERROR | user={user_id} | error={e}", exc_info=True)
-        return jsonify({
-            "wa_id": ctx.session.get("wa_id") if ctx else None,
-            "session_id": ctx.session_id if ctx else "unknown",
-            "response_type": "final_answer", 
-            "content": {"message": "I can help you with shopping queries. Please provide more details."},
-            "meta": {
-                "cli_fallback": True,
-                "fallback_error": str(e)
+        return jsonify(
+            {
+                "wa_id": ctx.session.get("wa_id") if ctx else None,
+                "session_id": ctx.session_id if ctx else "unknown",
+                "response_type": "final_answer",
+                "content": {
+                    "message": "I can help you with shopping queries. Please provide more details."
+                },
+                "meta": {"cli_fallback": True, "fallback_error": str(e)},
             }
-        }), 200
+        ), 200
 
 
 # ─────────────────────────────────────────────────────────────
-# Background processing polling endpoints (enhanced with logging)
+# Background processing polling endpoints
 # ─────────────────────────────────────────────────────────────
 @bp.get("/chat/processing/<processing_id>/status")
 async def get_processing_status(processing_id: str) -> Response:
-    """Get processing status with enhanced logging and error handling."""
     try:
         log.info(f"STATUS_LOOKUP | processing_id={processing_id}")
-        
+
         background_processor = current_app.extensions.get("background_processor")
         if not background_processor:
             log.error(f"STATUS_NO_PROCESSOR | processing_id={processing_id}")
             return jsonify({"error": "Background processor not available"}), 500
-        
-        # FIX: Proper await for async method
+
         status = await background_processor.get_processing_status(processing_id)
-        
+
         if not status or status.get("status") == "not_found":
             log.warning(f"STATUS_NOT_FOUND | processing_id={processing_id}")
             return jsonify({"error": "Processing ID not found"}), 404
-        
-        log.info(f"STATUS_FOUND | processing_id={processing_id} | status={status.get('status')}")
+
+        log.info(
+            f"STATUS_FOUND | processing_id={processing_id} | status={status.get('status')}"
+        )
         return jsonify(_to_json_safe(status)), 200
-        
+
     except Exception as exc:
-        log.error(f"STATUS_LOOKUP_ERROR | processing_id={processing_id} | error={exc}", exc_info=True)
+        log.error(
+            f"STATUS_LOOKUP_ERROR | processing_id={processing_id} | error={exc}",
+            exc_info=True,
+        )
         return jsonify({"error": str(exc)}), 500
 
 
 @bp.get("/chat/processing/<processing_id>/result")
 async def get_processing_result(processing_id: str) -> Response:
-    """Get processing result with enhanced logging and error handling."""
     try:
         log.info(f"RESULT_LOOKUP | processing_id={processing_id}")
-        
+
         background_processor = current_app.extensions.get("background_processor")
         if not background_processor:
             log.error(f"RESULT_NO_PROCESSOR | processing_id={processing_id}")
             return jsonify({"error": "Background processor not available"}), 500
-        
-        # FIX: Proper await for async method
+
         result = await background_processor.get_processing_result(processing_id)
-        
+
         if not result:
             log.warning(f"RESULT_NOT_FOUND | processing_id={processing_id}")
             return jsonify({"error": "Processing result not found"}), 404
-        
-        # Log result summary
+
         flow_data = result.get("flow_data", {})
         products_count = len(flow_data.get("products", [])) if flow_data else 0
         text_length = len(result.get("text_content", ""))
-        
-        log.info(f"RESULT_FOUND | processing_id={processing_id} | products_count={products_count} | text_length={text_length}")
-        
+
+        log.info(
+            f"RESULT_FOUND | processing_id={processing_id} | products_count={products_count} | text_length={text_length}"
+        )
+
         return jsonify(_to_json_safe(result)), 200
-        
+
     except Exception as exc:
-        log.error(f"RESULT_LOOKUP_ERROR | processing_id={processing_id} | error={exc}", exc_info=True)
+        log.error(
+            f"RESULT_LOOKUP_ERROR | processing_id={processing_id} | error={exc}",
+            exc_info=True,
+        )
         return jsonify({"error": str(exc)}), 500
 
 
 # ─────────────────────────────────────────────────────────────
-# Health and debug endpoints
+# Health and debug
 # ─────────────────────────────────────────────────────────────
 @bp.get("/chat/health")
 def chat_health() -> Response:
-    """Health check for chat endpoint."""
     try:
-        # Check if core services are available
         ctx_mgr = current_app.extensions.get("ctx_mgr")
-        background_processor = current_app.extensions.get("background_processor") 
+        background_processor = current_app.extensions.get("background_processor")
         enhanced_bot = current_app.extensions.get("enhanced_bot_core")
         base_bot = current_app.extensions.get("bot_core")
-        
+
         health_status = {
             "status": "healthy",
             "services": {
                 "ctx_mgr": bool(ctx_mgr),
                 "background_processor": bool(background_processor),
                 "enhanced_bot": bool(enhanced_bot),
-                "base_bot": bool(base_bot)
-            }
+                "base_bot": bool(base_bot),
+            },
         }
-        
-        # Overall health check
+
         if not (enhanced_bot or base_bot) or not ctx_mgr:
             health_status["status"] = "degraded"
-        
+
         return jsonify(health_status), 200
-        
+
     except Exception as e:
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
 
 @bp.get("/chat/debug/<user_id>")
 def debug_user_context(user_id: str) -> Response:
-    """Debug endpoint to inspect user context (development only)."""
     try:
         ctx_mgr = current_app.extensions.get("ctx_mgr")
         if not ctx_mgr:
             return jsonify({"error": "Context manager not available"}), 500
-        
-        # Get context for default session
+
         ctx = ctx_mgr.get_context(user_id, user_id)
-        
+
         debug_info = {
             "user_id": user_id,
             "session_id": ctx.session_id,
@@ -530,10 +617,10 @@ def debug_user_context(user_id: str) -> Response:
             "has_assessment": bool(ctx.session.get("assessment")),
             "assessment_phase": ctx.session.get("assessment", {}).get("phase"),
             "needs_background": ctx.session.get("needs_background"),
-            "intent_l3": ctx.session.get("intent_l3")
+            "intent_l3": ctx.session.get("intent_l3"),
         }
-        
+
         return jsonify(debug_info), 200
-        
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500

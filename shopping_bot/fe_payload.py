@@ -28,46 +28,68 @@ def _to_json_safe(obj: Any) -> Any:
 
 
 def map_fe_response_type(bot_resp_type: ResponseType, content: Dict[str, Any] | None) -> str:
-    c = content or {}
+    """
+    Map internal response type to FE-facing response_type.
+    Simple and clean: Check for products or summary_message to determine final_answer.
+    """
     if bot_resp_type == ResponseType.QUESTION:
         return "ask_user"
-    if bot_resp_type == ResponseType.FINAL_ANSWER:
-        if any(k in c for k in ("products", "summary_message", "sections")):
-            return "final_answer"
-        return "casual"
-    if bot_resp_type == ResponseType.PROCESSING_STUB:
-        return "processing"
+    
     if bot_resp_type == ResponseType.ERROR:
         return "error"
+    
+    if bot_resp_type == ResponseType.PROCESSING_STUB:
+        return "processing"
+    
+    # For FINAL_ANSWER, check content structure
+    if bot_resp_type == ResponseType.FINAL_ANSWER:
+        c = content or {}
+        # If we have products or summary_message, it's a proper final_answer
+        if c.get("products") or c.get("summary_message"):
+            return "final_answer"
+        # Otherwise it's casual (plain message only)
+        return "casual"
+    
     return "casual"
 
 
 def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | None) -> Dict[str, Any]:
-    # Ensure content is a dict and handle edge cases
+    """
+    Normalize the content for the FE envelope.
+    The content should already have the right structure from LLM service.
+    """
     if not isinstance(content, dict):
         content = {}
-    
     c = content or {}
 
+    # Questions
     if bot_resp_type == ResponseType.QUESTION:
         question = c.get("message") or c.get("question") or "Please provide more details."
         options = c.get("options") or c.get("choices")
-        ctx = {}
-        if "currently_asking" in c:
-            ctx["missing_slot"] = c["currently_asking"]
-        out: Dict[str, Any] = {"question": question}
+        out = {"question": question}
         if options:
             out["options"] = options
-        if ctx:
-            out["context"] = ctx
+        if "currently_asking" in c:
+            out["context"] = {"missing_slot": c["currently_asking"]}
         return out
 
+    # Final answers with products
     if bot_resp_type == ResponseType.FINAL_ANSWER:
+        # Check if we already have properly structured content
+        if c.get("products") is not None and c.get("summary_message") is not None:
+            # Content is already properly structured from LLM service
+            return {
+                "summary_message": c["summary_message"],
+                "products": c["products"]
+            }
+        
+        # Fallback for backward compatibility
         return {
-            "summary_message": c.get("summary_message", c.get("message", "")),
-            "products": c.get("products", []),
+            "summary_message": c.get("message", ""),
+            "products": []
         }
 
+    # Simple messages (casual/processing/error)
     return {"message": c.get("message", "")}
 
 
@@ -83,20 +105,13 @@ def build_envelope(
     timestamp: str | None = None,
     functions_executed: list[str] | None = None,
 ) -> Dict[str, Any]:
+    """
+    Build the FE envelope.
+    Clean and simple - the content should already be properly structured.
+    """
     try:
-        # Validate inputs
-        if not isinstance(bot_resp_type, ResponseType):
-            raise ValueError(f"Invalid bot_resp_type: {type(bot_resp_type)}")
-        
-        if not isinstance(ctx, UserContext):
-            raise ValueError(f"Invalid ctx: {type(ctx)}")
-        
-        # Ensure content is safe
-        if content is not None and not isinstance(content, dict):
-            content = {}
-        
         ui_type = map_fe_response_type(bot_resp_type, content)
-        normalized = normalize_content(bot_resp_type, content)
+        normalized = normalize_content(bot_resp_type, content or {})
 
         meta = {
             "elapsed_time": f"{elapsed_time_seconds:.3f}s",
@@ -112,13 +127,14 @@ def build_envelope(
             "content": normalized,
             "meta": {k: v for k, v in meta.items() if v is not None},
         }
+        
         return _to_json_safe(envelope)
+        
     except Exception as e:
-        # Return a safe fallback envelope
         return {
             "wa_id": wa_id,
             "session_id": session_id,
             "response_type": "error",
             "content": {"message": f"Envelope creation failed: {str(e)}"},
-            "meta": {"elapsed_time": f"{elapsed_time_seconds:.3f}s"}
+            "meta": {"elapsed_time": f"{elapsed_time_seconds:.3f}s"},
         }

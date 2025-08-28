@@ -377,11 +377,13 @@ Create a helpful response with:
    - Is 1-3 sentences long
 
 2. **products**: For each relevant product (up to 10):
+   - id: Use the EXACT 'id' field from the search results (DO NOT generate new IDs)
    - text: The exact product name from results
    - description: A compelling one-liner about why this product is worth buying
    - price: The price with currency (e.g., "₹60")
    - special_features: Key differentiators (e.g., "High protein, organic")
 
+IMPORTANT: Always use the actual 'id' field from each product in the search results.
 Focus on actual product attributes from the search results.
 Make descriptions specific and benefit-focused.
 If no products found, provide helpful message with empty products array.
@@ -592,10 +594,12 @@ class LLMService:
             
             result = _strip_keys(tool_use.input or {})
             
-            # Ensure product IDs are included
+            # Ensure product IDs from ES are preserved
             for i, product in enumerate(result.get("products", [])):
-                if "id" not in product and i < len(products_data):
-                    product["id"] = f"prod_{hash(products_data[i].get('name', ''))%1000000}"
+                if i < len(products_data):
+                    # Use the actual ES ID
+                    es_product = products_data[i]
+                    product["id"] = str(es_product.get('id', f"prod_{i}"))
             
             return result
             
@@ -607,8 +611,10 @@ class LLMService:
         """Create a fallback product response if LLM fails."""
         products = []
         for p in products_data[:5]:
+            # Use actual ID from ES if available, otherwise generate
+            product_id = p.get('id') or p.get('_id') or p.get('product_id') or f"prod_{hash(p.get('name', ''))%1000000}"
             products.append({
-                "id": f"prod_{hash(p.get('name', ''))%1000000}",
+                "id": str(product_id),
                 "text": p.get("name", "Product"),
                 "description": f"Quality product at {p.get('price', 'great price')}",
                 "price": f"₹{p.get('price', 'N/A')}",

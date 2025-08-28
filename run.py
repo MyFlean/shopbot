@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Shopping Bot Application Entry Point
+Shopping Bot Application Entry Point - Enhanced with UX System
 """
 
 from __future__ import annotations
@@ -59,23 +59,97 @@ def validate_environment() -> None:
 
 
 def create_application():
-    """Create and configure the Flask application."""
+    """Create and configure the Flask application with enhanced UX system."""
     try:
         app = create_app()
         
-        # Health check endpoint
+        # Initialize enhanced bot core alongside existing bot core
+        from shopping_bot.enhanced_core import get_enhanced_shopping_bot_core
+        from shopping_bot.redis_manager import RedisContextManager
+        
+        # Get existing context manager
+        ctx_mgr = app.extensions.get("ctx_mgr")
+        if ctx_mgr is None:
+            # Fallback if not initialized yet
+            ctx_mgr = RedisContextManager()
+            app.extensions["ctx_mgr"] = ctx_mgr
+        
+        # Initialize enhanced bot core
+        try:
+            enhanced_bot_core = get_enhanced_shopping_bot_core(ctx_mgr)
+            app.extensions["enhanced_bot_core"] = enhanced_bot_core
+            
+            # Log UX system status
+            ux_enabled = app.config.get('UX_PATTERNS_ENABLED', True)
+            rollout_pct = app.config.get('UX_ROLLOUT_PERCENTAGE', 100)
+            print(f"Enhanced UX System: {'Enabled' if ux_enabled else 'Disabled'}")
+            print(f"UX Rollout: {rollout_pct}%")
+            
+        except Exception as e:
+            print(f"Warning: Failed to initialize enhanced bot core: {e}")
+            print("Falling back to base bot core only")
+        
+        # Health check endpoint with UX system status
         @app.get("/__health")
         def health_check():
-            return jsonify({
+            enhanced_bot = app.extensions.get("enhanced_bot_core")
+            base_bot = app.extensions.get("bot_core")
+            
+            health_data = {
                 "status": "healthy",
                 "timestamp": datetime.now().isoformat(),
-                "version": getattr(app, 'version', 'unknown')
-            }), 200
+                "version": getattr(app, 'version', 'unknown'),
+                "ux_system": {
+                    "enhanced_bot_available": bool(enhanced_bot),
+                    "base_bot_available": bool(base_bot),
+                    "ux_patterns_enabled": app.config.get('UX_PATTERNS_ENABLED', False),
+                    "rollout_percentage": app.config.get('UX_ROLLOUT_PERCENTAGE', 0)
+                }
+            }
+            
+            # Set degraded status if neither bot is available
+            if not (enhanced_bot or base_bot):
+                health_data["status"] = "degraded"
+                health_data["issues"] = ["No bot core available"]
+            
+            return jsonify(health_data), 200
 
-        # Request logging middleware
+        # Enhanced request logging middleware
         @app.before_request
         def log_request():
-            app.logger.info("→ %s %s", request.method, request.path)
+            # Check for client version header
+            client_version = request.headers.get('X-Client-Version', 'v1')
+            if hasattr(request, 'get_json'):
+                try:
+                    json_data = request.get_json(silent=True)
+                    if json_data and 'client_version' in json_data:
+                        client_version = json_data['client_version']
+                except:
+                    pass
+            
+            app.logger.info("→ %s %s (client: %s)", request.method, request.path, client_version)
+
+        # UX system debug endpoint
+        @app.get("/__ux_debug")
+        def ux_debug():
+            """Debug endpoint for UX system status"""
+            enhanced_bot = app.extensions.get("enhanced_bot_core")
+            
+            if not enhanced_bot:
+                return jsonify({"error": "Enhanced bot core not available"}), 404
+            
+            debug_info = {
+                "ux_patterns_enabled": app.config.get('UX_PATTERNS_ENABLED', False),
+                "rollout_percentage": app.config.get('UX_ROLLOUT_PERCENTAGE', 0),
+                "confidence_threshold": app.config.get('UX_CONFIDENCE_THRESHOLD', 0.7),
+                "enhanced_services": {
+                    "ux_classifier": hasattr(enhanced_bot, 'ux_classifier'),
+                    "ux_response_generator": hasattr(enhanced_bot, 'ux_response_generator'),
+                    "enhanced_llm_service": hasattr(enhanced_bot, 'enhanced_llm_service')
+                }
+            }
+            
+            return jsonify(debug_info), 200
 
         return app
         
@@ -104,19 +178,31 @@ def get_server_config() -> tuple[str, int, bool]:
 
 
 def print_startup_info(host: str, port: int, debug: bool, log_level: LogLevel, app) -> None:
-    """Print startup information."""
+    """Print startup information including UX system status."""
     config_name = app.config.__class__.__name__ if hasattr(app, 'config') else "Unknown"
     
+    # UX system info
+    enhanced_bot = app.extensions.get("enhanced_bot_core")
+    ux_enabled = app.config.get('UX_PATTERNS_ENABLED', False)
+    rollout_pct = app.config.get('UX_ROLLOUT_PERCENTAGE', 0)
+    
     print("Shopping Bot Starting")
-    print("=" * 50)
+    print("=" * 60)
     print(f"Server: http://{host}:{port}")
     print(f"Health check: http://{host}:{port}/__health")
+    print(f"UX Debug: http://{host}:{port}/__ux_debug")
     print(f"Environment: {os.getenv('APP_ENV', 'development')}")
     print(f"Configuration: {config_name}")
     print(f"Debug mode: {debug}")
     print(f"Log level: {log_level.name}")
     print(f"Process ID: {os.getpid()}")
-    print("=" * 50)
+    print("-" * 60)
+    print("UX System Status:")
+    print(f"  Enhanced Bot Core: {'✓ Available' if enhanced_bot else '✗ Not Available'}")
+    print(f"  UX Patterns: {'✓ Enabled' if ux_enabled else '✗ Disabled'}")
+    print(f"  Rollout: {rollout_pct}% of users")
+    print(f"  Client Support: v1 (legacy), v2 (enhanced)")
+    print("=" * 60)
 
 
 def main() -> None:

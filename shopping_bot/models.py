@@ -1,5 +1,6 @@
 """
-Dataclass models shared across the whole application.
+Enhanced dataclass models with UX-driven components.
+Extends the existing models to support DPL, PSL, and QRs.
 """
 
 from __future__ import annotations
@@ -10,7 +11,10 @@ from datetime import datetime
 from typing import Any, Dict, List, Union, Optional
 from enum import Enum
 
-from .enums import QueryIntent, ResponseType, BackendFunction, UserSlot
+from .enums import (
+    QueryIntent, ResponseType, BackendFunction, UserSlot,
+    UXIntentType, PSLType, EnhancedResponseType
+)
 
 
 @dataclass
@@ -28,12 +32,170 @@ class UserContext:
 @dataclass
 class RequirementAssessment:
     intent: QueryIntent
-    # Allow both slots & backend functions
     missing_data: List[Union[BackendFunction, UserSlot]]
     rationale: Dict[str, str]
     priority_order: List[Union[BackendFunction, UserSlot]]
 
 
+# NEW: Quick Reply button
+@dataclass
+class QuickReply:
+    """Individual quick reply button"""
+    label: str              # Display text (e.g., "Why?", "Cheaper")
+    value: str              # Action value to send back
+    intent_type: Optional[UXIntentType] = None  # What UX pattern this triggers
+    
+    def to_dict(self) -> Dict[str, Any]:
+        result = {"label": self.label, "value": self.value}
+        if self.intent_type:
+            result["intent_type"] = self.intent_type.value
+        return result
+
+
+# NEW: Dynamic Persuasion Layer
+@dataclass
+class DPL:
+    """Dynamic Persuasion Layer - runtime personalized text"""
+    message: str            # Main persuasive message
+    context_hint: Optional[str] = None  # Why this message was chosen
+    personalization_factors: Optional[List[str]] = None  # What made it personal
+    
+    def to_dict(self) -> Dict[str, Any]:
+        result = {"message": self.message}
+        if self.context_hint:
+            result["context_hint"] = self.context_hint
+        if self.personalization_factors:
+            result["personalization_factors"] = self.personalization_factors
+        return result
+
+
+# NEW: Enhanced Product Data for UX
+@dataclass
+class UXProduct:
+    """Enhanced product data for UX templates"""
+    id: str
+    name: str
+    price: str
+    image_url: Optional[str] = None
+    brand: Optional[str] = None
+    rating: Optional[float] = None
+    
+    # UX-specific fields
+    persuasion_hook: Optional[str] = None    # One-liner why to buy
+    key_differentiator: Optional[str] = None # What makes it special
+    cart_action: Optional[str] = None        # Direct cart action ID
+    
+    # Nutritional/features for comparison
+    features: Optional[Dict[str, Any]] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "price": self.price,
+            "image_url": self.image_url,
+            "brand": self.brand,
+            "rating": self.rating,
+            "persuasion_hook": self.persuasion_hook,
+            "key_differentiator": self.key_differentiator,
+            "cart_action": self.cart_action,
+            "features": self.features or {}
+        }
+
+
+# NEW: Product Surface Layer
+@dataclass
+class PSL:
+    """Product Surface Layer - template with products"""
+    template_type: PSLType
+    products: List[UXProduct]
+    
+    # Template-specific config
+    max_visible: Optional[int] = None     # For carousel
+    collection_title: Optional[str] = None  # For MPM
+    view_more_action: Optional[str] = None  # Action for "View items"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "template_type": self.template_type.value,
+            "products": [p.to_dict() for p in self.products],
+            "max_visible": self.max_visible,
+            "collection_title": self.collection_title,
+            "view_more_action": self.view_more_action
+        }
+
+
+# NEW: Enhanced UX Response
+@dataclass
+class UXResponse:
+    """Complete UX-driven response with DPL, PSL, and QRs"""
+    ux_intent: UXIntentType
+    dpl: DPL                    # Dynamic persuasion text
+    psl: PSL                    # Product surface layer
+    quick_replies: List[QuickReply]  # Action buttons
+    
+    # Metadata
+    confidence_score: Optional[float] = None
+    personalization_applied: bool = False
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "ux_intent": self.ux_intent.value,
+            "dpl": self.dpl.to_dict(),
+            "psl": self.psl.to_dict(),
+            "quick_replies": [qr.to_dict() for qr in self.quick_replies],
+            "confidence_score": self.confidence_score,
+            "personalization_applied": self.personalization_applied
+        }
+
+
+# Enhanced BotResponse with UX support
+@dataclass
+class EnhancedBotResponse:
+    """Enhanced bot response supporting both legacy and new UX patterns"""
+    response_type: EnhancedResponseType
+    content: Dict[str, Any]
+    functions_executed: List[str] = field(default_factory=list)
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    
+    # NEW: UX components (optional)
+    ux_response: Optional[UXResponse] = None
+    
+    def to_legacy_response(self) -> 'BotResponse':
+        """Convert to legacy BotResponse format for backward compatibility"""
+        # Map enhanced response types back to original types
+        legacy_type_map = {
+            EnhancedResponseType.QUESTION: ResponseType.QUESTION,
+            EnhancedResponseType.PROCESSING_STUB: ResponseType.PROCESSING_STUB,
+            EnhancedResponseType.ERROR: ResponseType.ERROR,
+            EnhancedResponseType.CASUAL: ResponseType.FINAL_ANSWER,
+            EnhancedResponseType.UX_SPM: ResponseType.FINAL_ANSWER,
+            EnhancedResponseType.UX_CAROUSEL: ResponseType.FINAL_ANSWER,
+            EnhancedResponseType.UX_MPM: ResponseType.FINAL_ANSWER,
+        }
+        
+        legacy_type = legacy_type_map.get(self.response_type, ResponseType.FINAL_ANSWER)
+        
+        return BotResponse(
+            response_type=legacy_type,
+            content=self.content,
+            functions_executed=self.functions_executed,
+            timestamp=self.timestamp
+        )
+    
+    def to_json(self) -> str:
+        data = {
+            "response_type": self.response_type.value,
+            "content": self.content,
+            "functions_executed": self.functions_executed,
+            "timestamp": self.timestamp
+        }
+        if self.ux_response:
+            data["ux_response"] = self.ux_response.to_dict()
+        return json.dumps(data, default=str)
+
+
+# Keep original BotResponse for backward compatibility
 @dataclass
 class BotResponse:
     response_type: ResponseType
@@ -45,7 +207,7 @@ class BotResponse:
         return json.dumps(asdict(self), default=str)
 
 
-# NEW ── Follow-up result & patch
+# Follow-up models (unchanged but included for completeness)
 @dataclass
 class FollowUpPatch:
     slots: Dict[str, Any]
@@ -60,10 +222,7 @@ class FollowUpResult:
     reason: str = ""
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Enhanced Models for WhatsApp Flow Support
-# ══════════════════════════════════════════════════════════════════════════════
-
+# Legacy models for backward compatibility
 class FlowType(Enum):
     """Types of WhatsApp Flows supported"""
     PRODUCT_CATALOG = "product_catalog"
@@ -94,124 +253,3 @@ class FlowPayload:
     header_text: str
     footer_text: Optional[str] = None
     action_buttons: Optional[List[Dict[str, str]]] = None
-
-
-@dataclass
-class EnhancedBotResponse:
-    """Enhanced response that extends BotResponse with Flow support"""
-    # Base response data
-    response_type: ResponseType
-    content: Dict[str, Any]
-    functions_executed: List[str] = field(default_factory=list)
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
-    
-    # Flow enhancement fields
-    flow_payload: Optional[FlowPayload] = None
-    requires_flow: bool = False
-    
-    def to_legacy_bot_response(self) -> BotResponse:
-        """Convert to legacy BotResponse format"""
-        return BotResponse(
-            response_type=self.response_type,
-            content=self.content,
-            functions_executed=self.functions_executed,
-            timestamp=self.timestamp
-        )
-    
-    def to_dual_messages(self) -> List[Dict[str, Any]]:
-        """Convert to dual message format for WhatsApp API"""
-        messages = []
-        
-        # Text message (always first)
-        text_msg = {
-            "type": "text",
-            "content": {
-                "message": self.content.get("message", ""),
-                "response_type": self.response_type.value
-            }
-        }
-        if self.functions_executed:
-            text_msg["content"]["functions_executed"] = self.functions_executed
-        messages.append(text_msg)
-        
-        # Flow message (if available)
-        if self.requires_flow and self.flow_payload:
-            flow_msg = {
-                "type": "flow", 
-                "content": self._generate_flow_json()
-            }
-            messages.append(flow_msg)
-            
-        return messages
-    
-    def _generate_flow_json(self) -> Dict[str, Any]:
-        """Generate WhatsApp-compliant Flow JSON"""
-        if not self.flow_payload:
-            return {}
-            
-        return {
-            "type": "flow",
-            "header": {
-                "type": "text",
-                "text": self.flow_payload.header_text
-            },
-            "body": {
-                "type": "text",
-                "text": self.content.get("message", "")
-            },
-            "footer": {
-                "type": "text", 
-                "text": self.flow_payload.footer_text or "Tap to explore options"
-            },
-            "action": {
-                "type": "flow",
-                "parameters": {
-                    "flow_message_version": "3",
-                    "flow_token": f"flow_{self.flow_payload.flow_type.value}",
-                    "flow_id": self._get_flow_id(),
-                    "flow_cta": "View Options",
-                    "flow_action": "data_exchange",
-                    "flow_action_payload": {
-                        "screen": "PRODUCT_LIST",
-                        "data": {
-                            "products": [self._serialize_product(p) for p in self.flow_payload.products]
-                        }
-                    }
-                }
-            }
-        }
-    
-    def _get_flow_id(self) -> str:
-        """Get Flow ID based on flow type"""
-        flow_ids = {
-            FlowType.PRODUCT_CATALOG: "product_catalog_flow_v1",
-            FlowType.COMPARISON: "product_comparison_flow_v1",
-            FlowType.RECOMMENDATION: "product_recommendation_flow_v1"
-        }
-        return flow_ids.get(self.flow_payload.flow_type, "default_flow_v1")
-    
-    def _serialize_product(self, product: ProductData) -> Dict[str, Any]:
-        """Serialize product data for Flow"""
-        return {
-            "id": product.product_id,
-            "title": product.title,
-            "subtitle": product.subtitle,
-            "image": product.image_url,
-            "price": product.price,
-            "rating": product.rating,
-            "discount": product.discount,
-            "availability": product.availability,
-            "brand": product.brand,
-            "features": product.key_features or []
-        }
-    
-    def to_json(self) -> str:
-        """Convert to JSON (for compatibility)"""
-        return json.dumps({
-            "response_type": self.response_type.value,
-            "content": self.content,
-            "functions_executed": self.functions_executed,
-            "timestamp": self.timestamp,
-            "requires_flow": self.requires_flow,
-            "flow_payload": asdict(self.flow_payload) if self.flow_payload else None
-        }, default=str)

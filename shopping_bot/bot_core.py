@@ -1,11 +1,12 @@
 """
 Brain of the WhatsApp shopping bot – baseline core.
 
-UPDATED POLICY
---------------
-• ALL product intents use unified response generation
-• Structured product responses with descriptions
-• Clean separation between product and non-product responses
+UPDATED: Integrated 4-Intent Classification System
+─────────────────────────────────────────────────
+• Step 1: Modified existing LLM classification to detect product-related queries
+• Step 2: Added 4-intent classification for serious product queries
+• Step 3: Integrated UX response generation for classified intents
+• Fallback: Non-4-intent queries use existing casual/generic flow
 """
 from __future__ import annotations
 
@@ -13,22 +14,18 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Union
 
+from .bot_helpers import (build_question, compute_still_missing,
+                          get_func_value, is_user_slot, snapshot_and_trim,
+                          store_user_answer)
 from .config import get_config
-from .enums import ResponseType, BackendFunction, UserSlot
+from .data_fetchers import get_fetcher
+from .enums import BackendFunction, ResponseType, UserSlot
+from .llm_service import LLMService, map_leaf_to_query_intent
 from .models import BotResponse, UserContext
 from .redis_manager import RedisContextManager
-from .data_fetchers import get_fetcher
 from .utils.helpers import safe_get
 from .utils.smart_logger import get_smart_logger
-from .bot_helpers import (
-    compute_still_missing,
-    store_user_answer,
-    snapshot_and_trim,
-    is_user_slot,
-    get_func_value,
-    build_question,
-)
-from .llm_service import LLMService, map_leaf_to_query_intent
+from .ux_response_generator import generate_ux_response_for_intent
 
 Cfg = get_config()
 log = logging.getLogger(__name__)
@@ -37,6 +34,12 @@ log = logging.getLogger(__name__)
 PRODUCT_INTENTS = {
     "product_discovery", "recommendation", 
     "specific_product_search", "product_comparison"
+}
+
+# NEW: 4-Intent mapping for serious product queries
+SERIOUS_PRODUCT_INTENTS = {
+    "Product_Discovery", "Recommendation", 
+    "Specific_Product_Search", "Product_Comparison"
 }
 
 
@@ -87,7 +90,7 @@ class ShoppingBotCore:
             )
 
     # ────────────────────────────────────────────────────────
-    # Follow-up path
+    # Follow-up path (UPDATED for 4-intent support)
     # ────────────────────────────────────────────────────────
     async def _handle_follow_up(self, query: str, ctx: UserContext, fu) -> BotResponse:
         # Determine effective L3
@@ -148,7 +151,60 @@ class ShoppingBotCore:
                 ctx.user_id, [f.value for f in fetch_list], success_count
             )
 
-        # Generate unified response
+        # NEW: Check if this is a serious product query for 4-intent processing
+        if effective_l3 in SERIOUS_PRODUCT_INTENTS:
+            log.info(f"4INTENT_FOLLOWUP_CHECK | user={ctx.user_id} | intent_l3={effective_l3}")
+            
+            # Classify into 4-intent system
+            product_intent_result = await self.llm_service.classify_product_intent(query, ctx)
+            
+            if product_intent_result.confidence > 0.6:  # High confidence threshold
+                log.info(f"4INTENT_CLASSIFIED | user={ctx.user_id} | intent={product_intent_result.intent} | confidence={product_intent_result.confidence}")
+                
+                # Generate base answer
+                answer_dict = await self.llm_service.generate_response(
+                    query,
+                    ctx,
+                    fetched,
+                    intent_l3=effective_l3,
+                    query_intent=map_leaf_to_query_intent(effective_l3),
+                    product_intent=product_intent_result.intent
+                )
+                
+                # Generate UX-ready response
+                ux_enhanced_answer = await generate_ux_response_for_intent(
+                    intent=product_intent_result.intent,
+                    previous_answer=answer_dict,
+                    ctx=ctx,
+                    user_query=query
+                )
+                
+                resp_type = ResponseType(ux_enhanced_answer.get("response_type", "final_answer"))
+                
+                # Store snapshot for follow-ups
+                self._store_last_recommendation(query, ctx, fetched)
+                
+                # Final-answer summary for memory
+                final_answer_summary = {
+                    "response_type": resp_type.value,
+                    "message_preview": str(ux_enhanced_answer.get("summary_message", ux_enhanced_answer.get("message", "")))[:300],
+                    "has_sections": False,
+                    "has_products": bool(ux_enhanced_answer.get("products")),
+                    "flow_triggered": False,
+                    "ux_intent": product_intent_result.intent
+                }
+                
+                snapshot_and_trim(ctx, base_query=query, final_answer=final_answer_summary)
+                self.ctx_mgr.save_context(ctx)
+                self.smart_log.response_generated(ctx.user_id, resp_type.value, False)
+                
+                return BotResponse(
+                    resp_type,
+                    content=ux_enhanced_answer,
+                    functions_executed=list(fetched.keys()),
+                )
+
+        # Default: Generate unified response (existing flow)
         answer_dict = await self.llm_service.generate_response(
             query,
             ctx,
@@ -205,9 +261,10 @@ class ShoppingBotCore:
         )
 
     # ────────────────────────────────────────────────────────
-    # New assessment
+    # NEW: Enhanced new assessment with 4-intent support
     # ────────────────────────────────────────────────────────
     async def _start_new_assessment(self, query: str, ctx: UserContext) -> BotResponse:
+        # STEP 1: Classify intent with product detection
         result = await self.llm_service.classify_intent(query, ctx)
         intent = map_leaf_to_query_intent(result.layer3)
 
@@ -219,13 +276,27 @@ class ShoppingBotCore:
             intent_l1=result.layer1,
             intent_l2=result.layer2,
             intent_l3=result.layer3,
+            is_product_related=result.is_product_related,
         )
+
+        # STEP 2: If serious product query, classify into 4-intent system
+        product_intent = None
+        if result.is_product_related and result.layer3 in SERIOUS_PRODUCT_INTENTS:
+            log.info(f"4INTENT_NEW_CHECK | user={ctx.user_id} | intent_l3={result.layer3}")
+            
+            product_intent_result = await self.llm_service.classify_product_intent(query, ctx)
+            
+            if product_intent_result.confidence > 0.6:  # High confidence threshold
+                product_intent = product_intent_result.intent
+                ctx.session["product_intent"] = product_intent
+                log.info(f"4INTENT_NEW_CLASSIFIED | user={ctx.user_id} | intent={product_intent} | confidence={product_intent_result.confidence}")
+
         needs_bg = self._needs_background(intent)
         ctx.session["needs_background"] = needs_bg
         self.smart_log.flow_decision(
             ctx.user_id,
             "BACKGROUND_DECISION",
-            {"needs_background": needs_bg, "intent": intent.value, "intent_l3": result.layer3},
+            {"needs_background": needs_bg, "intent": intent.value, "intent_l3": result.layer3, "product_intent": product_intent},
         )
 
         assessment = await self.llm_service.assess_requirements(
@@ -259,7 +330,7 @@ class ShoppingBotCore:
         return await self._continue_assessment(query, ctx)
 
     # ────────────────────────────────────────────────────────
-    # Continue assessment
+    # Continue assessment (UPDATED for 4-intent support)
     # ────────────────────────────────────────────────────────
     async def _continue_assessment(self, query: str, ctx: UserContext) -> BotResponse:
         a = ctx.session["assessment"]
@@ -303,7 +374,7 @@ class ShoppingBotCore:
         return await self._complete_assessment(a, ctx, fetch_later)
 
     # ────────────────────────────────────────────────────────
-    # Complete assessment (sync)
+    # UPDATED: Complete assessment with 4-intent support
     # ────────────────────────────────────────────────────────
     async def _complete_assessment(
         self,
@@ -341,10 +412,62 @@ class ShoppingBotCore:
                 ctx.user_id, [f.value for f in backend_fetchers], success_count
             )
 
-        # Generate unified response
+        # Get query details
         original_q = safe_get(a, "original_query", "")
         intent_l3 = ctx.session.get("intent_l3", "") or ""
+        product_intent = ctx.session.get("product_intent")
         
+        # NEW: Enhanced response generation with 4-intent support
+        if product_intent and ctx.session.get("is_product_related"):
+            log.info(f"4INTENT_COMPLETE | user={ctx.user_id} | intent={product_intent}")
+            
+            # Generate base answer
+            answer_dict = await self.llm_service.generate_response(
+                original_q,
+                ctx,
+                fetched,
+                intent_l3=intent_l3,
+                query_intent=map_leaf_to_query_intent(intent_l3),
+                product_intent=product_intent
+            )
+            
+            # Generate UX-ready response
+            ux_enhanced_answer = await generate_ux_response_for_intent(
+                intent=product_intent,
+                previous_answer=answer_dict,
+                ctx=ctx,
+                user_query=original_q
+            )
+            
+            resp_type = ResponseType(ux_enhanced_answer.get("response_type", "final_answer"))
+            
+            # Store last_recommendation for follow-ups if products were fetched
+            self._store_last_recommendation(original_q, ctx, fetched)
+            
+            # Final-answer summary → memory
+            final_answer_summary = {
+                "response_type": resp_type.value,
+                "message_preview": str(ux_enhanced_answer.get("summary_message", ux_enhanced_answer.get("message", "")))[:300],
+                "has_sections": False,
+                "has_products": bool(ux_enhanced_answer.get("products")),
+                "flow_triggered": False,
+                "ux_intent": product_intent
+            }
+            
+            snapshot_and_trim(ctx, base_query=original_q, final_answer=final_answer_summary)
+            ctx.session.pop("assessment", None)
+            ctx.session.pop("contextual_questions", None)
+            self.ctx_mgr.save_context(ctx)
+            
+            self.smart_log.response_generated(ctx.user_id, resp_type.value, False)
+            
+            return BotResponse(
+                resp_type, 
+                content=ux_enhanced_answer,
+                functions_executed=list(fetched.keys())
+            )
+        
+        # DEFAULT: Generate unified response (existing flow)
         answer_dict = await self.llm_service.generate_response(
             original_q,
             ctx,

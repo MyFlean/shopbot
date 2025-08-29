@@ -1,29 +1,38 @@
+# shopping_bot/routes/simplified_chat.py
 """
-Enhanced Chat Endpoint with UX Pattern Support
+Simplified Chat Endpoint - Uses New Architecture Only
+=====================================================
+
+Uses only:
+- bot_core.py (with 4-intent classification)
+- ux_response_generator.py 
+- fe_payload.build_envelope for response formatting
 """
+
 from __future__ import annotations
 
-import logging
 import asyncio
-from typing import Any, Dict
+import logging
 from dataclasses import asdict, is_dataclass
 from enum import Enum
+from typing import Any, Dict
 
-from flask import Blueprint, current_app, jsonify, request, Response
-from shopping_bot.config import get_config
-from shopping_bot.enums import ResponseType
-from shopping_bot.models import UserContext, EnhancedBotResponse
-from shopping_bot.utils.smart_logger import get_smart_logger
-from shopping_bot.enhanced_envelope_builder import build_enhanced_envelope, build_legacy_compatible_envelope
-from shopping_bot.fe_payload import build_envelope  # Fallback for legacy responses
+from flask import Blueprint, Response, current_app, jsonify, request
+
+from ..config import get_config
+from ..enums import ResponseType
+from ..fe_payload import build_envelope
+from ..models import UserContext
+from ..utils.smart_logger import get_smart_logger
 
 log = logging.getLogger(__name__)
-smart_log = get_smart_logger("enhanced_chat_routes")
+smart_log = get_smart_logger("simplified_chat")
 bp = Blueprint("chat", __name__)
 Cfg = get_config()
 
 
 def _elapsed_since(start_ts: float) -> float:
+    """Calculate elapsed time since start timestamp."""
     loop = asyncio.get_event_loop()
     try:
         return loop.time() - start_ts
@@ -31,9 +40,6 @@ def _elapsed_since(start_ts: float) -> float:
         return 0.0
 
 
-# ─────────────────────────────────────────────────────────────
-# Utilities: make any object JSON-safe (dataclasses, Enums, etc.)
-# ─────────────────────────────────────────────────────────────
 def _to_json_safe(obj: Any) -> Any:
     """Convert objects to JSON-safe format with error handling."""
     try:
@@ -56,60 +62,35 @@ def _to_json_safe(obj: Any) -> Any:
         return str(obj)
 
 
-def _determine_client_version(data: Dict[str, Any]) -> str:
-    """Determine client version from request data or headers."""
-    # Check request data first
-    client_version = data.get("client_version", "v1")
-    
-    # Check headers as fallback
-    if client_version == "v1" and hasattr(request, 'headers'):
-        header_version = request.headers.get('X-Client-Version', 'v1')
-        if header_version in ['v2', 'enhanced']:
-            client_version = "v2"
-    
-    return client_version
-
-
-def _should_use_ux_patterns(user_id: str, client_version: str) -> bool:
-    """Determine if UX patterns should be used for this request."""
-    # Must be v2 client
-    if client_version != "v2":
-        return False
-    
-    # Check feature flag
-    if not Cfg.get("UX_PATTERNS_ENABLED", True):
-        return False
-    
-    # Check rollout percentage
-    rollout_pct = Cfg.get("UX_ROLLOUT_PERCENTAGE", 100)
-    if rollout_pct < 100:
-        user_hash = hash(user_id) % 100
-        if user_hash >= rollout_pct:
-            return False
-    
-    return True
-
-
 # ─────────────────────────────────────────────────────────────
-# Health ping
+# Test endpoint
 # ─────────────────────────────────────────────────────────────
 @bp.get("/chat/test")
 def chat_test():
-    return {"test": "working", "ux_enhanced": True}
+    return {"test": "working", "architecture": "simplified", "features": ["4_intent_classification", "ux_generation"]}
 
 
 # ─────────────────────────────────────────────────────────────
-# POST /chat - Enhanced with UX Pattern Support
+# Main chat endpoint
 # ─────────────────────────────────────────────────────────────
 @bp.post("/chat")
 async def chat() -> Response:
     """
-    Enhanced chat endpoint with UX pattern support and backward compatibility.
+    Simplified chat endpoint using the new architecture.
+    
+    Flow:
+    1. Parse and validate request
+    2. Load user context  
+    3. Process query with bot_core (includes 4-intent classification and UX generation)
+    4. Build response envelope using fe_payload
+    5. Return JSON response
     """
     request_start_time = asyncio.get_event_loop().time()
 
     try:
-        # Parse JSON
+        # ─────────────────────────────────────────────────────────────
+        # 1. Parse and validate request
+        # ─────────────────────────────────────────────────────────────
         try:
             data: Dict[str, Any] = request.get_json(force=True)
             if not data:
@@ -119,7 +100,7 @@ async def chat() -> Response:
             log.error(f"CHAT_JSON_PARSE_ERROR | error={e}")
             return jsonify({"error": "Invalid JSON format"}), 400
 
-        # Validate input
+        # Validate required fields
         missing = [k for k in ("user_id", "message") if k not in data]
         if missing:
             log.warning(f"CHAT_MISSING_FIELDS | missing={missing}")
@@ -130,68 +111,59 @@ async def chat() -> Response:
         message = str(data["message"]).strip()
         wa_id = data.get("wa_id")
         channel = str(data.get("channel", "api")).lower()
-        
-        # Determine client version and UX pattern usage
-        client_version = _determine_client_version(data)
-        use_ux_patterns = _should_use_ux_patterns(user_id, client_version)
 
         if not message:
             log.warning(f"CHAT_EMPTY_MESSAGE | user={user_id}")
             return jsonify({"error": "Message cannot be empty"}), 400
 
         log.info(
-            f"CHAT_REQUEST | user={user_id} | session={session_id} | channel={channel} | "
-            f"client_version={client_version} | use_ux={use_ux_patterns} | message='{message[:50]}...' | wa_id={wa_id}"
+            f"SIMPLIFIED_CHAT_REQUEST | user={user_id} | session={session_id} | "
+            f"channel={channel} | message='{message[:50]}...' | wa_id={wa_id}"
         )
 
-        # Resolve dependencies
+        # ─────────────────────────────────────────────────────────────
+        # 2. Get dependencies and load context
+        # ─────────────────────────────────────────────────────────────
         try:
             ctx_mgr = current_app.extensions["ctx_mgr"]
-            background_processor = current_app.extensions.get("background_processor")
-            enhanced_bot = current_app.extensions.get("enhanced_bot_core")
-            base_bot = current_app.extensions.get("bot_core")
+            bot_core = current_app.extensions["bot_core"]
         except KeyError as e:
             log.error(f"CHAT_MISSING_EXTENSION | extension={e}")
             return jsonify({"error": f"Required service not available: {e}"}), 500
 
-        if not (enhanced_bot or base_bot):
-            log.error("CHAT_NO_BOT_CORE | neither enhanced nor base bot available")
+        if not bot_core:
+            log.error("CHAT_NO_BOT_CORE | bot core not available")
             return jsonify({"error": "Bot core not initialized"}), 500
 
-        # Load context
+        # Load user context
         try:
             ctx = ctx_mgr.get_context(user_id, session_id)
             log.info(
-                f"CONTEXT_LOADED | user={user_id} | session={session_id} | has_assessment={bool(ctx.session.get('assessment'))}"
+                f"CONTEXT_LOADED | user={user_id} | session={session_id} | "
+                f"has_assessment={bool(ctx.session.get('assessment'))}"
             )
         except Exception as e:
-            log.error(
-                f"CONTEXT_LOAD_ERROR | user={user_id} | session={session_id} | error={e}"
-            )
+            log.error(f"CONTEXT_LOAD_ERROR | user={user_id} | session={session_id} | error={e}")
             return jsonify({"error": "Failed to load user context"}), 500
 
-        # Duplicate guard
+        # ─────────────────────────────────────────────────────────────
+        # 3. Handle duplicate processing guard
+        # ─────────────────────────────────────────────────────────────
         if "assessment" in ctx.session:
             current_phase = ctx.session["assessment"].get("phase")
             if current_phase == "processing":
-                log.warning(
-                    f"DUPLICATE_PROCESSING_BLOCKED | user={user_id} | phase={current_phase}"
-                )
+                log.warning(f"DUPLICATE_PROCESSING_BLOCKED | user={user_id} | phase={current_phase}")
                 elapsed_time = _elapsed_since(request_start_time)
-                return (
-                    jsonify(
-                        {
-                            "response_type": "processing",
-                            "status": "already_processing",
-                            "message": "Still working on your previous request. Please wait...",
-                            "suppress_user_channel": True,
-                            "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
-                        }
-                    ),
-                    202,
-                )
+                return jsonify({
+                    "response_type": "processing",
+                    "status": "already_processing",
+                    "message": "Still working on your previous request. Please wait...",
+                    "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
+                }), 202
 
-        # Persist wa_id (best-effort)
+        # ─────────────────────────────────────────────────────────────
+        # 4. Persist wa_id if provided
+        # ─────────────────────────────────────────────────────────────
         if wa_id:
             try:
                 ctx.session["wa_id"] = str(wa_id)
@@ -201,285 +173,133 @@ async def chat() -> Response:
                 ctx_mgr.save_context(ctx)
                 log.info(f"WA_ID_PERSISTED | user={user_id} | wa_id={wa_id}")
             except Exception as e:
-                log.warning(
-                    f"WA_ID_PERSIST_FAILED | user={user_id} | wa_id={wa_id} | error={e}"
-                )
+                log.warning(f"WA_ID_PERSIST_FAILED | user={user_id} | wa_id={wa_id} | error={e}")
 
-        # Process query with appropriate bot
+        # ─────────────────────────────────────────────────────────────
+        # 5. Process query with bot core (includes 4-intent + UX generation)
+        # ─────────────────────────────────────────────────────────────
         try:
+            log.info(f"BOT_PROCESSING_START | user={user_id} | using simplified architecture")
+
+            # Process query using the updated bot core with 4-intent classification
+            bot_resp = await bot_core.process_query(message, ctx)
+
             log.info(
-                f"BOT_PROCESSING_START | user={user_id} | enhanced={bool(enhanced_bot)} | "
-                f"ux_patterns={use_ux_patterns} | client_version={client_version}"
+                f"BOT_PROCESSING_COMPLETE | user={user_id} | response_type={bot_resp.response_type.value}"
             )
-
-            if enhanced_bot and use_ux_patterns:
-                # Use enhanced bot with UX patterns
-                bot_resp = await enhanced_bot.process_query_enhanced(
-                    message, ctx, use_ux_patterns=True
-                )
-                log.info(f"UX_ENHANCED_RESPONSE | user={user_id} | response_type={bot_resp.response_type.value}")
-                
-            elif enhanced_bot:
-                # Use enhanced bot without UX patterns (backward compatibility)
-                bot_resp = await enhanced_bot.process_query_enhanced(
-                    message, ctx, use_ux_patterns=False
-                )
-                log.info(f"ENHANCED_LEGACY_RESPONSE | user={user_id} | response_type={bot_resp.response_type.value}")
-                
-            else:
-                # Fallback to base bot
-                bot_resp = await base_bot.process_query(message, ctx)
-                log.info(f"BASE_BOT_RESPONSE | user={user_id} | response_type={bot_resp.response_type.value}")
-
-            log.debug(
-                f"BOT_RESPONSE_DEBUG | user={user_id} | content_type={type(bot_resp.content)} | "
-                f"keys={list(bot_resp.content.keys()) if isinstance(bot_resp.content, dict) else 'n/a'}"
-            )
+            
+            # Log if UX response was generated
+            if hasattr(bot_resp, 'content') and isinstance(bot_resp.content, dict):
+                if bot_resp.content.get('ux_response'):
+                    ux_intent = bot_resp.content.get('product_intent', 'unknown')
+                    log.info(f"UX_RESPONSE_GENERATED | user={user_id} | intent={ux_intent}")
 
         except Exception as e:
             elapsed_time = _elapsed_since(request_start_time)
             log.error(f"BOT_PROCESSING_ERROR | user={user_id} | error={e}", exc_info=True)
-            return (
-                jsonify(
-                    {
-                        "wa_id": wa_id,
-                        "session_id": session_id,
-                        "response_type": "error",
-                        "content": {"message": "Bot processing failed"},
-                        "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
-                    }
-                ),
-                500,
-            )
+            return jsonify({
+                "wa_id": wa_id,
+                "session_id": session_id,
+                "response_type": "error",
+                "content": {"message": "Bot processing failed"},
+                "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
+            }), 500
 
-        # Handle PROCESSING_STUB responses
-        if getattr(bot_resp, 'response_type', None) == ResponseType.PROCESSING_STUB:
-            return await _handle_processing_stub(
-                bot_resp, ctx, user_id, session_id, wa_id, message, 
-                background_processor, request_start_time
-            )
-
-        # Handle Flow-only responses
-        requires_flow = bool(getattr(bot_resp, "requires_flow", False))
-        if requires_flow:
-            log.warning(f"UNEXPECTED_FLOW_SYNC | user={user_id} | suppressing text")
+        # ─────────────────────────────────────────────────────────────
+        # 6. Handle special response types
+        # ─────────────────────────────────────────────────────────────
+        
+        # Handle processing stub (would need background processor for full functionality)
+        if bot_resp.response_type == ResponseType.PROCESSING_STUB:
             elapsed_time = _elapsed_since(request_start_time)
-
-            if channel in ["cli", "test"]:
-                return await _handle_cli_fallback(bot_resp, ctx, user_id, channel)
-
-            return (
-                jsonify(
-                    {
-                        "wa_id": wa_id,
-                        "session_id": session_id,
-                        "response_type": "processing",
-                        "content": {"message": "Content available via interactive elements"},
-                        "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
-                    }
-                ),
-                200,
-            )
-
-        # Build appropriate envelope based on response type and client version
-        try:
-            elapsed_time = _elapsed_since(request_start_time)
-            
-            if isinstance(bot_resp, EnhancedBotResponse):
-                # Enhanced response - choose envelope builder based on client version
-                if client_version == "v2" and use_ux_patterns:
-                    envelope = build_enhanced_envelope(
-                        wa_id=wa_id,
-                        session_id=session_id,
-                        enhanced_response=bot_resp,
-                        ctx=ctx,
-                        elapsed_time_seconds=elapsed_time,
-                        timestamp=bot_resp.timestamp,
-                    )
-                    log.info(f"ENHANCED_ENVELOPE_BUILT | user={user_id} | ux_intent={bot_resp.ux_response.ux_intent.value if bot_resp.ux_response else 'none'}")
-                else:
-                    # Legacy envelope for v1 clients or non-UX responses
-                    envelope = build_legacy_compatible_envelope(
-                        wa_id=wa_id,
-                        session_id=session_id,
-                        enhanced_response=bot_resp,
-                        ctx=ctx,
-                        elapsed_time_seconds=elapsed_time,
-                        timestamp=bot_resp.timestamp,
-                    )
-                    log.info(f"LEGACY_COMPATIBLE_ENVELOPE | user={user_id} | client_version={client_version}")
-            else:
-                # Legacy bot response - use original envelope builder
-                if not hasattr(bot_resp, "response_type"):
-                    log.error(
-                        f"INVALID_BOT_RESPONSE | user={user_id} | missing response_type | bot_resp={type(bot_resp)}"
-                    )
-                    raise ValueError("Bot response missing response_type")
-
-                envelope = build_envelope(
-                    wa_id=wa_id,
-                    session_id=session_id,
-                    bot_resp_type=bot_resp.response_type,
-                    content=bot_resp.content or {},
-                    ctx=ctx,
-                    elapsed_time_seconds=elapsed_time,
-                    mode_async_enabled=getattr(Cfg, "ENABLE_ASYNC", False),
-                    timestamp=getattr(bot_resp, "timestamp", None),
-                    functions_executed=getattr(bot_resp, "functions_executed", []),
-                )
-                log.info(f"LEGACY_ENVELOPE_BUILT | user={user_id}")
-
-            smart_log.response_generated(
-                user_id, envelope.get("response_type"), use_ux_patterns, elapsed_time
-            )
-
-            log.info(
-                f"CHAT_RESPONSE_SUCCESS | user={user_id} | ui_type={envelope.get('response_type')} | "
-                f"client_version={client_version} | ux_enhanced={use_ux_patterns} | elapsed_time={elapsed_time:.3f}s"
-            )
-            return jsonify(envelope), 200
-
-        except Exception as e:
-            elapsed_time = _elapsed_since(request_start_time)
-            log.error(
-                f"RESPONSE_SERIALIZATION_ERROR | user={user_id} | error={e}", exc_info=True
-            )
-            return (
-                jsonify(
-                    {
-                        "wa_id": wa_id,
-                        "session_id": session_id,
-                        "response_type": "error",
-                        "content": {"message": "Response serialization failed"},
-                        "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
-                    }
-                ),
-                500,
-            )
-
-    except Exception as exc:
-        elapsed_time = _elapsed_since(request_start_time)
-        log.error(
-            f"CHAT_ENDPOINT_ERROR | elapsed_time={elapsed_time:.3f}s | error={exc}",
-            exc_info=True,
-        )
-        return (
-            jsonify(
-                {
-                    "wa_id": None,
-                    "session_id": None,
-                    "response_type": "error",
-                    "content": {"message": "Internal server error"},
-                    "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
-                }
-            ),
-            500,
-        )
-
-
-# ─────────────────────────────────────────────────────────────
-# Helper functions for processing stub and CLI fallback
-# ─────────────────────────────────────────────────────────────
-async def _handle_processing_stub(
-    bot_resp, ctx, user_id, session_id, wa_id, message, 
-    background_processor, request_start_time
-) -> Response:
-    """Handle PROCESSING_STUB responses with enhanced logging."""
-    if not Cfg.ENABLE_ASYNC:
-        smart_log.background_decision(user_id, "FORCE_SYNC", "ENABLE_ASYNC=false")
-        try:
-            original_q = ctx.session.get("assessment", {}).get("original_query", message)
-            log.info(f"FORCE_SYNC_MODE | user={user_id} | original_query='{original_q[:50]}...'")
-            
-            processing_id = await background_processor.process_query_background(
-                query=original_q,
-                user_id=user_id,
-                session_id=session_id,
-                wa_id=wa_id,
-                notification_callback=None,
-                inline=True,
-            )
-            
-            elapsed_time = _elapsed_since(request_start_time)
-            log.info(f"FORCE_SYNC_DONE | user={user_id} | processing_id={processing_id}")
+            log.info(f"PROCESSING_STUB_FALLBACK | user={user_id} | elapsed_time={elapsed_time:.3f}s")
             
             return jsonify({
                 "wa_id": wa_id,
                 "session_id": session_id,
                 "response_type": "processing",
-                "content": {"message": "Processing completed"},
-                "meta": {
-                    "elapsed_time": f"{elapsed_time:.3f}s",
-                    "processing_id": processing_id,
-                },
+                "content": {"message": "Processing your request... (simplified mode)"},
+                "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
             }), 200
+
+        # Handle CLI fallback for flow-only responses
+        requires_flow = bool(getattr(bot_resp, "requires_flow", False))
+        if requires_flow and channel in ["cli", "test"]:
+            return await _handle_cli_fallback(bot_resp, ctx, user_id, channel)
+
+        # ─────────────────────────────────────────────────────────────
+        # 7. Build response envelope and return
+        # ─────────────────────────────────────────────────────────────
+        try:
+            elapsed_time = _elapsed_since(request_start_time)
+
+            if not hasattr(bot_resp, "response_type"):
+                log.error(f"INVALID_BOT_RESPONSE | user={user_id} | missing response_type")
+                raise ValueError("Bot response missing response_type")
+
+            # Use the existing fe_payload.build_envelope for response formatting
+            envelope = build_envelope(
+                wa_id=wa_id,
+                session_id=session_id,
+                bot_resp_type=bot_resp.response_type,
+                content=bot_resp.content or {},
+                ctx=ctx,
+                elapsed_time_seconds=elapsed_time,
+                mode_async_enabled=getattr(Cfg, "ENABLE_ASYNC", False),
+                timestamp=getattr(bot_resp, "timestamp", None),
+                functions_executed=getattr(bot_resp, "functions_executed", []),
+            )
+
+            # Log success with UX info if present
+            ux_info = ""
+            if isinstance(bot_resp.content, dict) and bot_resp.content.get('ux_response'):
+                ux_surface = bot_resp.content['ux_response'].get('ux_surface', 'unknown')
+                qr_count = len(bot_resp.content['ux_response'].get('quick_replies', []))
+                ux_info = f" | ux_surface={ux_surface} | qr_count={qr_count}"
+
+            smart_log.response_generated(
+                user_id, envelope.get("response_type"), False, elapsed_time
+            )
+
+            log.info(
+                f"SIMPLIFIED_CHAT_SUCCESS | user={user_id} | response_type={envelope.get('response_type')} | "
+                f"elapsed_time={elapsed_time:.3f}s{ux_info}"
+            )
             
+            return jsonify(envelope), 200
+
         except Exception as e:
             elapsed_time = _elapsed_since(request_start_time)
-            log.error(f"FORCE_SYNC_FAILED | user={user_id} | error={e}", exc_info=True)
+            log.error(f"RESPONSE_BUILD_ERROR | user={user_id} | error={e}", exc_info=True)
             return jsonify({
                 "wa_id": wa_id,
                 "session_id": session_id,
                 "response_type": "error",
-                "content": {"message": "Synchronous completion failed"},
+                "content": {"message": "Response formatting failed"},
                 "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
             }), 500
 
-    if not background_processor:
+    except Exception as exc:
         elapsed_time = _elapsed_since(request_start_time)
-        log.error(f"BACKGROUND_UNAVAILABLE | user={user_id}")
+        log.error(f"CHAT_ENDPOINT_ERROR | elapsed_time={elapsed_time:.3f}s | error={exc}", exc_info=True)
         return jsonify({
-            "wa_id": wa_id,
-            "session_id": session_id,
+            "wa_id": None,
+            "session_id": None,
             "response_type": "error",
-            "content": {"message": "Background processor unavailable"},
-            "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
-        }), 503
-
-    try:
-        original_q = ctx.session.get("assessment", {}).get("original_query", message)
-        log.info(f"BACKGROUND_INLINE_START | user={user_id} | original_query='{original_q[:50]}...'")
-
-        processing_id = await background_processor.process_query_background(
-            query=original_q,
-            user_id=user_id,
-            session_id=session_id,
-            wa_id=wa_id,
-            notification_callback=None,
-            inline=True,
-        )
-
-        elapsed_time = _elapsed_since(request_start_time)
-        log.info(f"BACKGROUND_INLINE_DONE | user={user_id} | processing_id={processing_id}")
-
-        return jsonify({
-            "wa_id": wa_id,
-            "session_id": session_id,
-            "response_type": "processing",
-            "content": {"message": "Processing completed"},
-            "meta": {
-                "elapsed_time": f"{elapsed_time:.3f}s",
-                "processing_id": processing_id,
-            },
-        }), 200
-
-    except Exception as e:
-        elapsed_time = _elapsed_since(request_start_time)
-        log.error(f"BACKGROUND_SPAWN_ERROR | user={user_id} | error={e}", exc_info=True)
-        return jsonify({
-            "wa_id": wa_id,
-            "session_id": session_id,
-            "response_type": "error",
-            "content": {"message": "Failed to start background processing"},
+            "content": {"message": "Internal server error"},
             "meta": {"elapsed_time": f"{elapsed_time:.3f}s"},
         }), 500
 
 
+# ─────────────────────────────────────────────────────────────
+# CLI fallback helper
+# ─────────────────────────────────────────────────────────────
 async def _handle_cli_fallback(bot_resp, ctx: UserContext, user_id: str, channel: str) -> Response:
     """Provide text fallback for CLI/test channels when Flow is produced."""
     try:
         log.info(f"CLI_FALLBACK | user={user_id} | channel={channel}")
 
+        # Extract products from fetched data for fallback
         fetched_data = ctx.fetched_data or {}
         products = []
         for key in ["search_products", "SEARCH_PRODUCTS"]:
@@ -496,10 +316,21 @@ async def _handle_cli_fallback(bot_resp, ctx: UserContext, user_id: str, channel
                 price = product.get("price", "Price on request")
                 lines.append(f"{i}. {title} - {price}")
             fallback_text = "\n".join(lines)
-            log.info(
-                f"CLI_PRODUCTS_FALLBACK | user={user_id} | products_count={len(products)}"
-            )
         else:
+            # Check for UX response text or assessment questions
+            fallback_text = "I can help you find products. Please provide more details."
+            
+            if hasattr(bot_resp, 'content') and isinstance(bot_resp.content, dict):
+                # Try to get UX response text
+                ux_response = bot_resp.content.get('ux_response', {})
+                if ux_response and ux_response.get('dpl_runtime_text'):
+                    fallback_text = ux_response['dpl_runtime_text']
+                elif bot_resp.content.get('summary_message'):
+                    fallback_text = bot_resp.content['summary_message']
+                elif bot_resp.content.get('message'):
+                    fallback_text = bot_resp.content['message']
+            
+            # Check for ongoing assessment
             assessment = ctx.session.get("assessment", {})
             currently_asking = assessment.get("currently_asking")
             if currently_asking:
@@ -507,15 +338,11 @@ async def _handle_cli_fallback(bot_resp, ctx: UserContext, user_id: str, channel
                 question_text = (
                     contextual_questions.get(currently_asking, {}).get("message", "")
                 )
-                fallback_text = question_text or f"I need: {currently_asking.replace('ASK_', '').replace('_', ' ').lower()}"
-            else:
-                content = getattr(bot_resp, "content", {})
-                message = (
-                    content.get("message", "")
-                    if isinstance(content, dict)
-                    else str(content)
-                )
-                fallback_text = message or "I can help you find products. Please provide more details."
+                if question_text:
+                    fallback_text = question_text
+                else:
+                    slot_name = currently_asking.replace('ASK_', '').replace('_', ' ').lower()
+                    fallback_text = f"I need to know your {slot_name}"
 
         cli_response = {
             "wa_id": ctx.session.get("wa_id"),
@@ -529,120 +356,54 @@ async def _handle_cli_fallback(bot_resp, ctx: UserContext, user_id: str, channel
             },
         }
 
-        log.info(
-            f"CLI_FALLBACK_SUCCESS | user={user_id} | text_length={len(fallback_text)}"
-        )
+        log.info(f"CLI_FALLBACK_SUCCESS | user={user_id} | text_length={len(fallback_text)}")
         return jsonify(cli_response), 200
 
     except Exception as e:
         log.error(f"CLI_FALLBACK_ERROR | user={user_id} | error={e}", exc_info=True)
-        return jsonify(
-            {
-                "wa_id": ctx.session.get("wa_id") if ctx else None,
-                "session_id": ctx.session_id if ctx else "unknown",
-                "response_type": "final_answer",
-                "content": {
-                    "message": "I can help you with shopping queries. Please provide more details."
-                },
-                "meta": {"cli_fallback": True, "fallback_error": str(e)},
-            }
-        ), 200
+        return jsonify({
+            "wa_id": ctx.session.get("wa_id") if ctx else None,
+            "session_id": ctx.session_id if ctx else "unknown",
+            "response_type": "final_answer",
+            "content": {
+                "message": "I can help you with shopping queries. Please provide more details."
+            },
+            "meta": {"cli_fallback": True, "fallback_error": str(e)},
+        }), 200
 
 
 # ─────────────────────────────────────────────────────────────
-# Background processing polling endpoints
-# ─────────────────────────────────────────────────────────────
-@bp.get("/chat/processing/<processing_id>/status")
-async def get_processing_status(processing_id: str) -> Response:
-    try:
-        log.info(f"STATUS_LOOKUP | processing_id={processing_id}")
-
-        background_processor = current_app.extensions.get("background_processor")
-        if not background_processor:
-            log.error(f"STATUS_NO_PROCESSOR | processing_id={processing_id}")
-            return jsonify({"error": "Background processor not available"}), 500
-
-        status = await background_processor.get_processing_status(processing_id)
-
-        if not status or status.get("status") == "not_found":
-            log.warning(f"STATUS_NOT_FOUND | processing_id={processing_id}")
-            return jsonify({"error": "Processing ID not found"}), 404
-
-        log.info(
-            f"STATUS_FOUND | processing_id={processing_id} | status={status.get('status')}"
-        )
-        return jsonify(_to_json_safe(status)), 200
-
-    except Exception as exc:
-        log.error(
-            f"STATUS_LOOKUP_ERROR | processing_id={processing_id} | error={exc}",
-            exc_info=True,
-        )
-        return jsonify({"error": str(exc)}), 500
-
-
-@bp.get("/chat/processing/<processing_id>/result")
-async def get_processing_result(processing_id: str) -> Response:
-    try:
-        log.info(f"RESULT_LOOKUP | processing_id={processing_id}")
-
-        background_processor = current_app.extensions.get("background_processor")
-        if not background_processor:
-            log.error(f"RESULT_NO_PROCESSOR | processing_id={processing_id}")
-            return jsonify({"error": "Background processor not available"}), 500
-
-        result = await background_processor.get_processing_result(processing_id)
-
-        if not result:
-            log.warning(f"RESULT_NOT_FOUND | processing_id={processing_id}")
-            return jsonify({"error": "Processing result not found"}), 404
-
-        flow_data = result.get("flow_data", {})
-        products_count = len(flow_data.get("products", [])) if flow_data else 0
-        text_length = len(result.get("text_content", ""))
-
-        log.info(
-            f"RESULT_FOUND | processing_id={processing_id} | products_count={products_count} | text_length={text_length}"
-        )
-
-        return jsonify(_to_json_safe(result)), 200
-
-    except Exception as exc:
-        log.error(
-            f"RESULT_LOOKUP_ERROR | processing_id={processing_id} | error={exc}",
-            exc_info=True,
-        )
-        return jsonify({"error": str(exc)}), 500
-
-
-# ─────────────────────────────────────────────────────────────
-# Health and debug endpoints with UX system info
+# Health and debug endpoints
 # ─────────────────────────────────────────────────────────────
 @bp.get("/chat/health")
 def chat_health() -> Response:
+    """Health check for chat service."""
     try:
         ctx_mgr = current_app.extensions.get("ctx_mgr")
-        background_processor = current_app.extensions.get("background_processor")
-        enhanced_bot = current_app.extensions.get("enhanced_bot_core")
-        base_bot = current_app.extensions.get("bot_core")
+        bot_core = current_app.extensions.get("bot_core")
 
         health_status = {
             "status": "healthy",
+            "architecture": "simplified",
             "services": {
                 "ctx_mgr": bool(ctx_mgr),
-                "background_processor": bool(background_processor),
-                "enhanced_bot": bool(enhanced_bot),
-                "base_bot": bool(base_bot),
+                "bot_core": bool(bot_core),
             },
-            "ux_system": {
-                "patterns_enabled": Cfg.get("UX_PATTERNS_ENABLED", False),
-                "rollout_percentage": Cfg.get("UX_ROLLOUT_PERCENTAGE", 0),
-                "confidence_threshold": Cfg.get("UX_CONFIDENCE_THRESHOLD", 0.7),
+            "features": {
+                "4_intent_classification": True,
+                "ux_generation": True,
+                "product_search": True,
+                "background_processing": False  # Not available in simplified mode
             }
         }
 
-        if not (enhanced_bot or base_bot) or not ctx_mgr:
+        if not (ctx_mgr and bot_core):
             health_status["status"] = "degraded"
+            health_status["issues"] = []
+            if not ctx_mgr:
+                health_status["issues"].append("Redis context manager unavailable")
+            if not bot_core:
+                health_status["issues"].append("Bot core unavailable")
 
         return jsonify(health_status), 200
 
@@ -652,97 +413,95 @@ def chat_health() -> Response:
 
 @bp.get("/chat/debug/<user_id>")
 def debug_user_context(user_id: str) -> Response:
+    """Get user context debug information."""
     try:
         ctx_mgr = current_app.extensions.get("ctx_mgr")
         if not ctx_mgr:
             return jsonify({"error": "Context manager not available"}), 500
 
         ctx = ctx_mgr.get_context(user_id, user_id)
-        
-        # Calculate UX eligibility
-        client_version = "v2"  # Assume v2 for debug
-        ux_eligible = _should_use_ux_patterns(user_id, client_version)
 
         debug_info = {
             "user_id": user_id,
             "session_id": ctx.session_id,
-            "session_keys": list(ctx.session.keys()),
-            "permanent_keys": list(ctx.permanent.keys()),
-            "fetched_data_keys": list(ctx.fetched_data.keys()),
-            "has_assessment": bool(ctx.session.get("assessment")),
-            "assessment_phase": ctx.session.get("assessment", {}).get("phase"),
-            "needs_background": ctx.session.get("needs_background"),
-            "intent_l3": ctx.session.get("intent_l3"),
-            "ux_system": {
-                "eligible_for_ux": ux_eligible,
-                "user_hash_bucket": hash(user_id) % 100,
-                "rollout_threshold": Cfg.get("UX_ROLLOUT_PERCENTAGE", 0),
-                "patterns_enabled": Cfg.get("UX_PATTERNS_ENABLED", False),
+            "architecture": "simplified",
+            "context": {
+                "session_keys": list(ctx.session.keys()),
+                "permanent_keys": list(ctx.permanent.keys()),
+                "fetched_data_keys": list(ctx.fetched_data.keys()),
+            },
+            "assessment": {
+                "has_assessment": bool(ctx.session.get("assessment")),
+                "assessment_phase": ctx.session.get("assessment", {}).get("phase"),
+                "intent_l3": ctx.session.get("intent_l3"),
+                "product_intent": ctx.session.get("product_intent"),
+                "is_product_related": ctx.session.get("is_product_related"),
+            },
+            "features": {
+                "4_intent_classification": True,
+                "ux_generation": True,
             }
         }
 
         return jsonify(debug_info), 200
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e), "user_id": user_id}), 500
 
 
 # ─────────────────────────────────────────────────────────────
-# UX System specific endpoints
+# UX System testing endpoints
 # ─────────────────────────────────────────────────────────────
-@bp.get("/chat/ux/test/<user_id>")
-async def test_ux_classification(user_id: str) -> Response:
-    """Test UX classification for a specific user and query."""
+@bp.post("/chat/test_ux")
+async def test_ux_system() -> Response:
+    """Test the UX generation system with a sample query."""
     try:
-        query = request.args.get('query', 'show me corn chips')
+        data = request.get_json() or {}
+        test_query = data.get("query", "show me some protein bars")
+        user_id = data.get("user_id", "test_user")
         
-        enhanced_bot = current_app.extensions.get("enhanced_bot_core")
-        if not enhanced_bot:
-            return jsonify({"error": "Enhanced bot not available"}), 404
-        
+        # Get dependencies
         ctx_mgr = current_app.extensions.get("ctx_mgr")
+        bot_core = current_app.extensions.get("bot_core")
+        
+        if not (ctx_mgr and bot_core):
+            return jsonify({"error": "Required services not available"}), 500
+        
+        # Load context
         ctx = ctx_mgr.get_context(user_id, user_id)
         
-        # Test UX classification
-        ux_classifier = getattr(enhanced_bot, 'ux_classifier', None)
-        if not ux_classifier:
-            return jsonify({"error": "UX classifier not available"}), 404
+        # Process query
+        bot_resp = await bot_core.process_query(test_query, ctx)
         
-        classification = await ux_classifier.classify_ux_intent(query, ctx, 5)
+        # Extract UX information
+        ux_info = {}
+        if hasattr(bot_resp, 'content') and isinstance(bot_resp.content, dict):
+            ux_response = bot_resp.content.get('ux_response')
+            if ux_response:
+                ux_info = {
+                    "ux_generated": True,
+                    "dpl_runtime_text": ux_response.get('dpl_runtime_text'),
+                    "ux_surface": ux_response.get('ux_surface'),
+                    "quick_replies": ux_response.get('quick_replies'),
+                    "product_ids": ux_response.get('product_ids', []),
+                }
+            
+            if bot_resp.content.get('product_intent'):
+                ux_info["product_intent"] = bot_resp.content['product_intent']
         
-        return jsonify({
-            "query": query,
+        test_result = {
+            "test_query": test_query,
             "user_id": user_id,
-            "classification": {
-                "ux_intent": classification.ux_intent.value,
-                "confidence": classification.confidence,
-                "reasoning": classification.reasoning,
-                "recommended_psl": classification.recommended_psl.value,
-                "context_factors": classification.context_factors
+            "response_type": bot_resp.response_type.value,
+            "ux_system": ux_info or {"ux_generated": False},
+            "intent_classification": {
+                "intent_l3": ctx.session.get("intent_l3"),
+                "is_product_related": ctx.session.get("is_product_related"),
+                "product_intent": ctx.session.get("product_intent"),
             }
-        }), 200
+        }
         
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@bp.post("/chat/ux/toggle")
-def toggle_ux_patterns() -> Response:
-    """Toggle UX patterns on/off (for testing)."""
-    try:
-        current_state = Cfg.get("UX_PATTERNS_ENABLED", True)
-        new_state = not current_state
-        
-        # Note: This only affects the current process
-        # In production, you'd want to update the actual config
-        Cfg._config_dict = getattr(Cfg, '_config_dict', {})
-        Cfg._config_dict["UX_PATTERNS_ENABLED"] = new_state
-        
-        return jsonify({
-            "ux_patterns_enabled": new_state,
-            "previous_state": current_state,
-            "note": "Change applies to current process only"
-        }), 200
+        return jsonify(test_result), 200
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500

@@ -207,9 +207,14 @@ class UXResponseGenerator:
             
             result = tool_use.input or {}
             
+            # Enforce surface rule by intent only:
+            # - is_this_good → SPM
+            # - which_is_better/show_me_alternate/show_me_options → MPM
+            enforced_surface = "SPM" if intent == "is_this_good" else "MPM"
+
             return UXResponse(
                 dpl_runtime_text=result.get("dpl_runtime_text", ""),
-                ux_surface=result.get("ux_surface", intent_config["default_surface"]),
+                ux_surface=enforced_surface,
                 quick_replies=result.get("quick_replies", intent_config["default_quick_replies"]),
                 product_ids=product_ids
             )
@@ -332,8 +337,8 @@ Return ONLY a tool call to generate_ux_response.
             if len(summary) > 20:  # Use summary if substantial
                 dpl_text = summary[:150] + "..." if len(summary) > 150 else summary
         
-        # Determine surface type
-        surface_type = "SPM" if len(product_ids) == 1 else "MPM"
+        # Enforce surface type strictly by intent
+        surface_type = "SPM" if intent == "is_this_good" else "MPM"
         
         # Generate contextual quick replies
         qr_options = self._generate_contextual_quick_replies(intent, ctx)

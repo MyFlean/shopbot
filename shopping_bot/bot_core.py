@@ -158,7 +158,7 @@ class ShoppingBotCore:
             # Classify into 4-intent system
             product_intent_result = await self.llm_service.classify_product_intent(query, ctx)
             
-            if product_intent_result.confidence > 0.6:  # High confidence threshold
+            if product_intent_result.confidence > 0.3:  # Relaxed confidence threshold to improve UX coverage
                 log.info(f"4INTENT_CLASSIFIED | user={ctx.user_id} | intent={product_intent_result.intent} | confidence={product_intent_result.confidence}")
                 
                 # Generate base answer
@@ -203,6 +203,53 @@ class ShoppingBotCore:
                     content=ux_enhanced_answer,
                     functions_executed=list(fetched.keys()),
                 )
+
+        # Heuristic fallback: if product-like follow-up and we have products, attach UX with default intent
+        try:
+            def _has_products(data: Dict[str, Any]) -> bool:
+                if not isinstance(data, dict):
+                    return False
+                block = data.get("search_products")
+                if isinstance(block, dict):
+                    payload = block.get("data", block)
+                    return bool(isinstance(payload, dict) and payload.get("products"))
+                return False
+            if (effective_l3 in SERIOUS_PRODUCT_INTENTS) and _has_products(fetched):
+                fallback_intent = "show_me_options"
+                log.info(f"4INTENT_FALLBACK | user={ctx.user_id} | intent={fallback_intent}")
+                base = await self.llm_service.generate_response(
+                    query,
+                    ctx,
+                    fetched,
+                    intent_l3=effective_l3,
+                    query_intent=map_leaf_to_query_intent(effective_l3),
+                    product_intent=fallback_intent,
+                )
+                ux = await generate_ux_response_for_intent(
+                    intent=fallback_intent,
+                    previous_answer=base,
+                    ctx=ctx,
+                    user_query=query,
+                )
+                resp_type = ResponseType(ux.get("response_type", "final_answer"))
+                self._store_last_recommendation(query, ctx, fetched)
+                snapshot_and_trim(
+                    ctx,
+                    base_query=query,
+                    final_answer={
+                        "response_type": resp_type.value,
+                        "message_preview": str(ux.get("summary_message", ux.get("message", "")))[:300],
+                        "has_sections": False,
+                        "has_products": bool(ux.get("products")),
+                        "flow_triggered": False,
+                        "ux_intent": fallback_intent,
+                    },
+                )
+                self.ctx_mgr.save_context(ctx)
+                self.smart_log.response_generated(ctx.user_id, resp_type.value, False)
+                return BotResponse(resp_type, content=ux, functions_executed=list(fetched.keys()))
+        except Exception:
+            pass
 
         # Default: Generate unified response (existing flow)
         answer_dict = await self.llm_service.generate_response(
@@ -286,7 +333,7 @@ class ShoppingBotCore:
             
             product_intent_result = await self.llm_service.classify_product_intent(query, ctx)
             
-            if product_intent_result.confidence > 0.6:  # High confidence threshold
+            if product_intent_result.confidence > 0.3:  # Relaxed confidence threshold to improve UX coverage
                 product_intent = product_intent_result.intent
                 ctx.session["product_intent"] = product_intent
                 log.info(f"4INTENT_NEW_CLASSIFIED | user={ctx.user_id} | intent={product_intent} | confidence={product_intent_result.confidence}")
@@ -302,6 +349,15 @@ class ShoppingBotCore:
         assessment = await self.llm_service.assess_requirements(
             query, intent, result.layer3, ctx
         )
+
+        # Enforce no-ask policy for specific product intents
+        no_ask_intents = {"is_this_good", "which_is_better"}
+        if (ctx.session.get("product_intent") in no_ask_intents) or (
+            product_intent in no_ask_intents
+        ):
+            # Strip user slots from assessment
+            assessment.missing_data = [f for f in assessment.missing_data if not is_user_slot(f)]
+            assessment.priority_order = [f for f in assessment.priority_order if not is_user_slot(f)]
 
         user_slots = [f for f in assessment.missing_data if is_user_slot(f)]
         missing_data_names = [get_func_value(f) for f in assessment.missing_data]
@@ -326,6 +382,25 @@ class ShoppingBotCore:
             "currently_asking": None,
         }
 
+        # Heuristic: ensure essential slots for product queries when model under-specifies
+        try:
+            if result.is_product_related:
+                essentials: list[str] = []
+                if "budget" not in ctx.session:
+                    essentials.append(UserSlot.USER_BUDGET.value)
+                if "product_category" not in ctx.session:
+                    essentials.append(UserSlot.PRODUCT_CATEGORY.value)
+                if essentials:
+                    a = ctx.session["assessment"]
+                    # Prepend essentials if missing
+                    for slot in reversed(essentials):
+                        if slot not in a["priority_order"]:
+                            a["priority_order"].insert(0, slot)
+                        if slot not in a["missing_data"]:
+                            a["missing_data"].insert(0, slot)
+        except Exception:
+            pass
+
         self.ctx_mgr.save_context(ctx)
         return await self._continue_assessment(query, ctx)
 
@@ -346,6 +421,11 @@ class ShoppingBotCore:
         ask_first = [f for f in still_missing if is_user_slot(f)]
         fetch_later = [f for f in still_missing if not is_user_slot(f)]
 
+        # Enforce no-ask policy for specific product intents
+        no_ask_intents = {"is_this_good", "which_is_better"}
+        if ctx.session.get("product_intent") in no_ask_intents:
+            ask_first = []
+
         if ask_first:
             func = ask_first[0]
             func_value = get_func_value(func)
@@ -353,7 +433,14 @@ class ShoppingBotCore:
 
             self.smart_log.user_question(ctx.user_id, func_value)
             self.ctx_mgr.save_context(ctx)
-            return BotResponse(ResponseType.QUESTION, build_question(func, ctx))
+            q = build_question(func, ctx)
+            # Include currently_asking so FE can render context like samples
+            try:
+                if isinstance(q, dict):
+                    q["currently_asking"] = func_value
+            except Exception:
+                pass
+            return BotResponse(ResponseType.QUESTION, q)
 
         needs_bg = bool(ctx.session.get("needs_background")) and Cfg.ENABLE_ASYNC
         if fetch_later and needs_bg:
@@ -467,6 +554,55 @@ class ShoppingBotCore:
                 functions_executed=list(fetched.keys())
             )
         
+        # Heuristic fallback: attach UX if products present even without explicit product_intent
+        try:
+            def _has_products(data: Dict[str, Any]) -> bool:
+                if not isinstance(data, dict):
+                    return False
+                block = data.get("search_products")
+                if isinstance(block, dict):
+                    payload = block.get("data", block)
+                    return bool(isinstance(payload, dict) and payload.get("products"))
+                return False
+            if ctx.session.get("is_product_related") and not product_intent and _has_products(fetched):
+                fallback_intent = "show_me_options"
+                log.info(f"4INTENT_COMPLETE_FALLBACK | user={ctx.user_id} | intent={fallback_intent}")
+                answer_dict = await self.llm_service.generate_response(
+                    original_q,
+                    ctx,
+                    fetched,
+                    intent_l3=intent_l3,
+                    query_intent=map_leaf_to_query_intent(intent_l3),
+                    product_intent=fallback_intent,
+                )
+                ux_enhanced_answer = await generate_ux_response_for_intent(
+                    intent=fallback_intent,
+                    previous_answer=answer_dict,
+                    ctx=ctx,
+                    user_query=original_q,
+                )
+                resp_type = ResponseType(ux_enhanced_answer.get("response_type", "final_answer"))
+                self._store_last_recommendation(original_q, ctx, fetched)
+                snapshot_and_trim(
+                    ctx,
+                    base_query=original_q,
+                    final_answer={
+                        "response_type": resp_type.value,
+                        "message_preview": str(ux_enhanced_answer.get("summary_message", ux_enhanced_answer.get("message", "")))[:300],
+                        "has_sections": False,
+                        "has_products": bool(ux_enhanced_answer.get("products")),
+                        "flow_triggered": False,
+                        "ux_intent": fallback_intent,
+                    },
+                )
+                ctx.session.pop("assessment", None)
+                ctx.session.pop("contextual_questions", None)
+                self.ctx_mgr.save_context(ctx)
+                self.smart_log.response_generated(ctx.user_id, resp_type.value, False)
+                return BotResponse(resp_type, content=ux_enhanced_answer, functions_executed=list(fetched.keys()))
+        except Exception:
+            pass
+
         # DEFAULT: Generate unified response (existing flow)
         answer_dict = await self.llm_service.generate_response(
             original_q,

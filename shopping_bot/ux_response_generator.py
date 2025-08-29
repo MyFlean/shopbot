@@ -1,573 +1,457 @@
 # shopping_bot/ux_response_generator.py
 """
-UX Response Generation Service
-──────────────────────────────
-Generates DPL, PSL, and Quick Replies for the 4 UX intent patterns.
-Creates cohesive UX responses that follow the three-tap rule.
+UX Response Generator - NEW MODULE
+==================================
+
+Modular service that takes classified 4-intent + answer + product IDs 
+and generates UX-ready responses with DPL, PSL, and QRs.
+
+Designed to be service-ready for future separation.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 import anthropic
 
 from .config import get_config
-from .models import UserContext, UXResponse, DPL, PSL, QuickReply, UXProduct
-from .enums import UXIntentType, PSLType, EnhancedResponseType
-from .ux_classifier import UXClassificationResult
-from .bot_helpers import pick_tool
+from .models import UserContext
 
 Cfg = get_config()
 log = logging.getLogger(__name__)
 
 
-# DPL Generation Tool
-DPL_GENERATION_TOOL = {
-    "name": "generate_dpl",
-    "description": "Generate Dynamic Persuasion Layer text",
+# ─────────────────────────────────────────────────────────────
+# UX Response Data Models
+# ─────────────────────────────────────────────────────────────
+
+@dataclass
+class UXResponse:
+    """Complete UX response with all components."""
+    dpl_runtime_text: str
+    ux_surface: str  # "SPM" or "MPM"
+    quick_replies: List[str]
+    product_ids: List[str]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "dpl_runtime_text": self.dpl_runtime_text,
+            "ux_surface": self.ux_surface,
+            "quick_replies": self.quick_replies,
+            "product_ids": self.product_ids
+        }
+
+
+# ─────────────────────────────────────────────────────────────
+# LLM Tool for UX Generation
+# ─────────────────────────────────────────────────────────────
+
+UX_GENERATION_TOOL = {
+    "name": "generate_ux_response",
+    "description": "Generate UX-ready response with DPL, surface type, and quick replies",
     "input_schema": {
         "type": "object",
         "properties": {
-            "message": {
+            "dpl_runtime_text": {
                 "type": "string",
-                "description": "Persuasive, personalized message"
+                "description": "Dynamic Persuasion Layer text explaining why the suggested products are good"
             },
-            "context_hint": {
-                "type": "string", 
-                "description": "Why this message was chosen"
+            "ux_surface": {
+                "type": "string",
+                "enum": ["SPM", "MPM"],
+                "description": "SPM for single item, MPM for multiple items/collections"
             },
-            "personalization_factors": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Factors that made it personal"
-            }
-        },
-        "required": ["message"]
-    }
-}
-
-
-# Quick Replies Generation Tool
-QUICK_REPLIES_TOOL = {
-    "name": "generate_quick_replies",
-    "description": "Generate context-appropriate quick reply buttons",
-    "input_schema": {
-        "type": "object",
-        "properties": {
             "quick_replies": {
                 "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "label": {"type": "string"},
-                        "value": {"type": "string"},
-                        "intent_type": {
-                            "type": "string",
-                            "enum": ["is_this_good", "which_is_better", "show_alternates", "show_options"]
-                        }
-                    },
-                    "required": ["label", "value"]
-                },
+                "items": {"type": "string"},
+                "minItems": 3,
                 "maxItems": 4,
-                "description": "Up to 4 quick reply buttons"
+                "description": "3-4 quick reply button labels for intent pivots"
             }
         },
-        "required": ["quick_replies"]
+        "required": ["dpl_runtime_text", "ux_surface", "quick_replies"]
     }
 }
 
 
+# ─────────────────────────────────────────────────────────────
+# Intent Configuration
+# ─────────────────────────────────────────────────────────────
+
+INTENT_UX_CONFIG = {
+    "is_this_good": {
+        "default_surface": "SPM",
+        "default_quick_replies": ["Why?", "Cleaner swap", "Cheaper"],
+        "dpl_focus": "verdict on why the product is good"
+    },
+    "which_is_better": {
+        "default_surface": "MPM", 
+        "default_quick_replies": ["Explain pick", "Show alternates", "Add to cart"],
+        "dpl_focus": "verdict on why the recommended choice is best"
+    },
+    "show_me_alternate": {
+        "default_surface": "MPM",
+        "default_quick_replies": ["Only cleaner", "Under ₹{x}", "Higher protein"],
+        "dpl_focus": "verdict on why these alternatives are good options"
+    },
+    "show_me_options": {
+        "default_surface": "MPM", 
+        "default_quick_replies": ["Cheaper", "Spicier", "Higher protein", "Show 10 more"],
+        "dpl_focus": "verdict on why these options suit your needs"
+    }
+}
+
+
+# ─────────────────────────────────────────────────────────────
+# UX Response Generator Service
+# ─────────────────────────────────────────────────────────────
+
 class UXResponseGenerator:
-    """Service for generating complete UX responses with DPL, PSL, and QRs"""
+    """
+    Modular service for generating UX-ready responses.
+    Designed to be separable as future microservice.
+    """
     
     def __init__(self):
         self.anthropic = anthropic.AsyncAnthropic(api_key=Cfg.ANTHROPIC_API_KEY)
     
     async def generate_ux_response(
         self,
-        classification: UXClassificationResult,
-        query: str,
+        intent: str,
+        previous_answer: Dict[str, Any],
+        product_ids: List[str],
         ctx: UserContext,
-        products_data: List[Dict[str, Any]]
+        user_query: str
     ) -> UXResponse:
         """
-        Generate complete UX response for the classified intent.
+        Main method to generate UX-ready response.
         
         Args:
-            classification: UX intent classification result
-            query: User's query
+            intent: One of the 4 intents (is_this_good, which_is_better, etc.)
+            previous_answer: The answer dict from existing LLM service
+            product_ids: List of product IDs to surface
             ctx: User context
-            products_data: Product search results
+            user_query: Original user query
+            
+        Returns:
+            UXResponse with all components
         """
         
-        # Convert products data to UX products
-        ux_products = self._convert_to_ux_products(products_data, classification.ux_intent)
+        if intent not in INTENT_UX_CONFIG:
+            log.warning(f"Unknown intent: {intent}, defaulting to show_me_options")
+            intent = "show_me_options"
         
-        # Generate DPL
-        dpl = await self._generate_dpl(classification, query, ctx, ux_products)
+        try:
+            # Generate UX response using LLM
+            ux_response = await self._call_llm_for_ux(
+                intent, previous_answer, product_ids, ctx, user_query
+            )
+            
+            if ux_response:
+                log.info(f"UX_RESPONSE_GENERATED | intent={intent} | surface={ux_response.ux_surface} | qr_count={len(ux_response.quick_replies)}")
+                return ux_response
+            else:
+                # Fallback to template-based generation
+                return self._generate_fallback_response(intent, previous_answer, product_ids, ctx)
+                
+        except Exception as e:
+            log.error(f"UX_GENERATION_ERROR | intent={intent} | error={e}", exc_info=True)
+            return self._generate_fallback_response(intent, previous_answer, product_ids, ctx)
+    
+    async def _call_llm_for_ux(
+        self,
+        intent: str,
+        previous_answer: Dict[str, Any],
+        product_ids: List[str],
+        ctx: UserContext,
+        user_query: str
+    ) -> Optional[UXResponse]:
+        """Call LLM to generate UX components."""
         
-        # Create PSL
-        psl = self._create_psl(classification.recommended_psl, ux_products, classification.ux_intent)
+        intent_config = INTENT_UX_CONFIG[intent]
         
-        # Generate Quick Replies
-        quick_replies = await self._generate_quick_replies(classification, ctx, len(ux_products))
+        # Build context for LLM
+        context_data = {
+            "user_query": user_query,
+            "intent": intent,
+            "previous_answer": previous_answer,
+            "product_count": len(product_ids),
+            "user_session": {
+                k: v for k, v in ctx.session.items() 
+                if k in ['budget', 'preferences', 'dietary_requirements', 'product_category']
+            }
+        }
+        
+        # Extract budget for dynamic QR generation
+        budget_info = self._extract_budget_info(ctx)
+        
+        prompt = self._build_ux_prompt(intent, context_data, intent_config, budget_info)
+        
+        try:
+            resp = await self.anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[UX_GENERATION_TOOL],
+                tool_choice={"type": "tool", "name": "generate_ux_response"},
+                temperature=0.7,
+                max_tokens=500,
+            )
+            
+            tool_use = self._pick_tool(resp, "generate_ux_response")
+            if not tool_use:
+                return None
+            
+            result = tool_use.input or {}
+            
+            return UXResponse(
+                dpl_runtime_text=result.get("dpl_runtime_text", ""),
+                ux_surface=result.get("ux_surface", intent_config["default_surface"]),
+                quick_replies=result.get("quick_replies", intent_config["default_quick_replies"]),
+                product_ids=product_ids
+            )
+            
+        except Exception as e:
+            log.error(f"LLM_UX_CALL_ERROR | intent={intent} | error={e}")
+            return None
+    
+    def _build_ux_prompt(
+        self, 
+        intent: str, 
+        context_data: Dict[str, Any],
+        intent_config: Dict[str, Any],
+        budget_info: Dict[str, Any]
+    ) -> str:
+        """Build the prompt for UX generation."""
+        
+        return f"""
+You are generating UX components for a WhatsApp shopping bot response.
+
+### INTENT: {intent}
+### CONTEXT: {json.dumps(context_data, ensure_ascii=False, indent=2)}
+### BUDGET INFO: {json.dumps(budget_info, ensure_ascii=False)}
+
+### YOUR TASK:
+Generate 3 components for this {intent} response:
+
+1. **DPL (Dynamic Persuasion Layer)**: 
+   - Focus: {intent_config['dpl_focus']}
+   - Should be persuasive and personal (1-2 sentences)
+   - Address why the user should consider these products
+   - Use information from the previous_answer to make it specific
+
+2. **UX Surface Type**:
+   - SPM: Single Product Module (use for 1 item or clear single recommendation)
+   - MPM: Multiple Product Module (use for 2+ items, comparisons, or collections)
+   - Consider: {len(context_data.get('product_ids', []))} products available
+
+3. **Quick Replies** (3-4 buttons):
+   - Intent-specific action buttons for user to pivot/refine
+   - Examples for {intent}: {intent_config['default_quick_replies']}
+   - Make them contextual to the user's situation
+   - If budget info available, include price-based options like "Under ₹{budget_info.get('upper_limit', 500)}"
+   - Keep labels short (1-3 words)
+
+### EXAMPLES:
+- "is_this_good" → DPL: "This protein powder is excellent for your fitness goals with 25g protein per serving."
+- "which_is_better" → DPL: "Based on your budget, the first option offers the best value with premium ingredients."
+- "show_me_alternate" → DPL: "These alternatives match your dietary needs while staying within your preferred price range."
+
+Return ONLY a tool call to generate_ux_response.
+"""
+    
+    def _extract_budget_info(self, ctx: UserContext) -> Dict[str, Any]:
+        """Extract budget information for dynamic QR generation."""
+        budget_info = {}
+        
+        try:
+            # Try to get budget from session
+            budget = ctx.session.get('budget')
+            if budget:
+                # Parse budget string like "₹100-500", "under ₹200", etc.
+                budget_str = str(budget).lower().replace('₹', '').replace('rs', '').replace('rupees', '')
+                
+                if '-' in budget_str:
+                    parts = budget_str.split('-')
+                    if len(parts) == 2:
+                        try:
+                            budget_info['lower_limit'] = int(parts[0].strip())
+                            budget_info['upper_limit'] = int(parts[1].strip())
+                        except ValueError:
+                            pass
+                elif 'under' in budget_str:
+                    try:
+                        amount = int(''.join(filter(str.isdigit, budget_str)))
+                        budget_info['upper_limit'] = amount
+                    except ValueError:
+                        pass
+                elif 'above' in budget_str or 'over' in budget_str:
+                    try:
+                        amount = int(''.join(filter(str.isdigit, budget_str)))
+                        budget_info['lower_limit'] = amount
+                    except ValueError:
+                        pass
+                else:
+                    try:
+                        amount = int(''.join(filter(str.isdigit, budget_str)))
+                        budget_info['target'] = amount
+                    except ValueError:
+                        pass
+        except Exception as e:
+            log.debug(f"BUDGET_EXTRACTION_ERROR | error={e}")
+        
+        return budget_info
+    
+    def _generate_fallback_response(
+        self,
+        intent: str,
+        previous_answer: Dict[str, Any],
+        product_ids: List[str],
+        ctx: UserContext
+    ) -> UXResponse:
+        """Generate fallback response using templates."""
+        
+        intent_config = INTENT_UX_CONFIG.get(intent, INTENT_UX_CONFIG["show_me_options"])
+        
+        # Template-based DPL generation
+        dpl_templates = {
+            "is_this_good": "This is a solid choice based on your preferences.",
+            "which_is_better": "I'd recommend the first option for the best value.",
+            "show_me_alternate": "These alternatives should work well for your needs.",
+            "show_me_options": "Here are some great options to consider."
+        }
+        
+        dpl_text = dpl_templates.get(intent, dpl_templates["show_me_options"])
+        
+        # Enhance DPL with context if available
+        if previous_answer.get("summary_message"):
+            summary = previous_answer["summary_message"]
+            if len(summary) > 20:  # Use summary if substantial
+                dpl_text = summary[:150] + "..." if len(summary) > 150 else summary
+        
+        # Determine surface type
+        surface_type = "SPM" if len(product_ids) == 1 else "MPM"
+        
+        # Generate contextual quick replies
+        qr_options = self._generate_contextual_quick_replies(intent, ctx)
+        
+        log.info(f"UX_FALLBACK_GENERATED | intent={intent} | surface={surface_type}")
         
         return UXResponse(
-            ux_intent=classification.ux_intent,
-            dpl=dpl,
-            psl=psl,
-            quick_replies=quick_replies,
-            confidence_score=classification.confidence,
-            personalization_applied=self._has_personalization(ctx)
+            dpl_runtime_text=dpl_text,
+            ux_surface=surface_type,
+            quick_replies=qr_options,
+            product_ids=product_ids
         )
     
-    async def _generate_dpl(
-        self,
-        classification: UXClassificationResult,
-        query: str,
-        ctx: UserContext,
-        products: List[UXProduct]
-    ) -> DPL:
-        """Generate Dynamic Persuasion Layer text"""
+    def _generate_contextual_quick_replies(self, intent: str, ctx: UserContext) -> List[str]:
+        """Generate contextual quick replies based on intent and context."""
         
-        # Build context for DPL generation
-        dpl_context = self._build_dpl_context(ctx, products, classification.ux_intent)
+        base_options = INTENT_UX_CONFIG[intent]["default_quick_replies"]
         
-        prompt = self._build_dpl_prompt(query, classification, dpl_context)
+        # Try to make them more contextual
+        contextual_options = []
         
+        for option in base_options:
+            if "₹{x}" in option:
+                # Replace with actual budget if available
+                budget_info = self._extract_budget_info(ctx)
+                if budget_info.get('upper_limit'):
+                    option = option.replace("₹{x}", f"₹{budget_info['upper_limit']}")
+                else:
+                    option = "Under ₹500"  # Default
+            
+            contextual_options.append(option)
+        
+        # Add dietary-specific options if relevant
+        dietary = ctx.session.get('dietary_requirements')
+        if dietary and isinstance(dietary, str):
+            if 'vegan' in dietary.lower():
+                contextual_options = [opt.replace("Cleaner", "Vegan") for opt in contextual_options]
+            elif 'gluten' in dietary.lower():
+                contextual_options = [opt.replace("Cleaner", "Gluten-free") for opt in contextual_options]
+        
+        return contextual_options[:4]  # Max 4 options
+    
+    def _pick_tool(self, resp, tool_name: str):
+        """Extract tool use from Anthropic response."""
         try:
-            resp = await self.anthropic.messages.create(
-                model=Cfg.LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                tools=[DPL_GENERATION_TOOL],
-                tool_choice={"type": "tool", "name": "generate_dpl"},
-                temperature=0.7,
-                max_tokens=200,
-            )
-            
-            tool_use = pick_tool(resp, "generate_dpl")
-            if tool_use and tool_use.input:
-                dpl_data = tool_use.input
-                return DPL(
-                    message=dpl_data.get("message", "Here are your options!"),
-                    context_hint=dpl_data.get("context_hint"),
-                    personalization_factors=dpl_data.get("personalization_factors", [])
-                )
-        
-        except Exception as exc:
-            log.warning(f"DPL generation failed: {exc}")
-        
-        # Fallback DPL
-        return self._get_fallback_dpl(classification.ux_intent, len(products))
-    
-    def _build_dpl_context(self, ctx: UserContext, products: List[UXProduct], intent: UXIntentType) -> Dict[str, Any]:
-        """Build context for DPL generation"""
-        session = ctx.session or {}
-        
-        return {
-            "user_budget": session.get("budget"),
-            "dietary_requirements": session.get("dietary_requirements"),
-            "brand_preferences": session.get("brands"),
-            "product_count": len(products),
-            "price_range": self._get_price_range(products),
-            "has_premium_options": self._has_premium_options(products),
-            "conversation_context": self._get_recent_context(session)
-        }
-    
-    def _build_dpl_prompt(self, query: str, classification: UXClassificationResult, context: Dict[str, Any]) -> str:
-        """Build DPL generation prompt"""
-        
-        intent_guidance = {
-            UXIntentType.IS_THIS_GOOD: "Validate the choice with confidence-building language. Address specific concerns.",
-            UXIntentType.WHICH_IS_BETTER: "Help compare options with clear differentiators. Be decisive.",
-            UXIntentType.SHOW_ALTERNATES: "Present alternatives as improvements or variations. Show why to switch.",
-            UXIntentType.SHOW_OPTIONS: "Create excitement about variety and choice. Guide exploration."
-        }
-        
-        return f"""
-Generate a Dynamic Persuasion Layer message for this shopping context.
-
-USER QUERY: "{query}"
-UX INTENT: {classification.ux_intent.value}
-REASONING: {classification.reasoning}
-
-CONTEXT:
-- Budget: {context.get('user_budget', 'Not specified')}
-- Dietary needs: {context.get('dietary_requirements', 'None')}
-- Brand preferences: {context.get('brand_preferences', 'None')}
-- Products available: {context['product_count']}
-- Price range: {context.get('price_range', 'Varied')}
-- Has premium options: {context.get('has_premium_options', False)}
-
-GUIDANCE: {intent_guidance.get(classification.ux_intent, "Create engaging, helpful message.")}
-
-RULES:
-- Keep message 1-2 sentences, conversational and personal
-- Reference user constraints when relevant (budget, dietary)
-- Build confidence and urgency without being pushy
-- Use "you" language, avoid generic phrases
-- Include relevant context (price, features, benefits)
-
-Return ONLY the tool call to generate_dpl.
-"""
-    
-    async def _generate_quick_replies(
-        self,
-        classification: UXClassificationResult,
-        ctx: UserContext,
-        product_count: int
-    ) -> List[QuickReply]:
-        """Generate context-appropriate quick replies"""
-        
-        # Build context for QR generation
-        qr_context = self._build_qr_context(ctx, classification.ux_intent, product_count)
-        
-        prompt = self._build_qr_prompt(classification, qr_context)
-        
-        try:
-            resp = await self.anthropic.messages.create(
-                model=Cfg.LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                tools=[QUICK_REPLIES_TOOL],
-                tool_choice={"type": "tool", "name": "generate_quick_replies"},
-                temperature=0.3,
-                max_tokens=300,
-            )
-            
-            tool_use = pick_tool(resp, "generate_quick_replies")
-            if tool_use and tool_use.input:
-                qr_data = tool_use.input.get("quick_replies", [])
-                return [
-                    QuickReply(
-                        label=qr.get("label", "More"),
-                        value=qr.get("value", "show more"),
-                        intent_type=UXIntentType(qr["intent_type"]) if qr.get("intent_type") else None
-                    )
-                    for qr in qr_data
-                ]
-        
-        except Exception as exc:
-            log.warning(f"Quick replies generation failed: {exc}")
-        
-        # Fallback QRs
-        return self._get_fallback_quick_replies(classification.ux_intent)
-    
-    def _build_qr_context(self, ctx: UserContext, intent: UXIntentType, product_count: int) -> Dict[str, Any]:
-        """Build context for quick replies generation"""
-        session = ctx.session or {}
-        
-        return {
-            "has_budget": bool(session.get("budget")),
-            "has_dietary_prefs": bool(session.get("dietary_requirements")),
-            "has_brand_prefs": bool(session.get("brands")),
-            "product_count": product_count,
-            "intent": intent.value
-        }
-    
-    def _build_qr_prompt(self, classification: UXClassificationResult, context: Dict[str, Any]) -> str:
-        """Build quick replies generation prompt"""
-        
-        # Intent-specific QR patterns
-        qr_patterns = {
-            UXIntentType.IS_THIS_GOOD: [
-                "Why? (explain choice)",
-                "Cleaner swap (better alternative)",
-                "Cheaper (lower price)",
-                "Add to cart"
-            ],
-            UXIntentType.WHICH_IS_BETTER: [
-                "Explain pick (why this one)",
-                "Show alternates (more options)",
-                "Add A to cart",
-                "Add B to cart"
-            ],
-            UXIntentType.SHOW_ALTERNATES: [
-                "Only cleaner (health focus)",
-                "Under ₹X (budget constraint)",
-                "Higher protein (nutrition)",
-                "Show 10 more"
-            ],
-            UXIntentType.SHOW_OPTIONS: [
-                "Cheaper (budget options)",
-                "Spicier (flavor preference)",
-                "Higher protein (nutrition)",
-                "Show 10 more"
-            ]
-        }
-        
-        pattern_suggestions = qr_patterns.get(classification.ux_intent, ["More", "Budget", "Premium", "Different"])
-        
-        return f"""
-Generate quick reply buttons for this UX intent pattern.
-
-UX INTENT: {classification.ux_intent.value}
-CONTEXT: {json.dumps(context, ensure_ascii=False)}
-
-PATTERN SUGGESTIONS: {pattern_suggestions}
-
-RULES:
-- Generate 3-4 buttons max
-- Keep labels short (1-2 words ideal, max 3)
-- Make values actionable for the bot to understand
-- Consider user constraints (budget, dietary, brands)
-- Follow three-tap rule - each button should lead closer to purchase
-- Map each button to appropriate intent_type when possible
-
-EXAMPLES:
-- "Why?" → value: "explain why this product", intent_type: "is_this_good"
-- "Cheaper" → value: "show cheaper alternatives", intent_type: "show_alternates"  
-- "Add to cart" → value: "add product to cart"
-
-Return ONLY the tool call to generate_quick_replies.
-"""
-    
-    def _create_psl(self, psl_type: PSLType, products: List[UXProduct], intent: UXIntentType) -> PSL:
-        """Create Product Surface Layer with appropriate template"""
-        
-        if psl_type == PSLType.SPM:
-            # Single Product Module - take first product
-            products_for_template = products[:1]
-            max_visible = 1
-            
-        else:  # MPM
-            # Multi-Product Module - curated collections
-            products_for_template = products[:20]  # More products for collections
-            max_visible = 10  # Show 10, rest behind "View items"
-        
-        # Set collection title for MPM
-        collection_title = None
-        view_more_action = None
-        
-        if psl_type == PSLType.MPM:
-            collection_title = self._get_collection_title(intent, len(products))
-            if len(products) > max_visible:
-                view_more_action = f"view_more_{intent.value}"
-        
-        return PSL(
-            template_type=psl_type,
-            products=products_for_template,
-            max_visible=max_visible,
-            collection_title=collection_title,
-            view_more_action=view_more_action
-        )
-    
-    def _convert_to_ux_products(self, products_data: List[Dict[str, Any]], intent: UXIntentType) -> List[UXProduct]:
-        """Convert search results to UX products with persuasion hooks"""
-        
-        ux_products = []
-        for i, product in enumerate(products_data):
-            # Extract basic product info
-            product_id = str(product.get("id", f"prod_{i}"))
-            name = product.get("name", "Product")
-            price = f"₹{product.get('price', 'N/A')}"
-            
-            # Generate persuasion hook based on intent
-            persuasion_hook = self._generate_persuasion_hook(product, intent)
-            
-            # Extract key differentiator
-            key_differentiator = self._extract_key_differentiator(product)
-            
-            ux_products.append(UXProduct(
-                id=product_id,
-                name=name,
-                price=price,
-                image_url=product.get("image"),
-                brand=product.get("brand"),
-                rating=product.get("rating"),
-                persuasion_hook=persuasion_hook,
-                key_differentiator=key_differentiator,
-                cart_action=f"add_to_cart_{product_id}",
-                features=self._extract_features(product)
-            ))
-        
-        return ux_products
-    
-    def _generate_persuasion_hook(self, product: Dict[str, Any], intent: UXIntentType) -> str:
-        """Generate persuasive one-liner for the product"""
-        
-        # Extract key attributes
-        price = product.get("price")
-        brand = product.get("brand", "")
-        health_claims = product.get("health_claims", [])
-        protein = product.get("protein_g")
-        
-        if intent == UXIntentType.IS_THIS_GOOD:
-            if health_claims:
-                return f"Great choice with {health_claims[0].lower()}"
-            elif protein and protein > 10:
-                return f"Excellent protein source at {protein}g per serving"
-            else:
-                return f"Popular {brand} choice" if brand else "Solid everyday option"
-        
-        elif intent == UXIntentType.WHICH_IS_BETTER:
-            if protein:
-                return f"{protein}g protein - ideal for fitness goals"
-            elif price and price < 100:
-                return "Budget-friendly without compromising quality"
-            else:
-                return "Premium quality meets great value"
-        
-        elif intent == UXIntentType.SHOW_ALTERNATES:
-            if health_claims:
-                return f"Cleaner choice: {health_claims[0].lower()}"
-            else:
-                return "Better alternative for your needs"
-        
-        else:  # SHOW_OPTIONS
-            return "Worth exploring for your requirements"
-    
-    def _extract_key_differentiator(self, product: Dict[str, Any]) -> str:
-        """Extract what makes this product special"""
-        
-        # Priority order for differentiators
-        if product.get("health_claims"):
-            return product["health_claims"][0]
-        elif product.get("dietary_labels"):
-            return product["dietary_labels"][0]
-        elif product.get("protein_g") and product["protein_g"] > 15:
-            return f"High protein ({product['protein_g']}g)"
-        elif product.get("brand"):
-            return f"Trusted {product['brand']} brand"
-        else:
-            return "Quality assured"
-    
-    def _extract_features(self, product: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract relevant features for comparison"""
-        features = {}
-        
-        if product.get("protein_g"):
-            features["protein"] = f"{product['protein_g']}g"
-        if product.get("calories"):
-            features["calories"] = product["calories"]
-        if product.get("dietary_labels"):
-            features["dietary"] = product["dietary_labels"]
-        if product.get("health_claims"):
-            features["claims"] = product["health_claims"]
-        
-        return features
-    
-    def _get_price_range(self, products: List[UXProduct]) -> str:
-        """Get price range from products"""
-        if not products:
-            return "Varied"
-        
-        prices = []
-        for product in products:
-            try:
-                # Extract numeric price
-                price_str = product.price.replace("₹", "").replace(",", "")
-                prices.append(float(price_str))
-            except:
-                continue
-        
-        if not prices:
-            return "Varied"
-        
-        min_price = min(prices)
-        max_price = max(prices)
-        
-        if min_price == max_price:
-            return f"₹{int(min_price)}"
-        else:
-            return f"₹{int(min_price)}-{int(max_price)}"
-    
-    def _has_premium_options(self, products: List[UXProduct]) -> bool:
-        """Check if there are premium-priced options"""
-        for product in products:
-            try:
-                price_str = product.price.replace("₹", "").replace(",", "")
-                if float(price_str) > 200:  # Consider 200+ as premium
-                    return True
-            except:
-                continue
-        return False
-    
-    def _get_recent_context(self, session: Dict[str, Any]) -> str:
-        """Get recent conversation context"""
-        history = session.get("history", [])
-        if not history:
-            return "New conversation"
-        
-        recent = history[-1]
-        if isinstance(recent, dict):
-            return recent.get("intent", "Continuing conversation")
-        
-        return "Ongoing conversation"
-    
-    def _has_personalization(self, ctx: UserContext) -> bool:
-        """Check if response can be personalized"""
-        session = ctx.session or {}
-        return bool(
-            session.get("budget") or 
-            session.get("dietary_requirements") or 
-            session.get("brands")
-        )
-    
-    def _get_collection_title(self, intent: UXIntentType, product_count: int) -> str:
-        """Generate collection title for MPM"""
-        titles = {
-            UXIntentType.IS_THIS_GOOD: "Recommended for You",
-            UXIntentType.WHICH_IS_BETTER: "Top Comparisons",
-            UXIntentType.SHOW_ALTERNATES: "Better Alternatives",
-            UXIntentType.SHOW_OPTIONS: f"All {product_count} Options"
-        }
-        return titles.get(intent, "Product Collection")
-    
-    def _get_fallback_dpl(self, intent: UXIntentType, product_count: int) -> DPL:
-        """Fallback DPL when generation fails"""
-        messages = {
-            UXIntentType.IS_THIS_GOOD: "This looks like a solid choice for your needs!",
-            UXIntentType.WHICH_IS_BETTER: "Here's how these options compare for you.",
-            UXIntentType.SHOW_ALTERNATES: f"Found {product_count} great alternatives to consider.",
-            UXIntentType.SHOW_OPTIONS: f"Exploring all {product_count} options for you!"
-        }
-        
-        return DPL(
-            message=messages.get(intent, "Here are your options!"),
-            context_hint="Fallback message due to generation failure",
-            personalization_factors=["fallback"]
-        )
-    
-    def _get_fallback_quick_replies(self, intent: UXIntentType) -> List[QuickReply]:
-        """Fallback quick replies when generation fails"""
-        fallback_qrs = {
-            UXIntentType.IS_THIS_GOOD: [
-                QuickReply("Why?", "explain choice", UXIntentType.IS_THIS_GOOD),
-                QuickReply("Cheaper", "cheaper options", UXIntentType.SHOW_ALTERNATES),
-                QuickReply("Add to cart", "add to cart")
-            ],
-            UXIntentType.WHICH_IS_BETTER: [
-                QuickReply("Explain", "explain difference", UXIntentType.IS_THIS_GOOD),
-                QuickReply("More options", "show more", UXIntentType.SHOW_OPTIONS)
-            ],
-            UXIntentType.SHOW_ALTERNATES: [
-                QuickReply("Cheaper", "cheaper options", UXIntentType.SHOW_ALTERNATES),
-                QuickReply("Premium", "premium options", UXIntentType.SHOW_ALTERNATES),
-                QuickReply("More", "show more", UXIntentType.SHOW_OPTIONS)
-            ],
-            UXIntentType.SHOW_OPTIONS: [
-                QuickReply("Budget", "budget options", UXIntentType.SHOW_ALTERNATES),
-                QuickReply("Premium", "premium options", UXIntentType.SHOW_ALTERNATES),
-                QuickReply("More", "show more", UXIntentType.SHOW_OPTIONS)
-            ]
-        }
-        
-        return fallback_qrs.get(intent, [
-            QuickReply("More", "show more options", UXIntentType.SHOW_OPTIONS)
-        ])
+            for block in (resp.content or []):
+                if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == tool_name:
+                    return block
+        except Exception:
+            pass
+        return None
 
 
-# Global service instance
-_ux_response_generator: Optional[UXResponseGenerator] = None
+# ─────────────────────────────────────────────────────────────
+# Service Factory
+# ─────────────────────────────────────────────────────────────
 
+_ux_generator_instance: Optional[UXResponseGenerator] = None
 
 def get_ux_response_generator() -> UXResponseGenerator:
-    """Get the global UX response generator instance"""
-    global _ux_response_generator
-    if _ux_response_generator is None:
-        _ux_response_generator = UXResponseGenerator()
-    return _ux_response_generator
+    """Get global UX response generator instance."""
+    global _ux_generator_instance
+    if _ux_generator_instance is None:
+        _ux_generator_instance = UXResponseGenerator()
+    return _ux_generator_instance
+
+
+# ─────────────────────────────────────────────────────────────
+# Integration Helper Functions
+# ─────────────────────────────────────────────────────────────
+
+async def generate_ux_response_for_intent(
+    intent: str,
+    previous_answer: Dict[str, Any],
+    ctx: UserContext,
+    user_query: str
+) -> Dict[str, Any]:
+    """
+    High-level integration function.
+    
+    Takes intent classification result and previous answer,
+    extracts product IDs, and returns UX-ready response.
+    """
+    
+    # Extract product IDs from previous answer
+    product_ids = []
+    if previous_answer.get("products"):
+        products = previous_answer["products"]
+        if isinstance(products, list):
+            for product in products:
+                if isinstance(product, dict) and product.get("id"):
+                    product_ids.append(product["id"])
+    
+    # If no IDs, generate them from product names
+    if not product_ids and previous_answer.get("products"):
+        products = previous_answer["products"]
+        if isinstance(products, list):
+            for i, product in enumerate(products):
+                if isinstance(product, dict):
+                    name = product.get("text", product.get("name", f"product_{i}"))
+                    product_ids.append(f"prod_{hash(name)%1000000}")
+    
+    # Generate UX response
+    generator = get_ux_response_generator()
+    ux_response = await generator.generate_ux_response(
+        intent=intent,
+        previous_answer=previous_answer,
+        product_ids=product_ids,
+        ctx=ctx,
+        user_query=user_query
+    )
+    
+    # Combine with original answer
+    result = dict(previous_answer)  # Copy original
+    result.update({
+        "ux_response": ux_response.to_dict(),
+        "product_intent": intent
+    })
+    
+    log.info(f"UX_INTEGRATION_COMPLETE | intent={intent} | products={len(product_ids)}")
+    return result

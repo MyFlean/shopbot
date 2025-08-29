@@ -2,10 +2,11 @@
 """
 LLM service module for ShoppingBotCore
 ──────────────────────────────────────
-UNIFIED PRODUCT RESPONSE GENERATION
-- All product intents use the same structured response format
-- Each product gets a one-liner description
-- Clean, consistent output structure
+UPDATED: 4-Intent Classification for Product Queries
+- Is this good?
+- Which is better?
+- Show me alternate
+- Show me options
 """
 
 from __future__ import annotations
@@ -13,36 +14,53 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Union, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import anthropic
 
-from .config import get_config
-from .enums import QueryIntent, BackendFunction, UserSlot
-from .intent_config import (
-    INTENT_MAPPING,
-    SLOT_QUESTIONS,
-    CATEGORY_QUESTION_HINTS,
-)
-from .models import (
-    RequirementAssessment,
-    UserContext,
-    FollowUpResult,
-    FollowUpPatch,
-    ProductData,
-)
-from .utils.helpers import extract_json_block
 from .bot_helpers import pick_tool, string_to_function
-
+from .config import get_config
+from .enums import BackendFunction, QueryIntent, UserSlot
+from .intent_config import (CATEGORY_QUESTION_HINTS, INTENT_MAPPING,
+                            SLOT_QUESTIONS)
+from .models import (FollowUpPatch, FollowUpResult, ProductData,
+                     RequirementAssessment, UserContext)
 from .recommendation import get_recommendation_service
+from .utils.helpers import extract_json_block
 
 Cfg = get_config()
 log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────
-# Tool definitions
+# NEW: 4-Intent Classification Tool
 # ─────────────────────────────────────────────────────────────
+
+PRODUCT_INTENT_TOOL = {
+    "name": "classify_product_intent",
+    "description": "Classify serious product-related queries into 4 specific intents",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "intent": {
+                "type": "string",
+                "enum": ["is_this_good", "which_is_better", "show_me_alternate", "show_me_options"],
+                "description": "The specific product intent"
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Confidence level in classification"
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation for the classification"
+            }
+        },
+        "required": ["intent", "confidence"]
+    }
+}
 
 INTENT_CLASSIFICATION_TOOL = {
     "name": "classify_intent",
@@ -65,8 +83,12 @@ INTENT_CLASSIFICATION_TOOL = {
                 "enum": list(INTENT_MAPPING.keys()),
                 "description": "Specific intent from the configured taxonomy",
             },
+            "is_product_related": {
+                "type": "boolean",
+                "description": "Whether this is a serious product-related query"
+            }
         },
-        "required": ["layer1", "layer2", "layer3"],
+        "required": ["layer1", "layer2", "layer3", "is_product_related"],
     },
 }
 
@@ -111,7 +133,6 @@ DELTA_ASSESS_TOOL = {
     },
 }
 
-# Unified product response tool
 PRODUCT_RESPONSE_TOOL = {
     "name": "generate_product_response",
     "description": "Generate structured response with product recommendations and descriptions",
@@ -148,7 +169,6 @@ PRODUCT_RESPONSE_TOOL = {
     }
 }
 
-# Non-product response tool
 SIMPLE_RESPONSE_TOOL = {
     "name": "generate_simple_response",
     "description": "Generate simple text response for non-product queries",
@@ -253,8 +273,8 @@ INTENT_CLASSIFICATION_PROMPT = """
 You are an e-commerce intent classifier.
 
 GOAL:
-Classify the user's **latest message** into the 3-layer hierarchy. The latest message DOMINATES.
-Use recent history ONLY to disambiguate when the latest message is substantive.
+1. Classify the user's **latest message** into the 3-layer hierarchy
+2. Determine if this is a serious product-related query that should use the new 4-intent system
 
 ### Intent Hierarchy:
 A. Awareness_Discovery
@@ -275,11 +295,36 @@ E. Account_Support
    E1. Account     → [Account_Profile_Management]
    E2. Support     → [Technical_Support, General_Help]
 
+### Product-Related Queries:
+Set is_product_related=true ONLY for serious product queries like:
+- Product_Discovery, Recommendation, Specific_Product_Search, Product_Comparison
+- Queries asking for product evaluations, comparisons, alternatives, or options
+
 INPUTS:
 - Recent context: {recent_context}
 - Latest user message: "{query}"
 
 Return ONLY a tool call to classify_intent.
+"""
+
+PRODUCT_INTENT_CLASSIFICATION_PROMPT = """
+You are classifying a serious product-related query into exactly 4 intents:
+
+1. **is_this_good** - User asking for evaluation/validation of a specific product or small set
+2. **which_is_better** - User comparing 2-3 specific items and wants a recommendation 
+3. **show_me_alternate** - User wants alternatives to something they've seen/mentioned
+4. **show_me_options** - User wants to explore a category/type with multiple choices
+
+EXAMPLES:
+- "Is this protein powder good?" → is_this_good
+- "Should I buy Samsung Galaxy or iPhone?" → which_is_better  
+- "Show me alternatives to this laptop" → show_me_alternate
+- "What are my options for wireless headphones?" → show_me_options
+
+USER QUERY: "{query}"
+CONTEXT: {context}
+
+Return ONLY a tool call to classify_product_intent.
 """
 
 FOLLOW_UP_PROMPT_TEMPLATE = """
@@ -350,7 +395,6 @@ Requirements:
 - NO instructional text or examples
 """
 
-# Unified product response prompt
 PRODUCT_RESPONSE_PROMPT = """
 You are an e-commerce assistant helping users find products.
 
@@ -377,13 +421,11 @@ Create a helpful response with:
    - Is 1-3 sentences long
 
 2. **products**: For each relevant product (up to 10):
-   - id: Use the EXACT 'id' field from the search results (DO NOT generate new IDs)
    - text: The exact product name from results
    - description: A compelling one-liner about why this product is worth buying
    - price: The price with currency (e.g., "₹60")
    - special_features: Key differentiators (e.g., "High protein, organic")
 
-IMPORTANT: Always use the actual 'id' field from each product in the search results.
 Focus on actual product attributes from the search results.
 Make descriptions specific and benefit-focused.
 If no products found, provide helpful message with empty products array.
@@ -391,7 +433,6 @@ If no products found, provide helpful message with empty products array.
 Return ONLY a tool call to generate_product_response.
 """
 
-# Simple response prompt for non-product queries
 SIMPLE_RESPONSE_PROMPT = """
 You are an e-commerce assistant.
 
@@ -418,7 +459,7 @@ Return ONLY a tool call to generate_simple_response.
 
 
 # ─────────────────────────────────────────────────────────────
-# Result dataclass
+# Result dataclasses
 # ─────────────────────────────────────────────────────────────
 
 @dataclass
@@ -426,6 +467,13 @@ class IntentResult:
     layer1: str
     layer2: str
     layer3: str
+    is_product_related: bool = False
+
+@dataclass
+class ProductIntentResult:
+    intent: str
+    confidence: float
+    reasoning: str = ""
 
 
 # ─────────────────────────────────────────────────────────────
@@ -467,9 +515,9 @@ class LLMService:
         self.anthropic = anthropic.AsyncAnthropic(api_key=Cfg.ANTHROPIC_API_KEY)
         self._recommendation_service = get_recommendation_service()
 
-    # ---------------- INTENT ----------------
+    # ---------------- UPDATED: INTENT CLASSIFICATION ----------------
     async def classify_intent(self, query: str, ctx: Optional[UserContext] = None) -> IntentResult:
-        """Classify intent with latest-turn dominance."""
+        """Updated intent classification with product-related detection."""
         recent_context: Dict[str, Any] = {}
         try:
             if ctx:
@@ -494,22 +542,64 @@ class LLMService:
             tools=[INTENT_CLASSIFICATION_TOOL],
             tool_choice={"type": "tool", "name": "classify_intent"},
             temperature=0.2,
-            max_tokens=120,
+            max_tokens=150,
         )
         
         tool_use = pick_tool(resp, "classify_intent")
         if not tool_use:
-            return IntentResult("E", "E2", "General_Help")
+            return IntentResult("E", "E2", "General_Help", False)
 
         args = _strip_keys(tool_use.input or {})
         layer1 = args.get("layer1", "E")
         layer2 = args.get("layer2", "E2")
         layer3 = args.get("layer3", "General_Help")
+        is_product_related = bool(args.get("is_product_related", False))
 
         if layer3 not in INTENT_MAPPING:
-            layer1, layer2, layer3 = "E", "E2", "General_Help"
+            layer1, layer2, layer3, is_product_related = "E", "E2", "General_Help", False
 
-        return IntentResult(layer1, layer2, layer3)
+        return IntentResult(layer1, layer2, layer3, is_product_related)
+
+    # ---------------- NEW: PRODUCT INTENT CLASSIFICATION ----------------
+    async def classify_product_intent(self, query: str, ctx: UserContext) -> ProductIntentResult:
+        """Classify product-related queries into the 4 specific intents."""
+        
+        # Build context for classification
+        context_info = {
+            "session_data": {k: v for k, v in ctx.session.items() if k in ['last_recommendation', 'product_category', 'budget']},
+            "recent_fetched": list(ctx.fetched_data.keys())[-3:] if ctx.fetched_data else [],
+            "conversation_history": ctx.session.get("history", [])[-2:] if ctx.session.get("history") else []
+        }
+
+        prompt = PRODUCT_INTENT_CLASSIFICATION_PROMPT.format(
+            query=query.strip(),
+            context=json.dumps(context_info, ensure_ascii=False)
+        )
+        
+        try:
+            resp = await self.anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[PRODUCT_INTENT_TOOL],
+                tool_choice={"type": "tool", "name": "classify_product_intent"},
+                temperature=0.1,
+                max_tokens=200,
+            )
+            
+            tool_use = pick_tool(resp, "classify_product_intent")
+            if not tool_use:
+                return ProductIntentResult("show_me_options", 0.5, "fallback")
+
+            args = _strip_keys(tool_use.input or {})
+            intent = args.get("intent", "show_me_options")
+            confidence = float(args.get("confidence", 0.5))
+            reasoning = args.get("reasoning", "")
+            
+            return ProductIntentResult(intent, confidence, reasoning)
+            
+        except Exception as exc:
+            log.warning("Product intent classification failed: %s", exc)
+            return ProductIntentResult("show_me_options", 0.3, f"error: {exc}")
 
     # ---------------- UNIFIED RESPONSE GENERATION ----------------
     async def generate_response(
@@ -518,22 +608,22 @@ class LLMService:
         ctx: UserContext,
         fetched: Dict[str, Any],
         intent_l3: str,
-        query_intent: QueryIntent
+        query_intent: QueryIntent,
+        product_intent: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Unified response generation - determines if product or simple response needed.
-        """
-        # Product-related intents that should show products
+        """Enhanced unified response generation."""
         product_intents = {
             "Product_Discovery", "Recommendation", 
             "Specific_Product_Search", "Product_Comparison"
         }
         
-        # Check if we have product search results
         has_products = self._has_product_results(fetched)
         
         if intent_l3 in product_intents and has_products:
-            return await self._generate_product_response(query, ctx, fetched, intent_l3)
+            result = await self._generate_product_response(query, ctx, fetched, intent_l3)
+            if product_intent:
+                result["product_intent"] = product_intent
+            return result
         else:
             return await self._generate_simple_response(query, ctx, fetched, intent_l3, query_intent)
 
@@ -554,13 +644,12 @@ class LLMService:
         intent_l3: str
     ) -> Dict[str, Any]:
         """Generate structured product response with descriptions."""
-        # Extract products from fetched data
         products_data = []
         if 'search_products' in fetched:
             search_data = fetched['search_products']
             if isinstance(search_data, dict):
                 data = search_data.get('data', search_data)
-                products_data = data.get('products', [])[:10]  # Limit to 10
+                products_data = data.get('products', [])[:10]
         
         if not products_data:
             return {
@@ -589,17 +678,13 @@ class LLMService:
             
             tool_use = pick_tool(resp, "generate_product_response")
             if not tool_use:
-                # Fallback
                 return self._create_fallback_product_response(products_data, query)
             
             result = _strip_keys(tool_use.input or {})
             
-            # Ensure product IDs from ES are preserved
             for i, product in enumerate(result.get("products", [])):
-                if i < len(products_data):
-                    # Use the actual ES ID
-                    es_product = products_data[i]
-                    product["id"] = str(es_product.get('id', f"prod_{i}"))
+                if "id" not in product and i < len(products_data):
+                    product["id"] = f"prod_{hash(products_data[i].get('name', ''))%1000000}"
             
             return result
             
@@ -611,10 +696,8 @@ class LLMService:
         """Create a fallback product response if LLM fails."""
         products = []
         for p in products_data[:5]:
-            # Use actual ID from ES if available, otherwise generate
-            product_id = p.get('id') or p.get('_id') or p.get('product_id') or f"prod_{hash(p.get('name', ''))%1000000}"
             products.append({
-                "id": str(product_id),
+                "id": f"prod_{hash(p.get('name', ''))%1000000}",
                 "text": p.get("name", "Product"),
                 "description": f"Quality product at {p.get('price', 'great price')}",
                 "price": f"₹{p.get('price', 'N/A')}",
@@ -671,17 +754,14 @@ class LLMService:
                 "message": "I can help you with shopping queries. What are you looking for?"
             }
 
-    # ---------------- COMPATIBILITY METHODS ----------------
+    # ---------------- EXISTING METHODS ----------------
     async def generate_answer(
         self,
         query: str,
         ctx: UserContext,
         fetched: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """
-        Compatibility method - now routes to unified response generation.
-        Used specifically for Recommendation intent.
-        """
+        """Compatibility method."""
         return await self.generate_response(
             query, ctx, fetched, 
             intent_l3="Recommendation",
@@ -697,14 +777,11 @@ class LLMService:
         intent_l3: str,
         query_intent: QueryIntent
     ) -> Dict[str, Any]:
-        """
-        Compatibility method - now routes to unified response generation.
-        """
+        """Compatibility method."""
         return await self.generate_response(
             query, ctx, fetched, intent_l3, query_intent
         )
 
-    # ---------------- FOLLOW-UP ----------------
     async def classify_follow_up(self, query: str, ctx: UserContext) -> FollowUpResult:
         """Classify if query is a follow-up."""
         history = ctx.session.get("history", [])
@@ -750,7 +827,6 @@ class LLMService:
             log.warning("Follow-up classification failed: %s", exc)
             return FollowUpResult(False, FollowUpPatch(slots={}))
 
-    # ---------------- DELTA ASSESS ----------------
     async def assess_delta_requirements(
         self, query: str, ctx: UserContext, patch: FollowUpPatch
     ) -> List[BackendFunction]:
@@ -788,7 +864,6 @@ class LLMService:
             log.warning("Delta assess failed: %s", exc)
             return []
 
-    # ---------------- REQUIREMENTS ----------------
     async def assess_requirements(
         self,
         query: str,
@@ -862,7 +937,6 @@ class LLMService:
             priority_order=order or missing,
         )
 
-    # ---------------- QUESTION GENERATION ----------------
     async def generate_contextual_questions(
         self,
         slots_needed: List[UserSlot],
@@ -938,7 +1012,6 @@ class LLMService:
             log.warning("Question generation failed: %s", exc)
             return {}
 
-    # ---------------- ES PARAMS ----------------
     async def extract_es_params(self, ctx: UserContext) -> Dict[str, Any]:
         """Extract ES parameters via recommendation service."""
         try:

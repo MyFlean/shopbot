@@ -1,7 +1,8 @@
 from __future__ import annotations
-from typing import Any, Dict
+
 from dataclasses import asdict, is_dataclass
 from enum import Enum
+from typing import Any, Dict
 
 from .enums import ResponseType
 from .models import UserContext

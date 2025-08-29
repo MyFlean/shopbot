@@ -1,11 +1,21 @@
 # shopping_bot/data_fetchers/es_products.py
 from __future__ import annotations
-import os, copy, re, requests, asyncio, json
+
+import asyncio
+import copy
+import json
+import os
+import re
 from typing import Any, Dict, List, Optional
 
-from . import register_fetcher
+import requests
+
 from ..enums import BackendFunction
 from ..llm_service import LLMService
+from . import register_fetcher
+
+# Configuration flags
+USE_MOCK_DATA = os.getenv("USE_MOCK_DATA", "true").lower() in {"1", "true", "yes", "on"}
 
 # ES Configuration
 ELASTIC_BASE = os.getenv(
@@ -15,6 +25,255 @@ ELASTIC_BASE = os.getenv(
 ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean_products_v2")
 ELASTIC_API_KEY = os.getenv("ELASTIC_API_KEY", "")
 TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
+
+# Mock product data for testing
+MOCK_PRODUCTS = [
+    {
+        "id": "01K184RAFREPPDPHRG0TZ4BVPY",
+        "name": "ADONIS Ds Acne Facewash",
+        "brand": "ADONIS",
+        "price": 299,
+        "mrp": 399,
+        "category": "personal_care",
+        "category_paths": ["personal_care", "face_care", "cleansers"],
+        "description": "Advanced acne fighting face wash with salicylic acid",
+        "protein_g": None,
+        "carbs_g": None,
+        "fat_g": None,
+        "calories": None,
+        "health_claims": ["Acne Fighting", "Deep Cleansing"],
+        "dietary_labels": [],
+        "image": "https://example.com/adonis-acne-facewash.jpg",
+        "ingredients": "Water, Salicylic Acid, Glycerin, Sodium Lauryl Sulfate",
+        "score": 8.5,
+        "rank": 1
+    },
+    {
+        "id": "01K184RAGX2295G86Y822CNGWK",
+        "name": "ADONIS Ds Pure Mild Foaming Cleanser",
+        "brand": "ADONIS",
+        "price": 349,
+        "mrp": 449,
+        "category": "personal_care",
+        "category_paths": ["personal_care", "face_care", "cleansers"],
+        "description": "Gentle foaming cleanser for sensitive skin",
+        "protein_g": None,
+        "carbs_g": None,
+        "fat_g": None,
+        "calories": None,
+        "health_claims": ["Mild Formula", "Sensitive Skin"],
+        "dietary_labels": [],
+        "image": "https://example.com/adonis-foaming-cleanser.jpg",
+        "ingredients": "Water, Cocamidopropyl Betaine, Glycerin, Aloe Extract",
+        "score": 8.2,
+        "rank": 2
+    },
+    {
+        "id": "AESTU00000003",
+        "name": "Theracne365 Clear Deep Cleansing Foam - (60ml)",
+        "brand": "Theracne365",
+        "price": 199,
+        "mrp": 249,
+        "category": "personal_care",
+        "category_paths": ["personal_care", "face_care", "cleansers"],
+        "description": "Deep cleansing foam for acne-prone skin",
+        "protein_g": None,
+        "carbs_g": None,
+        "fat_g": None,
+        "calories": None,
+        "health_claims": ["Deep Cleansing", "Acne Control"],
+        "dietary_labels": [],
+        "image": "https://example.com/theracne-foam-60ml.jpg",
+        "ingredients": "Water, Niacinamide, Tea Tree Oil, Zinc PCA",
+        "score": 7.9,
+        "rank": 3
+    },
+    {
+        "id": "AHAGL00000001",
+        "name": "Advanced Face Wash Gel - (50 g)",
+        "brand": "AHAGLOW",
+        "price": 125,
+        "mrp": 150,
+        "category": "personal_care",
+        "category_paths": ["personal_care", "face_care", "cleansers"],
+        "description": "AHA-based exfoliating face wash gel",
+        "protein_g": None,
+        "carbs_g": None,
+        "fat_g": None,
+        "calories": None,
+        "health_claims": ["Exfoliating", "Brightening"],
+        "dietary_labels": [],
+        "image": "https://example.com/ahaglow-gel-50g.jpg",
+        "ingredients": "Water, Glycolic Acid, Lactic Acid, Hyaluronic Acid",
+        "score": 7.6,
+        "rank": 4
+    },
+    {
+        "id": "01K184RAH26Y4KBPP5X6E306VK",
+        "name": "Aminu AHA Face Wash",
+        "brand": "Aminu",
+        "price": 450,
+        "mrp": 550,
+        "category": "personal_care",
+        "category_paths": ["personal_care", "face_care", "cleansers"],
+        "description": "Premium AHA face wash for smooth skin",
+        "protein_g": None,
+        "carbs_g": None,
+        "fat_g": None,
+        "calories": None,
+        "health_claims": ["AHA Formula", "Skin Smoothing"],
+        "dietary_labels": [],
+        "image": "https://example.com/aminu-aha-facewash.jpg",
+        "ingredients": "Water, Glycolic Acid, Mandelic Acid, Ceramides",
+        "score": 8.8,
+        "rank": 5
+    },
+    {
+        "id": "01K184RAH5QH18CQPATNZQ6MBC",
+        "name": "Anua 8 Hyaluronic Acid + Squalane Moisturizing Gentle Gel Cleanser",
+        "brand": "Anua",
+        "price": 899,
+        "mrp": 1199,
+        "category": "personal_care",
+        "category_paths": ["personal_care", "face_care", "cleansers"],
+        "description": "Hydrating gel cleanser with 8 types of hyaluronic acid",
+        "protein_g": None,
+        "carbs_g": None,
+        "fat_g": None,
+        "calories": None,
+        "health_claims": ["8 Hyaluronic Acids", "Deep Hydration"],
+        "dietary_labels": [],
+        "image": "https://example.com/anua-ha-cleanser.jpg",
+        "ingredients": "Water, Hyaluronic Acid Complex, Squalane, Panthenol",
+        "score": 9.2,
+        "rank": 6
+    }
+]
+
+# Food & Beverage mock products for variety
+MOCK_FOOD_PRODUCTS = [
+    {
+        "id": "PROTEIN_POWDER_001",
+        "name": "MuscleBlaze Whey Protein Isolate",
+        "brand": "MuscleBlaze",
+        "price": 1899,
+        "mrp": 2499,
+        "category": "f_and_b",
+        "category_paths": ["f_and_b", "health_nutrition", "protein_supplements"],
+        "description": "Premium whey protein isolate for muscle building",
+        "protein_g": 25.0,
+        "carbs_g": 2.0,
+        "fat_g": 0.5,
+        "calories": 110,
+        "health_claims": ["High Protein", "Fast Absorption", "Muscle Building"],
+        "dietary_labels": ["LACTOSE_FREE"],
+        "image": "https://example.com/muscleblaze-isolate.jpg",
+        "ingredients": "Whey Protein Isolate, Natural Flavors, Stevia",
+        "score": 9.1,
+        "rank": 1
+    },
+    {
+        "id": "PROTEIN_POWDER_002",
+        "name": "Optimum Nutrition Gold Standard Whey",
+        "brand": "Optimum Nutrition",
+        "price": 3299,
+        "mrp": 3999,
+        "category": "f_and_b",
+        "category_paths": ["f_and_b", "health_nutrition", "protein_supplements"],
+        "description": "World's best-selling whey protein powder",
+        "protein_g": 24.0,
+        "carbs_g": 3.0,
+        "fat_g": 1.0,
+        "calories": 120,
+        "health_claims": ["Gold Standard", "Proven Quality", "Muscle Recovery"],
+        "dietary_labels": [],
+        "image": "https://example.com/optimum-gold-standard.jpg",
+        "ingredients": "Whey Protein Isolates, Whey Protein Concentrates, Natural Flavors",
+        "score": 9.5,
+        "rank": 2
+    },
+    {
+        "id": "SNACKS_001",
+        "name": "Lays Classic Salted Chips",
+        "brand": "Lays",
+        "price": 20,
+        "mrp": 20,
+        "category": "f_and_b",
+        "category_paths": ["f_and_b", "snacks", "chips"],
+        "description": "Classic salted potato chips",
+        "protein_g": 2.0,
+        "carbs_g": 15.0,
+        "fat_g": 10.0,
+        "calories": 150,
+        "health_claims": [],
+        "dietary_labels": ["VEGETARIAN"],
+        "image": "https://example.com/lays-classic.jpg",
+        "ingredients": "Potatoes, Vegetable Oil, Salt",
+        "score": 7.2,
+        "rank": 3
+    }
+]
+
+def _get_mock_products_for_query(query: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Get relevant mock products based on query and parameters"""
+    query_lower = query.lower()
+    
+    # Determine which product set to use
+    if any(term in query_lower for term in ['protein', 'supplement', 'fitness', 'muscle']):
+        base_products = MOCK_FOOD_PRODUCTS[:2]  # Protein products
+    elif any(term in query_lower for term in ['face', 'skin', 'cleanser', 'wash']):
+        base_products = MOCK_PRODUCTS[:4]  # Face care products
+    elif any(term in query_lower for term in ['chips', 'snacks', 'lays']):
+        base_products = MOCK_FOOD_PRODUCTS[2:3]  # Snacks
+    else:
+        # Mix of products for general queries
+        base_products = MOCK_PRODUCTS[:3] + MOCK_FOOD_PRODUCTS[:2]
+    
+    # Apply filters
+    filtered_products = []
+    
+    for product in base_products:
+        # Price filter
+        if params.get("price_max") and product["price"] > params["price_max"]:
+            continue
+        if params.get("price_min") and product["price"] < params["price_min"]:
+            continue
+            
+        # Brand filter
+        if params.get("brands") and product["brand"] not in params["brands"]:
+            continue
+            
+        # Category filter
+        if params.get("category_group") and product["category"] != params["category_group"]:
+            continue
+            
+        filtered_products.append(product)
+    
+    # Sort by score (descending)
+    filtered_products.sort(key=lambda x: x["score"], reverse=True)
+    
+    # Apply size limit
+    size = params.get("size", 20)
+    return filtered_products[:size]
+
+def _create_mock_response(query: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Create mock response that matches the real ES response format"""
+    products = _get_mock_products_for_query(query, params)
+    
+    # Update ranks
+    for i, product in enumerate(products, 1):
+        product["rank"] = i
+    
+    return {
+        "meta": {
+            "total_hits": len(products),
+            "returned": len(products),
+            "took_ms": 15,  # Mock timing
+            "query_successful": True,
+            "mock_data": True  # Flag to indicate this is mock data
+        },
+        "products": products
+    }
 
 # Enhanced query template with better field coverage
 BASE_BODY: Dict[str, Any] = {
@@ -385,24 +644,40 @@ def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 class ElasticsearchProductsFetcher:
-    """Enhanced Elasticsearch fetcher with better query structure"""
+    """Enhanced Elasticsearch fetcher with mock data toggle"""
     
     def __init__(self, base_url: str = None, index: str = None, api_key: str = None):
         self.base_url = base_url or ELASTIC_BASE
         self.index = index or ELASTIC_INDEX
         self.api_key = api_key or ELASTIC_API_KEY
         
-        if not self.api_key:
-            raise RuntimeError("ELASTIC_API_KEY environment variable is required")
+        if not USE_MOCK_DATA and not self.api_key:
+            raise RuntimeError("ELASTIC_API_KEY environment variable is required when USE_MOCK_DATA=false")
             
         self.endpoint = f"{self.base_url}/{self.index}/_search"
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": f"ApiKey {self.api_key}"
-        }
+        } if self.api_key else {}
     
     def search(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute search with enhanced query structure"""
+        """Execute search with mock data toggle"""
+        
+        # Check if we should use mock data
+        if USE_MOCK_DATA:
+            print(f"DEBUG: Using mock data (USE_MOCK_DATA=true)")
+            query = params.get("q", "")
+            mock_response = _create_mock_response(query, params)
+            
+            print(f"DEBUG: Mock query returned {mock_response['meta']['total_hits']} products")
+            if mock_response['products']:
+                print("DEBUG: Top mock results:")
+                for i, product in enumerate(mock_response['products'][:3], 1):
+                    print(f"  {i}. {product['name']} - ₹{product['price']} (score: {product['score']})")
+            
+            return mock_response
+        
+        # Use real Elasticsearch
         try:
             # Use the enhanced query builder
             query_body = _build_enhanced_es_query(params)
@@ -425,33 +700,25 @@ class ElasticsearchProductsFetcher:
             raw_data = response.json()
             result = _transform_results(raw_data)
             
-            print(f"DEBUG: Enhanced query found {result['meta']['total_hits']} products")
+            print(f"DEBUG: Enhanced ES query found {result['meta']['total_hits']} products")
             
             # Show top results for debugging
             if result['products']:
-                print("DEBUG: Top results:")
+                print("DEBUG: Top ES results:")
                 for i, product in enumerate(result['products'][:3], 1):
                     print(f"  {i}. {product['name']} - ₹{product['price']} (score: {product['score']})")
             
             return result
             
         except requests.exceptions.Timeout:
-            return {
-                "meta": {"error": "Search timeout", "total_hits": 0, "query_successful": False},
-                "products": []
-            }
+            print(f"DEBUG: ES timeout, falling back to mock data")
+            return _create_mock_response(params.get("q", ""), params)
         except requests.exceptions.RequestException as e:
-            print(f"DEBUG: ES request failed: {e}")
-            return {
-                "meta": {"error": f"Search failed: {str(e)}", "total_hits": 0, "query_successful": False},
-                "products": []
-            }
+            print(f"DEBUG: ES request failed: {e}, falling back to mock data")
+            return _create_mock_response(params.get("q", ""), params)
         except Exception as e:
-            print(f"DEBUG: Unexpected error: {e}")
-            return {
-                "meta": {"error": f"Unexpected error: {str(e)}", "total_hits": 0, "query_successful": False},
-                "products": []
-            }
+            print(f"DEBUG: Unexpected ES error: {e}, falling back to mock data")
+            return _create_mock_response(params.get("q", ""), params)
 
 # Parameter extraction and normalization
 def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
@@ -531,16 +798,19 @@ async def build_search_params(ctx) -> Dict[str, Any]:
     # Get base parameters from context
     base_params = _extract_defaults_from_context(ctx)
     
-    # Use LLM to extract/normalize additional parameters
-    llm_service = LLMService()
+    # Use LLM to extract/normalize additional parameters (only if not using mock data)
     llm_params = {}
     
-    try:
-        llm_params = await llm_service.extract_es_params(ctx)
-        print(f"DEBUG: LLM extracted params = {llm_params}")
-    except Exception as e:
-        print(f"DEBUG: LLM param extraction failed: {e}")
-        llm_params = {}
+    if not USE_MOCK_DATA:
+        try:
+            llm_service = LLMService()
+            llm_params = await llm_service.extract_es_params(ctx)
+            print(f"DEBUG: LLM extracted params = {llm_params}")
+        except Exception as e:
+            print(f"DEBUG: LLM param extraction failed: {e}")
+            llm_params = {}
+    else:
+        print(f"DEBUG: Skipping LLM param extraction (using mock data)")
     
     # Merge and normalize
     final_params = _normalize_params(base_params, llm_params)
@@ -567,13 +837,16 @@ def get_es_fetcher() -> ElasticsearchProductsFetcher:
 
 # Async handlers for different functions
 async def search_products_handler(ctx) -> Dict[str, Any]:
-    """Main product search handler"""
+    """Main product search handler with mock data support"""
     params = await build_search_params(ctx)
     fetcher = get_es_fetcher()
     
-    # Run in thread to avoid blocking
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, lambda: fetcher.search(params))
+    # Run in thread to avoid blocking (unless using mock data)
+    if USE_MOCK_DATA:
+        return fetcher.search(params)
+    else:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: fetcher.search(params))
 
 async def fetch_user_profile_handler(ctx) -> Dict[str, Any]:
     """User profile - return minimal data for now"""

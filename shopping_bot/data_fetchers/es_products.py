@@ -214,46 +214,39 @@ MOCK_FOOD_PRODUCTS = [
 ]
 
 def _get_mock_products_for_query(query: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Get relevant mock products based on query and parameters"""
-    query_lower = query.lower()
-    
-    # Determine which product set to use
-    if any(term in query_lower for term in ['protein', 'supplement', 'fitness', 'muscle']):
-        base_products = MOCK_FOOD_PRODUCTS[:2]  # Protein products
-    elif any(term in query_lower for term in ['face', 'skin', 'cleanser', 'wash']):
-        base_products = MOCK_PRODUCTS[:4]  # Face care products
-    elif any(term in query_lower for term in ['chips', 'snacks', 'lays']):
-        base_products = MOCK_FOOD_PRODUCTS[2:3]  # Snacks
-    else:
-        # Mix of products for general queries
-        base_products = MOCK_PRODUCTS[:3] + MOCK_FOOD_PRODUCTS[:2]
-    
-    # Apply filters
-    filtered_products = []
-    
+    """Return skincare products only; count driven by product_intent.
+
+    - is_this_good  → 1 product (SPM upstream)
+    - others        → 4 products (MPM upstream)
+    """
+    # Always use skincare/personal care mock set
+    base_products: List[Dict[str, Any]] = MOCK_PRODUCTS[:]
+
+    # Apply optional filters
+    filtered_products: List[Dict[str, Any]] = []
     for product in base_products:
         # Price filter
         if params.get("price_max") and product["price"] > params["price_max"]:
             continue
         if params.get("price_min") and product["price"] < params["price_min"]:
             continue
-            
         # Brand filter
         if params.get("brands") and product["brand"] not in params["brands"]:
             continue
-            
-        # Category filter
-        if params.get("category_group") and product["category"] != params["category_group"]:
+        # Category filter (force personal care only if present)
+        if params.get("category_group") and product.get("category") and product["category"] != params["category_group"]:
             continue
-            
         filtered_products.append(product)
-    
+
     # Sort by score (descending)
-    filtered_products.sort(key=lambda x: x["score"], reverse=True)
-    
-    # Apply size limit
-    size = params.get("size", 20)
-    return filtered_products[:size]
+    filtered_products.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+    # Decide count from product_intent
+    product_intent = str(params.get("product_intent") or "show_me_options").strip().lower()
+    target_count = 1 if product_intent == "is_this_good" else 4
+
+    pool = filtered_products or base_products
+    return pool[:target_count]
 
 def _create_mock_response(query: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """Create mock response that matches the real ES response format"""
@@ -752,15 +745,21 @@ def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
             except:
                 pass
     
+    # Determine product_intent from context (default to show_me_options)
+    product_intent = str(session.get("product_intent") or "show_me_options")
+    # Size hint: 1 for is_this_good; else 4
+    size_hint = 1 if product_intent == "is_this_good" else 4
+
     return {
         "q": query,
-        "size": session.get("page_size", 20),
-        "category_group": session.get("category_group", "f_and_b"),  # Default to food & beverage
+        "size": size_hint,
+        "category_group": session.get("category_group", "personal_care"),  # Force non-food default
         "brands": session.get("brands"),
         "dietary_terms": session.get("dietary_requirements"),
         "price_min": price_min,
         "price_max": price_max,
-        "protein_weight": 1.5,  # Slight protein boost for health-conscious users
+        "protein_weight": 1.5,
+        "product_intent": product_intent,
     }
 
 def _normalize_params(base_params: Dict[str, Any], llm_params: Dict[str, Any]) -> Dict[str, Any]:

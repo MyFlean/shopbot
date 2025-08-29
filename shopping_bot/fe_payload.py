@@ -76,15 +76,12 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
 
     # Final answers with products
     if bot_resp_type == ResponseType.FINAL_ANSWER:
-        # Check if we already have properly structured content
-        if c.get("products") is not None and c.get("summary_message") is not None:
-            # Content is already properly structured from LLM service
-            return {
-                "summary_message": c["summary_message"],
-                "products": c["products"]
-            }
+        # If content already contains structured fields (summary_message/products),
+        # preserve the full payload including optional keys like ux_response and product_intent
+        if (c.get("products") is not None) or (c.get("summary_message") is not None):
+            return c
         
-        # Fallback for backward compatibility
+        # Fallback for backward compatibility when only a message is present
         return {
             "summary_message": c.get("message", ""),
             "products": []

@@ -22,7 +22,7 @@ class BaseConfig:
     REDIS_TTL_SECONDS: int = int(os.getenv("REDIS_TTL_SECONDS", 3600))
 
     # Anthropic - MUST be set via environment variable
-    ANTHROPIC_API_KEY = "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"
+    ANTHROPIC_API_KEY = "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"
     
     def __post_init__(self):
         """Validate critical settings."""

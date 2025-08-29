@@ -512,7 +512,13 @@ class LLMService:
     """Service class for all LLM interactions."""
 
     def __init__(self) -> None:
-        self.anthropic = anthropic.AsyncAnthropic(api_key=Cfg.ANTHROPIC_API_KEY)
+        api_key = getattr(Cfg, "ANTHROPIC_API_KEY", "") or ""
+        if not api_key:
+            raise RuntimeError("Missing ANTHROPIC_API_KEY. Set it in environment or .env file.")
+        if not isinstance(api_key, str) or not api_key.startswith("sk-ant-"):
+            raise RuntimeError("Invalid ANTHROPIC_API_KEY format. It should start with 'sk-ant-'.")
+
+        self.anthropic = anthropic.AsyncAnthropic(api_key=api_key)
         self._recommendation_service = get_recommendation_service()
 
     # ---------------- UPDATED: INTENT CLASSIFICATION ----------------

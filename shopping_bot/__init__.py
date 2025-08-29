@@ -89,6 +89,14 @@ def create_app() -> Flask:
             app.register_blueprint(health_bp)
         except ImportError:
             log.info("REGISTER_ROUTES | health routes not found, using built-in health check")
+
+        # Register onboarding/meta flow routes
+        try:
+            from .routes.onboarding_flow import bp as flow_bp
+            app.register_blueprint(flow_bp)
+            log.info("REGISTER_ROUTES_SUCCESS | onboarding/meta flow routes registered")
+        except Exception as e:
+            log.error(f"REGISTER_ROUTES_ERROR | onboarding/meta flow routes failed: {e}")
         
         log.info("REGISTER_ROUTES_SUCCESS | simplified routes registered")
         

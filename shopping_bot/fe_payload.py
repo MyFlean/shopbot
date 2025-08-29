@@ -79,6 +79,15 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
         # If content already contains structured fields (summary_message/products),
         # preserve the full payload including optional keys like ux_response and product_intent
         if (c.get("products") is not None) or (c.get("summary_message") is not None):
+            # Ensure a text anchor when quick replies are present (SPM/MPM UX)
+            try:
+                ux = c.get("ux_response")
+                has_qr = isinstance(ux, dict) and bool(ux.get("quick_replies"))
+                if has_qr:
+                    # Always use a standard anchor text for quick replies
+                    c = {**c, "message": "Choose an option:"}
+            except Exception:
+                pass
             return c
         
         # Fallback for backward compatibility when only a message is present

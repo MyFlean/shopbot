@@ -423,23 +423,27 @@ async def generate_ux_response_for_intent(
     extracts product IDs, and returns UX-ready response.
     """
     
-    # Extract product IDs from previous answer
-    product_ids = []
-    if previous_answer.get("products"):
-        products = previous_answer["products"]
-        if isinstance(products, list):
-            for product in products:
-                if isinstance(product, dict) and product.get("id"):
-                    product_ids.append(product["id"])
-    
-    # If no IDs, generate them from product names
-    if not product_ids and previous_answer.get("products"):
-        products = previous_answer["products"]
-        if isinstance(products, list):
-            for i, product in enumerate(products):
-                if isinstance(product, dict):
-                    name = product.get("text", product.get("name", f"product_{i}"))
-                    product_ids.append(f"prod_{hash(name)%1000000}")
+    # Extract product IDs for UX usage
+    product_ids: List[str] = []
+    # 1) Prefer explicit product_ids if provided by upstream (e.g., MPM flow)
+    if isinstance(previous_answer.get("product_ids"), list) and previous_answer["product_ids"]:
+        product_ids = [str(pid) for pid in previous_answer["product_ids"] if str(pid).strip()]
+    else:
+        # 2) Fallback: extract from products list
+        if previous_answer.get("products"):
+            products = previous_answer["products"]
+            if isinstance(products, list):
+                for product in products:
+                    if isinstance(product, dict) and product.get("id"):
+                        product_ids.append(str(product["id"]))
+        # 3) If still empty, synthesize from product names
+        if not product_ids and previous_answer.get("products"):
+            products = previous_answer["products"]
+            if isinstance(products, list):
+                for i, product in enumerate(products):
+                    if isinstance(product, dict):
+                        name = product.get("text", product.get("name", f"product_{i}"))
+                        product_ids.append(f"prod_{hash(name)%1000000}")
     
     # Generate UX response
     generator = get_ux_response_generator()
@@ -457,6 +461,15 @@ async def generate_ux_response_for_intent(
         "ux_response": ux_response.to_dict(),
         "product_intent": intent
     })
+    # Ensure product_ids live only inside ux_response (not at root content)
+    if "product_ids" in result:
+        try:
+            # Keep source of truth inside ux_response
+            if isinstance(result.get("ux_response"), dict) and not result["ux_response"].get("product_ids"):
+                result["ux_response"]["product_ids"] = product_ids
+        except Exception:
+            pass
+        del result["product_ids"]
     
     log.info(f"UX_INTEGRATION_COMPLETE | intent={intent} | products={len(product_ids)}")
     return result

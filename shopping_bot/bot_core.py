@@ -359,6 +359,11 @@ class ShoppingBotCore:
             assessment.missing_data = [f for f in assessment.missing_data if not is_user_slot(f)]
             assessment.priority_order = [f for f in assessment.priority_order if not is_user_slot(f)]
 
+        # Remove PRODUCT_CATEGORY asks for product flows – taxonomy/ES infers this
+        if result.is_product_related:
+            assessment.missing_data = [f for f in assessment.missing_data if get_func_value(f) != UserSlot.PRODUCT_CATEGORY.value]
+            assessment.priority_order = [f for f in assessment.priority_order if get_func_value(f) != UserSlot.PRODUCT_CATEGORY.value]
+
         user_slots = [f for f in assessment.missing_data if is_user_slot(f)]
         missing_data_names = [get_func_value(f) for f in assessment.missing_data]
         ask_first_names = [get_func_value(f) for f in user_slots]
@@ -388,8 +393,7 @@ class ShoppingBotCore:
                 essentials: list[str] = []
                 if "budget" not in ctx.session:
                     essentials.append(UserSlot.USER_BUDGET.value)
-                if "product_category" not in ctx.session:
-                    essentials.append(UserSlot.PRODUCT_CATEGORY.value)
+                # Do NOT add PRODUCT_CATEGORY here; category is inferred by taxonomy/ES
                 if essentials:
                     a = ctx.session["assessment"]
                     # Prepend essentials if missing

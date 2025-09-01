@@ -79,6 +79,13 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
         # If content already contains structured fields (summary_message/products),
         # preserve the full payload including optional keys like ux_response and product_intent
         if (c.get("products") is not None) or (c.get("summary_message") is not None):
+            # Enforce SPM single-product clamp
+            try:
+                if str(c.get("product_intent", "")).strip().lower() == "is_this_good":
+                    if isinstance(c.get("products"), list) and c["products"]:
+                        c["products"] = c["products"][:1]
+            except Exception:
+                pass
             # Ensure a text anchor when quick replies are present (SPM/MPM UX)
             try:
                 ux = c.get("ux_response")

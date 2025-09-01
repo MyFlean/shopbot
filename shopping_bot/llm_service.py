@@ -162,10 +162,10 @@ PRODUCT_RESPONSE_TOOL = {
                     "required": ["text", "description"]
                 },
                 "maxItems": 10,
-                "description": "Product list with compelling descriptions"
+                "description": "Product list with compelling descriptions (SPM only)"
             }
         },
-        "required": ["response_type", "summary_message", "products"]
+        "required": ["response_type", "summary_message"]
     }
 }
 
@@ -187,6 +187,37 @@ SIMPLE_RESPONSE_TOOL = {
         "required": ["response_type", "message"]
     }
 }
+
+
+# ─────────────────────────────────────────────────────────────
+# Dynamic Slot Selection Tool (LLM-driven)
+# ─────────────────────────────────────────────────────────────
+
+SLOT_SELECTION_TOOL = {
+    "name": "select_slots_to_ask",
+    "description": "Select up to 3 user slots to ask next, optimized to refine ES filters and avoid redundancy.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "slots": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "ASK_USER_BUDGET",
+                        "ASK_DIETARY_REQUIREMENTS",
+                        "ASK_USER_PREFERENCES",
+                        "ASK_USE_CASE",
+                        "ASK_QUANTITY"
+                    ]
+                },
+                "maxItems": 3
+            }
+        },
+        "required": ["slots"]
+    }
+}
+
 
 def build_assessment_tool() -> Dict[str, Any]:
     """Build the requirements assessment tool dynamically."""
@@ -626,7 +657,7 @@ class LLMService:
         has_products = self._has_product_results(fetched)
         
         if intent_l3 in product_intents and has_products:
-            result = await self._generate_product_response(query, ctx, fetched, intent_l3)
+            result = await self._generate_product_response(query, ctx, fetched, intent_l3, product_intent)
             if product_intent:
                 result["product_intent"] = product_intent
             return result
@@ -647,7 +678,8 @@ class LLMService:
         query: str,
         ctx: UserContext,
         fetched: Dict[str, Any],
-        intent_l3: str
+        intent_l3: str,
+        product_intent: Optional[str] = None
     ) -> Dict[str, Any]:
         """Generate structured product response with descriptions."""
         products_data = []
@@ -655,7 +687,11 @@ class LLMService:
             search_data = fetched['search_products']
             if isinstance(search_data, dict):
                 data = search_data.get('data', search_data)
-                products_data = data.get('products', [])[:10]
+                # For SPM (is_this_good) we only need one product end-to-end
+                if product_intent and product_intent == "is_this_good":
+                    products_data = data.get('products', [])[:1]
+                else:
+                    products_data = data.get('products', [])[:10]
         
         if not products_data:
             return {
@@ -664,12 +700,15 @@ class LLMService:
                 "products": []
             }
         
+        # Narrow the LLM input as well: only pass the single product for SPM
+        products_for_llm = products_data[:1] if (product_intent and product_intent == "is_this_good") else products_data
+
         prompt = PRODUCT_RESPONSE_PROMPT.format(
             query=query,
             intent_l3=intent_l3,
             session=json.dumps(ctx.session, ensure_ascii=False),
             permanent=json.dumps(ctx.permanent, ensure_ascii=False),
-            products_json=json.dumps(products_data, ensure_ascii=False)
+            products_json=json.dumps(products_for_llm, ensure_ascii=False)
         )
         
         try:
@@ -679,7 +718,7 @@ class LLMService:
                 tools=[PRODUCT_RESPONSE_TOOL],
                 tool_choice={"type": "tool", "name": "generate_product_response"},
                 temperature=0.7,
-                max_tokens=1500,
+                max_tokens=800 if (product_intent and product_intent != "is_this_good") else 1500,
             )
             
             tool_use = pick_tool(resp, "generate_product_response")
@@ -687,10 +726,39 @@ class LLMService:
                 return self._create_fallback_product_response(products_data, query)
             
             result = _strip_keys(tool_use.input or {})
+
+            # Enforce exactly one product for SPM in final result
+            if product_intent and product_intent == "is_this_good":
+                one = []
+                if isinstance(result.get("products"), list) and result["products"]:
+                    one = [result["products"][0]]
+                # If LLM didn't return products, synthesize minimal from ES top-1
+                if not one and products_data:
+                    p = products_data[0]
+                    one = [{
+                        "id": str(p.get("id") or f"prod_{hash(p.get('name',''))%1000000}"),
+                        "text": p.get("name", "Product"),
+                        "description": f"Solid choice at ₹{p.get('price','N/A')}",
+                        "price": f"₹{p.get('price','N/A')}",
+                        "special_features": ""
+                    }]
+                result["products"] = one
             
             for i, product in enumerate(result.get("products", [])):
                 if "id" not in product and i < len(products_data):
                     product["id"] = f"prod_{hash(products_data[i].get('name', ''))%1000000}"
+            
+            # For MPM (non-SPM), remove per-product details but include product_ids for UX
+            if product_intent and product_intent != "is_this_good":
+                # Build product_ids from ES results
+                pid_list = []
+                for i, p in enumerate(products_data):
+                    pid = p.get("id") or f"prod_{hash(p.get('name','') or p.get('title',''))%1000000}"
+                    pid_list.append(str(pid))
+                if pid_list:
+                    result["product_ids"] = pid_list[:10]
+                if "products" in result:
+                    del result["products"]
             
             return result
             
@@ -952,37 +1020,113 @@ class LLMService:
     ) -> Dict[str, Dict[str, Any]]:
         """Generate contextual questions."""
         if not slots_needed:
+            slots_needed = []
+
+        # ── Derive domain and last ES params from session for gating/normalization
+        session_debug = (ctx.session or {}).get("debug", {}) or {}
+        last_params = session_debug.get("last_search_params", {}) or {}
+        category_group = (last_params.get("category_group") or ctx.session.get("category_group") or "").strip()
+        has_cat_path = bool(last_params.get("category_path"))
+        has_price = (last_params.get("price_min") is not None) or (last_params.get("price_max") is not None)
+
+        # Gate out slots we already know from ES params/classification
+        filtered_slots: List[UserSlot] = []
+        product_intents_l3 = {"Product_Discovery", "Recommendation", "Specific_Product_Search", "Product_Comparison"}
+        for slot in slots_needed:
+            if slot == UserSlot.PRODUCT_CATEGORY and (category_group or has_cat_path):
+                continue
+            # Also skip category ask for product-related intents; taxonomy classifier will infer it
+            if slot == UserSlot.PRODUCT_CATEGORY and intent_l3 in product_intents_l3:
+                continue
+            if slot == UserSlot.USER_BUDGET and has_price:
+                continue
+            filtered_slots.append(slot)
+        # LLM-driven slot selection to ensure relevance (max 3)
+        if intent_l3 in product_intents_l3:
+            dynamic_slots = await self._select_slots_to_ask(
+                query=query,
+                intent_l3=intent_l3,
+                domain=category_group or "",
+                last_params=last_params
+            )
+            # Merge with filtered and keep order preference: dynamic first
+            merged: List[UserSlot] = []
+            # map strings to enum safely
+            def _to_slot(s: str) -> Optional[UserSlot]:
+                try:
+                    return UserSlot(s)
+                except Exception:
+                    return None
+            for s in (dynamic_slots or []):
+                sl = _to_slot(s)
+                if sl and sl not in merged:
+                    merged.append(sl)
+            for sl in filtered_slots:
+                if sl not in merged:
+                    merged.append(sl)
+            # Apply gating again
+            final_list: List[UserSlot] = []
+            for sl in merged:
+                if sl == UserSlot.PRODUCT_CATEGORY:
+                    continue
+                if sl == UserSlot.USER_BUDGET and has_price:
+                    continue
+                final_list.append(sl)
+            filtered_slots = final_list[:3]
+        # If still nothing to ask but this is a product flow, ask smart defaults to aid ES
+        if not filtered_slots and intent_l3 in product_intents_l3:
+            filtered_slots = [UserSlot.USER_BUDGET, UserSlot.DIETARY_REQUIREMENTS, UserSlot.USER_PREFERENCES]
+        if not filtered_slots:
             return {}
 
-        product_category = ctx.session.get("product_category", "general products")
+        # Determine domain for category-specific hints
+        domain = category_group if category_group in ("f_and_b", "personal_care") else "general"
+        product_category = domain  # reuse existing variable name used in hints
 
+        # Build slot hint lines from intent_config (if any)
         slot_hints_lines = []
-        for slot in slots_needed:
+        for slot in filtered_slots:
             hint_config = SLOT_QUESTIONS.get(slot, {})
             if "hint" in hint_config:
                 slot_hints_lines.append(f"- {slot.value}: {hint_config['hint']}")
-        slot_hints = "\n".join(slot_hints_lines) if slot_hints_lines else "No specific hints available."
+        slot_hints = "\n".join(slot_hints_lines) if slot_hints_lines else "Use domain-specific ranges/options."
 
-        category_hints = CATEGORY_QUESTION_HINTS.get(product_category, "Focus on relevant attributes.")
-        slots_needed_desc = ", ".join([slot.value for slot in slots_needed])
+        # Use category-domain hints and INR budget ranges
+        domain_hints = CATEGORY_QUESTION_HINTS.get(product_category, CATEGORY_QUESTION_HINTS.get("general", {}))
+        slots_needed_desc = ", ".join([slot.value for slot in filtered_slots])
 
-        prompt = CONTEXTUAL_QUESTIONS_PROMPT.format(
+        # Stronger instructions for INR/currency and relevance
+        prompt = (
+            CONTEXTUAL_QUESTIONS_PROMPT
+            + "\nPersona & goal:\n"
+            + "- You are an advanced shopping buddy. For f_and_b, think like a friendly dietician; for personal_care, like a dermatologist friend.\n"
+            + "- Ask only what is necessary to refine search and improve ES filters.\n"
+            + "\nStrict rules:\n"
+            + "- Currency MUST be INR with symbol '₹'. Never use '$' or other currencies.\n"
+            + "- For budget questions, choose ONLY from these INR buckets: "
+            + ", ".join(domain_hints.get("budget_ranges", []))
+            + ".\n- Questions must directly aid Elasticsearch filtering (budget, dietary labels/health claims like 'NO PALM OIL', brand preference as a multiple-choice concept), avoid asking category if already known.\n"
+            + "- Options must be 1-4 words, discrete, non-overlapping.\n"
+            + "\nContext examples:\n"
+            + "- Query: 'spicy chips' → Ask budget (₹ ranges), oil preference (No palm oil), heat level.\n"
+            + "- Query: 'face wash for oily skin' → Ask skin type, fragrance preference, budget (₹ ranges).\n"
+        ).format(
             query=query,
             intent_l3=intent_l3,
             product_category=product_category,
             slot_hints=slot_hints,
-            category_hints=category_hints,
+            category_hints=json.dumps(domain_hints, ensure_ascii=False),
             slots_needed=slots_needed_desc,
         )
 
         try:
-            questions_tool = build_questions_tool(slots_needed)
+            questions_tool = build_questions_tool(filtered_slots)
             resp = await self.anthropic.messages.create(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[questions_tool],
                 tool_choice={"type": "tool", "name": "generate_questions"},
-                temperature=0.3,
+                temperature=0.2,
                 max_tokens=800,
             )
 
@@ -991,32 +1135,113 @@ class LLMService:
                 return {}
 
             questions_data = _strip_keys(tool_use.input.get("questions", {}) or {})
-            
-            processed_questions = {}
+
+            # ── Post-process to enforce INR and domain-allowed ranges/options
+            def _coerce_budget_options(options: List[Any]) -> List[Dict[str, str]]:
+                allowed = domain_hints.get("budget_ranges", [])[:3] or ["Under ₹100", "₹100-500", "Over ₹500"]
+                coerced = []
+                for i, rng in enumerate(allowed[:3]):
+                    coerced.append({"label": rng, "value": rng})
+                return coerced
+
+            processed_questions: Dict[str, Dict[str, Any]] = {}
             for slot_value, question_data in questions_data.items():
                 options = question_data.get("options", [])
-                
-                formatted_options = []
+
+                formatted_options: List[Dict[str, str]] = []
+                # Coerce options to dicts {label,value} and normalize currency to INR
                 for opt in options[:3]:
                     if isinstance(opt, str):
-                        formatted_options.append({"label": opt.strip(), "value": opt.strip()})
+                        label = opt.strip()
+                        # Replace $ with ₹ and normalize common patterns
+                        label = label.replace("$", "₹")
+                        formatted_options.append({"label": label, "value": label})
                     elif isinstance(opt, dict) and "label" in opt and "value" in opt:
-                        formatted_options.append(opt)
-                
+                        label = str(opt["label"]).strip().replace("$", "₹")
+                        value = str(opt["value"]).strip().replace("$", "₹")
+                        formatted_options.append({"label": label, "value": value})
+
+                # Pad or clamp to 3 options
                 while len(formatted_options) < 3:
                     formatted_options.append({"label": "Other", "value": "Other"})
-                
+                formatted_options = formatted_options[:3]
+
+                # Budget-specific coercion to domain INR buckets
+                if slot_value == UserSlot.USER_BUDGET.value:
+                    formatted_options = _coerce_budget_options(formatted_options)
+
                 processed_questions[slot_value] = {
-                    "message": question_data.get("message", f"What's your {slot_value.lower().replace('_', ' ')}?"),
+                    "message": question_data.get(
+                        "message",
+                        f"What's your {slot_value.lower().replace('_', ' ')}?",
+                    ),
                     "type": "multi_choice",
-                    "options": formatted_options[:3]
+                    "options": formatted_options,
                 }
-            
+
             return processed_questions
-            
+
         except Exception as exc:
             log.warning("Question generation failed: %s", exc)
             return {}
+
+    async def _select_slots_to_ask(
+        self,
+        *,
+        query: str,
+        intent_l3: str,
+        domain: str,
+        last_params: Dict[str, Any],
+    ) -> List[str]:
+        """Use LLM to pick up to 3 ES-relevant user slots to ask next."""
+        # Build guidance: what we already know
+        known = {
+            "category_group": domain,
+            "has_category_path": bool(last_params.get("category_path")),
+            "has_price": (last_params.get("price_min") is not None) or (last_params.get("price_max") is not None),
+            "dietary_terms": last_params.get("dietary_terms") or last_params.get("dietary_labels") or [],
+        }
+        prompt = (
+            "Select up to 3 user slots to ask next for a shopping query.\n\n"
+            f"QUERY: {query}\n"
+            f"INTENT_L3: {intent_l3}\n"
+            f"DOMAIN: {domain or 'unknown'}\n"
+            f"KNOWN: {json.dumps(known, ensure_ascii=False)}\n\n"
+            "Allowed slots (choose any up to 3):\n"
+            "- ASK_USER_BUDGET (₹ ranges)\n"
+            "- ASK_DIETARY_REQUIREMENTS (e.g., NO PALM OIL, VEGAN, GLUTEN FREE)\n"
+            "- ASK_USER_PREFERENCES (e.g., taste/brand/features)\n"
+            "- ASK_USE_CASE (e.g., party, daily use)\n"
+            "- ASK_QUANTITY\n\n"
+            "Rules:\n"
+            "- Do NOT include ASK_PRODUCT_CATEGORY (category is inferred).\n"
+            "- Prefer budget and dietary for FOOD queries; skin-type/preferences for PERSONAL_CARE.\n"
+            "- Avoid slots already known (e.g., price range exists).\n"
+            "Return ONLY a tool call to select_slots_to_ask."
+        )
+        try:
+            resp = await self.anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[SLOT_SELECTION_TOOL],
+                tool_choice={"type": "tool", "name": "select_slots_to_ask"},
+                temperature=0,
+                max_tokens=200,
+            )
+            tool_use = pick_tool(resp, "select_slots_to_ask")
+            if not tool_use:
+                return []
+            data = _strip_keys(tool_use.input or {})
+            slots = data.get("slots", [])
+            # sanitize
+            out: List[str] = []
+            for s in slots:
+                if isinstance(s, str) and s.strip() and s.strip() != UserSlot.PRODUCT_CATEGORY.value:
+                    out.append(s.strip())
+            return out[:3]
+        except Exception as exc:
+            log.debug(f"SLOT_SELECTION_FAILED | {exc}")
+            return []
 
     async def extract_es_params(self, ctx: UserContext) -> Dict[str, Any]:
         """Extract ES parameters via recommendation service."""

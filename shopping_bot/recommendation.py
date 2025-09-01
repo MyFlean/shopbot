@@ -290,6 +290,14 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             }
             
             current_user_text = context.get("original_query", "")
+            # 0) Extract constraints from CURRENT user text (brands/dietary/health/keywords/prices)
+            try:
+                current_constraints = await self._extract_constraints_from_text(current_user_text)
+            except Exception as exc:
+                log.warning(f"CURRENT_CONSTRAINTS_FAILED | error={exc}")
+                current_constraints = {}
+            context["current_constraints"] = current_constraints
+
             # 1) Construct a context-aware search query
             constructed_q = await self._construct_search_query(context, current_user_text)
             log.info(f"ES_CONSTRUCTED_QUERY | q='{constructed_q}'")
@@ -454,6 +462,68 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 error_message=str(exc)
             )
 
+    async def _extract_constraints_from_text(self, text: str) -> Dict[str, Any]:
+        """General constraint extractor from CURRENT user text using LLM tool-call.
+        Extract brands, dietary_terms (UPPERCASE), health_claims, keywords (lowercase), price_min/max when present.
+        """
+        EXTRACT_CONSTRAINTS_TOOL = {
+            "name": "extract_current_constraints",
+            "description": "From the given text, extract brands, dietary_terms (UPPERCASE), health_claims, keywords (lowercase), and optional price_min/price_max.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "brands": {"type": "array", "items": {"type": "string"}},
+                    "dietary_terms": {"type": "array", "items": {"type": "string"}},
+                    "dietary_labels": {"type": "array", "items": {"type": "string"}},
+                    "health_claims": {"type": "array", "items": {"type": "string"}},
+                    "keywords": {"type": "array", "items": {"type": "string"}},
+                    "price_min": {"type": "number"},
+                    "price_max": {"type": "number"}
+                }
+            }
+        }
+
+        prompt = (
+            "Extract shopping constraints from the CURRENT user text.\n\n"
+            f"TEXT: {text}\n\n"
+            "Rules:\n"
+            "- brands: exact strings as mentioned; avoid guessing.\n"
+            "- dietary_terms: map phrases like 'no/without palm oil' → 'PALM OIL FREE'; uppercase all; include VEGAN/GLUTEN FREE/ORGANIC if present.\n"
+            "- dietary_labels: same as dietary_terms (duplicate acceptable).\n"
+            "- health_claims: short phrases as-is (lowercase if natural).\n"
+            "- keywords: 1-6 single words (lowercase), exclude stopwords and brand names.\n"
+            "- price_min/price_max: parse ranges or under/over expressions when explicit.\n"
+            "Return ONLY tool call to extract_current_constraints."
+        )
+
+        try:
+            resp = await self._anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[EXTRACT_CONSTRAINTS_TOOL],
+                tool_choice={"type": "tool", "name": "extract_current_constraints"},
+                temperature=0,
+                max_tokens=250,
+            )
+            tool_use = self._pick_tool(resp, "extract_current_constraints")
+            if tool_use and getattr(tool_use, "input", None):
+                data = self._strip_keys(getattr(tool_use, "input", {}) or {})
+                # Normalise: uppercase dietary terms/labels; lowercase keywords
+                def _norm_list(v, fn):
+                    return [fn(str(x)) for x in v if str(x).strip()]
+                if isinstance(data.get("dietary_terms"), list):
+                    data["dietary_terms"] = _norm_list(data["dietary_terms"], lambda s: s.strip().upper())
+                if isinstance(data.get("dietary_labels"), list):
+                    data["dietary_labels"] = _norm_list(data["dietary_labels"], lambda s: s.strip().upper())
+                if isinstance(data.get("keywords"), list):
+                    data["keywords"] = _norm_list(data["keywords"], lambda s: s.strip().lower())
+                if isinstance(data.get("brands"), list):
+                    data["brands"] = _norm_list(data["brands"], lambda s: s.strip())
+                return data
+        except Exception as exc:
+            log.debug(f"CONSTRAINT_EXTRACT_FAIL | {exc}")
+        return {}
+
     def _load_taxonomy_override(self) -> Optional[Dict[str, Any]]:
         """Load F&B taxonomy override from env JSON or file path. Returns dict or None."""
         path = os.getenv("FNB_TAXONOMY_PATH")
@@ -502,18 +572,22 @@ RULES:
    - "health_nutrition" for supplements, vitamins
    - "personal_care" for cosmetics, hygiene
    - Default to "f_and_b" if unclear
-3. dietary_terms: Extract terms like "GLUTEN FREE", "VEGAN", "ORGANIC" (UPPERCASE)
+3. dietary_terms: Extract from the CURRENT user text and context. Map phrases like "no palm oil", "without palm oil", "palm oil free" → "PALM OIL FREE" (UPPERCASE). Include other terms like "GLUTEN FREE", "VEGAN", "ORGANIC" (UPPERCASE).
 4. price_min/price_max: Parse budget expressions:
    - "100 rupees" → price_max: 100
    - "under 200" → price_max: 200  
    - "50-150" → price_min: 50, price_max: 150
    - "0-200 rupees" → price_min: 0, price_max: 200
-5. brands: Extract brand names if mentioned
+5. brands: Extract brand names ONLY if explicitly mentioned in the CURRENT user text. Do NOT carry over brands from previous turns when the user asks for generic "options/alternatives".
 6. size: Default 20, max 50
 
 EXAMPLES:
 - "gluten free bread under 100 rupees" → category_group: "f_and_b", dietary_terms: ["GLUTEN FREE"], price_max: 100
 - "organic snacks 50-200" → category_group: "f_and_b", dietary_terms: ["ORGANIC"], price_min: 50, price_max: 200
+
+FOLLOW-UP HANDLING:
+- If the last turn was about a specific brand but the CURRENT user text asks for "options/alternatives" without re-mentioning that brand, DROP brands.
+- Always include dietary constraints present in the CURRENT user text.
 
 Return ONLY the tool call to emit_es_params.
 """
@@ -696,12 +770,15 @@ Return ONLY the tool call to emit_es_params.
             f"Current params (pre-normalisation): {json.dumps(params, ensure_ascii=False)}\n"
             f"Recent turns (user↔bot): {json.dumps(convo_hist, ensure_ascii=False)}\n"
             f"Last search params hint: {json.dumps(last_params_hint, ensure_ascii=False)}\n"
+            f"CURRENT_CONSTRAINTS: {json.dumps(context.get('current_constraints', {}), ensure_ascii=False)}\n"
             f"Recent prices from last_recommendation (if any): {lr_prices}\n\n"
             "General rules:\n"
             "- Clamp size to [1,50]; ensure price_min<=price_max; uppercase dietary terms.\n"
             "- If dietary_terms == ['ANY'] then DROP dietary_terms.\n"
             "- If q is empty or placeholder, set q to the constructed query.\n"
-            "- Use conversation context (last turns, last_search_params, last_recommendation) to infer missing constraints when user implies a delta (e.g., brand/color/dietary/price).\n"
+            "- Use conversation context to infer missing constraints when user implies a delta (e.g., brand/color/dietary/price).\n"
+            "- If CURRENT_USER_TEXT includes phrases like 'no palm oil', 'without palm oil', set dietary_terms to include 'PALM OIL FREE'.\n"
+            "- If CURRENT_USER_TEXT does NOT mention a brand and asks for 'options'/'alternatives', REMOVE any brands carried from previous turns.\n"
             "- For 'cheaper/budget' with no explicit price → infer price_max from historical prices (e.g., 0.8×median or 25th percentile, rounded to 10/50).\n"
             "- For 'premium/more expensive' with no explicit price → infer price_min similarly (e.g., 1.2×median or 75th percentile).\n"
             "- If user implies brand or color changes in CURRENT_USER_TEXT or last turn, reflect that in brands or append to q (phrase boosts allowed).\n"
@@ -712,6 +789,7 @@ Return ONLY the tool call to emit_es_params.
             "- Text: 'premium choices' + prices [120, 90, 60, 45] → set price_min ≈ 110.\n"
             "- Text: 'show me Lays only' → brands=['Lays'] and/or phrase_boosts on brand/title.\n"
             "- Text: 'make them VEGAN' → dietary_terms=['VEGAN'].\n"
+            "- Text: 'spicy chips without palm oil' → dietary_terms=['PALM OIL FREE']; DO NOT set brands.\n"
         )
 
         try:
@@ -765,6 +843,61 @@ Return ONLY the tool call to emit_es_params.
             out["field_boosts"] = norm["field_boosts"]
         if isinstance(norm.get("sort"), list):
             out["sort"] = norm["sort"]
+        # carry product_intent if present for downstream size logic
+        if isinstance(norm.get("product_intent"), str):
+            out["product_intent"] = norm["product_intent"].strip()
+
+        # Merge CURRENT_CONSTRAINTS from this turn (generalizable, no hardcoded terms)
+        try:
+            constraints = context.get("current_constraints", {}) or {}
+            # Brands: if explicitly present for this turn, replace previous brands
+            if isinstance(constraints.get("brands"), list) and constraints["brands"]:
+                out["brands"] = [str(b).strip() for b in constraints["brands"] if str(b).strip()]
+            # Dietary terms/labels and health claims: union with priority to current turn
+            def _merge_list(key: str, transform=None):
+                cur = constraints.get(key)
+                if isinstance(cur, list) and cur:
+                    vals = [str(x).strip() for x in cur if str(x).strip()]
+                    if transform:
+                        vals = [transform(x) for x in vals]
+                    prev = out.get(key, []) if isinstance(out.get(key), list) else []
+                    out[key] = list({*prev, *vals})
+            _merge_list("dietary_terms", lambda x: x.upper())
+            _merge_list("dietary_labels", lambda x: x.upper())
+            _merge_list("health_claims", lambda x: x)
+            _merge_list("keywords", lambda x: x.lower())
+            # Prices from this turn override
+            if isinstance(constraints.get("price_min"), (int, float)):
+                out["price_min"] = float(constraints["price_min"])
+            if isinstance(constraints.get("price_max"), (int, float)):
+                out["price_max"] = float(constraints["price_max"])
+        except Exception:
+            pass
+
+        # Hard guards: derive dietary_terms from CURRENT_USER_TEXT if missing
+        try:
+            text_lower = (current_user_text or "").lower()
+            palm_markers = ["no palm oil", "without palm oil", "palm oil free"]
+            has_palm = any(m in text_lower for m in palm_markers)
+            if has_palm and not out.get("dietary_terms"):
+                out["dietary_terms"] = ["PALM OIL FREE"]
+        except Exception:
+            pass
+
+        # Brand carry-over guard for generic option/alternate requests
+        try:
+            text_lower = (current_user_text or "").lower()
+            generic_markers = ["options", "alternatives", "alternate", "show me options", "show me alternate"]
+            mentions_brand = False
+            existing_brands = [b for b in out.get("brands", [])] if isinstance(out.get("brands"), list) else []
+            for b in existing_brands:
+                if isinstance(b, str) and b.strip() and b.strip().lower() in text_lower:
+                    mentions_brand = True
+                    break
+            if (not mentions_brand) and any(g in text_lower for g in generic_markers):
+                out.pop("brands", None)
+        except Exception:
+            pass
 
         # Log fields inferred compared to input
         try:
@@ -830,12 +963,18 @@ Return ONLY the tool call to emit_es_params.
         prompt = (
             "Construct a concise product search phrase from context.\n\n"
             f"CURRENT_USER_TEXT: {current_user_text}\n\n"
+            f"CURRENT_CONSTRAINTS: {json.dumps(context.get('current_constraints', {}), ensure_ascii=False)}\n\n"
             f"RECENT_TURNS (user↔bot): {json.dumps(context.get('conversation_history', []), ensure_ascii=False)}\n\n"
             f"SLOTS/STATE: {json.dumps({'user_answers': context.get('user_answers', {}), 'session_data': context.get('session_data', {}), 'debug': context.get('debug', {})}, ensure_ascii=False)}\n\n"
             f"LAST_RECOMMENDATION: {json.dumps(context.get('last_recommendation', {}), ensure_ascii=False)}\n\n"
-            "Rules: Prefer debug.last_search_params.q if present; else derive from last_recommendation/products and slots;"
-            " include constraints (brand, color, dietary in UPPERCASE, price range).\n"
-            "Avoid placeholders like <UNKNOWN>.\n"
+            "Rules:\n"
+            "- Base the query primarily on CURRENT_USER_TEXT.\n"
+            "- Prefer debug.last_search_params.q only when CURRENT_USER_TEXT is vague.\n"
+            "- Include constraints explicitly present in CURRENT_USER_TEXT and CURRENT_CONSTRAINTS (dietary in UPPERCASE, price).\n"
+            "- Only include brand if CURRENT_USER_TEXT mentions it; otherwise DO NOT carry prior brand.\n"
+            "- For requests like 'options', 'alternatives', or category exploration, DROP prior brand constraints.\n"
+            "- Map 'no/without palm oil' → 'PALM OIL FREE'.\n"
+            "- Avoid placeholders like <UNKNOWN>.\n"
             "Return ONLY tool call to construct_search_query."
         )
         try:

@@ -273,9 +273,12 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     """Build ES query using explicit hard filters and soft re-ranking per latest spec."""
     p = params or {}
 
+    # Determine size: SPM (is_this_good) → 1; otherwise → 10
+    desired_size = 1 if str(p.get("product_intent", "")).strip().lower() == "is_this_good" else 10
+
     # Base doc with fields per spec
     body: Dict[str, Any] = {
-        "size": 10,
+        "size": desired_size,
         "track_total_hits": True,
         "_source": {
             "includes": [
@@ -322,10 +325,22 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 filters.append({"wildcard": {"category_paths": {"value": f"*f_and_b/food/{core_path}*"}}})
                 filters.append({"wildcard": {"category_paths": {"value": f"*personal_care/{core_path}*"}}})
 
-    # brands
-    brands = p.get("brands") or []
-    if isinstance(brands, list) and brands:
-        filters.append({"terms": {"brand": brands}})
+    # brands (DISABLED)
+    # NOTE: We intentionally skip direct filtering on brand for now.
+    # Rationale:
+    # - The `brand` field in the current index may be analyzed/lowercased or vary in casing/punctuation
+    #   (e.g., "Uncle Chips" vs "UNCLE CHIPS"), causing `terms` queries to miss matches.
+    # - Some documents store brand variants or aliases; an exact terms filter is brittle and
+    #   can suppress valid hits, leading to zero results (observed in manual tests).
+    # - We plan to reintroduce brand narrowing once we standardize on a non-analyzed keyword subfield
+    #   (e.g., `brand.keyword`) and/or implement a normalized brand alias map.
+    # - In the meantime, brand signals are still leveraged indirectly via multi_match should-clauses
+    #   (keywords) and relevance boosts.
+    #
+    # Example of future reintroduction once mapping is stable:
+    # brands = p.get("brands") or []
+    # if isinstance(brands, list) and brands:
+    #     filters.append({"terms": {"brand.keyword": brands}})
 
     # price range
     price_min = p.get("price_min")
@@ -378,7 +393,7 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     # Debug logs
     print(f"DEBUG: ES filters={filters}")
     print(f"DEBUG: ES should_count={len(shoulds)}")
-
+    
     return body
 
 def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:

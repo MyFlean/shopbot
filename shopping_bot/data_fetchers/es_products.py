@@ -275,7 +275,7 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
 
     # Base doc with fields per spec
     body: Dict[str, Any] = {
-        "size": max(1, min(50, int(p.get("size", 20)))),
+        "size": 10,
         "track_total_hits": True,
         "_source": {
             "includes": [

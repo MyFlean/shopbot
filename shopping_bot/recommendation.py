@@ -736,9 +736,9 @@ Return ONLY the tool call to emit_es_params.
         out: Dict[str, Any] = {}
         out["q"] = (norm.get("q") or constructed_q or "").strip()
         try:
-            out["size"] = max(1, min(50, int(norm.get("size", 20))))
+            out["size"] = max(1, min(10, int(norm.get("size", 10))))
         except Exception:
-            out["size"] = 20
+            out["size"] = 10
         if isinstance(norm.get("price_min"), (int, float)):
             out["price_min"] = float(norm["price_min"])
         if isinstance(norm.get("price_max"), (int, float)):

@@ -45,9 +45,10 @@ class BaseConfig:
     ENABLE_ASYNC: bool = os.getenv("ENABLE_ASYNC", "false").lower() in {"1", "true", "yes", "on"}
     
     # Elasticsearch (if used)
-    ELASTIC_BASE: str = os.getenv("ELASTIC_BASE", "")
+    # Prefer ES_URL/ES_API_KEY if provided; fallback to legacy ELASTIC_BASE/ELASTIC_API_KEY
+    ELASTIC_BASE: str = os.getenv("ES_URL") or os.getenv("ELASTIC_BASE", "")
     ELASTIC_INDEX: str = os.getenv("ELASTIC_INDEX", "flean_products_v2")
-    ELASTIC_API_KEY: str = os.getenv("ELASTIC_API_KEY", "")
+    ELASTIC_API_KEY: str = os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")
     ELASTIC_TIMEOUT_SECONDS: int = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
     ELASTIC_MAX_RESULTS: int = int(os.getenv("ELASTIC_MAX_RESULTS", "50"))
 

@@ -28,6 +28,7 @@ from enum import Enum
 import anthropic
 
 from .config import get_config
+import os
 from .models import UserContext
 
 Cfg = get_config()
@@ -134,6 +135,7 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             "home_kitchen", "electronics"
         ]
         # F&B taxonomy (provided)
+        # Default F&B taxonomy (can be overridden via env)
         self._fnb_taxonomy = {
             "frozen_treats": [
                 "ice_cream_cakes_and_sandwiches",
@@ -242,6 +244,17 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 "seeds"
             ]
         }
+
+        # Allow runtime override via env:
+        # FNB_TAXONOMY_PATH → path to JSON file
+        # FNB_TAXONOMY_JSON → raw JSON string
+        try:
+            override = self._load_taxonomy_override()
+            if override:
+                self._fnb_taxonomy = override
+                log.info("FNB_TAXONOMY | loaded override from environment")
+        except Exception as exc:
+            log.warning(f"FNB_TAXONOMY_OVERRIDE_FAILED | {exc}")
     
     async def extract_search_params(self, ctx: UserContext) -> RecommendationResponse:
         """
@@ -281,7 +294,14 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             constructed_q = await self._construct_search_query(context, current_user_text)
             log.info(f"ES_CONSTRUCTED_QUERY | q='{constructed_q}'")
 
-            # 2) Ask LLM to emit initial ES params (seeded by constructed_q)
+            # 2) Category/signals extraction from taxonomy (LLM tool)
+            try:
+                cat_signals = await self._extract_category_and_signals(constructed_q, self._fnb_taxonomy)
+            except Exception as exc:
+                log.warning(f"CAT_SIGNAL_EXTRACTION_FAILED | error={exc}")
+                cat_signals = {}
+
+            # 3) Ask LLM to emit initial ES params (seeded by constructed_q)
             prompt = self._build_extraction_prompt(context, constructed_q)
             params_from_llm = await self._call_anthropic_for_params(prompt)
             if isinstance(params_from_llm, dict):
@@ -300,7 +320,7 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                     error_message="LLM did not return a tool-call; used heuristics."
                 )
             
-            # 3) Normalise params via dedicated LLM tool
+            # 4) Normalise params via dedicated LLM tool
             final_params = await self._normalise_es_params(params_from_llm, context, constructed_q, current_user_text)
             # Guard against UNKNOWN/blank q after normalisation
             try:
@@ -329,7 +349,54 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             except Exception as exc:
                 log.warning(f"ES_BUDGET_FALLBACK_ERROR | error={exc}")
 
-            # 4) Optional F&B classification to attach category/subcategory
+            # Merge category/signals into final params
+            try:
+                if isinstance(cat_signals, dict):
+                    # category path
+                    cat_path = cat_signals.get("cat_path")
+                    if isinstance(cat_path, list):
+                        cat_path_str = "/".join([str(x).strip() for x in cat_path if str(x).strip()])
+                    else:
+                        cat_path_str = str(cat_path or "").strip()
+                    if cat_path_str:
+                        # Prefix by domain for F&B to match ES category_paths convention
+                        prefix = "food" if final_params.get("category_group", "f_and_b") == "f_and_b" else None
+                        final_params["category_path"] = f"{prefix}/{cat_path_str}" if prefix else cat_path_str
+
+                    # category group/name (fallback to f_and_b when taxonomy used)
+                    if not final_params.get("category_group"):
+                        final_params["category_group"] = "f_and_b"
+
+                    # brands
+                    brands = cat_signals.get("brands") or []
+                    if isinstance(brands, list) and brands:
+                        final_params["brands"] = list({str(b).strip() for b in brands if str(b).strip()})
+
+                    # price range
+                    if isinstance(cat_signals.get("price_min"), (int, float)):
+                        final_params["price_min"] = float(cat_signals["price_min"])
+                    if isinstance(cat_signals.get("price_max"), (int, float)):
+                        final_params["price_max"] = float(cat_signals["price_max"])
+
+                    # dietary/health signals
+                    if isinstance(cat_signals.get("dietary_labels"), list) and cat_signals["dietary_labels"]:
+                        final_params["dietary_labels"] = [str(x).upper() for x in cat_signals["dietary_labels"] if str(x).strip()]
+                    # map dietary_terms to dietary_labels if only former exists
+                    if final_params.get("dietary_terms") and not final_params.get("dietary_labels"):
+                        try:
+                            final_params["dietary_labels"] = [str(x).upper() for x in (final_params.get("dietary_terms") or [])]
+                        except Exception:
+                            pass
+                    if isinstance(cat_signals.get("health_claims"), list) and cat_signals["health_claims"]:
+                        final_params["health_claims"] = [str(x) for x in cat_signals["health_claims"] if str(x).strip()]
+
+                    # keywords for re-ranking / multi_match
+                    if isinstance(cat_signals.get("keywords"), list) and cat_signals["keywords"]:
+                        final_params["keywords"] = [str(x) for x in cat_signals["keywords"] if str(x).strip()]
+            except Exception as exc:
+                log.debug(f"MERGE_CAT_SIGNALS_FAILED | {exc}")
+
+            # 5) Optional F&B classification to attach category/subcategory
             fb_meta = await self._fb_category_classify(constructed_q)
             if fb_meta.get("is_fnb"):
                 final_params["category_group"] = "f_and_b"
@@ -360,6 +427,34 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 data={},
                 error_message=str(exc)
             )
+
+    def _load_taxonomy_override(self) -> Optional[Dict[str, Any]]:
+        """Load F&B taxonomy override from env JSON or file path. Returns dict or None."""
+        path = os.getenv("FNB_TAXONOMY_PATH")
+        raw = os.getenv("FNB_TAXONOMY_JSON")
+        data: Optional[Dict[str, Any]] = None
+        if path and isinstance(path, str) and path.strip():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                raise RuntimeError(f"Failed to load taxonomy file '{path}': {e}")
+        elif raw and isinstance(raw, str) and raw.strip():
+            try:
+                data = json.loads(raw)
+            except Exception as e:
+                raise RuntimeError(f"Failed to parse FNB_TAXONOMY_JSON: {e}")
+
+        if data is None:
+            return None
+
+        # Basic validation: dict[str, list[str]]
+        if not isinstance(data, dict):
+            raise ValueError("Taxonomy override must be a JSON object mapping category → list[subcategories]")
+        for k, v in data.items():
+            if not isinstance(k, str) or not isinstance(v, list):
+                raise ValueError("Invalid taxonomy format: keys must be strings and values must be lists")
+        return data
     
     def _build_extraction_prompt(self, context: Dict[str, Any], constructed_q: str) -> str:
         """Build the extraction prompt for LLM"""
@@ -396,6 +491,73 @@ EXAMPLES:
 
 Return ONLY the tool call to emit_es_params.
 """
+
+    async def _extract_category_and_signals(self, user_query: str, taxonomy: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        LLM tool-call function:
+        Input: user query and taxonomy JSON
+        Output:
+          - cat: top-level category name (e.g., "light_bites")
+          - cat_path: [parent_cat, sub_cat] or a slash-joined path string
+          - brands: [..]
+          - price_min, price_max
+          - dietary_labels: [..]
+          - health_claims: [..]
+          - keywords: [..] single-word tokens for re-ranking
+        """
+        EXTRACT_TOOL = {
+            "name": "extract_category_signals",
+            "description": "Given user text and taxonomy, emit cat, cat_path, brand filters, price range, dietary/health signals, and keywords.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "cat": {"type": "string"},
+                    "cat_path": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+                    "brands": {"type": "array", "items": {"type": "string"}},
+                    "price_min": {"type": "number"},
+                    "price_max": {"type": "number"},
+                    "dietary_labels": {"type": "array", "items": {"type": "string"}},
+                    "health_claims": {"type": "array", "items": {"type": "string"}},
+                    "keywords": {"type": "array", "items": {"type": "string"}}
+                }
+            }
+        }
+
+        prompt = (
+            "Extract hard filters and soft signals for an ES query.\n\n"
+            f"QUERY: {user_query}\n\n"
+            f"TAXONOMY JSON (F&B example): {json.dumps(taxonomy, ensure_ascii=False)}\n\n"
+            "Rules:\n"
+            "- Choose the closest category and subcategory when possible.\n"
+            "- If brand(s) mentioned, include them. Keep brand casing as-is, don't uppercase.\n"
+            "- Parse price constraints from text (under X, between A-B).\n"
+            "- Emit dietary_labels in UPPERCASE if present (e.g., VEGAN, GLUTEN FREE).\n"
+            "- Emit health_claims as given (free-form).\n"
+            "- Emit 1-5 single-word keywords (lowercase) for re-ranking.\n"
+            "Return ONLY the tool call to extract_category_signals."
+        )
+
+        try:
+            resp = await self._anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[EXTRACT_TOOL],
+                tool_choice={"type": "tool", "name": "extract_category_signals"},
+                temperature=0,
+                max_tokens=300,
+            )
+            tool_use = self._pick_tool(resp, "extract_category_signals")
+            if tool_use and getattr(tool_use, "input", None):
+                data = self._strip_keys(getattr(tool_use, "input", {}) or {})
+                # Normalise outputs minimally
+                if isinstance(data.get("dietary_labels"), list):
+                    data["dietary_labels"] = [str(x).upper() for x in data["dietary_labels"] if str(x).strip()]
+                if isinstance(data.get("keywords"), list):
+                    data["keywords"] = [str(x).lower() for x in data["keywords"] if str(x).strip()]
+                return data
+        except Exception as exc:
+            log.warning(f"CAT_SIGNAL_TOOL_FAILED | error={exc}")
+        return {}
     
     async def _call_anthropic_for_params(self, prompt: str) -> Optional[Dict[str, Any]]:
         """Make the Anthropic API call for parameter extraction"""

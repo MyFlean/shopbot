@@ -10,8 +10,8 @@ import requests
 from typing import Dict, Any, List
 
 # Configuration - update these with your values
-ELASTIC_BASE = "https://ecf1f6c12cba494b8dd14b854befb208.asia-south1.gcp.elastic-cloud.com:443"
-ELASTIC_INDEX = "flean_products_v2"
+ELASTIC_BASE = "https://adb98ad92e064025a9b2893e0589a3b5.asia-south1.gcp.elastic-cloud.com:443"
+ELASTIC_INDEX = "flean-v3"
 ELASTIC_API_KEY = "QkFZT2VwZ0JWejF3T1VGQkJIYU46Y0Z1emhYRXU5bDV0U0hQOGRYYXExdw"  # Your API key
 TIMEOUT = 10
 

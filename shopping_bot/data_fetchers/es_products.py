@@ -14,15 +14,19 @@ from ..llm_service import LLMService
 from . import register_fetcher
 
 # Configuration flags
-USE_MOCK_DATA = os.getenv("USE_MOCK_DATA", "true").lower() in {"1", "true", "yes", "on"}
+# Default to real Elasticsearch (no mock data). Can be overridden via USE_MOCK_DATA env.
+USE_MOCK_DATA = os.getenv("USE_MOCK_DATA", "false").lower() in {"1", "true", "yes", "on"}
 
 # ES Configuration
-ELASTIC_BASE = os.getenv(
-    "ELASTIC_BASE",
-    "https://ecf1f6c12cba494b8dd14b854befb208.asia-south1.gcp.elastic-cloud.com:443",
+# Prefer ES_URL/ES_API_KEY if provided; fallback to legacy ELASTIC_BASE/ELASTIC_API_KEY
+ELASTIC_BASE = (
+    os.getenv("ES_URL")
+    or os.getenv("ELASTIC_BASE",
+        "https://ecf1f6c12cba494b8dd14b854befb208.asia-south1.gcp.elastic-cloud.com:443"
+    )
 )
-ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean_products_v2")
-ELASTIC_API_KEY = os.getenv("ELASTIC_API_KEY", "")
+ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v3")
+ELASTIC_API_KEY = os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")
 TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
 
 # Mock product data for testing
@@ -513,61 +517,95 @@ def _build_function_score_functions(params: Dict[str, Any]) -> List[Dict[str, An
     return functions
 
 def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Build sophisticated ES query using the enhanced structure"""
+    """Build ES query using explicit hard filters and soft re-ranking per latest spec."""
     p = params or {}
-    body = copy.deepcopy(BASE_BODY)
-    
-    # Extract meaningful product terms
-    original_query = p.get("q", "").strip()
-    product_terms = _extract_product_terms(original_query)
-    
-    print(f"DEBUG: Original query: '{original_query}'")
-    print(f"DEBUG: Extracted product terms: '{product_terms}'")
-    
-    # Result size
-    size = p.get("size", 20)
-    body["size"] = max(1, min(50, int(size)))
-    
-    # Build query components
-    bool_query = body["query"]["function_score"]["query"]["bool"]
-    
-    # Filters (hard constraints)
-    filters = bool_query["filter"]
-    
-    # Category filter
-    if p.get("category_group"):
-        filters.append({"term": {"category_group": p["category_group"]}})
-    
-    # Price range filter
-    if p.get("price_min") is not None or p.get("price_max") is not None:
-        price_range = {}
-        if p.get("price_min") is not None:
-            price_range["gte"] = float(p["price_min"])
-        if p.get("price_max") is not None:
-            price_range["lte"] = float(p["price_max"])
-        filters.append({"range": {"price": price_range}})
-    
-    # Brand filter
-    if p.get("brands"):
-        brands = p["brands"] if isinstance(p["brands"], list) else [p["brands"]]
+
+    # Base doc with fields per spec
+    body: Dict[str, Any] = {
+        "size": max(1, min(50, int(p.get("size", 20)))),
+        "track_total_hits": True,
+        "_source": {
+            "includes": [
+                "id", "name", "brand", "price", "mrp", "hero_image.*",
+                "package_claims.*", "category_group", "category_paths", "description", "use"
+            ]
+        },
+        "query": {"bool": {"filter": [], "should": [], "minimum_should_match": 0}},
+        "sort": [{"_score": "desc"}],
+    }
+
+    bq = body["query"]["bool"]
+    filters: List[Dict[str, Any]] = bq["filter"]
+    shoulds: List[Dict[str, Any]] = bq["should"]
+
+    # 1) Hard filters
+    # category_group
+    category_group = p.get("category_group")
+    if isinstance(category_group, str) and category_group.strip():
+        filters.append({"term": {"category_group": category_group.strip()}})
+
+    # category_paths wildcard
+    category_path = p.get("category_path") or p.get("cat_path")
+    if isinstance(category_path, str) and category_path.strip():
+        filters.append({"wildcard": {"category_paths": {"value": f"*{category_path.strip()}*"}}})
+
+    # brands
+    brands = p.get("brands") or []
+    if isinstance(brands, list) and brands:
         filters.append({"terms": {"brand": brands}})
-    
-    # Dietary requirements filter
-    if p.get("dietary_terms"):
-        dietary = p["dietary_terms"] if isinstance(p["dietary_terms"], list) else [p["dietary_terms"]]
-        filters.append({"terms": {"package_claims.dietary_labels": dietary}})
-    
-    # Main search query
-    bool_query["must"] = _build_must_query(product_terms)
-    
-    # Relevance boosts
-    should_clauses = _build_should_boosts(product_terms, p)
-    bool_query["should"] = should_clauses
-    bool_query["minimum_should_match"] = 1 if should_clauses else 0
-    
-    # Function scoring
-    body["query"]["function_score"]["functions"] = _build_function_score_functions(p)
-    
+
+    # price range
+    price_min = p.get("price_min")
+    price_max = p.get("price_max")
+    if price_min is not None or price_max is not None:
+        pr: Dict[str, float] = {}
+        if isinstance(price_min, (int, float)):
+            pr["gte"] = float(price_min)
+        if isinstance(price_max, (int, float)):
+            pr["lte"] = float(price_max)
+        if pr:
+            filters.append({"range": {"price": pr}})
+
+    # 2) Soft re-ranking signals
+    dietary_labels = p.get("dietary_labels") or p.get("dietary_terms") or []
+    if isinstance(dietary_labels, list) and dietary_labels:
+        shoulds.append({"terms": {"package_claims.dietary_labels": dietary_labels}})
+
+    health_claims = p.get("health_claims") or []
+    if isinstance(health_claims, list) and health_claims:
+        shoulds.append({"terms": {"package_claims.health_claims": health_claims}})
+
+    # 3) Keyword/multi_match component
+    q_text = str(p.get("q", "")).strip()
+    keywords = p.get("keywords") or []
+    # Prefer explicit keywords; else fall back to extracted product terms from q
+    if isinstance(keywords, list) and keywords:
+        for kw in keywords[:5]:
+            kw_str = str(kw).strip()
+            if kw_str:
+                shoulds.append({
+                    "multi_match": {
+                        "query": kw_str,
+                        "type": "most_fields",
+                        "fields": ["name^4", "description^2", "use", "combined_text"],
+                    }
+                })
+    elif q_text:
+        shoulds.append({
+            "multi_match": {
+                "query": q_text,
+                "type": "most_fields",
+                "fields": ["name^4", "description^2", "use", "combined_text"],
+            }
+        })
+
+    # minimum_should_match stays 0 per spec
+    bq["minimum_should_match"] = 0
+
+    # Debug logs
+    print(f"DEBUG: ES filters={filters}")
+    print(f"DEBUG: ES should_count={len(shoulds)}")
+
     return body
 
 def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:

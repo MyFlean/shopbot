@@ -46,8 +46,8 @@ class BaseConfig:
     
     # Elasticsearch (if used)
     # Prefer ES_URL/ES_API_KEY if provided; fallback to legacy ELASTIC_BASE/ELASTIC_API_KEY
-    ELASTIC_BASE: str = os.getenv("ES_URL") or os.getenv("ELASTIC_BASE", "")
-    ELASTIC_INDEX: str = os.getenv("ELASTIC_INDEX", "flean_products_v2")
+    ELASTIC_BASE: str = os.getenv("ES_URL") or os.getenv("ELASTIC_BASE", "https://adb98ad92e064025a9b2893e0589a3b5.asia-south1.gcp.elastic-cloud.com:443")
+    ELASTIC_INDEX: str = os.getenv("ELASTIC_INDEX", "flean-v3")
     ELASTIC_API_KEY: str = os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")
     ELASTIC_TIMEOUT_SECONDS: int = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
     ELASTIC_MAX_RESULTS: int = int(os.getenv("ELASTIC_MAX_RESULTS", "50"))

@@ -352,18 +352,44 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             # Merge category/signals into final params
             try:
                 if isinstance(cat_signals, dict):
-                    # category path
-                    cat_path = cat_signals.get("cat_path")
-                    if isinstance(cat_path, list):
-                        cat_path_str = "/".join([str(x).strip() for x in cat_path if str(x).strip()])
-                    else:
-                        cat_path_str = str(cat_path or "").strip()
-                    if cat_path_str:
-                        # Prefix by domain for F&B to match ES category_paths convention
-                        prefix = "food" if final_params.get("category_group", "f_and_b") == "f_and_b" else None
-                        final_params["category_path"] = f"{prefix}/{cat_path_str}" if prefix else cat_path_str
+                    # Determine l1/l2/l3 first
+                    l1 = str(cat_signals.get("l1", "")).strip()
+                    l2 = (cat_signals.get("l2") or cat_signals.get("cat") or "").strip()
+                    l3 = (cat_signals.get("l3") or "").strip()
 
-                    # category group/name (fallback to f_and_b when taxonomy used)
+                    # Apply category_group from l1 when valid
+                    if l1 in ("f_and_b", "personal_care"):
+                        final_params["category_group"] = l1
+
+                    # If l2/l3 missing, fall back to FB classifier hints
+                    if not l2:
+                        l2 = (final_params.get("fb_category") or "").strip()
+                    if not l3:
+                        l3 = (final_params.get("fb_subcategory") or "").strip()
+
+                    # Prefer explicit l2(/l3) path; else accept provided cat_path
+                    cat_path = cat_signals.get("cat_path")
+                    if l2:
+                        cat_path_str = f"{l2}/{l3}".rstrip("/") if l3 else l2
+                    else:
+                        if isinstance(cat_path, list):
+                            cat_path_str = "/".join([str(x).strip() for x in cat_path if str(x).strip()])
+                        else:
+                            cat_path_str = str(cat_path or "").strip()
+
+                    if cat_path_str:
+                        # Ensure meta prefix matches our two meta categories
+                        group = final_params.get("category_group") or "f_and_b"
+                        final_params["category_group"] = group
+                        if group == "f_and_b":
+                            # ES stores as f_and_b/food/<l2>/<l3?>
+                            final_params["category_path"] = f"f_and_b/food/{cat_path_str}"
+                        elif group == "personal_care":
+                            final_params["category_path"] = f"personal_care/{cat_path_str}"
+                        else:
+                            final_params["category_path"] = cat_path_str
+
+                    # Fallback category_group if still unset
                     if not final_params.get("category_group"):
                         final_params["category_group"] = "f_and_b"
 
@@ -496,9 +522,12 @@ Return ONLY the tool call to emit_es_params.
         """
         LLM tool-call function:
         Input: user query and taxonomy JSON
-        Output:
-          - cat: top-level category name (e.g., "light_bites")
-          - cat_path: [parent_cat, sub_cat] or a slash-joined path string
+        Output (strict 3-level hierarchy):
+          - l1: meta category_group, exactly one of ["f_and_b", "personal_care"]
+          - l2: top bucket under the chosen domain (e.g., "light_bites" for f_and_b)
+          - l3: subcategory slug (e.g., "chips_and_crisps")
+          - cat: alias of l2 for convenience (optional)
+          - cat_path: [l2, l3] (preferred) or a slash-joined string "l2/l3"
           - brands: [..]
           - price_min, price_max
           - dietary_labels: [..]
@@ -507,10 +536,13 @@ Return ONLY the tool call to emit_es_params.
         """
         EXTRACT_TOOL = {
             "name": "extract_category_signals",
-            "description": "Given user text and taxonomy, emit cat, cat_path, brand filters, price range, dietary/health signals, and keywords.",
+            "description": "Given user text and taxonomy, emit hierarchical category (l1/l2/l3), cat_path, brand filters, price range, dietary/health signals, and keywords.",
             "input_schema": {
                 "type": "object",
                 "properties": {
+                    "l1": {"type": "string", "enum": ["f_and_b", "personal_care"]},
+                    "l2": {"type": "string"},
+                    "l3": {"type": "string"},
                     "cat": {"type": "string"},
                     "cat_path": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
                     "brands": {"type": "array", "items": {"type": "string"}},
@@ -519,21 +551,29 @@ Return ONLY the tool call to emit_es_params.
                     "dietary_labels": {"type": "array", "items": {"type": "string"}},
                     "health_claims": {"type": "array", "items": {"type": "string"}},
                     "keywords": {"type": "array", "items": {"type": "string"}}
-                }
+                },
+                "required": ["l1"]
             }
         }
 
         prompt = (
-            "Extract hard filters and soft signals for an ES query.\n\n"
+            "Extract hierarchical category and ES signals.\n\n"
             f"QUERY: {user_query}\n\n"
-            f"TAXONOMY JSON (F&B example): {json.dumps(taxonomy, ensure_ascii=False)}\n\n"
-            "Rules:\n"
-            "- Choose the closest category and subcategory when possible.\n"
-            "- If brand(s) mentioned, include them. Keep brand casing as-is, don't uppercase.\n"
-            "- Parse price constraints from text (under X, between A-B).\n"
-            "- Emit dietary_labels in UPPERCASE if present (e.g., VEGAN, GLUTEN FREE).\n"
-            "- Emit health_claims as given (free-form).\n"
-            "- Emit 1-5 single-word keywords (lowercase) for re-ranking.\n"
+            f"F_AND_B TAXONOMY: {json.dumps(taxonomy, ensure_ascii=False)}\n\n"
+            "Hierarchy and mapping rules:\n"
+            "1) l1 (category_group) MUST be exactly one of: f_and_b, personal_care.\n"
+            "   - If the query is about foods, snacks, beverages, groceries → l1=f_and_b.\n"
+            "   - If the query is about skincare, facewash, creams, shampoos, personal products → l1=personal_care.\n"
+            "2) For l1=f_and_b, pick l2 from the top-level keys in the taxonomy (e.g., light_bites, refreshing_beverages, etc.).\n"
+            "3) For l1=f_and_b, pick l3 from the corresponding subcategory list (e.g., chips_and_crisps under light_bites).\n"
+            "4) If the query suggests snacks like chips, nachos, namkeen, popcorn → l2=light_bites;\n"
+            "   then choose a specific l3 such as chips_and_crisps when appropriate.\n"
+            "5) Build cat_path as [l2, l3] when l3 exists; else just [l2].\n"
+            "6) brands: include any explicit brand mentions; keep original casing (e.g., Lay's).\n"
+            "7) price_min/price_max: parse ranges like 'under 60', '50-100'.\n"
+            "8) dietary_labels: emit UPPERCASE terms (e.g., PALM OIL FREE, GLUTEN FREE, VEGAN) if present.\n"
+            "9) health_claims: free-form phrases in lowercase or as mentioned (e.g., 'palm oil free').\n"
+            "10) keywords: 1-5 single words (lowercase) useful for re-ranking (exclude stop-words).\n"
             "Return ONLY the tool call to extract_category_signals."
         )
 
@@ -554,6 +594,11 @@ Return ONLY the tool call to emit_es_params.
                     data["dietary_labels"] = [str(x).upper() for x in data["dietary_labels"] if str(x).strip()]
                 if isinstance(data.get("keywords"), list):
                     data["keywords"] = [str(x).lower() for x in data["keywords"] if str(x).strip()]
+                # Build cat_path from l2/l3 when available
+                l2 = (data.get("l2") or data.get("cat") or "").strip()
+                l3 = (data.get("l3") or "").strip()
+                if l2 and not data.get("cat_path"):
+                    data["cat_path"] = [l2] + ([l3] if l3 else [])
                 return data
         except Exception as exc:
             log.warning(f"CAT_SIGNAL_TOOL_FAILED | error={exc}")

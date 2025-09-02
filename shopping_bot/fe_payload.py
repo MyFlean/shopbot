@@ -48,6 +48,9 @@ def map_fe_response_type(bot_resp_type: ResponseType, content: Dict[str, Any] | 
         # If we have products or summary_message, it's a proper final_answer
         if c.get("products") or c.get("summary_message"):
             return "final_answer"
+        # Treat presence of UX payload or product_intent as final_answer (even if products array is empty)
+        if isinstance(c.get("ux_response"), dict) or c.get("product_intent"):
+            return "final_answer"
         # Otherwise it's casual (plain message only)
         return "casual"
     

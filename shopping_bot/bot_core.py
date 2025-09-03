@@ -123,6 +123,26 @@ class ShoppingBotCore:
                 content={"message": "Processing your request…"},
             )
 
+        # Opportunistic upgrade: if previous L3 was non-product but current text is product-like,
+        # reclassify intent for this follow-up so we can engage 4-intent flow.
+        if effective_l3 not in SERIOUS_PRODUCT_INTENTS:
+            try:
+                reclass = await self.llm_service.classify_intent(query, ctx)
+                if reclass.is_product_related and reclass.layer3 in SERIOUS_PRODUCT_INTENTS:
+                    effective_l3 = reclass.layer3
+                    ctx.session.update(
+                        intent_l1=reclass.layer1,
+                        intent_l2=reclass.layer2,
+                        intent_l3=reclass.layer3,
+                        is_product_related=reclass.is_product_related,
+                    )
+                    self.smart_log.intent_classified(
+                        ctx.user_id, (reclass.layer1, reclass.layer2, reclass.layer3), map_leaf_to_query_intent(reclass.layer3).value
+                    )
+                    self.ctx_mgr.save_context(ctx)
+            except Exception:
+                pass
+
         # Delta-fetch-and-reply
         fetch_list = await self.llm_service.assess_delta_requirements(query, ctx, fu.patch)
         if fetch_list:

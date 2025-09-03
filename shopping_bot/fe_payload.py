@@ -89,6 +89,27 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
                         c["products"] = c["products"][:1]
             except Exception:
                 pass
+            # Derive and inject ux_type when UX data present or intent implies it
+            try:
+                ux_type: str | None = None
+                ux_payload = c.get("ux_response") if isinstance(c.get("ux_response"), dict) else None
+                if ux_payload:
+                    surface = str(ux_payload.get("ux_surface", "")).upper()
+                    if surface == "SPM":
+                        ux_type = "UX_SPM"
+                    elif surface == "MPM":
+                        ux_type = "UX_MPM"
+                if not ux_payload and isinstance(c.get("product_intent"), str):
+                    intent_lower = c["product_intent"].strip().lower()
+                    if intent_lower == "is_this_good":
+                        ux_type = "UX_SPM"
+                    elif intent_lower in {"which_is_better", "show_me_options", "show_me_alternate"}:
+                        ux_type = "UX_MPM"
+                if ux_type:
+                    c = {**c, "ux_type": ux_type}
+            except Exception:
+                pass
+
             # Ensure a text anchor when quick replies are present (SPM/MPM UX)
             try:
                 ux = c.get("ux_response")

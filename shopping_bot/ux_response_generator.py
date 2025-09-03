@@ -247,11 +247,16 @@ Generate 3 components for this {intent} response:
    - Should be persuasive and personal (1-2 sentences)
    - Address why the user should consider these products
    - Use information from the previous_answer to make it specific
+   - Leverage product quality signals when available:
+     • flean_percentile (overall quality in %)
+     • bonus_percentiles (e.g., protein, fiber, wholefood, fortification, simplicity)
+     • penalty_percentiles (e.g., sugar, sodium, trans_fat, saturated_fat, oil, sweetener, calories)
+   - Give evidence-based reasons such as "Top 10% on wholefood score" or "Lower sodium than typical choices".
 
 2. **UX Surface Type**:
    - SPM: Single Product Module (use for 1 item or clear single recommendation)
    - MPM: Multiple Product Module (use for 2+ items, comparisons, or collections)
-   - Consider: {len(context_data.get('product_ids', []))} products available
+   - Consider: {context_data.get('product_count', 0)} products available
 
 3. **Quick Replies** (3-4 buttons):
    - Intent-specific action buttons for user to pivot/refine

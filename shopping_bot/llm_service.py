@@ -26,6 +26,7 @@ from .intent_config import (CATEGORY_QUESTION_HINTS, INTENT_MAPPING,
 from .models import (FollowUpPatch, FollowUpResult, ProductData,
                      RequirementAssessment, UserContext)
 from .recommendation import get_recommendation_service
+# Avoid top-level import of es_products to prevent circular import at app startup
 from .utils.helpers import extract_json_block
 
 Cfg = get_config()
@@ -442,6 +443,9 @@ Permanent: {permanent}
 ### PRODUCT SEARCH RESULTS
 {products_json}
 
+### ENRICHED TOP PRODUCTS (full-doc summaries; use for reasoning and evidence)
+{enriched_top}
+
 ### INSTRUCTIONS
 Create a helpful response with:
 
@@ -459,6 +463,9 @@ Create a helpful response with:
 
 Focus on actual product attributes from the search results.
 Make descriptions specific and benefit-focused.
+Leverage percentiles and quality signals explicitly when available, for example:
+- "Top {{percent}}%, protein percentile" or "Lower sodium (penalty percentile {{percent}}%)"
+- "High wholefood score (top {{percent}}%)" or "Low additives/sweeteners"
 If no products found, provide helpful message with empty products array.
 
 Return ONLY a tool call to generate_product_response.
@@ -700,15 +707,100 @@ class LLMService:
                 "products": []
             }
         
-        # Narrow the LLM input as well: only pass the single product for SPM
-        products_for_llm = products_data[:1] if (product_intent and product_intent == "is_this_good") else products_data
+        # Log top-3 products from Redis-backed fetched data for debugging/traceability
+        try:
+            top_preview = []
+            for p in products_data[:3]:
+                if isinstance(p, dict):
+                    top_preview.append({
+                        "id": p.get("id"),
+                        "name": p.get("name"),
+                        "price": p.get("price"),
+                        "flean_percentile": p.get("flean_percentile"),
+                        "bonus": {k: v for k, v in (p.get("bonus_percentiles") or {}).items() if k in ["protein", "fiber", "wholefood"]},
+                        "penalty": {k: v for k, v in (p.get("penalty_percentiles") or {}).items() if k in ["sodium", "sugar", "oil", "sweetener"]}
+                    })
+            if top_preview:
+                log.info(f"REDIS_TOP3_PRODUCTS | items={json.dumps(top_preview, ensure_ascii=False)}")
+        except Exception:
+            pass
 
+        # Build enrichment: fetch full docs for top-3 (or top-1 for SPM) via ES mget
+        top_k = 1 if (product_intent and product_intent == "is_this_good") else 3
+        top_ids: List[str] = []
+        try:
+            for p in products_data[:top_k]:
+                pid = str(p.get("id") or "").strip()
+                if pid:
+                    top_ids.append(pid)
+        except Exception:
+            top_ids = []
+
+        top_products_brief: List[Dict[str, Any]] = []
+        if top_ids:
+            try:
+                from .data_fetchers.es_products import get_es_fetcher  # type: ignore
+                loop = asyncio.get_running_loop()
+                fetcher = get_es_fetcher()
+                full_docs = await loop.run_in_executor(None, lambda: fetcher.mget_products(top_ids))
+                try:
+                    # Log full docs for top-3 (be careful with size; this prints only top-3)
+                    log.info(f"ES_MGET_TOP3_FULLDOCS | count={len(full_docs)} | docs={json.dumps(full_docs[:3], ensure_ascii=False)}")
+                except Exception:
+                    pass
+                # Build compact briefs for LLM (avoid token bloat)
+                for doc in full_docs[:top_k]:
+                    try:
+                        stats = doc.get("stats", {}) or {}
+                        def _pp(key: str) -> Optional[float]:
+                            try:
+                                return (stats.get(key, {}) or {}).get("subcategory_percentile")
+                            except Exception:
+                                return None
+                        brief = {
+                            "id": doc.get("id"),
+                            "name": doc.get("name"),
+                            "brand": doc.get("brand"),
+                            "price": doc.get("price"),
+                            "description": doc.get("description"),
+                            "dietary_labels": (doc.get("package_claims", {}) or {}).get("dietary_labels", []),
+                            "health_claims": (doc.get("package_claims", {}) or {}).get("health_claims", []),
+                            "nutri": ((doc.get("category_data", {}) or {}).get("nutritional", {}) or {}).get("nutri_breakdown", {}),
+                            "flean_score": (doc.get("flean_score", {}) or {}).get("adjusted_score"),
+                            "percentiles": {
+                                "flean": _pp("adjusted_score_percentiles"),
+                                "protein": _pp("protein_percentiles"),
+                                "fiber": _pp("fiber_percentiles"),
+                                "wholefood": _pp("wholefood_percentiles"),
+                                "fortification": _pp("fortification_percentiles"),
+                                "simplicity": _pp("simplicity_percentiles"),
+                                "sugar_penalty": _pp("sugar_penalty_percentiles"),
+                                "sodium_penalty": _pp("sodium_penalty_percentiles"),
+                                "trans_fat_penalty": _pp("trans_fat_penalty_percentiles"),
+                                "saturated_fat_penalty": _pp("saturated_fat_penalty_percentiles"),
+                                "oil_penalty": _pp("oil_penalty_percentiles"),
+                                "sweetener_penalty": _pp("sweetener_penalty_percentiles"),
+                                "calories_penalty": _pp("calories_penalty_percentiles"),
+                                "empty_food_penalty": _pp("empty_food_penalty_percentiles"),
+                            },
+                        }
+                        top_products_brief.append(brief)
+                    except Exception:
+                        continue
+            except Exception:
+                top_products_brief = []
+
+        # Narrow LLM input: single product for SPM else pass the list; add enriched briefs separately
+        products_for_llm = products_data[:1] if (product_intent and product_intent == "is_this_good") else products_data[:10]
+
+        # Augmented prompt with enriched top products and percentile guidance
         prompt = PRODUCT_RESPONSE_PROMPT.format(
             query=query,
             intent_l3=intent_l3,
             session=json.dumps(ctx.session, ensure_ascii=False),
             permanent=json.dumps(ctx.permanent, ensure_ascii=False),
-            products_json=json.dumps(products_for_llm, ensure_ascii=False)
+            products_json=json.dumps(products_for_llm, ensure_ascii=False),
+            enriched_top=json.dumps(top_products_brief, ensure_ascii=False)
         )
         
         try:
@@ -748,6 +840,10 @@ class LLMService:
                 if "id" not in product and i < len(products_data):
                     product["id"] = f"prod_{hash(products_data[i].get('name', ''))%1000000}"
             
+            # Attach enrichment for downstream UX/DPL
+            if top_products_brief:
+                result["top_products_brief"] = top_products_brief
+
             # For MPM (non-SPM), remove per-product details but include product_ids for UX
             if product_intent and product_intent != "is_this_good":
                 # Build product_ids from ES results

@@ -256,6 +256,17 @@ async def chat() -> Response:
                 ux_surface = bot_resp.content['ux_response'].get('ux_surface', 'unknown')
                 qr_count = len(bot_resp.content['ux_response'].get('quick_replies', []))
                 ux_info = f" | ux_surface={ux_surface} | qr_count={qr_count}"
+            elif isinstance(bot_resp.content, dict) and bot_resp.content.get('product_intent'):
+                # Derive and log implied UX type from intent when no explicit UX payload is present
+                try:
+                    intent_lower = str(bot_resp.content.get('product_intent', '')).strip().lower()
+                    implied = 'UX_SPM' if intent_lower == 'is_this_good' else (
+                        'UX_MPM' if intent_lower in {'which_is_better', 'show_me_options', 'show_me_alternate'} else 'unknown'
+                    )
+                    if implied != 'unknown':
+                        ux_info = f" | ux_type={implied}"
+                except Exception:
+                    pass
 
             smart_log.response_generated(
                 user_id, envelope.get("response_type"), False, elapsed_time
@@ -488,6 +499,20 @@ async def test_ux_system() -> Response:
             
             if bot_resp.content.get('product_intent'):
                 ux_info["product_intent"] = bot_resp.content['product_intent']
+
+            # Inject ux_type for validation
+            try:
+                if isinstance(ux_response, dict) and ux_response.get('ux_surface'):
+                    surf = str(ux_response.get('ux_surface', '')).upper()
+                    ux_info['ux_type'] = 'UX_SPM' if surf == 'SPM' else ('UX_MPM' if surf == 'MPM' else None)
+                if not ux_info.get('ux_type') and isinstance(bot_resp.content.get('product_intent'), str):
+                    intent_lower = bot_resp.content['product_intent'].strip().lower()
+                    if intent_lower == 'is_this_good':
+                        ux_info['ux_type'] = 'UX_SPM'
+                    elif intent_lower in {'which_is_better', 'show_me_options', 'show_me_alternate'}:
+                        ux_info['ux_type'] = 'UX_MPM'
+            except Exception:
+                pass
         
         test_result = {
             "test_query": test_query,

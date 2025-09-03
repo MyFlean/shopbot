@@ -1,4 +1,14 @@
 # shopping_bot/data_fetchers/es_products.py
+"""
+Elasticsearch Products Fetcher
+──────────────────────────────
+Enhanced with:
+• Better brand handling using match queries
+• Function score for percentile-based ranking
+• Result quality checks with fallback strategies
+• Minimum score thresholds
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -9,11 +19,10 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from ..enums import BackendFunction
-from ..llm_service import LLMService
 from . import register_fetcher
+from ..scoring_config import build_function_score_functions
 
 # ES Configuration
-# Prefer ES_URL/ES_API_KEY if provided; fallback to legacy ELASTIC_BASE/ELASTIC_API_KEY
 ELASTIC_BASE = (
     os.getenv("ES_URL")
     or os.getenv("ELASTIC_BASE",
@@ -23,66 +32,6 @@ ELASTIC_BASE = (
 ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v3")
 ELASTIC_API_KEY = os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")
 TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
-
-# Enhanced query template with better field coverage
-BASE_BODY: Dict[str, Any] = {
-    "track_total_hits": True,
-    "size": 20,
-    "_source": {
-        "includes": [
-            "id", "name", "brand", "price", "mrp", "category_paths",
-            "ingredients.raw_text", "ingredients.raw_text_new",
-            "category_data.nutritional.nutri_breakdown.*",
-            "category_data.nutritional.raw_text",
-            "package_claims.*", "tags_and_sentiments.tags.*", 
-            "hero_image.*", "description", "use"
-        ]
-    },
-    "query": {
-        "function_score": {
-            "query": {
-                "bool": {
-                    "filter": [],
-                    "must": [],
-                    "should": [],
-                    "minimum_should_match": 0
-                }
-            },
-            "functions": [],
-            "score_mode": "sum",
-            "boost_mode": "sum"
-        }
-    },
-    "sort": [
-        {"_score": "desc"},
-        {"category_data.nutritional.nutri_breakdown.protein_g": {"order": "desc"}}
-    ],
-    "highlight": {
-        "pre_tags": ["<em class=\"hl\">"],
-        "post_tags": ["</em>"],
-        "fields": {
-            "name": {},
-            "ingredients.raw_text": {},
-            "ingredients.raw_text_new": {},
-            "category_data.nutritional.raw_text": {}
-        }
-    },
-    "aggs": {
-        "by_brand": {"terms": {"field": "brand", "size": 10}},
-        "dietary_labels": {"terms": {"field": "package_claims.dietary_labels", "size": 10}},
-        "protein_ranges": {
-            "range": {
-                "field": "category_data.nutritional.nutri_breakdown.protein_g",
-                "ranges": [
-                    {"to": 5}, 
-                    {"from": 5, "to": 10}, 
-                    {"from": 10, "to": 20}, 
-                    {"from": 20}
-                ]
-            }
-        }
-    }
-}
 
 # Text cleaning
 TAG_RE = re.compile(r"<[^>]+>")
@@ -127,167 +76,44 @@ def _extract_highlight(hit: Dict[str, Any]) -> Optional[str]:
             return _clean_text(hl[field][0])
     return None
 
-def _extract_product_terms(query_text: str) -> str:
-    """Extract meaningful product terms from natural language query"""
-    # Words to remove that don't help product matching
-    stop_words = {
-        'recommend', 'suggest', 'show', 'find', 'get', 'buy', 'purchase', 'want', 'need',
-        'me', 'some', 'any', 'good', 'nice', 'best', 'great', 'options', 'products', 'items',
-        'under', 'above', 'below', 'within', 'around', 'about', 'less', 'more', 'than',
-        'rupees', 'rs', 'inr', 'price', 'cost', 'budget', 'cheap', 'expensive',
-        'can', 'you', 'please', 'help', 'looking', 'for'
-    }
-    
-    # Extract words, remove numbers and stop words
-    words = re.findall(r'\b[a-zA-Z]+\b', query_text.lower())
-    product_words = [w for w in words if w not in stop_words and len(w) > 2]
-    
-    return ' '.join(product_words)
-
-def _build_must_query(product_terms: str) -> List[Dict[str, Any]]:
-    """Build the main search query with enhanced field coverage"""
-    if not product_terms.strip():
-        return [{"match_all": {}}]
-    
-    return [{
-        "multi_match": {
-            "query": product_terms,
-            "type": "most_fields",
-            "operator": "or",
-            "fuzziness": "AUTO",
-            "lenient": True,
-            "fields": [
-                "name^6",
-                "ingredients.raw_text^8",
-                "ingredients.raw_text_new^8",
-                "category_data.nutritional.raw_text^3",
-                "description^2",
-                "use",
-                "package_claims.health_claims^2",
-                "package_claims.dietary_labels^2",
-                "tags_and_sentiments.seo_keywords.*^2",
-                "tags_and_sentiments.tags.*^1.5"
-            ]
-        }
-    }]
-
-def _build_should_boosts(product_terms: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Build should clauses for better relevance based on query content"""
-    should_clauses = []
-    terms_lower = product_terms.lower()
-    
-    # Boost for exact phrase matches in name
-    if len(product_terms.split()) > 1:
-        should_clauses.append({
-            "match_phrase": {
-                "name": {
-                    "query": product_terms,
-                    "boost": 10
-                }
-            }
-        })
-    
-    # Category-specific boosts (examples)
-    if any(term in terms_lower for term in ['bread', 'roti', 'pav', 'bun']):
-        should_clauses.extend([
-            {"wildcard": {"category_paths": {"value": "*bread*", "boost": 5.0}}},
-            {"match": {"name": {"query": "whole wheat", "boost": 3}}},
-            {"match": {"package_claims.dietary_labels": {"query": "whole grain", "boost": 2}}}
-        ])
-    
-    if any(term in terms_lower for term in ['chips', 'snacks', 'namkeen']):
-        should_clauses.extend([
-            {"wildcard": {"category_paths": {"value": "*snacks*", "boost": 5.0}}},
-            {"match": {"package_claims.health_claims": {"query": "baked not fried", "boost": 2}}}
-        ])
-    
-    if any(term in terms_lower for term in ['protein', 'fitness', 'workout']):
-        should_clauses.extend([
-            {"match": {"package_claims.health_claims": {"query": "high protein", "boost": 5}}},
-            {"match": {"package_claims.health_claims": {"query": "source of protein", "boost": 3}}},
-            {"range": {"category_data.nutritional.nutri_breakdown.protein_g": {"gte": 10, "boost": 3}}}
-        ])
-    
-    # Dietary preference boosts
-    dietary_terms = params.get("dietary_terms", [])
-    for term in dietary_terms:
-        should_clauses.append({
-            "match": {
-                "package_claims.dietary_labels": {
-                    "query": term,
-                    "boost": 8
-                }
-            }
-        })
-    
-    # Brand preference boosts
-    brands = params.get("brands", [])
-    for brand in brands:
-        should_clauses.append({
-            "match": {
-                "brand": {
-                    "query": brand,
-                    "boost": 6
-                }
-            }
-        })
-    
-    return should_clauses
-
-def _build_function_score_functions(params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Build function score functions for better ranking"""
-    functions = []
-    
-    # Protein content boost
-    protein_weight = params.get("protein_weight", 1.5)
-    if protein_weight > 0:
-        functions.append({
-            "field_value_factor": {
-                "field": "category_data.nutritional.nutri_breakdown.protein_g",
-                "modifier": "ln1p",
-                "missing": 0
-            },
-            "weight": float(protein_weight)
-        })
-    
-    # Health claims boost
-    functions.append({
-        "filter": {
-            "exists": {"field": "package_claims.health_claims"}
-        },
-        "weight": 1.2
-    })
-    
-    # Popular brands boost
-    popular_brands = ["Nestle", "Britannia", "Parle", "ITC", "Amul"]
-    functions.append({
-        "filter": {
-            "terms": {"brand": popular_brands}
-        },
-        "weight": 1.1
-    })
-    
-    return functions
-
 def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Build ES query using explicit hard filters and soft re-ranking per latest spec."""
+    """
+    Build ES query with improved brand handling and percentile-based ranking.
+    Uses function_score for quality-based ranking.
+    """
     p = params or {}
 
-    # Determine size: SPM (is_this_good) → 1; otherwise → 10
+    # Determine size based on product intent
     desired_size = 1 if str(p.get("product_intent", "")).strip().lower() == "is_this_good" else 10
 
-    # Base doc with fields per spec
+    # Base document structure with enhanced source fields
     body: Dict[str, Any] = {
         "size": desired_size,
         "track_total_hits": True,
         "_source": {
             "includes": [
                 "id", "name", "brand", "price", "mrp", "hero_image.*",
-                "package_claims.*", "category_group", "category_paths", "description", "use"
+                "package_claims.*", "category_group", "category_paths", 
+                "description", "use", "flean_score.*",
+                "stats.adjusted_score_percentiles.*",
+                "stats.wholefood_percentiles.*",
+                "stats.protein_percentiles.*",
+                "stats.fiber_percentiles.*",
+                "stats.fortification_percentiles.*",
+                "stats.simplicity_percentiles.*",
+                "stats.sugar_penalty_percentiles.*",
+                "stats.sodium_penalty_percentiles.*",
+                "stats.trans_fat_penalty_percentiles.*",
+                "stats.saturated_fat_penalty_percentiles.*",
+                "stats.oil_penalty_percentiles.*",
+                "stats.sweetener_penalty_percentiles.*",
+                "stats.calories_penalty_percentiles.*",
+                "stats.empty_food_penalty_percentiles.*",
             ]
         },
         "query": {"bool": {"filter": [], "should": [], "minimum_should_match": 0}},
         "sort": [{"_score": "desc"}],
+        "min_score": 0.5,  # Add minimum score threshold
     }
 
     bq = body["query"]["bool"]
@@ -295,12 +121,12 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     shoulds: List[Dict[str, Any]] = bq["should"]
 
     # 1) Hard filters
-    # category_group
+    # Category group filter
     category_group = p.get("category_group")
     if isinstance(category_group, str) and category_group.strip():
         filters.append({"term": {"category_group": category_group.strip()}})
 
-    # category_paths via explicit l2/l3 or full path wildcard respecting ES layout
+    # Category path filter with improved handling
     category_path = p.get("category_path") or p.get("cat_path")
     if isinstance(category_path, str) and category_path.strip():
         raw_path = category_path.strip()
@@ -316,37 +142,44 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
             group = (category_group or "").strip()
             if group == "f_and_b":
                 full = f"f_and_b/food/{core_path}"
-                filters.append({"wildcard": {"category_paths": {"value": f"*{full}*"}}})
+                # More robust category matching
+                filters.append({
+                    "bool": {
+                        "should": [
+                            {"term": {"category_paths": full}},
+                            {"wildcard": {"category_paths": {"value": f"*{full}*"}}}
+                        ],
+                        "minimum_should_match": 1
+                    }
+                })
             elif group == "personal_care":
                 full = f"personal_care/{core_path}"
-                filters.append({"wildcard": {"category_paths": {"value": f"*{full}*"}}})
+                filters.append({
+                    "bool": {
+                        "should": [
+                            {"term": {"category_paths": full}},
+                            {"wildcard": {"category_paths": {"value": f"*{full}*"}}}
+                        ],
+                        "minimum_should_match": 1
+                    }
+                })
             else:
                 # Fallback: try both
-                filters.append({"wildcard": {"category_paths": {"value": f"*f_and_b/food/{core_path}*"}}})
-                filters.append({"wildcard": {"category_paths": {"value": f"*personal_care/{core_path}*"}}})
+                filters.append({
+                    "bool": {
+                        "should": [
+                            {"wildcard": {"category_paths": {"value": f"*f_and_b/food/{core_path}*"}}},
+                            {"wildcard": {"category_paths": {"value": f"*personal_care/{core_path}*"}}}
+                        ],
+                        "minimum_should_match": 1
+                    }
+                })
 
-    # brands (DISABLED)
-    # NOTE: We intentionally skip direct filtering on brand for now.
-    # Rationale:
-    # - The `brand` field in the current index may be analyzed/lowercased or vary in casing/punctuation
-    #   (e.g., "Uncle Chips" vs "UNCLE CHIPS"), causing `terms` queries to miss matches.
-    # - Some documents store brand variants or aliases; an exact terms filter is brittle and
-    #   can suppress valid hits, leading to zero results (observed in manual tests).
-    # - We plan to reintroduce brand narrowing once we standardize on a non-analyzed keyword subfield
-    #   (e.g., `brand.keyword`) and/or implement a normalized brand alias map.
-    # - In the meantime, brand signals are still leveraged indirectly via multi_match should-clauses
-    #   (keywords) and relevance boosts.
-    #
-    # Example of future reintroduction once mapping is stable:
-    # brands = p.get("brands") or []
-    # if isinstance(brands, list) and brands:
-    #     filters.append({"terms": {"brand.keyword": brands}})
-
-    # price range
+    # Price range filter
     price_min = p.get("price_min")
     price_max = p.get("price_max")
     if price_min is not None or price_max is not None:
-        pr: Dict[str, float] = {}
+        pr: Dict[str, Any] = {}
         if isinstance(price_min, (int, float)):
             pr["gte"] = float(price_min)
         if isinstance(price_max, (int, float)):
@@ -354,19 +187,67 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
         if pr:
             filters.append({"range": {"price": pr}})
 
-    # 2) Soft re-ranking signals
+    # Minimum flean percentile (quality threshold)
+    min_flean = p.get("min_flean_percentile")
+    if isinstance(min_flean, (int, float)):
+        try:
+            filters.append({
+                "range": {
+                    "stats.adjusted_score_percentiles.subcategory_percentile": {"gte": float(min_flean)}
+                }
+            })
+        except Exception:
+            pass
+
+    # 2) Soft re-ranking signals with boosts
+    
+    # IMPROVED: Brand handling using match queries instead of terms
+    brands = p.get("brands") or []
+    if isinstance(brands, list) and brands:
+        for brand in brands:
+            if brand and str(brand).strip():
+                shoulds.append({
+                    "match": {
+                        "brand": {
+                            "query": str(brand).strip(),
+                            "boost": 5.0
+                        }
+                    }
+                })
+
+    # Dietary labels with boost
     dietary_labels = p.get("dietary_labels") or p.get("dietary_terms") or []
     if isinstance(dietary_labels, list) and dietary_labels:
-        shoulds.append({"terms": {"package_claims.dietary_labels": dietary_labels}})
+        for label in dietary_labels:
+            if label and str(label).strip():
+                shoulds.append({
+            "match": {
+                "package_claims.dietary_labels": {
+                            "query": str(label).strip(),
+                            "boost": 3.0
+                        }
+                    }
+                })
 
+    # Health claims with boost
     health_claims = p.get("health_claims") or []
     if isinstance(health_claims, list) and health_claims:
-        shoulds.append({"terms": {"package_claims.health_claims": health_claims}})
+        for claim in health_claims:
+            if claim and str(claim).strip():
+                shoulds.append({
+            "match": {
+                        "package_claims.health_claims": {
+                            "query": str(claim).strip(),
+                            "boost": 2.0
+                        }
+                    }
+                })
 
     # 3) Keyword/multi_match component
     q_text = str(p.get("q", "")).strip()
     keywords = p.get("keywords") or []
-    # Prefer explicit keywords; else fall back to extracted product terms from q
+    
+    # Main query matching
     if isinstance(keywords, list) and keywords:
         for kw in keywords[:5]:
             kw_str = str(kw).strip()
@@ -374,25 +255,61 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 shoulds.append({
                     "multi_match": {
                         "query": kw_str,
-                        "type": "most_fields",
+                        "type": "best_fields",
                         "fields": ["name^4", "description^2", "use", "combined_text"],
+                        "fuzziness": "AUTO"
                     }
                 })
     elif q_text:
         shoulds.append({
             "multi_match": {
                 "query": q_text,
-                "type": "most_fields",
+                "type": "best_fields",
                 "fields": ["name^4", "description^2", "use", "combined_text"],
+                "fuzziness": "AUTO"
             }
         })
+
+    # 4) Apply dynamic function_score based on subcategory
+    # Derive subcategory from params/category_path
+    subcategory = None
+    try:
+        if isinstance(p.get("fb_subcategory"), str) and p["fb_subcategory"].strip():
+            subcategory = p["fb_subcategory"].strip()
+        elif isinstance(category_path, str) and category_path.strip():
+            # Use the last segment as subcategory when present
+            path_parts = [seg for seg in category_path.split("/") if seg]
+            if path_parts:
+                # Expect f_and_b/food/l2/l3; pick l3 else l2
+                subcategory = path_parts[-1]
+                if subcategory in ("food", "f_and_b", "personal_care") and len(path_parts) >= 2:
+                    subcategory = path_parts[-2]
+        if not subcategory:
+            subcategory = "_default"
+    except Exception:
+        subcategory = "_default"
+
+    scoring_functions: List[Dict[str, Any]] = []
+    if shoulds or filters:
+        # Get category-specific scoring functions
+        scoring_functions = build_function_score_functions(subcategory, include_flean=True)
+        body["query"] = {
+            "function_score": {
+                "query": {"bool": bq},
+                "functions": scoring_functions,
+                "score_mode": "sum",
+                "boost_mode": "multiply"
+            }
+        }
 
     # minimum_should_match stays 0 per spec
     bq["minimum_should_match"] = 0
 
     # Debug logs
-    print(f"DEBUG: ES filters={filters}")
-    print(f"DEBUG: ES should_count={len(shoulds)}")
+    print(f"DEBUG: ES filters={len(filters)} filters")
+    print(f"DEBUG: ES should={len(shoulds)} clauses")
+    print(f"DEBUG: Using dynamic scoring for subcategory='{subcategory}'")
+    print(f"DEBUG: Applied {len(scoring_functions)} scoring functions")
     
     return body
 
@@ -414,6 +331,30 @@ def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
         package_claims = src.get("package_claims", {})
         health_claims = package_claims.get("health_claims", [])
         dietary_labels = package_claims.get("dietary_labels", [])
+        
+        # Extract percentile scores
+        stats = src.get("stats", {})
+        flean_percentile = None
+        if stats.get("adjusted_score_percentiles"):
+            flean_percentile = stats["adjusted_score_percentiles"].get("subcategory_percentile")
+        # Prepare bonus/penalty percentile bundle for LLM persuasion
+        bonus_percentiles = {
+            "protein": (stats.get("protein_percentiles", {}) or {}).get("subcategory_percentile"),
+            "fiber": (stats.get("fiber_percentiles", {}) or {}).get("subcategory_percentile"),
+            "wholefood": (stats.get("wholefood_percentiles", {}) or {}).get("subcategory_percentile"),
+            "fortification": (stats.get("fortification_percentiles", {}) or {}).get("subcategory_percentile"),
+            "simplicity": (stats.get("simplicity_percentiles", {}) or {}).get("subcategory_percentile"),
+        }
+        penalty_percentiles = {
+            "sugar": (stats.get("sugar_penalty_percentiles", {}) or {}).get("subcategory_percentile"),
+            "sodium": (stats.get("sodium_penalty_percentiles", {}) or {}).get("subcategory_percentile"),
+            "trans_fat": (stats.get("trans_fat_penalty_percentiles", {}) or {}).get("subcategory_percentile"),
+            "saturated_fat": (stats.get("saturated_fat_penalty_percentiles", {}) or {}).get("subcategory_percentile"),
+            "oil": (stats.get("oil_penalty_percentiles", {}) or {}).get("subcategory_percentile"),
+            "sweetener": (stats.get("sweetener_penalty_percentiles", {}) or {}).get("subcategory_percentile"),
+            "calories": (stats.get("calories_penalty_percentiles", {}) or {}).get("subcategory_percentile"),
+            "empty_food": (stats.get("empty_food_penalty_percentiles", {}) or {}).get("subcategory_percentile"),
+        }
         
         product = {
             "rank": rank,
@@ -437,10 +378,16 @@ def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
             "health_claims": health_claims if isinstance(health_claims, list) else [],
             "dietary_labels": dietary_labels if isinstance(dietary_labels, list) else [],
             
+            # Quality scores
+            "flean_percentile": flean_percentile,
+            "flean_score": src.get("flean_score", {}).get("adjusted_score"),
+            "bonus_percentiles": {k: v for k, v in bonus_percentiles.items() if v is not None},
+            "penalty_percentiles": {k: v for k, v in penalty_percentiles.items() if v is not None},
+            
             # Image
             "image": _get_best_image(src.get("hero_image", {})),
             
-            # Ingredients (useful for detailed info)
+            # Ingredients
             "ingredients": _clean_text(src.get("ingredients", {}).get("raw_text", "")),
         }
         
@@ -462,7 +409,7 @@ def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 class ElasticsearchProductsFetcher:
-    """Elasticsearch fetcher (real ES only, no mock data)."""
+    """Elasticsearch fetcher with enhanced query capabilities."""
     
     def __init__(self, base_url: str = None, index: str = None, api_key: str = None):
         self.base_url = base_url or ELASTIC_BASE
@@ -473,23 +420,25 @@ class ElasticsearchProductsFetcher:
             raise RuntimeError("ELASTIC_API_KEY (or ES_API_KEY) is required for Elasticsearch access")
             
         self.endpoint = f"{self.base_url}/{self.index}/_search"
+        self.mget_endpoint = f"{self.base_url}/{self.index}/_mget"
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": f"ApiKey {self.api_key}"
         } if self.api_key else {}
     
     def search(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute search against Elasticsearch. No mock fallbacks."""
+        """Execute search against Elasticsearch with fallback strategies."""
         try:
             # Use the enhanced query builder
             query_body = _build_enhanced_es_query(params)
             
             # Debug logging
             print(f"DEBUG: Enhanced ES Query Structure:")
-            print(f"  - Original query: {params.get('q', '')}")
+            print(f"  - Query: {params.get('q', '')}")
             print(f"  - Category: {params.get('category_group', 'all')}")
-            print(f"  - Price max: {params.get('price_max', 'no limit')}")
-            print(f"  - Dietary labels: {params.get('dietary_labels', 'none')}")
+            print(f"  - Brands: {params.get('brands', [])}")
+            print(f"  - Price range: {params.get('price_min', 'no min')}-{params.get('price_max', 'no max')}")
+            print(f"  - Dietary: {params.get('dietary_labels', [])}")
             
             response = requests.post(
                 self.endpoint,
@@ -502,13 +451,41 @@ class ElasticsearchProductsFetcher:
             raw_data = response.json()
             result = _transform_results(raw_data)
             
-            print(f"DEBUG: Enhanced ES query found {result['meta']['total_hits']} products")
+            print(f"DEBUG: ES query found {result['meta']['total_hits']} products")
+            
+            # IMPROVEMENT: Fallback if no results and we had brand filters
+            if result['meta']['total_hits'] == 0 and params.get('brands'):
+                print("DEBUG: No results with brand filter, trying without...")
+                
+                # Retry without brand filter
+                params_relaxed = dict(params)
+                params_relaxed.pop('brands', None)
+                query_body_relaxed = _build_enhanced_es_query(params_relaxed)
+                
+                response = requests.post(
+                    self.endpoint,
+                    headers=self.headers,
+                    json=query_body_relaxed,
+                    timeout=TIMEOUT
+                )
+                response.raise_for_status()
+                
+                raw_data = response.json()
+                result = _transform_results(raw_data)
+                
+                if result['meta']['total_hits'] > 0:
+                    result['meta']['fallback_applied'] = 'removed_brand_filter'
+                    print(f"DEBUG: Fallback successful, found {result['meta']['total_hits']} products")
             
             # Show top results for debugging
             if result['products']:
                 print("DEBUG: Top ES results:")
                 for i, product in enumerate(result['products'][:3], 1):
-                    print(f"  {i}. {product['name']} - ₹{product['price']} (score: {product['score']})")
+                    score_info = f"(score: {product['score']}"
+                    if product.get('flean_percentile'):
+                        score_info += f", flean: {product['flean_percentile']}%"
+                    score_info += ")"
+                    print(f"  {i}. {product['name']} - ₹{product['price']} {score_info}")
             
             return result
             
@@ -521,6 +498,40 @@ class ElasticsearchProductsFetcher:
         except Exception as e:
             print(f"DEBUG: Unexpected ES error: {e}")
             return {"meta": {"total_hits": 0, "returned": 0, "took_ms": 0, "query_successful": False, "error": str(e)}, "products": []}
+
+    def mget_products(self, ids: List[str]) -> List[Dict[str, Any]]:
+        """Fetch full product documents via _mget for the given IDs.
+
+        Returns a list of _source dicts (with selected fields prioritized) in the same order as requested IDs
+        when possible.
+        """
+        if not ids:
+            return []
+        try:
+            body = {
+                "ids": [str(x).strip() for x in ids if str(x).strip()]
+            }
+            response = requests.post(
+                self.mget_endpoint,
+                headers=self.headers,
+                json=body,
+                timeout=TIMEOUT
+            )
+            response.raise_for_status()
+            data = response.json() or {}
+            docs = data.get("docs", []) or []
+            out: List[Dict[str, Any]] = []
+            for d in docs:
+                src = d.get("_source", {}) or {}
+                if src:
+                    out.append(src)
+            return out
+        except requests.exceptions.Timeout:
+            print("DEBUG: ES mget timeout")
+            return []
+        except Exception as exc:
+            print(f"DEBUG: ES mget failed: {exc}")
+            return []
 
 # Parameter extraction and normalization
 def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
@@ -555,15 +566,15 @@ def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
             except:
                 pass
     
-    # Determine product_intent from context (default to show_me_options)
+    # Determine product_intent from context
     product_intent = str(session.get("product_intent") or "show_me_options")
-    # Size hint: 1 for is_this_good; else 4
-    size_hint = 1 if product_intent == "is_this_good" else 4
+    # Size hint: 1 for is_this_good; else 10
+    size_hint = 1 if product_intent == "is_this_good" else 10
 
     return {
         "q": query,
         "size": size_hint,
-        "category_group": session.get("category_group", "personal_care"),  # default if unknown
+        "category_group": session.get("category_group", "f_and_b"),  # default to f_and_b
         "brands": session.get("brands"),
         "dietary_terms": session.get("dietary_requirements"),
         "price_min": price_min,
@@ -583,15 +594,21 @@ def _normalize_params(base_params: Dict[str, Any], llm_params: Dict[str, Any]) -
             final_params[key] = value
     
     # Normalize lists
-    for list_field in ["brands", "dietary_terms"]:
+    for list_field in ["brands", "dietary_terms", "dietary_labels"]:
         if list_field in final_params and final_params[list_field]:
             value = final_params[list_field]
             if isinstance(value, str):
                 # Split string into list
-                final_params[list_field] = [v.strip().upper() for v in value.replace(",", " ").split() if v.strip()]
+                if list_field in ["dietary_terms", "dietary_labels"]:
+                    final_params[list_field] = [v.strip().upper() for v in value.replace(",", " ").split() if v.strip()]
+                else:
+                    final_params[list_field] = [v.strip() for v in value.replace(",", " ").split() if v.strip()]
             elif isinstance(value, list):
                 # Clean existing list
-                final_params[list_field] = [str(v).strip().upper() for v in value if str(v).strip()]
+                if list_field in ["dietary_terms", "dietary_labels"]:
+                    final_params[list_field] = [str(v).strip().upper() for v in value if str(v).strip()]
+                else:
+                    final_params[list_field] = [str(v).strip() for v in value if str(v).strip()]
     
     # Ensure category_group is set
     if not final_params.get("category_group"):
@@ -609,6 +626,8 @@ async def build_search_params(ctx) -> Dict[str, Any]:
     # Use LLM to extract/normalize additional parameters (always)
     llm_params = {}
     try:
+        # Lazy import to avoid circular import with llm_service importing this module
+        from ..llm_service import LLMService  # type: ignore
         llm_service = LLMService()
         llm_params = await llm_service.extract_es_params(ctx)
         print(f"DEBUG: LLM extracted params = {llm_params}")
@@ -618,6 +637,10 @@ async def build_search_params(ctx) -> Dict[str, Any]:
     
     # Merge and normalize
     final_params = _normalize_params(base_params, llm_params)
+    
+    # Apply minimum quality threshold if not searching for specific brand
+    if not final_params.get("brands"):
+        final_params["min_flean_percentile"] = 30  # Only show products in top 70%
     
     print(f"DEBUG: Final search params = {final_params}")
     
@@ -641,13 +664,23 @@ def get_es_fetcher() -> ElasticsearchProductsFetcher:
 
 # Async handlers for different functions
 async def search_products_handler(ctx) -> Dict[str, Any]:
-    """Main product search handler (real ES only)"""
+    """Main product search handler with quality checks"""
     params = await build_search_params(ctx)
     fetcher = get_es_fetcher()
     
     # Run in thread to avoid blocking
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, lambda: fetcher.search(params))
+    results = await loop.run_in_executor(None, lambda: fetcher.search(params))
+    
+    # Additional quality check: if we got results but they're all low quality
+    if results.get('products'):
+        avg_flean = sum(p.get('flean_percentile', 50) for p in results['products']) / len(results['products'])
+        if avg_flean < 30 and params.get('brands'):
+            # Products are low quality, maybe try without brand constraint
+            print(f"DEBUG: Average flean percentile {avg_flean}% is low, considering fallback...")
+            results['meta']['quality_warning'] = f'average_flean_percentile_{avg_flean:.1f}'
+    
+    return results
 
 async def fetch_user_profile_handler(ctx) -> Dict[str, Any]:
     """User profile - return minimal data for now"""

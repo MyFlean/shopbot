@@ -14,12 +14,19 @@ Fix (2025-08-22):
 • Switched to anthropic.AsyncAnthropic and awaited all .messages.create(...) calls
 • Robust tool-pick for Anthropic response content blocks
 • Defensive fallbacks when tool call is missing (JSON sniff + heuristic defaults)
+
+Updates (2025-01-XX):
+• Added extraction caching for performance
+• Improved dietary term normalization
+• Added query explanation for debugging
+• Enhanced brand handling
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -83,6 +90,21 @@ class BaseRecommendationEngine(ABC):
 
 
 # ─────────────────────────────────────────────────────────────
+# Dietary Normalizations
+# ─────────────────────────────────────────────────────────────
+
+DIETARY_NORMALIZATIONS = {
+    "palm oil free": ["PALM OIL FREE", "NO PALM OIL"],
+    "gluten free": ["GLUTEN FREE", "NO GLUTEN"],
+    "vegan": ["VEGAN", "100% VEG", "PLANT BASED"],
+    "sugar free": ["SUGAR FREE", "NO ADDED SUGAR", "NO SUGAR"],
+    "organic": ["ORGANIC", "100% ORGANIC"],
+    "keto": ["KETO", "KETO FRIENDLY", "LOW CARB"],
+    "dairy free": ["DAIRY FREE", "NO DAIRY", "LACTOSE FREE"],
+}
+
+
+# ─────────────────────────────────────────────────────────────
 # Elasticsearch Parameter Tool
 # ─────────────────────────────────────────────────────────────
 
@@ -130,12 +152,12 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
     def __init__(self):
         # IMPORTANT: async client for awaitable calls
         self._anthropic = anthropic.AsyncAnthropic(api_key=Cfg.ANTHROPIC_API_KEY)
+        self._extraction_cache = {}  # Add simple cache for performance
         self._valid_categories = [
             "f_and_b", "health_nutrition", "personal_care", 
             "home_kitchen", "electronics"
         ]
         # F&B taxonomy (provided)
-        # Default F&B taxonomy (can be overridden via env)
         self._fnb_taxonomy = {
             "frozen_treats": [
                 "ice_cream_cakes_and_sandwiches",
@@ -245,9 +267,7 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             ]
         }
 
-        # Allow runtime override via env:
-        # FNB_TAXONOMY_PATH → path to JSON file
-        # FNB_TAXONOMY_JSON → raw JSON string
+        # Allow runtime override via env
         try:
             override = self._load_taxonomy_override()
             if override:
@@ -255,6 +275,35 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 log.info("FNB_TAXONOMY | loaded override from environment")
         except Exception as exc:
             log.warning(f"FNB_TAXONOMY_OVERRIDE_FAILED | {exc}")
+    
+    def _normalize_dietary_term(self, term: str) -> List[str]:
+        """Normalize a single dietary term to multiple possible variations"""
+        term_lower = term.lower().strip()
+        
+        # Check against known normalizations
+        for key, values in DIETARY_NORMALIZATIONS.items():
+            if key in term_lower:
+                return values
+            # Check if any variation matches
+            for value in values:
+                if value.lower() in term_lower:
+                    return values
+        
+        # Default: just uppercase the term
+        return [term.upper()]
+    
+    def _create_cache_key(self, ctx: UserContext, current_user_text: str) -> str:
+        """Create a cache key from context and current text"""
+        session = ctx.session or {}
+        key_parts = [
+            current_user_text or "",
+            session.get("last_query", ""),
+            str(session.get("budget")),
+            str(session.get("dietary_requirements")),
+            str(session.get("brands")),
+        ]
+        key_str = ":".join(key_parts)
+        return hashlib.md5(key_str.encode()).hexdigest()
     
     async def extract_search_params(self, ctx: UserContext) -> RecommendationResponse:
         """
@@ -290,7 +339,18 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             }
             
             current_user_text = context.get("original_query", "")
-            # 0) Extract constraints from CURRENT user text (brands/dietary/health/keywords/prices)
+            
+            # Check cache first
+            cache_key = self._create_cache_key(ctx, current_user_text)
+            if cache_key in self._extraction_cache:
+                log.info(f"ES_PARAMS_FROM_CACHE | key={cache_key}")
+                cached_response = self._extraction_cache[cache_key]
+                # Add cache hit to metadata
+                if cached_response.metadata:
+                    cached_response.metadata["cache_hit"] = True
+                return cached_response
+            
+            # 0) Extract constraints from CURRENT user text
             try:
                 current_constraints = await self._extract_constraints_from_text(current_user_text)
             except Exception as exc:
@@ -309,7 +369,7 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 log.warning(f"CAT_SIGNAL_EXTRACTION_FAILED | error={exc}")
                 cat_signals = {}
 
-            # 3) Ask LLM to emit initial ES params (seeded by constructed_q)
+            # 3) Ask LLM to emit initial ES params
             prompt = self._build_extraction_prompt(context, constructed_q)
             params_from_llm = await self._call_anthropic_for_params(prompt)
             if isinstance(params_from_llm, dict):
@@ -321,15 +381,19 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             if params_from_llm is None:
                 # Defensive fallback
                 fallback = self._heuristic_defaults(context, constructed_q)
-                return RecommendationResponse(
+                response = RecommendationResponse(
                     response_type=RecommendationResponseType.ES_PARAMS,
                     data=fallback,
                     metadata={"extraction_method": "fallback_heuristic", "context_keys": list(context.keys())},
                     error_message="LLM did not return a tool-call; used heuristics."
                 )
+                # Cache the response
+                self._extraction_cache[cache_key] = response
+                return response
             
             # 4) Normalise params via dedicated LLM tool
             final_params = await self._normalise_es_params(params_from_llm, context, constructed_q, current_user_text)
+            
             # Guard against UNKNOWN/blank q after normalisation
             try:
                 qval = str(final_params.get("q", "")).strip()
@@ -339,7 +403,7 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             except Exception:
                 final_params["q"] = constructed_q
 
-            # Deterministic budget inference fallback for follow-ups like "cheaper"/"premium"
+            # Deterministic budget inference fallback
             try:
                 intent_text = (current_user_text or "").lower()
                 has_price = ("price_min" in final_params) or ("price_max" in final_params)
@@ -360,22 +424,18 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             # Merge category/signals into final params
             try:
                 if isinstance(cat_signals, dict):
-                    # Determine l1/l2/l3 first
                     l1 = str(cat_signals.get("l1", "")).strip()
                     l2 = (cat_signals.get("l2") or cat_signals.get("cat") or "").strip()
                     l3 = (cat_signals.get("l3") or "").strip()
 
-                    # Apply category_group from l1 when valid
                     if l1 in ("f_and_b", "personal_care"):
                         final_params["category_group"] = l1
 
-                    # If l2/l3 missing, fall back to FB classifier hints
                     if not l2:
                         l2 = (final_params.get("fb_category") or "").strip()
                     if not l3:
                         l3 = (final_params.get("fb_subcategory") or "").strip()
 
-                    # Prefer explicit l2(/l3) path; else accept provided cat_path
                     cat_path = cat_signals.get("cat_path")
                     if l2:
                         cat_path_str = f"{l2}/{l3}".rstrip("/") if l3 else l2
@@ -386,18 +446,15 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                             cat_path_str = str(cat_path or "").strip()
 
                     if cat_path_str:
-                        # Ensure meta prefix matches our two meta categories
                         group = final_params.get("category_group") or "f_and_b"
                         final_params["category_group"] = group
                         if group == "f_and_b":
-                            # ES stores as f_and_b/food/<l2>/<l3?>
                             final_params["category_path"] = f"f_and_b/food/{cat_path_str}"
                         elif group == "personal_care":
                             final_params["category_path"] = f"personal_care/{cat_path_str}"
                         else:
                             final_params["category_path"] = cat_path_str
 
-                    # Fallback category_group if still unset
                     if not final_params.get("category_group"):
                         final_params["category_group"] = "f_and_b"
 
@@ -412,47 +469,72 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                     if isinstance(cat_signals.get("price_max"), (int, float)):
                         final_params["price_max"] = float(cat_signals["price_max"])
 
-                    # dietary/health signals
+                    # dietary/health signals with normalization
                     if isinstance(cat_signals.get("dietary_labels"), list) and cat_signals["dietary_labels"]:
-                        final_params["dietary_labels"] = [str(x).upper() for x in cat_signals["dietary_labels"] if str(x).strip()]
-                    # map dietary_terms to dietary_labels if only former exists
+                        normalized_dietary = []
+                        for term in cat_signals["dietary_labels"]:
+                            normalized_dietary.extend(self._normalize_dietary_term(str(term)))
+                        final_params["dietary_labels"] = list(set(normalized_dietary))
+                    
                     if final_params.get("dietary_terms") and not final_params.get("dietary_labels"):
                         try:
-                            final_params["dietary_labels"] = [str(x).upper() for x in (final_params.get("dietary_terms") or [])]
+                            normalized_dietary = []
+                            for term in (final_params.get("dietary_terms") or []):
+                                normalized_dietary.extend(self._normalize_dietary_term(str(term)))
+                            final_params["dietary_labels"] = list(set(normalized_dietary))
                         except Exception:
                             pass
+                    
                     if isinstance(cat_signals.get("health_claims"), list) and cat_signals["health_claims"]:
                         final_params["health_claims"] = [str(x) for x in cat_signals["health_claims"] if str(x).strip()]
 
-                    # keywords for re-ranking / multi_match
+                    # keywords for re-ranking
                     if isinstance(cat_signals.get("keywords"), list) and cat_signals["keywords"]:
                         final_params["keywords"] = [str(x) for x in cat_signals["keywords"] if str(x).strip()]
             except Exception as exc:
                 log.debug(f"MERGE_CAT_SIGNALS_FAILED | {exc}")
 
-            # 5) Optional F&B classification to attach category/subcategory
+            # 5) Optional F&B classification
             fb_meta = await self._fb_category_classify(constructed_q)
             if fb_meta.get("is_fnb"):
                 final_params["category_group"] = "f_and_b"
-                # Attach category/subcategory as metadata for downstream query builder
                 final_params["fb_category"] = fb_meta.get("category")
                 final_params["fb_subcategory"] = fb_meta.get("subcategory")
                 log.info(f"FB_CLASSIFIED | category={final_params.get('fb_category')} | subcategory={final_params.get('fb_subcategory')}")
+
+            # Add query explanation for debugging
+            explanation = {
+                "extracted_from": "current_query" if current_user_text else "context",
+                "filters_applied": len([k for k in final_params if k in ['price_min', 'price_max', 'brands', 'dietary_terms', 'dietary_labels']]),
+                "category_inferred": bool(final_params.get('category_path')),
+                "using_percentiles": True,
+                "dietary_normalized": bool(final_params.get('dietary_labels'))
+            }
+            
+            # Store in session for debugging
+            ctx.session.setdefault("debug", {})["query_explanation"] = explanation
 
             log.info(f"ES_PARAMS_FINAL | keys={list(final_params.keys())}")
             try:
                 log.info(f"ES_SEARCH_QUERY_USED | q='{final_params.get('q','')}'")
             except Exception:
                 pass
-            return RecommendationResponse(
+            
+            response = RecommendationResponse(
                 response_type=RecommendationResponseType.ES_PARAMS,
                 data=final_params,
                 metadata={
                     "extraction_method": "llm_enhanced",
                     "context_keys": list(context.keys()),
-                    "constructed_q": constructed_q
+                    "constructed_q": constructed_q,
+                    "explanation": explanation
                 }
             )
+            
+            # Cache the response
+            self._extraction_cache[cache_key] = response
+            
+            return response
             
         except Exception as exc:
             log.warning("Enhanced ES param extraction failed: %s", exc)
@@ -463,9 +545,7 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             )
 
     async def _extract_constraints_from_text(self, text: str) -> Dict[str, Any]:
-        """General constraint extractor from CURRENT user text using LLM tool-call.
-        Extract brands, dietary_terms (UPPERCASE), health_claims, keywords (lowercase), price_min/max when present.
-        """
+        """General constraint extractor from CURRENT user text using LLM tool-call."""
         EXTRACT_CONSTRAINTS_TOOL = {
             "name": "extract_current_constraints",
             "description": "From the given text, extract brands, dietary_terms (UPPERCASE), health_claims, keywords (lowercase), and optional price_min/price_max.",
@@ -508,174 +588,28 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             tool_use = self._pick_tool(resp, "extract_current_constraints")
             if tool_use and getattr(tool_use, "input", None):
                 data = self._strip_keys(getattr(tool_use, "input", {}) or {})
-                # Normalise: uppercase dietary terms/labels; lowercase keywords
-                def _norm_list(v, fn):
-                    return [fn(str(x)) for x in v if str(x).strip()]
+                
+                # Apply dietary normalizations
                 if isinstance(data.get("dietary_terms"), list):
-                    data["dietary_terms"] = _norm_list(data["dietary_terms"], lambda s: s.strip().upper())
+                    normalized = []
+                    for term in data["dietary_terms"]:
+                        normalized.extend(self._normalize_dietary_term(str(term)))
+                    data["dietary_terms"] = list(set(normalized))
+                
                 if isinstance(data.get("dietary_labels"), list):
-                    data["dietary_labels"] = _norm_list(data["dietary_labels"], lambda s: s.strip().upper())
+                    normalized = []
+                    for term in data["dietary_labels"]:
+                        normalized.extend(self._normalize_dietary_term(str(term)))
+                    data["dietary_labels"] = list(set(normalized))
+                
                 if isinstance(data.get("keywords"), list):
-                    data["keywords"] = _norm_list(data["keywords"], lambda s: s.strip().lower())
+                    data["keywords"] = [str(x).strip().lower() for x in data["keywords"] if str(x).strip()]
                 if isinstance(data.get("brands"), list):
-                    data["brands"] = _norm_list(data["brands"], lambda s: s.strip())
+                    data["brands"] = [str(x).strip() for x in data["brands"] if str(x).strip()]
+                
                 return data
         except Exception as exc:
             log.debug(f"CONSTRAINT_EXTRACT_FAIL | {exc}")
-        return {}
-
-    def _load_taxonomy_override(self) -> Optional[Dict[str, Any]]:
-        """Load F&B taxonomy override from env JSON or file path. Returns dict or None."""
-        path = os.getenv("FNB_TAXONOMY_PATH")
-        raw = os.getenv("FNB_TAXONOMY_JSON")
-        data: Optional[Dict[str, Any]] = None
-        if path and isinstance(path, str) and path.strip():
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception as e:
-                raise RuntimeError(f"Failed to load taxonomy file '{path}': {e}")
-        elif raw and isinstance(raw, str) and raw.strip():
-            try:
-                data = json.loads(raw)
-            except Exception as e:
-                raise RuntimeError(f"Failed to parse FNB_TAXONOMY_JSON: {e}")
-
-        if data is None:
-            return None
-
-        # Basic validation: dict[str, list[str]]
-        if not isinstance(data, dict):
-            raise ValueError("Taxonomy override must be a JSON object mapping category → list[subcategories]")
-        for k, v in data.items():
-            if not isinstance(k, str) or not isinstance(v, list):
-                raise ValueError("Invalid taxonomy format: keys must be strings and values must be lists")
-        return data
-    
-    def _build_extraction_prompt(self, context: Dict[str, Any], constructed_q: str) -> str:
-        """Build the extraction prompt for LLM"""
-        return f"""
-You are a search parameter extractor for an e-commerce platform. 
-
-USER CONTEXT:
-{json.dumps(context, ensure_ascii=False, indent=2)}
-
-CONSTRUCTED QUERY (use this as the primary q):
-{constructed_q}
-
-TASK: Extract normalized Elasticsearch parameters for product search.
-
-RULES:
-1. q: Use the CONSTRUCTED QUERY above as the main search text
-2. category_group: 
-   - "f_and_b" for food, beverages, snacks, bread, etc.
-   - "health_nutrition" for supplements, vitamins
-   - "personal_care" for cosmetics, hygiene
-   - Default to "f_and_b" if unclear
-3. dietary_terms: Extract from the CURRENT user text and context. Map phrases like "no palm oil", "without palm oil", "palm oil free" → "PALM OIL FREE" (UPPERCASE). Include other terms like "GLUTEN FREE", "VEGAN", "ORGANIC" (UPPERCASE).
-4. price_min/price_max: Parse budget expressions:
-   - "100 rupees" → price_max: 100
-   - "under 200" → price_max: 200  
-   - "50-150" → price_min: 50, price_max: 150
-   - "0-200 rupees" → price_min: 0, price_max: 200
-5. brands: Extract brand names ONLY if explicitly mentioned in the CURRENT user text. Do NOT carry over brands from previous turns when the user asks for generic "options/alternatives".
-6. size: Default 20, max 50
-
-EXAMPLES:
-- "gluten free bread under 100 rupees" → category_group: "f_and_b", dietary_terms: ["GLUTEN FREE"], price_max: 100
-- "organic snacks 50-200" → category_group: "f_and_b", dietary_terms: ["ORGANIC"], price_min: 50, price_max: 200
-
-FOLLOW-UP HANDLING:
-- If the last turn was about a specific brand but the CURRENT user text asks for "options/alternatives" without re-mentioning that brand, DROP brands.
-- Always include dietary constraints present in the CURRENT user text.
-
-Return ONLY the tool call to emit_es_params.
-"""
-
-    async def _extract_category_and_signals(self, user_query: str, taxonomy: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        LLM tool-call function:
-        Input: user query and taxonomy JSON
-        Output (strict 3-level hierarchy):
-          - l1: meta category_group, exactly one of ["f_and_b", "personal_care"]
-          - l2: top bucket under the chosen domain (e.g., "light_bites" for f_and_b)
-          - l3: subcategory slug (e.g., "chips_and_crisps")
-          - cat: alias of l2 for convenience (optional)
-          - cat_path: [l2, l3] (preferred) or a slash-joined string "l2/l3"
-          - brands: [..]
-          - price_min, price_max
-          - dietary_labels: [..]
-          - health_claims: [..]
-          - keywords: [..] single-word tokens for re-ranking
-        """
-        EXTRACT_TOOL = {
-            "name": "extract_category_signals",
-            "description": "Given user text and taxonomy, emit hierarchical category (l1/l2/l3), cat_path, brand filters, price range, dietary/health signals, and keywords.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "l1": {"type": "string", "enum": ["f_and_b", "personal_care"]},
-                    "l2": {"type": "string"},
-                    "l3": {"type": "string"},
-                    "cat": {"type": "string"},
-                    "cat_path": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
-                    "brands": {"type": "array", "items": {"type": "string"}},
-                    "price_min": {"type": "number"},
-                    "price_max": {"type": "number"},
-                    "dietary_labels": {"type": "array", "items": {"type": "string"}},
-                    "health_claims": {"type": "array", "items": {"type": "string"}},
-                    "keywords": {"type": "array", "items": {"type": "string"}}
-                },
-                "required": ["l1"]
-            }
-        }
-
-        prompt = (
-            "Extract hierarchical category and ES signals.\n\n"
-            f"QUERY: {user_query}\n\n"
-            f"F_AND_B TAXONOMY: {json.dumps(taxonomy, ensure_ascii=False)}\n\n"
-            "Hierarchy and mapping rules:\n"
-            "1) l1 (category_group) MUST be exactly one of: f_and_b, personal_care.\n"
-            "   - If the query is about foods, snacks, beverages, groceries → l1=f_and_b.\n"
-            "   - If the query is about skincare, facewash, creams, shampoos, personal products → l1=personal_care.\n"
-            "2) For l1=f_and_b, pick l2 from the top-level keys in the taxonomy (e.g., light_bites, refreshing_beverages, etc.).\n"
-            "3) For l1=f_and_b, pick l3 from the corresponding subcategory list (e.g., chips_and_crisps under light_bites).\n"
-            "4) If the query suggests snacks like chips, nachos, namkeen, popcorn → l2=light_bites;\n"
-            "   then choose a specific l3 such as chips_and_crisps when appropriate.\n"
-            "5) Build cat_path as [l2, l3] when l3 exists; else just [l2].\n"
-            "6) brands: include any explicit brand mentions; keep original casing (e.g., Lay's).\n"
-            "7) price_min/price_max: parse ranges like 'under 60', '50-100'.\n"
-            "8) dietary_labels: emit UPPERCASE terms (e.g., PALM OIL FREE, GLUTEN FREE, VEGAN) if present.\n"
-            "9) health_claims: free-form phrases in lowercase or as mentioned (e.g., 'palm oil free').\n"
-            "10) keywords: 1-5 single words (lowercase) useful for re-ranking (exclude stop-words).\n"
-            "Return ONLY the tool call to extract_category_signals."
-        )
-
-        try:
-            resp = await self._anthropic.messages.create(
-                model=Cfg.LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                tools=[EXTRACT_TOOL],
-                tool_choice={"type": "tool", "name": "extract_category_signals"},
-                temperature=0,
-                max_tokens=300,
-            )
-            tool_use = self._pick_tool(resp, "extract_category_signals")
-            if tool_use and getattr(tool_use, "input", None):
-                data = self._strip_keys(getattr(tool_use, "input", {}) or {})
-                # Normalise outputs minimally
-                if isinstance(data.get("dietary_labels"), list):
-                    data["dietary_labels"] = [str(x).upper() for x in data["dietary_labels"] if str(x).strip()]
-                if isinstance(data.get("keywords"), list):
-                    data["keywords"] = [str(x).lower() for x in data["keywords"] if str(x).strip()]
-                # Build cat_path from l2/l3 when available
-                l2 = (data.get("l2") or data.get("cat") or "").strip()
-                l3 = (data.get("l3") or "").strip()
-                if l2 and not data.get("cat_path"):
-                    data["cat_path"] = [l2] + ([l3] if l3 else [])
-                return data
-        except Exception as exc:
-            log.warning(f"CAT_SIGNAL_TOOL_FAILED | error={exc}")
         return {}
     
     async def _call_anthropic_for_params(self, prompt: str) -> Optional[Dict[str, Any]]:
@@ -749,7 +683,7 @@ Return ONLY the tool call to emit_es_params.
         except Exception:
             lr_prices = []
 
-        # Provide richer context to the LLM normaliser beyond prices
+        # Provide richer context to the LLM normaliser
         try:
             convo_hist = [
                 {
@@ -823,15 +757,23 @@ Return ONLY the tool call to emit_es_params.
             out["price_max"] = float(norm["price_max"])
         if "price_min" in out and "price_max" in out and out["price_min"] > out["price_max"]:
             out["price_min"], out["price_max"] = out["price_max"], out["price_min"]
-        # Lists
+        
+        # Lists with normalization
         for lf in ["brands", "dietary_terms"]:
             items = norm.get(lf)
             if isinstance(items, list):
-                cleaned = [str(x).strip() for x in items if str(x).strip()]
                 if lf == "dietary_terms":
-                    cleaned = [x.upper() for x in cleaned if x.upper() != "ANY"]
-                if cleaned:
-                    out[lf] = cleaned
+                    normalized = []
+                    for term in items:
+                        if str(term).strip().upper() != "ANY":
+                            normalized.extend(self._normalize_dietary_term(str(term)))
+                    if normalized:
+                        out[lf] = list(set(normalized))
+                else:
+                    cleaned = [str(x).strip() for x in items if str(x).strip()]
+                    if cleaned:
+                        out[lf] = cleaned
+        
         # Optional fields
         if isinstance(norm.get("protein_weight"), (int, float)):
             pw = float(norm["protein_weight"])
@@ -847,7 +789,7 @@ Return ONLY the tool call to emit_es_params.
         if isinstance(norm.get("product_intent"), str):
             out["product_intent"] = norm["product_intent"].strip()
 
-        # Merge CURRENT_CONSTRAINTS from this turn (generalizable, no hardcoded terms)
+        # Merge CURRENT_CONSTRAINTS from this turn
         try:
             constraints = context.get("current_constraints", {}) or {}
             # Brands: if explicitly present for this turn, replace previous brands
@@ -862,8 +804,22 @@ Return ONLY the tool call to emit_es_params.
                         vals = [transform(x) for x in vals]
                     prev = out.get(key, []) if isinstance(out.get(key), list) else []
                     out[key] = list({*prev, *vals})
-            _merge_list("dietary_terms", lambda x: x.upper())
-            _merge_list("dietary_labels", lambda x: x.upper())
+            
+            # Apply normalization to dietary merges
+            if isinstance(constraints.get("dietary_terms"), list) and constraints["dietary_terms"]:
+                normalized = []
+                for term in constraints["dietary_terms"]:
+                    normalized.extend(self._normalize_dietary_term(str(term)))
+                prev = out.get("dietary_terms", []) if isinstance(out.get("dietary_terms"), list) else []
+                out["dietary_terms"] = list(set(prev + normalized))
+            
+            if isinstance(constraints.get("dietary_labels"), list) and constraints["dietary_labels"]:
+                normalized = []
+                for term in constraints["dietary_labels"]:
+                    normalized.extend(self._normalize_dietary_term(str(term)))
+                prev = out.get("dietary_labels", []) if isinstance(out.get("dietary_labels"), list) else []
+                out["dietary_labels"] = list(set(prev + normalized))
+            
             _merge_list("health_claims", lambda x: x)
             _merge_list("keywords", lambda x: x.lower())
             # Prices from this turn override
@@ -877,10 +833,10 @@ Return ONLY the tool call to emit_es_params.
         # Hard guards: derive dietary_terms from CURRENT_USER_TEXT if missing
         try:
             text_lower = (current_user_text or "").lower()
-            palm_markers = ["no palm oil", "without palm oil", "palm oil free"]
-            has_palm = any(m in text_lower for m in palm_markers)
-            if has_palm and not out.get("dietary_terms"):
-                out["dietary_terms"] = ["PALM OIL FREE"]
+            for key_phrase, normalized_values in DIETARY_NORMALIZATIONS.items():
+                if key_phrase in text_lower and not out.get("dietary_terms"):
+                    out["dietary_terms"] = normalized_values
+                    break
         except Exception:
             pass
 
@@ -1042,9 +998,13 @@ Return ONLY the tool call to emit_es_params.
                     if diet:
                         try:
                             if isinstance(diet, list) and diet:
-                                parts.append(str(diet[0]).upper())
+                                normalized = self._normalize_dietary_term(str(diet[0]))
+                                if normalized:
+                                    parts.append(normalized[0])
                             elif isinstance(diet, str) and diet.strip():
-                                parts.append(diet.strip().upper())
+                                normalized = self._normalize_dietary_term(diet.strip())
+                                if normalized:
+                                    parts.append(normalized[0])
                         except Exception:
                             pass
                     return " ".join(parts).strip()
@@ -1120,15 +1080,169 @@ Return ONLY the tool call to emit_es_params.
                 size = 20
             out["size"] = max(1, min(50, size))
             # Copy through commonly used fields without heavy parsing
-            for k in ["category_group", "brands", "dietary_terms", "price_min", "price_max", "protein_weight", "phrase_boosts", "field_boosts", "sort"]:
-                if k in params:
+            for k in [
+                "category_group",
+                "brands",
+                "dietary_terms",
+                "price_min",
+                "price_max",
+                "protein_weight",
+                "phrase_boosts",
+                "field_boosts",
+                "sort",
+                "dietary_labels",
+                "health_claims",
+                "keywords",
+                "category_path",
+                "product_intent",
+            ]:
+                if k in params and params[k] is not None:
                     out[k] = params[k]
             return out
         except Exception:
             return {"q": (context.get("original_query") or "").strip(), "size": 20}
+
+    def _load_taxonomy_override(self) -> Optional[Dict[str, Any]]:
+        """Load F&B taxonomy override from env JSON or file path."""
+        path = os.getenv("FNB_TAXONOMY_PATH")
+        raw = os.getenv("FNB_TAXONOMY_JSON")
+        data: Optional[Dict[str, Any]] = None
+        if path and isinstance(path, str) and path.strip():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                raise RuntimeError(f"Failed to load taxonomy file '{path}': {e}")
+        elif raw and isinstance(raw, str) and raw.strip():
+            try:
+                data = json.loads(raw)
+            except Exception as e:
+                raise RuntimeError(f"Failed to parse FNB_TAXONOMY_JSON: {e}")
+
+        if data is None:
+            return None
+
+        # Basic validation
+        if not isinstance(data, dict):
+            raise ValueError("Taxonomy override must be a JSON object mapping category → list[subcategories]")
+        for k, v in data.items():
+            if not isinstance(k, str) or not isinstance(v, list):
+                raise ValueError("Invalid taxonomy format: keys must be strings and values must be lists")
+        return data
     
+    def _build_extraction_prompt(self, context: Dict[str, Any], constructed_q: str) -> str:
+        """Build the extraction prompt for LLM"""
+        return f"""
+You are a search parameter extractor for an e-commerce platform. 
+
+USER CONTEXT:
+{json.dumps(context, ensure_ascii=False, indent=2)}
+
+CONSTRUCTED QUERY (use this as the primary q):
+{constructed_q}
+
+TASK: Extract normalized Elasticsearch parameters for product search.
+
+RULES:
+1. q: Use the CONSTRUCTED QUERY above as the main search text
+2. category_group: 
+   - "f_and_b" for food, beverages, snacks, bread, etc.
+   - "health_nutrition" for supplements, vitamins
+   - "personal_care" for cosmetics, hygiene
+   - Default to "f_and_b" if unclear
+3. dietary_terms: Extract from the CURRENT user text and context. Map phrases like "no palm oil", "without palm oil", "palm oil free" → "PALM OIL FREE" (UPPERCASE). Include other terms like "GLUTEN FREE", "VEGAN", "ORGANIC" (UPPERCASE).
+4. price_min/price_max: Parse budget expressions:
+   - "100 rupees" → price_max: 100
+   - "under 200" → price_max: 200  
+   - "50-150" → price_min: 50, price_max: 150
+   - "0-200 rupees" → price_min: 0, price_max: 200
+5. brands: Extract brand names ONLY if explicitly mentioned in the CURRENT user text. Do NOT carry over brands from previous turns when the user asks for generic "options/alternatives".
+6. size: Default 20, max 50
+
+EXAMPLES:
+- "gluten free bread under 100 rupees" → category_group: "f_and_b", dietary_terms: ["GLUTEN FREE"], price_max: 100
+- "organic snacks 50-200" → category_group: "f_and_b", dietary_terms: ["ORGANIC"], price_min: 50, price_max: 200
+
+FOLLOW-UP HANDLING:
+- If the last turn was about a specific brand but the CURRENT user text asks for "options/alternatives" without re-mentioning that brand, DROP brands.
+- Always include dietary constraints present in the CURRENT user text.
+
+Return ONLY the tool call to emit_es_params.
+"""
+
+    async def _extract_category_and_signals(self, user_query: str, taxonomy: Dict[str, Any]) -> Dict[str, Any]:
+        """LLM tool-call function for category extraction."""
+        EXTRACT_TOOL = {
+            "name": "extract_category_signals",
+            "description": "Given user text and taxonomy, emit hierarchical category (l1/l2/l3), cat_path, brand filters, price range, dietary/health signals, and keywords.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "l1": {"type": "string", "enum": ["f_and_b", "personal_care"]},
+                    "l2": {"type": "string"},
+                    "l3": {"type": "string"},
+                    "cat": {"type": "string"},
+                    "cat_path": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+                    "brands": {"type": "array", "items": {"type": "string"}},
+                    "price_min": {"type": "number"},
+                    "price_max": {"type": "number"},
+                    "dietary_labels": {"type": "array", "items": {"type": "string"}},
+                    "health_claims": {"type": "array", "items": {"type": "string"}},
+                    "keywords": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["l1"],
+            },
+        }
+
+        prompt = (
+            "Extract hierarchical category and ES signals.\n\n"
+            f"QUERY: {user_query}\n\n"
+            f"F_AND_B TAXONOMY: {json.dumps(taxonomy, ensure_ascii=False)}\n\n"
+            "Hierarchy and mapping rules:\n"
+            "1) l1 (category_group) MUST be exactly one of: f_and_b, personal_care.\n"
+            "   - If the query is about foods, snacks, beverages, groceries → l1=f_and_b.\n"
+            "   - If the query is about skincare, facewash, creams, shampoos, personal products → l1=personal_care.\n"
+            "2) For l1=f_and_b, pick l2 from the top-level keys in the taxonomy (e.g., light_bites, refreshing_beverages, etc.).\n"
+            "3) For l1=f_and_b, pick l3 from the corresponding subcategory list (e.g., chips_and_crisps under light_bites).\n"
+            "4) If the query suggests snacks like chips, nachos, namkeen, popcorn → l2=light_bites; then choose l3 when appropriate.\n"
+            "5) Build cat_path as [l2, l3] when l3 exists; else just [l2].\n"
+            "6) brands: include any explicit brand mentions; keep original casing.\n"
+            "7) price_min/price_max: parse ranges like 'under 60', '50-100'.\n"
+            "8) dietary_labels: emit UPPERCASE terms (e.g., PALM OIL FREE, GLUTEN FREE, VEGAN) if present.\n"
+            "9) health_claims: short phrases as mentioned.\n"
+            "10) keywords: 1-5 single words (lowercase) useful for re-ranking (exclude stop-words).\n"
+            "Return ONLY the tool call to extract_category_signals."
+        )
+
+        try:
+            resp = await self._anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[EXTRACT_TOOL],
+                tool_choice={"type": "tool", "name": "extract_category_signals"},
+                temperature=0,
+                max_tokens=300,
+            )
+            tool_use = self._pick_tool(resp, "extract_category_signals")
+            if tool_use and getattr(tool_use, "input", None):
+                data = self._strip_keys(getattr(tool_use, "input", {}) or {})
+                # Normalise outputs minimally
+                if isinstance(data.get("dietary_labels"), list):
+                    data["dietary_labels"] = [str(x).upper() for x in data["dietary_labels"] if str(x).strip()]
+                if isinstance(data.get("keywords"), list):
+                    data["keywords"] = [str(x).lower() for x in data["keywords"] if str(x).strip()]
+                # Build cat_path from l2/l3 when available
+                l2 = (data.get("l2") or data.get("cat") or "").strip()
+                l3 = (data.get("l3") or "").strip()
+                if l2 and not data.get("cat_path"):
+                    data["cat_path"] = [l2] + ([l3] if l3 else [])
+                return data
+        except Exception as exc:
+            log.warning(f"CAT_SIGNAL_TOOL_FAILED | error={exc}")
+        return {}
+
     def _strip_keys(self, obj: Any) -> Any:
-        """Recursively trim whitespace around dict keys"""
+        """Recursively trim whitespace around dict keys and values."""
         if isinstance(obj, dict):
             new: Dict[str, Any] = {}
             for k, v in obj.items():
@@ -1137,21 +1251,18 @@ Return ONLY the tool call to emit_es_params.
             return new
         if isinstance(obj, list):
             return [self._strip_keys(x) for x in obj]
+        if isinstance(obj, str):
+            return obj.strip()
         return obj
-    
+
     def _pick_tool(self, resp, tool_name: str):
-        """
-        Extract tool use from Anthropic response.
-        Works with SDK content blocks (type == 'tool_use') and is defensive.
-        """
+        """Extract tool use from Anthropic response (robust to SDK formats)."""
         try:
             for block in (resp.content or []):
-                # New SDK objects: .type == "tool_use", .name, .input
                 btype = getattr(block, "type", None)
                 bname = getattr(block, "name", None)
                 if btype == "tool_use" and bname == tool_name:
                     return block
-                # Extremely defensive: dict-like fallback
                 if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == tool_name:
                     return block
         except Exception:
@@ -1160,106 +1271,34 @@ Return ONLY the tool call to emit_es_params.
 
 
 # ─────────────────────────────────────────────────────────────
-# Factory and Service Manager
+# Service Factory (restored for llm_service import)
 # ─────────────────────────────────────────────────────────────
-
-class RecommendationEngineFactory:
-    """Factory for creating recommendation engines"""
-    
-    _engines = {
-        "elasticsearch": ElasticsearchRecommendationEngine,
-        # "ml_based": MLRecommendationEngine,  # future
-        # "hybrid": HybridRecommendationEngine,  # future
-    }
-    
-    @classmethod
-    def create_engine(cls, engine_type: str = "elasticsearch") -> BaseRecommendationEngine:
-        if engine_type not in cls._engines:
-            log.warning(f"Unknown engine type {engine_type}, defaulting to elasticsearch")
-            engine_type = "elasticsearch"
-        engine_class = cls._engines[engine_type]
-        return engine_class()
-    
-    @classmethod
-    def register_engine(cls, name: str, engine_class: type):
-        cls._engines[name] = engine_class
-
 
 class RecommendationService:
-    """Main service for handling recommendations"""
-    
-    def __init__(self, engine_type: str = "elasticsearch"):
-        self.engine = RecommendationEngineFactory.create_engine(engine_type)
+    """Facade over the recommendation engine used by LLMService."""
+    def __init__(self, engine_type: str = "elasticsearch") -> None:
+        # Currently only one engine; hook for future extensibility
+        self.engine = ElasticsearchRecommendationEngine()
         self.engine_type = engine_type
-    
+
     async def extract_es_params(self, ctx: UserContext) -> Dict[str, Any]:
-        """
-        Extract ES parameters - maintains original interface for backward compatibility
-        """
-        response = await self.engine.extract_search_params(ctx)
-        if response.response_type == RecommendationResponseType.ERROR:
-            log.error(f"Recommendation engine error: {response.error_message}")
+        resp = await self.engine.extract_search_params(ctx)
+        if resp.response_type == RecommendationResponseType.ERROR:
+            log.error(f"Recommendation engine error: {resp.error_message}")
             return {}
-        return response.data
-    
-    async def get_recommendations(self, ctx: UserContext) -> RecommendationResponse:
-        """
-        Get full recommendation response with metadata
-        """
-        return await self.engine.extract_search_params(ctx)
-    
-    def switch_engine(self, engine_type: str):
-        """Switch to a different recommendation engine"""
-        self.engine = RecommendationEngineFactory.create_engine(engine_type)
-        self.engine_type = engine_type
-        log.info(f"Switched to recommendation engine: {engine_type}")
+        return resp.data
 
-
-# ─────────────────────────────────────────────────────────────
-# Compatibility Layer
-# ─────────────────────────────────────────────────────────────
 
 _recommendation_service: Optional[RecommendationService] = None
 
 def get_recommendation_service() -> RecommendationService:
-    """Get the global recommendation service instance"""
+    """Return a singleton RecommendationService instance."""
     global _recommendation_service
     if _recommendation_service is None:
         _recommendation_service = RecommendationService()
     return _recommendation_service
 
-def set_recommendation_engine(engine_type: str):
-    """Set the global recommendation engine type"""
+def set_recommendation_engine(engine_type: str) -> None:
+    """Swap engine type (placeholder for future multiple engines)."""
     global _recommendation_service
-    if _recommendation_service is None:
-        _recommendation_service = RecommendationService(engine_type)
-    else:
-        _recommendation_service.switch_engine(engine_type)
-
-
-# ─────────────────────────────────────────────────────────────
-# Future Extension Points (stubs kept for API compatibility)
-# ─────────────────────────────────────────────────────────────
-
-class MLRecommendationEngine(BaseRecommendationEngine):
-    async def extract_search_params(self, ctx: UserContext) -> RecommendationResponse:
-        return RecommendationResponse(
-            response_type=RecommendationResponseType.ERROR,
-            data={},
-            error_message="ML engine not implemented yet"
-        )
-    
-    def validate_params(self, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
-        return params
-
-
-class HybridRecommendationEngine(BaseRecommendationEngine):
-    def __init__(self):
-        self.elasticsearch_engine = ElasticsearchRecommendationEngine()
-        # self.ml_engine = MLRecommendationEngine()
-    
-    async def extract_search_params(self, ctx: UserContext) -> RecommendationResponse:
-        return await self.elasticsearch_engine.extract_search_params(ctx)
-    
-    def validate_params(self, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
-        return self.elasticsearch_engine.validate_params(params, context)
+    _recommendation_service = RecommendationService(engine_type)

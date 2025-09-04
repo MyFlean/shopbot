@@ -186,6 +186,7 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     bq = body["query"]["bool"]
     filters: List[Dict[str, Any]] = bq["filter"]
     shoulds: List[Dict[str, Any]] = bq["should"]
+    musts: List[Dict[str, Any]] = bq.setdefault("must", [])
 
     # 1) Hard filters
     # Category group filter
@@ -329,6 +330,20 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
             }
         })
 
+    # 3b) Hard must keywords (e.g., flavor tokens like 'orange') to avoid mismatched variants
+    must_keywords = p.get("must_keywords") or []
+    if isinstance(must_keywords, list) and must_keywords:
+        for kw in must_keywords[:3]:
+            kw_str = str(kw).strip()
+            if kw_str:
+                musts.append({
+                    "multi_match": {
+                        "query": kw_str,
+                        "type": "phrase",
+                        "fields": ["name^6", "description^2", "combined_text"],
+                    }
+                })
+
     # 4) Apply dynamic function_score based on subcategory
     # Derive subcategory from params/category_path
     subcategory = None
@@ -350,6 +365,39 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
 
     scoring_functions: List[Dict[str, Any]] = []
     if shoulds or filters:
+        # Optional: strict brand filter for trusted sources (e.g., vision flow)
+        try:
+            if bool(p.get("enforce_brand")) and isinstance(p.get("brands"), list) and p.get("brands"):
+                brand_value = str(p.get("brands")[0] or "").strip()
+                brand_clean = brand_value.strip("'\" ")
+                if brand_clean:
+                    # Build robust brand conditions: exact, case variants, wildcard, and phrase match in analyzed fields
+                    def _variants(s: str) -> List[str]:
+                        base = s.strip()
+                        title = " ".join([w.capitalize() for w in base.split()])
+                        lower = base.lower()
+                        upper = base.upper()
+                        no_punct = base.replace("'", "").replace("`", "")
+                        uniq = []
+                        for v in [base, title, lower, upper, no_punct]:
+                            if v and v not in uniq:
+                                uniq.append(v)
+                        return uniq
+                    brand_variants = _variants(brand_clean)
+                    should_brand: List[Dict[str, Any]] = []
+                    for v in brand_variants:
+                        should_brand.append({"term": {"brand": v}})
+                        should_brand.append({"wildcard": {"brand": {"value": f"{v}*"}}})
+                        should_brand.append({"wildcard": {"brand": {"value": f"*{v}*"}}})
+                        # Also allow phrase in analyzed fields
+                        should_brand.append({"match_phrase": {"name": v}})
+                        should_brand.append({"match_phrase": {"combined_text": v}})
+                    filters.append({
+                        "bool": {"should": should_brand, "minimum_should_match": 1}
+                    })
+                    print(f"DEBUG: Enforcing brand filter | brand='{brand_clean}' | variants={brand_variants}")
+        except Exception:
+            pass
         # Get category-specific scoring functions
         scoring_functions = build_function_score_functions(subcategory, include_flean=True)
         body["query"] = {
@@ -581,6 +629,56 @@ class ElasticsearchProductsFetcher:
             print(f"DEBUG: ES mget failed: {exc}")
             return []
 
+    def suggest_brand(self, brand_hint: str, category_group: Optional[str] = None) -> Optional[str]:
+        """Suggest a canonical brand value from ES given a noisy hint.
+
+        Uses a terms aggregation over `brand` filtered by wildcard matches of the hint.
+        Returns the top bucket key (most frequent brand) or None.
+        """
+        try:
+            hint = (brand_hint or "").strip().strip("'\" ")
+            if not hint:
+                return None
+            should_terms: List[Dict[str, Any]] = [
+                {"term": {"brand": hint}},
+                {"wildcard": {"brand": {"value": f"{hint}*"}}},
+                {"wildcard": {"brand": {"value": f"*{hint}*"}}},
+            ]
+            filters: List[Dict[str, Any]] = []
+            if category_group and isinstance(category_group, str) and category_group.strip():
+                filters.append({"term": {"category_group": category_group.strip()}})
+            body: Dict[str, Any] = {
+                "size": 0,
+                "query": {
+                    "bool": {
+                        "filter": filters,
+                        "should": should_terms,
+                        "minimum_should_match": 1,
+                    }
+                },
+                "aggs": {
+                    "brand_suggest": {
+                        "terms": {"field": "brand", "size": 5}
+                    }
+                }
+            }
+            response = requests.post(
+                self.endpoint,
+                headers=self.headers,
+                json=body,
+                timeout=TIMEOUT
+            )
+            response.raise_for_status()
+            data = response.json() or {}
+            buckets = (((data.get("aggregations", {}) or {}).get("brand_suggest", {}) or {}).get("buckets", []) or [])
+            if buckets:
+                suggestion = str(buckets[0].get("key", "")).strip()
+                print(f"DEBUG: Brand suggest | hint='{hint}' → '{suggestion}'")
+                return suggestion or None
+        except Exception as exc:
+            print(f"DEBUG: Brand suggest failed: {exc}")
+        return None
+
     def search_by_ids(self, ids: List[str]) -> List[Dict[str, Any]]:
         """Fetch documents by matching the 'id' field using a terms query.
 
@@ -747,6 +845,31 @@ async def build_search_params(ctx) -> Dict[str, Any]:
         print(f"DEBUG: BSP_BASE | base_params={base_params}")
     except Exception:
         pass
+    
+    # Pre-merge heuristic: if current text is generic and we have last category, pre-fill
+    try:
+        import re as _re
+        generic_markers = ["options", "more", "cheaper", "budget", "sugar free", "no sugar", "healthier", "baked", "under", "over"]
+        product_nouns = ["ketchup", "chips", "juice", "candy", "chocolate", "soap", "shampoo", "cream", "oil", "powder"]
+        text_lower = (current_text or "").lower()
+        has_generic = any(marker in text_lower for marker in generic_markers)
+        has_product_noun = any(noun in text_lower for noun in product_nouns)
+        is_generic = has_generic and not has_product_noun
+        
+        if is_generic:
+            last_params = ((ctx.session or {}).get("debug") or {}).get("last_search_params") or {}
+            last_cat_path = last_params.get("category_path")
+            if last_cat_path and "<UNKNOWN>" not in last_cat_path:
+                base_params["category_path"] = last_cat_path
+                base_params["fb_category"] = last_params.get("fb_category")
+                base_params["fb_subcategory"] = last_params.get("fb_subcategory")
+                print(f"DEBUG: BSP_PRE_MERGE | applied_category_carry_over='{last_cat_path}'")
+            else:
+                print("DEBUG: BSP_PRE_MERGE | no_valid_last_category")
+        else:
+            print(f"DEBUG: BSP_PRE_MERGE | not_generic | has_generic={has_generic} | has_product_noun={has_product_noun}")
+    except Exception as exc:
+        print(f"DEBUG: BSP_PRE_MERGE_ERROR | {exc}")
     
     # Use LLM to extract/normalize additional parameters (always)
     llm_params = {}

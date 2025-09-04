@@ -24,6 +24,9 @@ from ..enums import ResponseType
 from ..fe_payload import build_envelope
 from ..models import UserContext
 from ..utils.smart_logger import get_smart_logger
+from ..data_fetchers.es_products import get_es_fetcher  # type: ignore
+from ..llm_service import LLMService  # type: ignore
+from ..ux_response_generator import generate_ux_response_for_intent  # type: ignore
 
 log = logging.getLogger(__name__)
 smart_log = get_smart_logger("simplified_chat")
@@ -194,7 +197,138 @@ async def chat() -> Response:
         try:
             log.info(f"BOT_PROCESSING_START | user={user_id} | using simplified architecture")
 
-            # Process query using the updated bot core with 4-intent classification
+            # NEW: Image selection pathway – user selected a product id from FE suggestions
+            selected_product_id = str(data.get("selected_product_id") or "").strip()
+            if selected_product_id:
+                log.info(f"IMAGE_SELECTION_START | user={user_id} | selected_id={selected_product_id}")
+                # Fetch full product doc via ES mget (sync API run in executor)
+                fetcher = get_es_fetcher()
+                loop = asyncio.get_running_loop()
+                docs = await loop.run_in_executor(None, lambda: fetcher.mget_products([selected_product_id]))
+                if not docs:
+                    log.info("IMAGE_SELECTION_FALLBACK | mget returned 0 docs")
+                    # Gracefully degrade: minimal response
+                    content = {
+                        "summary_message": "Couldn't fetch the selected product. Want me to show close matches?",
+                        "ux_response": {
+                            "ux_surface": "MPM",
+                            "quick_replies": ["Show close matches", "Try another photo"],
+                            "product_ids": []
+                        },
+                    }
+                    envelope = build_envelope(
+                        wa_id=wa_id,
+                        session_id=session_id,
+                        bot_resp_type=ResponseType.FINAL_ANSWER,
+                        content=content,
+                        ctx=ctx,
+                        elapsed_time_seconds=_elapsed_since(request_start_time),
+                        mode_async_enabled=getattr(Cfg, "ENABLE_ASYNC", False),
+                        timestamp=None,
+                        functions_executed=["image_selected_no_doc"],
+                    )
+                    smart_log.response_generated(user_id, envelope.get("response_type"), False, _elapsed_since(request_start_time))
+                    return jsonify(envelope), 200
+
+                doc = docs[0]
+                try:
+                    log.info(f"IMAGE_SELECTION_FETCH_OK | fields={list((doc or {}).keys())[:12]}")
+                except Exception:
+                    pass
+
+                # Build a synthetic query and fetched block to reuse product flow
+                latest_text = (
+                    (ctx.session or {}).get("current_user_text")
+                    or (ctx.session or {}).get("last_user_message")
+                    or (ctx.session or {}).get("last_query")
+                    or ""
+                )
+                brand = (doc.get("brand") or "").strip()
+                name = (doc.get("name") or "").strip()
+                if latest_text:
+                    synthetic_query = f"is this good? {brand} {name}".strip()
+                else:
+                    synthetic_query = "is this good?"
+                log.info(f"IMAGE_SELECTION_SYNTH_QUERY | text='{synthetic_query}'")
+
+                # Inject fetched block shaped like search_products
+                fetched = {
+                    "search_products": {
+                        "products": [doc],
+                        "meta": {"total_hits": 1, "returned": 1}
+                    }
+                }
+
+                # Call LLM response generator directly with SPM intent
+                llm = LLMService()
+                answer = await llm.generate_response(
+                    synthetic_query,
+                    ctx,
+                    fetched,
+                    intent_l3="Product_Discovery",
+                    query_intent=None,
+                    product_intent="is_this_good",
+                )
+                # Generate UX for SPM
+                ux_answer = await generate_ux_response_for_intent(
+                    intent="is_this_good",
+                    previous_answer=answer,
+                    ctx=ctx,
+                    user_query=synthetic_query,
+                )
+
+                resp_type = ResponseType.FINAL_ANSWER
+                envelope = build_envelope(
+                    wa_id=wa_id,
+                    session_id=session_id,
+                    bot_resp_type=resp_type,
+                    content=ux_answer,
+                    ctx=ctx,
+                    elapsed_time_seconds=_elapsed_since(request_start_time),
+                    mode_async_enabled=getattr(Cfg, "ENABLE_ASYNC", False),
+                    timestamp=None,
+                    functions_executed=["image_selected_confirmed"],
+                )
+                log.info("IMAGE_SELECTION_GENERATED | surface=SPM")
+                smart_log.response_generated(user_id, envelope.get("response_type"), False, _elapsed_since(request_start_time))
+                return jsonify(envelope), 200
+
+            # NEW: Image pathway — if image_url is present, run image flow and short-circuit
+            image_url = str(data.get("image_url") or "").strip()
+            if image_url:
+                try:
+                    ctx.session.setdefault("debug", {})["image_url"] = image_url
+                except Exception:
+                    pass
+                # Run image flow to get top 3 product ids
+                from ..vision_flow import process_image_query  # type: ignore
+                log.info(f"IMAGE_FLOW_START | user={user_id} | url_present=true")
+                image_result = await process_image_query(ctx, image_url)
+                # Build minimal envelope content
+                content = {
+                    "summary_message": "Choose an option:",
+                    "ux_response": {
+                        "ux_surface": "MPM",
+                        "quick_replies": ["Show healthier", "Cheaper", "More like this"],
+                        "product_ids": image_result.get("product_ids", [])
+                    },
+                    "product_intent": "show_me_options",
+                }
+                envelope = build_envelope(
+                    wa_id=wa_id,
+                    session_id=session_id,
+                    bot_resp_type=ResponseType.IMAGE_IDS,
+                    content=content,
+                    ctx=ctx,
+                    elapsed_time_seconds=_elapsed_since(request_start_time),
+                    mode_async_enabled=getattr(Cfg, "ENABLE_ASYNC", False),
+                    timestamp=None,
+                    functions_executed=["vision_image_match"],
+                )
+                smart_log.response_generated(user_id, envelope.get("response_type"), False, _elapsed_since(request_start_time))
+                return jsonify(envelope), 200
+
+            # Process text query using the updated bot core with 4-intent classification
             bot_resp = await bot_core.process_query(message, ctx)
 
             log.info(

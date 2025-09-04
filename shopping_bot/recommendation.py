@@ -403,6 +403,28 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             # 4) Normalise params via dedicated LLM tool
             final_params = await self._normalise_es_params(params_from_llm, context, constructed_q, current_user_text)
             
+            # 4b) Category carry-over for generic follow-ups
+            try:
+                is_generic = self._is_generic_followup(current_user_text)
+                if is_generic and (not final_params.get("category_path") or "<UNKNOWN>" in str(final_params.get("category_path", ""))):
+                    last_params = ((context.get("session_data") or {}).get("debug") or {}).get("last_search_params") or {}
+                    last_cat_path = last_params.get("category_path")
+                    last_fb_cat = last_params.get("fb_category")
+                    last_fb_sub = last_params.get("fb_subcategory")
+                    if last_cat_path and "<UNKNOWN>" not in last_cat_path:
+                        final_params["category_path"] = last_cat_path
+                        if last_fb_cat:
+                            final_params["fb_category"] = last_fb_cat
+                        if last_fb_sub:
+                            final_params["fb_subcategory"] = last_fb_sub
+                        log.info(f"CATEGORY_CARRY_OVER_APPLIED | carried_path='{last_cat_path}'")
+                    else:
+                        log.info("CATEGORY_CARRY_OVER_SKIPPED | no_valid_last_path")
+                else:
+                    log.info(f"CATEGORY_CARRY_OVER_SKIPPED | is_generic={is_generic} | has_valid_path={bool(final_params.get('category_path') and '<UNKNOWN>' not in str(final_params.get('category_path', '')))}")
+            except Exception as exc:
+                log.warning(f"CATEGORY_CARRY_OVER_ERROR | error={exc}")
+            
             # Guard against UNKNOWN/blank q after normalisation
             try:
                 qval = str(final_params.get("q", "")).strip()
@@ -925,21 +947,52 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 "required": ["query"]
             }
         }
+        # Extract last category context for delta-aware construction
+        last_params = ((context.get("session_data") or {}).get("debug") or {}).get("last_search_params") or {}
+        last_category = last_params.get("fb_category") or last_params.get("category_group") or ""
+        last_subcategory = last_params.get("fb_subcategory") or ""
+        
+        # Extract last product names for category anchoring
+        last_rec = context.get("last_recommendation") or {}
+        last_product_names = []
+        try:
+            for p in (last_rec.get("products") or [])[:3]:
+                name = str(p.get("name") or "").strip()
+                if name:
+                    # Extract product type nouns (e.g., "ketchup" from "Del Monte Classic Blend Tomato Ketchup")
+                    words = name.lower().split()
+                    for noun in ["ketchup", "chips", "juice", "candy", "chocolate", "soap", "shampoo", "cream", "oil", "powder"]:
+                        if noun in words:
+                            last_product_names.append(noun)
+                            break
+        except Exception:
+            pass
+        
+        try:
+            log.info(f"CONSTRUCT_QUERY_INPUT | current='{current_user_text}' | last_category='{last_category}' | last_subcategory='{last_subcategory}' | product_nouns={last_product_names}")
+        except Exception:
+            pass
+
         prompt = (
             "Construct a concise product search phrase from context.\n\n"
             f"CURRENT_USER_TEXT: {current_user_text}\n\n"
             f"CURRENT_CONSTRAINTS: {json.dumps(context.get('current_constraints', {}), ensure_ascii=False)}\n\n"
+            f"LAST_CATEGORY_CONTEXT: category={last_category}, subcategory={last_subcategory}, product_nouns={last_product_names}\n\n"
             f"RECENT_TURNS (user↔bot): {json.dumps(context.get('conversation_history', []), ensure_ascii=False)}\n\n"
             f"SLOTS/STATE: {json.dumps({'user_answers': context.get('user_answers', {}), 'session_data': context.get('session_data', {}), 'debug': context.get('debug', {})}, ensure_ascii=False)}\n\n"
             f"LAST_RECOMMENDATION: {json.dumps(context.get('last_recommendation', {}), ensure_ascii=False)}\n\n"
-            "Rules:\n"
-            "- Base the query primarily on CURRENT_USER_TEXT.\n"
-            "- Prefer debug.last_search_params.q only when CURRENT_USER_TEXT is vague.\n"
-            "- Include constraints explicitly present in CURRENT_USER_TEXT and CURRENT_CONSTRAINTS (dietary in UPPERCASE, price).\n"
+            "Rules for delta-aware construction:\n"
+            "- If CURRENT_USER_TEXT is generic (only constraints/modifiers like 'sugar free options', 'cheaper', 'baked only', 'healthier'), preserve the last product category/nouns and merge constraints.\n"
+            "- Examples:\n"
+            "  • Previous: 'healthy ketchup' → Current: 'sugar free options' → Output: 'sugar free ketchup'\n"
+            "  • Previous: 'spicy chips' → Current: 'baked only' → Output: 'baked chips'\n"
+            "  • Previous: 'protein powder' → Current: 'under 500 rupees' → Output: 'protein powder'\n"
+            "- If CURRENT_USER_TEXT mentions a new product category explicitly ('face wash', 'candy', 'juice'), use the new category.\n"
             "- Only include brand if CURRENT_USER_TEXT mentions it; otherwise DO NOT carry prior brand.\n"
             "- For requests like 'options', 'alternatives', or category exploration, DROP prior brand constraints.\n"
             "- Map 'no/without palm oil' → 'PALM OIL FREE'.\n"
             "- Avoid placeholders like <UNKNOWN>.\n"
+            "- Keep it concise: 2-6 words max.\n"
             "Return ONLY tool call to construct_search_query."
         )
         try:
@@ -957,6 +1010,10 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 q = str(q).strip()
                 if not q or q.upper().find("UNKNOWN") >= 0:
                     raise ValueError("constructed query invalid")
+                try:
+                    log.info(f"CONSTRUCT_QUERY_OUTPUT | q='{q}'")
+                except Exception:
+                    pass
                 return q
         except Exception as exc:
             log.warning(f"CONSTRUCT_QUERY_FAILED | error={exc}")
@@ -966,10 +1023,19 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             if composed:
                 log.info(f"CONSTRUCT_QUERY_FALLBACK | q='{composed}'")
                 return composed
+            try:
+                log.info(f"CONSTRUCT_QUERY_FALLBACK_EMPTY")
+            except Exception:
+                pass
         except Exception:
             pass
         q = context.get("original_query") or (context.get("session_data", {}) or {}).get("last_query") or current_user_text or ""
-        return str(q).strip()
+        result = str(q).strip()
+        try:
+            log.info(f"CONSTRUCT_QUERY_FINAL_FALLBACK | q='{result}'")
+        except Exception:
+            pass
+        return result
 
     def _compose_query_from_context(self, context: Dict[str, Any], current_user_text: str) -> str:
         """Programmatic fallback: prefer last_search_params, else synthesize from last_recommendation and slots."""
@@ -1203,6 +1269,31 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
         except Exception:
             pass
         return ""
+    
+    def _is_generic_followup(self, text: str) -> bool:
+        """Check if the current text is a generic constraint/modifier without explicit product nouns."""
+        if not text:
+            return False
+        text_lower = text.lower().strip()
+        # Generic markers: constraints, modifiers, budget terms, but no explicit product categories
+        generic_markers = {
+            "options", "more", "cheaper", "budget", "affordable", "premium", "expensive",
+            "sugar free", "no sugar", "no added sugar", "healthier", "healthy", "cleaner",
+            "baked", "fried", "organic", "vegan", "gluten free", "no palm oil",
+            "under", "over", "below", "above", "less than", "more than",
+            "show me", "give me", "find me", "alternatives", "alternate"
+        }
+        # Product nouns that indicate a category shift
+        product_nouns = {
+            "ketchup", "chips", "juice", "candy", "chocolate", "soap", "shampoo", 
+            "cream", "oil", "powder", "biscuit", "cookie", "cake", "bread", "milk"
+        }
+        
+        has_generic = any(marker in text_lower for marker in generic_markers)
+        has_product_noun = any(noun in text_lower for noun in product_nouns)
+        
+        # Generic if it has constraint markers but no new product nouns
+        return has_generic and not has_product_noun
     
     def _build_extraction_prompt(self, context: Dict[str, Any], constructed_q: str) -> str:
         """Build the extraction prompt for LLM"""

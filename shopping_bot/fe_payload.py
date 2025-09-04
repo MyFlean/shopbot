@@ -53,7 +53,10 @@ def map_fe_response_type(bot_resp_type: ResponseType, content: Dict[str, Any] | 
             return "final_answer"
         # Otherwise it's casual (plain message only)
         return "casual"
-    
+    # New image ids response type
+    if bot_resp_type == ResponseType.IMAGE_IDS:
+        return "image_ids"
+
     return "casual"
 
 
@@ -70,10 +73,29 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
     if bot_resp_type == ResponseType.QUESTION:
         question = c.get("message") or c.get("question") or "Please provide more details."
         options = c.get("options") or c.get("choices")
-        out = {"question": question}
-        if options:
-            out["options"] = options
-        if "currently_asking" in c:
+        # Normalize options into [{label,value}]
+        norm_options = []
+        if isinstance(options, list):
+            for opt in options[:10]:
+                if isinstance(opt, dict) and "label" in opt and "value" in opt:
+                    norm_options.append({"label": str(opt["label"]).strip(), "value": str(opt["value"]).strip()})
+                elif isinstance(opt, str):
+                    val = opt.strip()
+                    if val:
+                        norm_options.append({"label": val, "value": val})
+        out = {
+            "question": question,
+        }
+        if norm_options:
+            out["type"] = c.get("type") or "multi_choice"
+            out["options"] = norm_options
+        else:
+            # If no options, default to free text
+            out["type"] = c.get("type") or "text"
+        # Context passthrough
+        if isinstance(c.get("context"), dict):
+            out["context"] = c.get("context")
+        elif "currently_asking" in c:
             out["context"] = {"missing_slot": c["currently_asking"]}
         return out
 
@@ -117,6 +139,35 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
                 if has_qr:
                     # Always use a standard anchor text for quick replies
                     c = {**c, "message": "Choose an option:"}
+                    # Also ensure summary_message exists for FE consumption
+                    if not c.get("summary_message"):
+                        c = {**c, "summary_message": "Choose an option:"}
+            except Exception:
+                pass
+            # Lean MPM: keep only summary_message, ux_response (product_ids, quick_replies, ux_surface, dpl_runtime_text), and product_intent
+            try:
+                ux_payload = c.get("ux_response") if isinstance(c.get("ux_response"), dict) else None
+                is_mpm = False
+                if ux_payload:
+                    surface = str(ux_payload.get("ux_surface", "")).upper()
+                    is_mpm = (surface == "MPM")
+                if (not is_mpm) and isinstance(c.get("product_intent"), str):
+                    is_mpm = c["product_intent"].strip().lower() in {"which_is_better", "show_me_options", "show_me_alternate"}
+                if is_mpm:
+                    lean_ux = {}
+                    if ux_payload:
+                        lean_ux = {
+                            "ux_surface": ux_payload.get("ux_surface"),
+                            "quick_replies": ux_payload.get("quick_replies", []),
+                            "product_ids": ux_payload.get("product_ids", []),
+                        }
+                        if ux_payload.get("dpl_runtime_text"):
+                            lean_ux["dpl_runtime_text"] = ux_payload.get("dpl_runtime_text")
+                    return {
+                        "summary_message": c.get("summary_message", "Choose an option:"),
+                        "ux_response": lean_ux,
+                        "product_intent": c.get("product_intent"),
+                    }
             except Exception:
                 pass
             return c
@@ -126,6 +177,15 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
             "summary_message": c.get("message", ""),
             "products": []
         }
+
+    # Image-IDs response: keep ux_response with product_ids and summary_message
+    if bot_resp_type == ResponseType.IMAGE_IDS:
+        ux = c.get("ux_response") if isinstance(c.get("ux_response"), dict) else {}
+        out = {
+            "summary_message": c.get("summary_message", ""),
+            "ux_response": ux,
+        }
+        return out
 
     # Simple messages (casual/processing/error)
     return {"message": c.get("message", "")}

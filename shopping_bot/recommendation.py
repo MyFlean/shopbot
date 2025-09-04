@@ -152,7 +152,8 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
     def __init__(self):
         # IMPORTANT: async client for awaitable calls
         self._anthropic = anthropic.AsyncAnthropic(api_key=Cfg.ANTHROPIC_API_KEY)
-        self._extraction_cache = {}  # Add simple cache for performance
+        # Caching disabled for correctness-first behavior
+        self._extraction_cache = None
         self._valid_categories = [
             "f_and_b", "health_nutrition", "personal_care", 
             "home_kitchen", "electronics"
@@ -295,9 +296,19 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
     def _create_cache_key(self, ctx: UserContext, current_user_text: str) -> str:
         """Create a cache key from context and current text"""
         session = ctx.session or {}
+        # Pull the most recent user query from conversation history if available
+        try:
+            conv = (session.get("conversation_history", []) or [])
+            last_turn = conv[-1] if conv else {}
+            last_user_query = str((last_turn or {}).get("user_query", ""))
+        except Exception:
+            last_user_query = ""
         key_parts = [
+            str(getattr(ctx, "session_id", "")),
+            str(getattr(ctx, "user_id", "")),
             current_user_text or "",
             session.get("last_query", ""),
+            last_user_query,
             str(session.get("budget")),
             str(session.get("dietary_requirements")),
             str(session.get("brands")),
@@ -314,9 +325,14 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             session = ctx.session or {}
             assessment = session.get("assessment", {})
             
-            # Build context for LLM
+            # Resolve CURRENT user text first (delta-aware)
+            current_user_text = self._get_current_user_text(ctx)
+            if not current_user_text:
+                current_user_text = assessment.get("original_query", "") or session.get("last_query", "") or ""
+
+            # Build context for LLM (use CURRENT user text as original_query)
             context = {
-                "original_query": assessment.get("original_query", "") or session.get("last_query", "") or "",
+                "original_query": current_user_text,
                 "user_answers": {
                     "budget": session.get("budget"),
                     "dietary_requirements": session.get("dietary_requirements"),
@@ -338,17 +354,7 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 ],
             }
             
-            current_user_text = context.get("original_query", "")
-            
-            # Check cache first
-            cache_key = self._create_cache_key(ctx, current_user_text)
-            if cache_key in self._extraction_cache:
-                log.info(f"ES_PARAMS_FROM_CACHE | key={cache_key}")
-                cached_response = self._extraction_cache[cache_key]
-                # Add cache hit to metadata
-                if cached_response.metadata:
-                    cached_response.metadata["cache_hit"] = True
-                return cached_response
+            # Caching disabled
             
             # 0) Extract constraints from CURRENT user text
             try:
@@ -384,11 +390,14 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 response = RecommendationResponse(
                     response_type=RecommendationResponseType.ES_PARAMS,
                     data=fallback,
-                    metadata={"extraction_method": "fallback_heuristic", "context_keys": list(context.keys())},
+                    metadata={
+                        "extraction_method": "fallback_heuristic",
+                        "context_keys": list(context.keys()),
+                        "source_user_text": current_user_text,
+                    },
                     error_message="LLM did not return a tool-call; used heuristics."
                 )
-                # Cache the response
-                self._extraction_cache[cache_key] = response
+                # Caching disabled
                 return response
             
             # 4) Normalise params via dedicated LLM tool
@@ -527,12 +536,12 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                     "extraction_method": "llm_enhanced",
                     "context_keys": list(context.keys()),
                     "constructed_q": constructed_q,
-                    "explanation": explanation
+                    "explanation": explanation,
+                    "source_user_text": current_user_text,
                 }
             )
             
-            # Cache the response
-            self._extraction_cache[cache_key] = response
+            # Caching disabled
             
             return response
             
@@ -1129,6 +1138,71 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             if not isinstance(k, str) or not isinstance(v, list):
                 raise ValueError("Invalid taxonomy format: keys must be strings and values must be lists")
         return data
+
+    def _get_current_user_text(self, ctx: UserContext) -> str:
+        """Best-effort extraction of the current turn's user text for delta-aware caching and prompts."""
+        for attr in [
+            "current_user_text",
+            "current_text",
+            "message_text",
+            "user_message",
+            "last_user_message",
+            "text",
+            "message",
+        ]:
+            try:
+                value = getattr(ctx, attr, None)
+                if isinstance(value, str) and value.strip():
+                    try:
+                        log.info(f"REC_TEXT_ATTR | attr={attr} | value='{value.strip()}'")
+                    except Exception:
+                        pass
+                    return value.strip()
+            except Exception:
+                pass
+        try:
+            session = ctx.session or {}
+            for key in [
+                "current_user_text",
+                "latest_user_text",
+                "last_user_message",
+                "last_user_text",
+                "last_query",
+            ]:
+                val = session.get(key)
+                if isinstance(val, str) and val.strip():
+                    try:
+                        log.info(f"REC_TEXT_SESSION | key={key} | value='{val.strip()}'")
+                    except Exception:
+                        pass
+                    return val.strip()
+            # Also check debug payload if present
+            debug = session.get("debug", {}) or {}
+            val = debug.get("current_user_text")
+            if isinstance(val, str) and val.strip():
+                try:
+                    log.info(f"REC_TEXT_DEBUG | value='{val.strip()}'")
+                except Exception:
+                    pass
+                return val.strip()
+        except Exception:
+            pass
+        try:
+            assessment = (getattr(ctx, "session", {}) or {}).get("assessment", {}) or {}
+            val = assessment.get("original_query")
+            if isinstance(val, str) and val.strip():
+                try:
+                    log.info(f"REC_TEXT_ASSESSMENT | value='{val.strip()}'")
+                except Exception:
+                    pass
+                return val.strip()
+        except Exception:
+            pass
+        try:
+            log.info("REC_TEXT_FALLBACK_EMPTY")
+        except Exception:
+            pass
+        return ""
     
     def _build_extraction_prompt(self, context: Dict[str, Any], constructed_q: str) -> str:
         """Build the extraction prompt for LLM"""

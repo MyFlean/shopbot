@@ -146,6 +146,19 @@ async def chat() -> Response:
             log.error(f"CONTEXT_LOAD_ERROR | user={user_id} | session={session_id} | error={e}")
             return jsonify({"error": "Failed to load user context"}), 500
 
+        # Inject CURRENT user text directly into ctx so downstream ES/LLM always see it
+        try:
+            setattr(ctx, "current_user_text", message)
+            setattr(ctx, "message_text", message)
+            ctx.session = ctx.session or {}
+            ctx.session["current_user_text"] = message
+            ctx.session["last_user_message"] = message
+            ctx.session["last_query"] = message
+            ctx.session.setdefault("debug", {})["current_user_text"] = message
+            log.info(f"INGRESS_SET_CURRENT_TEXT | user={user_id} | text='{message[:80]}'")
+        except Exception as _ing_exc:
+            log.warning(f"INGRESS_SET_CURRENT_TEXT_FAILED | user={user_id} | error={_ing_exc}")
+
         # ─────────────────────────────────────────────────────────────
         # 3. Handle duplicate processing guard
         # ─────────────────────────────────────────────────────────────

@@ -76,6 +76,73 @@ def _extract_highlight(hit: Dict[str, Any]) -> Optional[str]:
             return _clean_text(hl[field][0])
     return None
 
+def _get_current_user_text(ctx) -> str:
+    """Best-effort extraction of the CURRENT user utterance.
+
+    Falls back through several likely attributes/locations and finally to any
+    previously stored session text. This is critical to ensure each follow-up
+    rebuilds ES params using the latest user intent delta.
+    """
+    # Direct attributes on context
+    for attr in [
+        "current_user_text",
+        "current_text",
+        "message_text",
+        "user_message",
+        "last_user_message",
+        "text",
+        "message",
+    ]:
+        try:
+            value = getattr(ctx, attr, None)
+            if isinstance(value, str) and value.strip():
+                try:
+                    print(f"DEBUG: CURRENT_TEXT_ATTR | attr={attr} | value='{value.strip()}'")
+                except Exception:
+                    pass
+                return value.strip()
+        except Exception:
+            pass
+
+    # Common session keys where pipelines may store the last turn text
+    try:
+        session = getattr(ctx, "session", {}) or {}
+        for key in [
+            "current_user_text",
+            "latest_user_text",
+            "last_user_message",
+            "last_user_text",
+            "last_query",
+        ]:
+            val = session.get(key)
+            if isinstance(val, str) and val.strip():
+                try:
+                    print(f"DEBUG: CURRENT_TEXT_SESSION | key={key} | value='{val.strip()}'")
+                except Exception:
+                    pass
+                return val.strip()
+    except Exception:
+        pass
+
+    # Assessment-level fallbacks
+    try:
+        assessment = (getattr(ctx, "session", {}) or {}).get("assessment", {}) or {}
+        val = assessment.get("original_query")
+        if isinstance(val, str) and val.strip():
+            try:
+                print(f"DEBUG: CURRENT_TEXT_ASSESSMENT | value='{val.strip()}'")
+            except Exception:
+                pass
+            return val.strip()
+    except Exception:
+        pass
+
+    try:
+        print("DEBUG: CURRENT_TEXT_FALLBACK_EMPTY")
+    except Exception:
+        pass
+    return ""
+
 def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Build ES query with improved brand handling and percentile-based ranking.
@@ -201,19 +268,11 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
 
     # 2) Soft re-ranking signals with boosts
     
-    # IMPROVED: Brand handling using match queries instead of terms
-    brands = p.get("brands") or []
-    if isinstance(brands, list) and brands:
-        for brand in brands:
-            if brand and str(brand).strip():
-                shoulds.append({
-                    "match": {
-                        "brand": {
-                            "query": str(brand).strip(),
-                            "boost": 5.0
-                        }
-                    }
-                })
+    # NOTE: Brand-based boosting is intentionally disabled.
+    # Direct brand filtering/boosting proved brittle due to inconsistent brand tokenization
+    # (e.g., variants, localization, punctuation). It can eliminate good matches or overfit
+    # to noisy brand mentions in text. If we need brand handling later, prefer exact keyword
+    # fields (e.g., brand.keyword) and a carefully normalized brand map.
 
     # Dietary labels with boost
     dietary_labels = p.get("dietary_labels") or p.get("dietary_terms") or []
@@ -453,29 +512,7 @@ class ElasticsearchProductsFetcher:
             
             print(f"DEBUG: ES query found {result['meta']['total_hits']} products")
             
-            # IMPROVEMENT: Fallback if no results and we had brand filters
-            if result['meta']['total_hits'] == 0 and params.get('brands'):
-                print("DEBUG: No results with brand filter, trying without...")
-                
-                # Retry without brand filter
-                params_relaxed = dict(params)
-                params_relaxed.pop('brands', None)
-                query_body_relaxed = _build_enhanced_es_query(params_relaxed)
-                
-                response = requests.post(
-                    self.endpoint,
-                    headers=self.headers,
-                    json=query_body_relaxed,
-                    timeout=TIMEOUT
-                )
-                response.raise_for_status()
-                
-                raw_data = response.json()
-                result = _transform_results(raw_data)
-                
-                if result['meta']['total_hits'] > 0:
-                    result['meta']['fallback_applied'] = 'removed_brand_filter'
-                    print(f"DEBUG: Fallback successful, found {result['meta']['total_hits']} products")
+            # No brand-specific fallback; brand handling is disabled (see note above)
             
             # Show top results for debugging
             if result['products']:
@@ -535,12 +572,19 @@ class ElasticsearchProductsFetcher:
 
 # Parameter extraction and normalization
 def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
-    """Extract search parameters from user context"""
+    """Extract search parameters from user context
+
+    Critical: Always use CURRENT user text for follow-ups so we rebuild ES params
+    from the latest delta rather than reusing stale query text from a prior turn.
+    """
     session = ctx.session or {}
     assessment = session.get("assessment", {})
-    
-    # Get the original query
-    query = assessment.get("original_query") or session.get("last_query", "")
+
+    # Prioritize the current user utterance
+    query = _get_current_user_text(ctx) or ""
+    if not query:
+        # Fallbacks for safety
+        query = assessment.get("original_query") or session.get("last_query", "")
     
     # Extract budget
     budget = session.get("budget", {})
@@ -570,6 +614,13 @@ def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
     product_intent = str(session.get("product_intent") or "show_me_options")
     # Size hint: 1 for is_this_good; else 10
     size_hint = 1 if product_intent == "is_this_good" else 10
+
+    # Persist latest user query back into session for visibility/debug
+    try:
+        session["last_query"] = query
+        ctx.session = session
+    except Exception:
+        pass
 
     return {
         "q": query,
@@ -620,8 +671,18 @@ def _normalize_params(base_params: Dict[str, Any], llm_params: Dict[str, Any]) -
 async def build_search_params(ctx) -> Dict[str, Any]:
     """Build final search parameters from context + LLM analysis"""
     
+    # Resolve current user text once for downstream guards
+    current_text = _get_current_user_text(ctx)
+    try:
+        print(f"DEBUG: BSP_START | current_text='{current_text}'")
+    except Exception:
+        pass
     # Get base parameters from context
     base_params = _extract_defaults_from_context(ctx)
+    try:
+        print(f"DEBUG: BSP_BASE | base_params={base_params}")
+    except Exception:
+        pass
     
     # Use LLM to extract/normalize additional parameters (always)
     llm_params = {}
@@ -629,6 +690,11 @@ async def build_search_params(ctx) -> Dict[str, Any]:
         # Lazy import to avoid circular import with llm_service importing this module
         from ..llm_service import LLMService  # type: ignore
         llm_service = LLMService()
+        # Inject current user text explicitly so LLM sees the latest delta
+        try:
+            ctx.session.setdefault("debug", {})["current_user_text"] = current_text
+        except Exception:
+            pass
         llm_params = await llm_service.extract_es_params(ctx)
         print(f"DEBUG: LLM extracted params = {llm_params}")
     except Exception as e:
@@ -637,13 +703,90 @@ async def build_search_params(ctx) -> Dict[str, Any]:
     
     # Merge and normalize
     final_params = _normalize_params(base_params, llm_params)
+    try:
+        print(f"DEBUG: BSP_MERGED | merged_params={final_params}")
+    except Exception:
+        pass
     
-    # Apply minimum quality threshold if not searching for specific brand
+    # Heuristic upgrades based on current text
+    text_lower = (current_text or "").lower()
+    if any(token in text_lower for token in ["healthier", "healthy", "cleaner", "better for me", "low sugar", "less oil", "low sodium"]):
+        # Tighten quality threshold if user is asking for healthier options
+        try:
+            prev = float(final_params.get("min_flean_percentile", 30))
+        except Exception:
+            prev = 30.0
+        final_params["min_flean_percentile"] = max(prev, 50)
+
+    # Apply minimum quality threshold if not searching for specific brand.
+    # Don't clobber a higher threshold set above; enforce at least 30.
     if not final_params.get("brands"):
-        final_params["min_flean_percentile"] = 30  # Only show products in top 70%
+        try:
+            prev = float(final_params.get("min_flean_percentile", 0))
+        except Exception:
+            prev = 0.0
+        final_params["min_flean_percentile"] = max(prev, 30)
     
+    # Deterministic keyword injection from CURRENT user text so refinements like
+    # 'baked options' always influence ES ranking, even if LLM omits them.
+    try:
+        import re as _re
+        stop = {
+            "pls", "please", "options", "option", "want", "show", "some", "more",
+            "the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "me"
+        }
+        tokens = [_t for _t in (_re.findall(r"[A-Za-z]+", (current_text or "").lower()) or []) if _t and _t not in stop]
+        before_kw = list(final_params.get("keywords") or [])
+        if tokens:
+            existing = []
+            try:
+                existing = [str(x).strip().lower() for x in (final_params.get("keywords") or []) if str(x).strip()]
+            except Exception:
+                existing = []
+            merged = []
+            seen = set()
+            for x in existing + tokens:
+                if x and x not in seen:
+                    seen.add(x)
+                    merged.append(x)
+            final_params["keywords"] = merged[:8]
+            print(f"DEBUG: BSP_INJECT | tokens={tokens} | before={before_kw} | after={final_params['keywords']}")
+        else:
+            print("DEBUG: BSP_INJECT | no_tokens_from_current_text")
+    except Exception as _inj_exc:
+        print(f"DEBUG: BSP_INJECT_ERROR | {str(_inj_exc)}")
+
     print(f"DEBUG: Final search params = {final_params}")
     
+    # Deterministic keyword injection from CURRENT user text so refinements like
+    # 'baked options' always influence ES ranking, even if LLM omits them.
+    try:
+        import re as _re
+        stop = {
+            "pls", "please", "options", "option", "want", "show", "some", "more",
+            "the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "me"
+        }
+        tokens = [_t for _t in (_re.findall(r"[A-Za-z]+", (current_text or "").lower()) or []) if _t and _t not in stop]
+        if tokens:
+            existing = []
+            try:
+                existing = [str(x).strip().lower() for x in (final_params.get("keywords") or []) if str(x).strip()]
+            except Exception:
+                existing = []
+            merged = []
+            seen = set()
+            # Keep existing order, then add new tokens
+            for x in existing + tokens:
+                if x and x not in seen:
+                    seen.add(x)
+                    merged.append(x)
+            # Cap to a reasonable number
+            final_params["keywords"] = merged[:8]
+            if merged != existing:
+                print(f"DEBUG: Injected current_text tokens into keywords = {final_params['keywords']}")
+    except Exception:
+        pass
+
     # Store for debugging
     try:
         ctx.session.setdefault("debug", {})["last_search_params"] = final_params
@@ -665,6 +808,15 @@ def get_es_fetcher() -> ElasticsearchProductsFetcher:
 # Async handlers for different functions
 async def search_products_handler(ctx) -> Dict[str, Any]:
     """Main product search handler with quality checks"""
+    # Ensure follow-ups always use the latest user text by refreshing session state
+    try:
+        latest_text = _get_current_user_text(ctx)
+        if isinstance(latest_text, str) and latest_text.strip():
+            ctx.session = ctx.session or {}
+            ctx.session["last_query"] = latest_text.strip()
+    except Exception:
+        pass
+
     params = await build_search_params(ctx)
     fetcher = get_es_fetcher()
     

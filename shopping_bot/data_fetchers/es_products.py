@@ -545,6 +545,7 @@ class ElasticsearchProductsFetcher:
         if not ids:
             return []
         try:
+            print(f"DEBUG: ES mget request | endpoint={self.mget_endpoint} | id_count={len(ids)} | sample_ids={ids[:3]}")
             body = {
                 "ids": [str(x).strip() for x in ids if str(x).strip()]
             }
@@ -554,20 +555,83 @@ class ElasticsearchProductsFetcher:
                 json=body,
                 timeout=TIMEOUT
             )
+            try:
+                print(f"DEBUG: ES mget response | status={response.status_code}")
+            except Exception:
+                pass
             response.raise_for_status()
             data = response.json() or {}
             docs = data.get("docs", []) or []
+            print(f"DEBUG: ES mget parsed | docs_count={len(docs)}")
             out: List[Dict[str, Any]] = []
             for d in docs:
                 src = d.get("_source", {}) or {}
                 if src:
                     out.append(src)
+            print(f"DEBUG: ES mget out | sources_count={len(out)}")
+            # If _mget by _id returned nothing, fallback to a terms search on field 'id'
+            if not out:
+                print("DEBUG: ES mget fallback → terms search on field 'id'")
+                return self.search_by_ids(ids)
             return out
         except requests.exceptions.Timeout:
             print("DEBUG: ES mget timeout")
             return []
         except Exception as exc:
             print(f"DEBUG: ES mget failed: {exc}")
+            return []
+
+    def search_by_ids(self, ids: List[str]) -> List[Dict[str, Any]]:
+        """Fetch documents by matching the 'id' field using a terms query.
+
+        Returns list of _source dicts ordered to match the requested ids.
+        """
+        if not ids:
+            return []
+        try:
+            ordered_ids = [str(x).strip() for x in ids if str(x).strip()]
+            body = {
+                "size": len(ordered_ids),
+                "_source": {
+                    "includes": [
+                        "id", "name", "brand", "price", "mrp", "description", "use",
+                        "hero_image.*", "package_claims.*", "category_group", "category_paths",
+                        "category_data.*", "ingredients.*", "tags_and_sentiments.*",
+                        "flean_score.*", "stats.*"
+                    ]
+                },
+                "query": {
+                    "terms": {"id": ordered_ids}
+                }
+            }
+            search_endpoint = f"{self.base_url}/{self.index}/_search"
+            print(f"DEBUG: ES ids-search request | endpoint={search_endpoint} | id_count={len(ordered_ids)}")
+            response = requests.post(
+                search_endpoint,
+                headers=self.headers,
+                json=body,
+                timeout=TIMEOUT
+            )
+            print(f"DEBUG: ES ids-search response | status={response.status_code}")
+            response.raise_for_status()
+            data = response.json() or {}
+            hits = (data.get("hits", {}) or {}).get("hits", []) or []
+            print(f"DEBUG: ES ids-search parsed | hits_count={len(hits)}")
+            id_to_src: Dict[str, Dict[str, Any]] = {}
+            for h in hits:
+                src = h.get("_source", {}) or {}
+                pid = str(src.get("id", "")).strip()
+                if pid:
+                    id_to_src[pid] = src
+            # Reorder to match requested ids
+            out: List[Dict[str, Any]] = [id_to_src.get(i) for i in ordered_ids if id_to_src.get(i)]
+            print(f"DEBUG: ES ids-search out | sources_count={len(out)}")
+            return out
+        except requests.exceptions.Timeout:
+            print("DEBUG: ES ids-search timeout")
+            return []
+        except Exception as exc:
+            print(f"DEBUG: ES ids-search failed: {exc}")
             return []
 
 # Parameter extraction and normalization
@@ -579,12 +643,12 @@ def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
     """
     session = ctx.session or {}
     assessment = session.get("assessment", {})
-
+    
     # Prioritize the current user utterance
     query = _get_current_user_text(ctx) or ""
     if not query:
         # Fallbacks for safety
-        query = assessment.get("original_query") or session.get("last_query", "")
+    query = assessment.get("original_query") or session.get("last_query", "")
     
     # Extract budget
     budget = session.get("budget", {})
@@ -651,13 +715,13 @@ def _normalize_params(base_params: Dict[str, Any], llm_params: Dict[str, Any]) -
             if isinstance(value, str):
                 # Split string into list
                 if list_field in ["dietary_terms", "dietary_labels"]:
-                    final_params[list_field] = [v.strip().upper() for v in value.replace(",", " ").split() if v.strip()]
+                final_params[list_field] = [v.strip().upper() for v in value.replace(",", " ").split() if v.strip()]
                 else:
                     final_params[list_field] = [v.strip() for v in value.replace(",", " ").split() if v.strip()]
             elif isinstance(value, list):
                 # Clean existing list
                 if list_field in ["dietary_terms", "dietary_labels"]:
-                    final_params[list_field] = [str(v).strip().upper() for v in value if str(v).strip()]
+                final_params[list_field] = [str(v).strip().upper() for v in value if str(v).strip()]
                 else:
                     final_params[list_field] = [str(v).strip() for v in value if str(v).strip()]
     
@@ -686,20 +750,20 @@ async def build_search_params(ctx) -> Dict[str, Any]:
     
     # Use LLM to extract/normalize additional parameters (always)
     llm_params = {}
-    try:
+        try:
         # Lazy import to avoid circular import with llm_service importing this module
         from ..llm_service import LLMService  # type: ignore
-        llm_service = LLMService()
+            llm_service = LLMService()
         # Inject current user text explicitly so LLM sees the latest delta
         try:
             ctx.session.setdefault("debug", {})["current_user_text"] = current_text
         except Exception:
             pass
-        llm_params = await llm_service.extract_es_params(ctx)
-        print(f"DEBUG: LLM extracted params = {llm_params}")
-    except Exception as e:
-        print(f"DEBUG: LLM param extraction failed: {e}")
-        llm_params = {}
+            llm_params = await llm_service.extract_es_params(ctx)
+            print(f"DEBUG: LLM extracted params = {llm_params}")
+        except Exception as e:
+            print(f"DEBUG: LLM param extraction failed: {e}")
+            llm_params = {}
     
     # Merge and normalize
     final_params = _normalize_params(base_params, llm_params)
@@ -755,7 +819,7 @@ async def build_search_params(ctx) -> Dict[str, Any]:
             print("DEBUG: BSP_INJECT | no_tokens_from_current_text")
     except Exception as _inj_exc:
         print(f"DEBUG: BSP_INJECT_ERROR | {str(_inj_exc)}")
-
+    
     print(f"DEBUG: Final search params = {final_params}")
     
     # Deterministic keyword injection from CURRENT user text so refinements like
@@ -786,7 +850,7 @@ async def build_search_params(ctx) -> Dict[str, Any]:
                 print(f"DEBUG: Injected current_text tokens into keywords = {final_params['keywords']}")
     except Exception:
         pass
-
+    
     # Store for debugging
     try:
         ctx.session.setdefault("debug", {})["last_search_params"] = final_params
@@ -821,7 +885,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
     fetcher = get_es_fetcher()
     
     # Run in thread to avoid blocking
-    loop = asyncio.get_running_loop()
+        loop = asyncio.get_running_loop()
     results = await loop.run_in_executor(None, lambda: fetcher.search(params))
     
     # Additional quality check: if we got results but they're all low quality

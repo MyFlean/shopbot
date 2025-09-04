@@ -11,6 +11,7 @@ UPDATED: 4-Intent Classification for Product Queries
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -449,11 +450,12 @@ Permanent: {permanent}
 ### INSTRUCTIONS
 Create a helpful response with:
 
-1. **summary_message**: A natural, conversational summary that:
-   - Addresses the user's specific query
-   - Mentions how many products were found
-   - Highlights the best options briefly
-   - Is 1-3 sentences long
+1. **summary_message** (USE enriched_top for top 3 products):
+   Structure the summary as 4 concise bullets/sentences:
+   - Positives (from tags_and_sentiments and marketing/usage/occasion signals) for the top 1-3 products
+   - Quantitative quality signals (flean_score, key percentiles like protein/wholefood; penalties like sodium/sugar/additives when notable)
+   - Caveats or watch-outs (e.g., ultra_processed, high sodium, saturated fat, additives)
+   - One lean line summarizing the overall 10-product set (coverage/value/variety)
 
 2. **products**: For each relevant product (up to 10):
    - text: The exact product name from results
@@ -461,12 +463,11 @@ Create a helpful response with:
    - price: The price with currency (e.g., "₹60")
    - special_features: Key differentiators (e.g., "High protein, organic")
 
-Focus on actual product attributes from the search results.
-Make descriptions specific and benefit-focused.
-Leverage percentiles and quality signals explicitly when available, for example:
-- "Top {{percent}}%, protein percentile" or "Lower sodium (penalty percentile {{percent}}%)"
-- "High wholefood score (top {{percent}}%)" or "Low additives/sweeteners"
-If no products found, provide helpful message with empty products array.
+Guidelines:
+- Focus on actual product attributes from the search results and enriched_top.
+- Keep it crisp, persuasive, and evidence-driven.
+- Use percentiles/penalties explicitly when helpful (e.g., "Top 10% protein" or "Sodium penalty high").
+- If no products found, provide helpful message with empty products array.
 
 Return ONLY a tool call to generate_product_response.
 """
@@ -739,16 +740,33 @@ class LLMService:
         top_products_brief: List[Dict[str, Any]] = []
         if top_ids:
             try:
-                from .data_fetchers.es_products import get_es_fetcher  # type: ignore
-                loop = asyncio.get_running_loop()
-                fetcher = get_es_fetcher()
-                full_docs = await loop.run_in_executor(None, lambda: fetcher.mget_products(top_ids))
                 try:
-                    # Log full docs for top-3 (be careful with size; this prints only top-3)
-                    log.info(f"ES_MGET_TOP3_FULLDOCS | count={len(full_docs)} | docs={json.dumps(full_docs[:3], ensure_ascii=False)}")
+                    log.info(f"UX_ENRICH_START | top_ids_count={len(top_ids)} | ids_sample={top_ids[:3]}")
                 except Exception:
                     pass
-                # Build compact briefs for LLM (avoid token bloat)
+                from .data_fetchers.es_products import get_es_fetcher  # type: ignore
+                loop = asyncio.get_running_loop()
+                log.info("UX_ENRICH_FETCHER_GET")
+                fetcher = get_es_fetcher()
+                log.info("UX_ENRICH_BEFORE_MGET")
+                full_docs = await loop.run_in_executor(None, lambda: fetcher.mget_products(top_ids))
+                log.info(f"UX_ENRICH_AFTER_MGET | full_docs_count={len(full_docs) if isinstance(full_docs, list) else 'N/A'}")
+                try:
+                    # Log basic shape of full docs
+                    log.info(
+                        f"ES_MGET_TOP3_FULLDOCS | count={len(full_docs)} | fields_sample={list((full_docs[:1] or [{}])[0].keys())}"
+                    )
+                    # Print content of these ids as requested (capped to top_k)
+                    for _doc in full_docs[:top_k]:
+                        try:
+                            log.info(
+                                f"ES_DOC_CONTENT | id={_doc.get('id')} | doc={json.dumps(_doc, ensure_ascii=False)}"
+                            )
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                # Build compact briefs for LLM (avoid token bloat) with rich attributes
                 for doc in full_docs[:top_k]:
                     try:
                         stats = doc.get("stats", {}) or {}
@@ -757,16 +775,40 @@ class LLMService:
                                 return (stats.get(key, {}) or {}).get("subcategory_percentile")
                             except Exception:
                                 return None
+                        # Extract rich attributes
+                        pkg = (doc.get("package_claims", {}) or {})
+                        cat = (doc.get("category_data", {}) or {})
+                        nutr = (cat.get("nutritional", {}) or {}).get("nutri_breakdown", {})
+                        tags = (doc.get("tags_and_sentiments", {}) or {})
+                        ingredients = (doc.get("ingredients", {}) or {})
+                        flean = (doc.get("flean_score", {}) or {})
                         brief = {
                             "id": doc.get("id"),
                             "name": doc.get("name"),
                             "brand": doc.get("brand"),
                             "price": doc.get("price"),
                             "description": doc.get("description"),
-                            "dietary_labels": (doc.get("package_claims", {}) or {}).get("dietary_labels", []),
-                            "health_claims": (doc.get("package_claims", {}) or {}).get("health_claims", []),
-                            "nutri": ((doc.get("category_data", {}) or {}).get("nutritional", {}) or {}).get("nutri_breakdown", {}),
-                            "flean_score": (doc.get("flean_score", {}) or {}).get("adjusted_score"),
+                            "dietary_labels": pkg.get("dietary_labels", []),
+                            "health_claims": pkg.get("health_claims", []),
+                            "package_text": pkg.get("text"),
+                            "nutri": nutr,
+                            "processing_type": cat.get("processing_type"),
+                            "dietary_label": cat.get("dietary_label"),
+                            "ingredients_raw": ingredients.get("raw_text") or ingredients.get("raw_text_new"),
+                            "tags_and_sentiments": {
+                                "usage_tags": ((tags.get("tags", {}) or {}).get("usage_tags", []) if isinstance(tags.get("tags"), dict) else []),
+                                "occasion_tags": ((tags.get("tags", {}) or {}).get("occasion_tags", []) if isinstance(tags.get("tags"), dict) else []),
+                                "time_of_day_tags": ((tags.get("tags", {}) or {}).get("time_of_day_tags", []) if isinstance(tags.get("tags"), dict) else []),
+                                "social_context_tags": ((tags.get("tags", {}) or {}).get("social_context_tags", []) if isinstance(tags.get("tags"), dict) else []),
+                                "weather_season_tags": ((tags.get("tags", {}) or {}).get("weather_season_tags", []) if isinstance(tags.get("tags"), dict) else []),
+                                "emotional_trigger_tags": ((tags.get("tags", {}) or {}).get("emotional_trigger_tags", []) if isinstance(tags.get("tags"), dict) else []),
+                                "health_positioning_tags": ((tags.get("tags", {}) or {}).get("health_positioning_tags", []) if isinstance(tags.get("tags"), dict) else []),
+                                "processing_level_tags": ((tags.get("tags", {}) or {}).get("processing_level_tags", []) if isinstance(tags.get("tags"), dict) else []),
+                                "marketing_tags": ((tags.get("tags", {}) or {}).get("marketing_tags", []) if isinstance(tags.get("tags"), dict) else []),
+                            },
+                            "flean_score": flean.get("adjusted_score"),
+                            "bonuses": flean.get("bonuses"),
+                            "penalties": flean.get("penalties"),
                             "percentiles": {
                                 "flean": _pp("adjusted_score_percentiles"),
                                 "protein": _pp("protein_percentiles"),
@@ -785,15 +827,29 @@ class LLMService:
                             },
                         }
                         top_products_brief.append(brief)
+                        try:
+                            log.info(
+                                f"UX_ENRICHMENT_BRIEF | id={brief.get('id')} | has_nutri={bool(brief.get('nutri'))} | tags_keys={list((brief.get('tags_and_sentiments') or {}).keys())} | bonuses={bool(brief.get('bonuses'))} | penalties={bool(brief.get('penalties'))}"
+                            )
+                        except Exception:
+                            pass
                     except Exception:
                         continue
             except Exception:
                 top_products_brief = []
+                log.error("UX_ENRICH_ERROR | failed during enrichment (import/fetch/mget/brief-build)", exc_info=True)
 
         # Narrow LLM input: single product for SPM else pass the list; add enriched briefs separately
         products_for_llm = products_data[:1] if (product_intent and product_intent == "is_this_good") else products_data[:10]
 
         # Augmented prompt with enriched top products and percentile guidance
+        try:
+            log.info(
+                f"UX_ENRICHMENT_COUNTS | top_ids={len(top_ids)} | briefs={len(top_products_brief)} | products_for_llm={len(products_for_llm)}"
+            )
+        except Exception:
+            pass
+
         prompt = PRODUCT_RESPONSE_PROMPT.format(
             query=query,
             intent_l3=intent_l3,

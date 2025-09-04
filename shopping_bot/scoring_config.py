@@ -231,16 +231,21 @@ def build_function_score_functions(subcategory: str, include_flean: bool = True)
     """
     functions = []
     
-    # Always include flean score as the base quality metric
+    # Always include flean score as the base quality multiplier (normalized > 1)
+    # Using script_score here so that with score_mode=multiply the overall score is
+    # multiplied by a factor in ~[1.0, 2.0] based on the percentile.
     if include_flean:
         functions.append({
-            "field_value_factor": {
-                "field": "stats.adjusted_score_percentiles.subcategory_percentile",
-                "factor": 0.02,
-                "modifier": "sqrt",
-                "missing": 50
-            },
-            "weight": 2.0
+            "script_score": {
+                "script": {
+                    "source": (
+                        "double p = (doc.containsKey('stats.adjusted_score_percentiles.subcategory_percentile') \n"
+                        "            && doc['stats.adjusted_score_percentiles.subcategory_percentile'].size() > 0) \n"
+                        "    ? doc['stats.adjusted_score_percentiles.subcategory_percentile'].value : 50; \n"
+                        "return 1.0 + (Math.max(0.0, Math.min(100.0, p)) / 100.0);"
+                    )
+                }
+            }
         })
     
     # Get category-specific rules

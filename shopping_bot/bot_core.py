@@ -440,6 +440,15 @@ class ShoppingBotCore:
                 ctx.user_id, "USER_ANSWER_STORED",
                 {"for": a.get("currently_asking"), "answer_len": len(query)}
             )
+            try:
+                log.info(
+                    f"SLOT_ANSWER_RECEIVED | user={ctx.user_id} | slot={a.get('currently_asking')} | answer='{str(query)[:80]}'"
+                )
+                log.info(
+                    f"ASSESSMENT_STATE | user={ctx.user_id} | base_query='{a.get('original_query','')}' | missing={a.get('missing_data', [])} | priority={a.get('priority_order', [])}"
+                )
+            except Exception:
+                pass
 
         still_missing = compute_still_missing(a, ctx)
         ask_first = [f for f in still_missing if is_user_slot(f)]
@@ -450,6 +459,7 @@ class ShoppingBotCore:
         if ctx.session.get("product_intent") in no_ask_intents:
             ask_first = []
 
+        # If any user slots remain, do not run product fetchers yet
         if ask_first:
             func = ask_first[0]
             func_value = get_func_value(func)
@@ -465,7 +475,8 @@ class ShoppingBotCore:
             except Exception:
                 pass
             return BotResponse(ResponseType.QUESTION, q)
-
+        
+        # At this point, no user slots are pending; safe to fetch
         needs_bg = bool(ctx.session.get("needs_background")) and Cfg.ENABLE_ASYNC
         if fetch_later and needs_bg:
             a["phase"] = "processing"
@@ -482,6 +493,12 @@ class ShoppingBotCore:
         self.smart_log.flow_decision(
             ctx.user_id, "COMPLETE_ASSESSMENT", f"{len(fetch_later)} fetches needed"
         )
+        try:
+            log.info(
+                f"ASSESSMENT_FINALIZE | user={ctx.user_id} | base_query='{a.get('original_query','')}' | ask_first={ask_first} | fetchers={[get_func_value(f) for f in fetch_later]}"
+            )
+        except Exception:
+            pass
         return await self._complete_assessment(a, ctx, fetch_later)
 
     # ────────────────────────────────────────────────────────

@@ -155,7 +155,7 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
 
     # Base document structure with enhanced source fields
     body: Dict[str, Any] = {
-        "size": desired_size,
+        "size": int(p.get("size", desired_size)) if isinstance(p.get("size"), int) else desired_size,
         "track_total_hits": True,
         "_source": {
             "includes": [
@@ -306,6 +306,15 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     # 3) Keyword/multi_match component
     q_text = str(p.get("q", "")).strip()
     keywords = p.get("keywords") or []
+    field_boosts = p.get("field_boosts") or []
+    dynamic_fields = ["name^4", "description^2", "use", "combined_text"]
+    if isinstance(field_boosts, list) and field_boosts:
+        try:
+            for fb in field_boosts:
+                if isinstance(fb, str) and fb.strip():
+                    dynamic_fields.append(fb.strip())
+        except Exception:
+            pass
     
     # Main query matching
     if isinstance(keywords, list) and keywords:
@@ -316,7 +325,7 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                     "multi_match": {
                         "query": kw_str,
                         "type": "best_fields",
-                        "fields": ["name^4", "description^2", "use", "combined_text"],
+                        "fields": dynamic_fields,
                         "fuzziness": "AUTO"
                     }
                 })
@@ -325,7 +334,7 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
             "multi_match": {
                 "query": q_text,
                 "type": "best_fields",
-                "fields": ["name^4", "description^2", "use", "combined_text"],
+                "fields": dynamic_fields,
                 "fuzziness": "AUTO"
             }
         })
@@ -343,6 +352,22 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                         "fields": ["name^6", "description^2", "combined_text"],
                     }
                 })
+
+    # 3c) Phrase boosts provided by LLM normaliser
+    phrase_boosts = p.get("phrase_boosts") or []
+    if isinstance(phrase_boosts, list) and phrase_boosts:
+        for pb in phrase_boosts[:6]:
+            try:
+                if isinstance(pb, dict):
+                    field = str(pb.get("field") or pb.get("title") or "name").strip() or "name"
+                    phrase = str(pb.get("phrase") or pb.get("title") or "").strip()
+                    boost = float(pb.get("boost", 1.5))
+                    if phrase:
+                        shoulds.append({
+                            "match_phrase": {field: {"query": phrase, "boost": boost}}
+                        })
+            except Exception:
+                pass
 
     # 4) Apply dynamic function_score based on subcategory
     # Derive subcategory from params/category_path
@@ -404,13 +429,19 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
             "function_score": {
                 "query": {"bool": bq},
                 "functions": scoring_functions,
-                "score_mode": "sum",
+                "score_mode": "multiply",
                 "boost_mode": "multiply"
             }
         }
 
-    # minimum_should_match stays 0 per spec
-    bq["minimum_should_match"] = 0
+    # Set minimum_should_match to 1 if we have textual should clauses; else 0
+    try:
+        has_text_should = any(
+            any(k in s for k in ["multi_match", "match", "match_phrase"]) for s in shoulds
+        )
+        bq["minimum_should_match"] = 1 if has_text_should else 0
+    except Exception:
+        bq["minimum_should_match"] = 0
 
     # Debug logs
     print(f"DEBUG: ES filters={len(filters)} filters")
@@ -418,6 +449,19 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     print(f"DEBUG: Using dynamic scoring for subcategory='{subcategory}'")
     print(f"DEBUG: Applied {len(scoring_functions)} scoring functions")
     
+    # Add highlight section if there is a query text component
+    try:
+        if q_text or keywords:
+            body["highlight"] = {
+                "fields": {
+                    "name": {"number_of_fragments": 0},
+                    "package_claims.dietary_labels": {"number_of_fragments": 0},
+                    "ingredients.raw_text": {"fragment_size": 120, "number_of_fragments": 1}
+                }
+            }
+    except Exception:
+        pass
+
     return body
 
 def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
@@ -742,11 +786,9 @@ def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
     session = ctx.session or {}
     assessment = session.get("assessment", {})
     
-    # Prioritize the current user utterance
-    query = _get_current_user_text(ctx) or ""
-    if not query:
-        # Fallbacks for safety
-        query = assessment.get("original_query") or session.get("last_query", "")
+    # Canonical base query comes from assessment or prior meaningful query
+    base_query = (assessment or {}).get("original_query") or session.get("last_query", "")
+    query = base_query or ""
     
     # Extract budget
     budget = session.get("budget", {})
@@ -771,20 +813,33 @@ def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
                 price_max = float(parts[1].strip())
             except:
                 pass
+        else:
+            # Map gen-z style labels to INR ranges
+            label = budget_lower.strip()
+            if label in {"budget-friendly", "budget friendly", "budget", "cheap", "affordable"}:
+                price_min = None
+                price_max = 100.0
+            elif label in {"smart value", "value", "mid", "mid-range", "mid range"}:
+                price_min = 100.0
+                price_max = 200.0
+            elif label in {"premium", "expensive", "high-end", "high end"}:
+                price_min = 200.0
+                price_max = None
     
     # Determine product_intent from context
     product_intent = str(session.get("product_intent") or "show_me_options")
     # Size hint: 1 for is_this_good; else 10
     size_hint = 1 if product_intent == "is_this_good" else 10
 
-    # Persist latest user query back into session for visibility/debug
+    # Persist latest base query back into session for visibility/debug
     try:
         session["last_query"] = query
         ctx.session = session
     except Exception:
         pass
 
-    return {
+    # Seed params
+    params = {
         "q": query,
         "size": size_hint,
         "category_group": session.get("category_group", "f_and_b"),  # default to f_and_b
@@ -796,14 +851,33 @@ def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
         "product_intent": product_intent,
     }
 
+    # Lift quality if preferences indicate health focus
+    try:
+        pref = str(session.get("preferences", "") or "").lower()
+        if any(token in pref for token in ["healthy", "healthier", "cleaner", "low oil", "low sugar", "low sodium", "baked"]):
+            prev = float(params.get("min_flean_percentile", 30) or 30)
+            params["min_flean_percentile"] = max(prev, 50)
+    except Exception:
+        pass
+
+    return params
+
 def _normalize_params(base_params: Dict[str, Any], llm_params: Dict[str, Any]) -> Dict[str, Any]:
     """Merge and normalize parameters"""
     # Start with base params
     final_params = dict(base_params)
     
-    # Overlay LLM-extracted params
+    # Overlay LLM-extracted params (but do not override non-empty base 'q')
     for key, value in (llm_params or {}).items():
         if value is not None:
+            if key == "q":
+                try:
+                    base_q = str(final_params.get("q", "")).strip()
+                except Exception:
+                    base_q = ""
+                if base_q:
+                    # Keep canonical base query; ignore LLM q override
+                    continue
             final_params[key] = value
     
     # Normalize lists
@@ -855,21 +929,9 @@ async def build_search_params(ctx) -> Dict[str, Any]:
         has_generic = any(marker in text_lower for marker in generic_markers)
         has_product_noun = any(noun in text_lower for noun in product_nouns)
         is_generic = has_generic and not has_product_noun
-        
-        if is_generic:
-            last_params = ((ctx.session or {}).get("debug") or {}).get("last_search_params") or {}
-            last_cat_path = last_params.get("category_path")
-            if last_cat_path and "<UNKNOWN>" not in last_cat_path:
-                base_params["category_path"] = last_cat_path
-                base_params["fb_category"] = last_params.get("fb_category")
-                base_params["fb_subcategory"] = last_params.get("fb_subcategory")
-                print(f"DEBUG: BSP_PRE_MERGE | applied_category_carry_over='{last_cat_path}'")
-            else:
-                print("DEBUG: BSP_PRE_MERGE | no_valid_last_category")
-        else:
-            print(f"DEBUG: BSP_PRE_MERGE | not_generic | has_generic={has_generic} | has_product_noun={has_product_noun}")
+        print(f"DEBUG: SLOT_ONLY_PREVIEW | text='{current_text}' | is_generic={is_generic} | has_generic={has_generic} | has_product_noun={has_product_noun}")
     except Exception as exc:
-        print(f"DEBUG: BSP_PRE_MERGE_ERROR | {exc}")
+        print(f"DEBUG: SLOT_ONLY_PREVIEW_ERROR | {exc}")
     
     # Use LLM to extract/normalize additional parameters (always)
     llm_params = {}
@@ -894,6 +956,28 @@ async def build_search_params(ctx) -> Dict[str, Any]:
         print(f"DEBUG: BSP_MERGED | merged_params={final_params}")
     except Exception:
         pass
+
+    # Apply query sanitization (strip noisy tokens)
+    try:
+        if isinstance(final_params.get('q'), str) and final_params['q']:
+            before_q = final_params['q']
+            after_q = before_q
+            for junk in ["products", "options", "show me", "alternatives"]:
+                after_q = after_q.replace(junk, "").strip()
+            if after_q != before_q:
+                print(f"DEBUG: BSP_Q_SANITIZED | before='{before_q}' | after='{after_q}'")
+                final_params['q'] = after_q
+    except Exception:
+        pass
+
+    # Heuristic: if q empty/meaningless AND no category, prefer to ask next slot rather than search
+    try:
+        qval = str(final_params.get('q') or '').strip()
+        has_category = bool(final_params.get('category_path'))
+        if (not qval or len(qval) <= 2) and not has_category:
+            print("DEBUG: ES_SKIP_SEARCH_PREVIEW | slot-only turn with no category; would ask next slot instead of searching")
+    except Exception:
+        pass
     
     # Heuristic upgrades based on current text
     text_lower = (current_text or "").lower()
@@ -905,43 +989,22 @@ async def build_search_params(ctx) -> Dict[str, Any]:
             prev = 30.0
         final_params["min_flean_percentile"] = max(prev, 50)
 
-    # Apply minimum quality threshold if not searching for specific brand.
-    # Don't clobber a higher threshold set above; enforce at least 30.
-    if not final_params.get("brands"):
-        try:
-            prev = float(final_params.get("min_flean_percentile", 0))
-        except Exception:
-            prev = 0.0
-        final_params["min_flean_percentile"] = max(prev, 30)
-    
-    # Deterministic keyword injection from CURRENT user text so refinements like
-    # 'baked options' always influence ES ranking, even if LLM omits them.
+    # Also consider preferences stored in session for keyword enrichment
     try:
-        import re as _re
-        stop = {
-            "pls", "please", "options", "option", "want", "show", "some", "more",
-            "the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "me"
-        }
-        tokens = [_t for _t in (_re.findall(r"[A-Za-z]+", (current_text or "").lower()) or []) if _t and _t not in stop]
-        before_kw = list(final_params.get("keywords") or [])
-        if tokens:
-            existing = []
-            try:
-                existing = [str(x).strip().lower() for x in (final_params.get("keywords") or []) if str(x).strip()]
-            except Exception:
-                existing = []
-            merged = []
-            seen = set()
-            for x in existing + tokens:
-                if x and x not in seen:
-                    seen.add(x)
-                    merged.append(x)
-            final_params["keywords"] = merged[:8]
-            print(f"DEBUG: BSP_INJECT | tokens={tokens} | before={before_kw} | after={final_params['keywords']}")
-        else:
-            print("DEBUG: BSP_INJECT | no_tokens_from_current_text")
-    except Exception as _inj_exc:
-        print(f"DEBUG: BSP_INJECT_ERROR | {str(_inj_exc)}")
+        pref_text = str((ctx.session or {}).get("preferences", "") or "").lower()
+        if pref_text:
+            # crude tokenization
+            pref_tokens = [t for t in re.findall(r"[A-Za-z]+", pref_text) if t]
+            before_kw = list(final_params.get("keywords") or [])
+            existing = set(x.lower() for x in before_kw)
+            for t in pref_tokens:
+                if t.lower() not in existing:
+                    before_kw.append(t.lower())
+                    existing.add(t.lower())
+            final_params["keywords"] = before_kw[:8]
+            print(f"DEBUG: BSP_PREF_INJECT | prefs='{pref_text}' | keywords={final_params['keywords']}")
+    except Exception as _pref_exc:
+        print(f"DEBUG: BSP_PREF_INJECT_ERROR | {str(_pref_exc)}")
     
     print(f"DEBUG: Final search params = {final_params}")
     
@@ -970,8 +1033,8 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
     try:
         latest_text = _get_current_user_text(ctx)
         if isinstance(latest_text, str) and latest_text.strip():
-            ctx.session = ctx.session or {}
-            ctx.session["last_query"] = latest_text.strip()
+            # Do not overwrite last_query with slot-only/ephemeral text
+            pass
     except Exception:
         pass
 

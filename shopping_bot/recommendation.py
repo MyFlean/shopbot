@@ -330,28 +330,22 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             if not current_user_text:
                 current_user_text = assessment.get("original_query", "") or session.get("last_query", "") or ""
 
-            # Build context for LLM (use CURRENT user text as original_query)
+            # Compute base query from assessment for stability across slots
+            base_query = assessment.get("original_query", "") or session.get("last_query", "") or ""
+
+            # Build context for LLM (use BASE query as original_query; current text for constraints)
             context = {
-                "original_query": current_user_text,
+                "original_query": base_query,
                 "user_answers": {
                     "budget": session.get("budget"),
+                    "preferences": session.get("preferences"),
                     "dietary_requirements": session.get("dietary_requirements"),
-                    "product_category": session.get("product_category"),
-                    "brands": session.get("brands"),
                 },
-                "session_data": {
-                    "category_group": session.get("category_group"),
-                    "last_query": session.get("last_query"),
-                },
+                "session_data": session,
                 "debug": session.get("debug", {}),
                 "last_recommendation": session.get("last_recommendation", {}),
-                "conversation_history": [
-                    {
-                        "user_query": (h or {}).get("user_query"),
-                        "bot_reply": ((h or {}).get("final_answer", {}) or {}).get("message_full")
-                    }
-                    for h in (session.get("conversation_history", []) or [])[-3:]
-                ],
+                "conversation_history": session.get("conversation_history", []),
+                "current_constraints": {}
             }
             
             # Caching disabled
@@ -364,9 +358,23 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 current_constraints = {}
             context["current_constraints"] = current_constraints
 
-            # 1) Construct a context-aware search query
-            constructed_q = await self._construct_search_query(context, current_user_text)
+            # 1) Construct a context-aware search query (gate generic slot-only)
+            is_generic = self._is_generic_followup(current_user_text)
+            if is_generic and base_query:
+                constructed_q = base_query
+                log.info(f"CONSTRUCT_QUERY_GATED | using_base_q='{constructed_q}'")
+            else:
+                constructed_q = await self._construct_search_query(context, current_user_text)
             log.info(f"ES_CONSTRUCTED_QUERY | q='{constructed_q}'")
+            try:
+                # Preview sanitization (no behavior change yet)
+                before = constructed_q
+                after = before
+                for junk in ["products", "options", "show me", "alternatives"]:
+                    after = after.replace(junk, "").strip()
+                log.info(f"Q_SANITIZATION_PREVIEW | before='{before}' | after='{after}'")
+            except Exception:
+                pass
 
             # 2) Category/signals extraction from taxonomy (LLM tool)
             try:
@@ -402,6 +410,33 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             
             # 4) Normalise params via dedicated LLM tool
             final_params = await self._normalise_es_params(params_from_llm, context, constructed_q, current_user_text)
+            
+            # Overlay session answers explicitly (budget/preferences/dietary)
+            try:
+                if isinstance(session.get('dietary_requirements'), (list, str)) and session.get('dietary_requirements'):
+                    final_params['dietary_terms'] = session.get('dietary_requirements')
+                if isinstance(session.get('preferences'), str) and session.get('preferences').strip():
+                    # preferences become keywords/phrase_boosts
+                    ptxt = session.get('preferences').strip()
+                    kws = list(final_params.get('keywords') or [])
+                    if ptxt.lower() not in [k.lower() for k in kws]:
+                        kws.append(ptxt.lower())
+                    final_params['keywords'] = kws[:8]
+                    boosts = list(final_params.get('phrase_boosts') or [])
+                    boosts.append({"title": ptxt, "boost": 1.5})
+                    final_params['phrase_boosts'] = boosts[:5]
+                # budget already parsed in defaults; ensure pass-through
+                if session.get('budget'):
+                    pass
+            except Exception:
+                pass
+            try:
+                slot = assessment.get("currently_asking")
+                log.info(
+                    f"NORMALISE_SUMMARY | slot='{slot}' | has_category={bool(final_params.get('category_path'))} | has_price={('price_min' in final_params) or ('price_max' in final_params)}"
+                )
+            except Exception:
+                pass
             
             # 4b) Category carry-over for generic follow-ups
             try:
@@ -531,7 +566,15 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 final_params["category_group"] = "f_and_b"
                 final_params["fb_category"] = fb_meta.get("category")
                 final_params["fb_subcategory"] = fb_meta.get("subcategory")
-                log.info(f"FB_CLASSIFIED | category={final_params.get('fb_category')} | subcategory={final_params.get('fb_subcategory')}")
+                # Build category_path if possible
+                try:
+                    cat = str(final_params.get("fb_category", "")).strip()
+                    sub = str(final_params.get("fb_subcategory", "")).strip()
+                    if cat and sub:
+                        final_params["category_path"] = f"f_and_b/food/{cat}/{sub}"
+                except Exception:
+                    pass
+                log.info(f"FB_CLASSIFIED | category={final_params.get('fb_category')} | subcategory={final_params.get('fb_subcategory')} | path={final_params.get('category_path')}")
 
             # Add query explanation for debugging
             explanation = {

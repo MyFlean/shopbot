@@ -1289,12 +1289,13 @@ class LLMService:
             questions_data = _strip_keys(tool_use.input.get("questions", {}) or {})
 
             # ── Post-process to enforce INR and domain-allowed ranges/options
-            def _coerce_budget_options(options: List[Any]) -> List[Dict[str, str]]:
-                allowed = domain_hints.get("budget_ranges", [])[:3] or ["Under ₹100", "₹100-500", "Over ₹500"]
-                coerced = []
-                for i, rng in enumerate(allowed[:3]):
-                    coerced.append({"label": rng, "value": rng})
-                return coerced
+            def _coerce_budget_options_genz() -> List[Dict[str, str]]:
+                # Fixed, non-variable Gen-Z style budget options
+                return [
+                    {"label": "Budget-friendly", "value": "Budget-friendly"},
+                    {"label": "Smart value", "value": "Smart value"},
+                    {"label": "Premium", "value": "Premium"},
+                ]
 
             processed_questions: Dict[str, Dict[str, Any]] = {}
             for slot_value, question_data in questions_data.items():
@@ -1318,9 +1319,9 @@ class LLMService:
                     formatted_options.append({"label": "Other", "value": "Other"})
                 formatted_options = formatted_options[:3]
 
-                # Budget-specific coercion to domain INR buckets
+                # Budget-specific override: always use fixed Gen-Z style buckets
                 if slot_value == UserSlot.USER_BUDGET.value:
-                    formatted_options = _coerce_budget_options(formatted_options)
+                    formatted_options = _coerce_budget_options_genz()
 
                 processed_questions[slot_value] = {
                     "message": question_data.get(

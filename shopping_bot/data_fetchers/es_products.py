@@ -648,7 +648,7 @@ def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
     query = _get_current_user_text(ctx) or ""
     if not query:
         # Fallbacks for safety
-    query = assessment.get("original_query") or session.get("last_query", "")
+        query = assessment.get("original_query") or session.get("last_query", "")
     
     # Extract budget
     budget = session.get("budget", {})
@@ -715,13 +715,13 @@ def _normalize_params(base_params: Dict[str, Any], llm_params: Dict[str, Any]) -
             if isinstance(value, str):
                 # Split string into list
                 if list_field in ["dietary_terms", "dietary_labels"]:
-                final_params[list_field] = [v.strip().upper() for v in value.replace(",", " ").split() if v.strip()]
+                    final_params[list_field] = [v.strip().upper() for v in value.replace(",", " ").split() if v.strip()]
                 else:
                     final_params[list_field] = [v.strip() for v in value.replace(",", " ").split() if v.strip()]
             elif isinstance(value, list):
                 # Clean existing list
                 if list_field in ["dietary_terms", "dietary_labels"]:
-                final_params[list_field] = [str(v).strip().upper() for v in value if str(v).strip()]
+                    final_params[list_field] = [str(v).strip().upper() for v in value if str(v).strip()]
                 else:
                     final_params[list_field] = [str(v).strip() for v in value if str(v).strip()]
     
@@ -750,20 +750,20 @@ async def build_search_params(ctx) -> Dict[str, Any]:
     
     # Use LLM to extract/normalize additional parameters (always)
     llm_params = {}
-        try:
+    try:
         # Lazy import to avoid circular import with llm_service importing this module
         from ..llm_service import LLMService  # type: ignore
-            llm_service = LLMService()
+        llm_service = LLMService()
         # Inject current user text explicitly so LLM sees the latest delta
         try:
             ctx.session.setdefault("debug", {})["current_user_text"] = current_text
         except Exception:
             pass
-            llm_params = await llm_service.extract_es_params(ctx)
-            print(f"DEBUG: LLM extracted params = {llm_params}")
-        except Exception as e:
-            print(f"DEBUG: LLM param extraction failed: {e}")
-            llm_params = {}
+        llm_params = await llm_service.extract_es_params(ctx)
+        print(f"DEBUG: LLM extracted params = {llm_params}")
+    except Exception as e:
+        print(f"DEBUG: LLM param extraction failed: {e}")
+        llm_params = {}
     
     # Merge and normalize
     final_params = _normalize_params(base_params, llm_params)
@@ -822,35 +822,6 @@ async def build_search_params(ctx) -> Dict[str, Any]:
     
     print(f"DEBUG: Final search params = {final_params}")
     
-    # Deterministic keyword injection from CURRENT user text so refinements like
-    # 'baked options' always influence ES ranking, even if LLM omits them.
-    try:
-        import re as _re
-        stop = {
-            "pls", "please", "options", "option", "want", "show", "some", "more",
-            "the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "me"
-        }
-        tokens = [_t for _t in (_re.findall(r"[A-Za-z]+", (current_text or "").lower()) or []) if _t and _t not in stop]
-        if tokens:
-            existing = []
-            try:
-                existing = [str(x).strip().lower() for x in (final_params.get("keywords") or []) if str(x).strip()]
-            except Exception:
-                existing = []
-            merged = []
-            seen = set()
-            # Keep existing order, then add new tokens
-            for x in existing + tokens:
-                if x and x not in seen:
-                    seen.add(x)
-                    merged.append(x)
-            # Cap to a reasonable number
-            final_params["keywords"] = merged[:8]
-            if merged != existing:
-                print(f"DEBUG: Injected current_text tokens into keywords = {final_params['keywords']}")
-    except Exception:
-        pass
-    
     # Store for debugging
     try:
         ctx.session.setdefault("debug", {})["last_search_params"] = final_params
@@ -885,7 +856,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
     fetcher = get_es_fetcher()
     
     # Run in thread to avoid blocking
-        loop = asyncio.get_running_loop()
+    loop = asyncio.get_running_loop()
     results = await loop.run_in_executor(None, lambda: fetcher.search(params))
     
     # Additional quality check: if we got results but they're all low quality

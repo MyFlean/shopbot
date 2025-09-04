@@ -38,6 +38,7 @@ class ResponseType(str, Enum):
     PROCESSING_STUB = "processing"
     FINAL_ANSWER = "final_answer"
     ERROR = "error"
+    IMAGE_IDS = "image_ids"
 
 
 # NEW: UX Intent Types for the 4 new patterns

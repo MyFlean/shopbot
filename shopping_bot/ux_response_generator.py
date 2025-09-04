@@ -278,10 +278,26 @@ Generate 3 components for this {intent} response:
    - If budget info available, include price-based options like "Under ₹{budget_info.get('upper_limit', 500)}"
    - Keep labels short (1-3 words)
 
+### DPL EVIDENCE RULES (MANDATORY)
+- Structure: 1) Opening verdict with one key number; 2) Specific superiority claim with metric; 3) Usage fit or decision helper
+- REQUIRED: At least 2 numbers, 1 percentile (convert 0.78 → "top 22%"), and 1 comparison (vs average/typical)
+- BANNED PHRASES: great, awesome, amazing, healthy, good (use quantified statements instead)
+- Max 3 sentences; each ≤20 words; professional and concise
+
+### DPL HERO FOCUS
+- For MPM responses: First sentence features the TOP PICK with a specific metric; second sentence states a quantified benefit; third sentence mentions alternatives or a filter.
+- For SPM responses: Focus entirely on the single product with a clear BUY/CONSIDER/SKIP verdict; do not discuss other options.
+
+### COMMANDMENTS FOR QUICK REPLIES
+- Max 3 words per button; action verbs preferred; always include one price filter and one quality filter.
+- For show_me_options: include "Top rated only" or "Score 70+", "Under ₹{max(50, (budget_info.get('upper_limit') or 100)//2)}", "Less sodium" or "More protein", and "Different brands" or "Baked only".
+- For is_this_good: include "Compare similar", "Healthier options", "Cheaper options", "Why this rating?".
+- For which_is_better: include "See more options", "Compare nutrition", "Find middle ground", "Different category".
+
 ### EXAMPLES:
-- "is_this_good" → DPL: "This protein powder is excellent for your fitness goals with 25g protein per serving."
-- "which_is_better" → DPL: "Based on your budget, the first option offers the best value with premium ingredients."
-- "show_me_alternate" → DPL: "These alternatives match your dietary needs while staying within your preferred price range."
+- "is_this_good" → DPL: "This protein powder suits your goals. 25g protein (top 5% category) outperforms most. Ideal for post-workout recovery."
+- "which_is_better" → DPL: "Top choice offers best value. 78/100 flean (top 22%) and 25% less sodium than average. Pick based on taste vs nutrition."
+- "show_me_options" → DPL: "Found 10 under ₹100. Modern Kitchen at ₹72 has 30% less sodium than average. Start here for healthier snacking." 
 
 Return ONLY a tool call to generate_ux_response.
 """

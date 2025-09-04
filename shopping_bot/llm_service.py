@@ -165,6 +165,10 @@ PRODUCT_RESPONSE_TOOL = {
                 },
                 "maxItems": 10,
                 "description": "Product list with compelling descriptions (SPM only)"
+            },
+            "hero_product_id": {
+                "type": "string",
+                "description": "Optional. ID of the hero product to feature first in product_ids"
             }
         },
         "required": ["response_type", "summary_message"]
@@ -468,6 +472,40 @@ Guidelines:
 - Keep it crisp, persuasive, and evidence-driven.
 - Use percentiles/penalties explicitly when helpful (e.g., "Top 10% protein" or "Sodium penalty high").
 - If no products found, provide helpful message with empty products array.
+
+### STRICT FORMAT RULES (MANDATORY)
+- summary_message: EXACTLY 4 bullets, each 15-25 words
+- Line 1: Overall verdict with flean score and percentile (translate percentiles: 0.78 → "top 22%")
+- Line 2: Top 2-3 nutritional strengths with exact numbers and units (e.g., protein_g, fiber_g)
+- Line 3: Honest caveat prefixed with "Note:" or "Caution:" and include a number (e.g., sodium mg, penalty percentile)
+- Line 4: Value/variety statement for the set (price span, count, use-cases). Include at least one number.
+
+### EVIDENCE AND COMPARISON REQUIREMENTS
+- Every positive claim MUST include a metric: score, grams, percentage, or ranking
+- Always compare to category average or benchmark (e.g., "25% less sugar than typical chips")
+- Avoid vague terms: replace "healthy" with quantified statements (e.g., "flean score 78/100")
+- Keep each sentence ≤20 words; avoid marketing fluff, be professional and conversational
+
+### CRITICAL COMMANDMENTS (NEVER VIOLATE)
+- Flean Score: If score ≥ 0, higher is better → "scores 78/100". If score < 0, NEVER present as positive → write "fails quality standards" or "poor quality score".
+- Percentiles:
+  • BONUSES (protein, fiber, wholefood): higher percentile = GOOD → 0.90 = "top 10% for protein".
+  • PENALTIES (sugar, sodium, saturated_fat, trans_fat, sweetener, calories): higher percentile = BAD → 0.90 = "bottom 10% - high sodium warning". NEVER say "top 90%" for penalties.
+- Processing Honesty: Always mention "ultra_processed" as a caution; mention "processed" if >50% of products; highlight "minimally_processed" as positive.
+
+### HERO_SELECTION_RULES (MANDATORY FOR MPM)
+1) SELECT HERO: From enriched_top, choose the healthiest/cleanest product (highest positive flean; else minimally_processed; else best nutrition profile). If all are poor, pick least problematic and be honest.
+2) REORDER IDS: Return hero_product_id and ensure hero appears FIRST in product_ids (followed by #2, #3, then others).
+3) SUMMARY STRUCTURE FOR MPM:
+   Line 1: "TOP PICK: [Hero Name] (₹[price]) - [score]/100, [best attribute with number]"
+   Line 2: "Why it wins: [2-3 specific data points]"
+   Line 3: "Other options: [Name 2] ([trait]), [Name 3] ([trait]), [Name 4] ([trait])"
+   Line 4: "Overview: [X] total products ₹[min]-[max], [aggregate insight]"
+4) DPL FOCUS: Spend ~70% on hero, ~30% on alternatives/filters.
+5) BANNED WORDS: elevate, indulge, delight, companion, munchies.
+
+### VALIDATION CHECKLIST (self-verify before responding)
+- Exactly 4 lines in summary_message; DPL ≤3 sentences; numbers have units; penalties described correctly; #1 recommendation clear; no fluff; hero identified and first.
 
 Return ONLY a tool call to generate_product_response.
 """
@@ -892,6 +930,7 @@ class LLMService:
                     }]
                 result["products"] = one
             
+            # Ensure product IDs exist for any returned products
             for i, product in enumerate(result.get("products", [])):
                 if "id" not in product and i < len(products_data):
                     product["id"] = f"prod_{hash(products_data[i].get('name', ''))%1000000}"
@@ -907,6 +946,32 @@ class LLMService:
                 for i, p in enumerate(products_data):
                     pid = p.get("id") or f"prod_{hash(p.get('name','') or p.get('title',''))%1000000}"
                     pid_list.append(str(pid))
+                # Reorder with hero first if provided
+                hero_id = (result.get("hero_product_id") or "").strip()
+                if hero_id and hero_id in pid_list:
+                    try:
+                        pid_list.remove(hero_id)
+                    except ValueError:
+                        pass
+                    pid_list = [hero_id] + pid_list
+                else:
+                    # Heuristic hero: choose by highest flean percentile from briefs
+                    try:
+                        if isinstance(top_products_brief, list) and top_products_brief:
+                            scored = []
+                            for b in top_products_brief:
+                                bid = str(b.get("id"))
+                                perc = ((b.get("percentiles", {}) or {}).get("flean") or 0.0) or 0.0
+                                proc = (b.get("processing_type") or "")
+                                proc_bonus = 0.2 if proc == "minimally_processed" else (0.0 if proc == "processed" else -0.2)
+                                scored.append((perc + proc_bonus, bid))
+                            scored.sort(reverse=True)
+                            if scored and scored[0][1] in pid_list:
+                                best = scored[0][1]
+                                pid_list.remove(best)
+                                pid_list = [best] + pid_list
+                    except Exception:
+                        pass
                 if pid_list:
                     result["product_ids"] = pid_list[:10]
                 if "products" in result:

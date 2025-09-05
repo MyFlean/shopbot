@@ -941,6 +941,22 @@ async def build_search_params(ctx) -> Dict[str, Any]:
     except Exception:
         pass
 
+    # SPM-specific upgrades: fetch a small top-K and enforce brand if provided
+    try:
+        if str(final_params.get('product_intent') or '').strip() == 'is_this_good':
+            # Increase size to allow brand-aware selection among top-K
+            try:
+                cur_size = int(final_params.get('size', 1) or 1)
+            except Exception:
+                cur_size = 1
+            final_params['size'] = max(cur_size, 5)
+            # Enforce strict brand filter when brand hints exist
+            brands_val = final_params.get('brands')
+            if (isinstance(brands_val, list) and len(brands_val) > 0) or (isinstance(brands_val, str) and brands_val.strip()):
+                final_params['enforce_brand'] = True
+    except Exception:
+        pass
+
     # Apply query sanitization (strip noisy tokens)
     try:
         if isinstance(final_params.get('q'), str) and final_params['q']:

@@ -361,6 +361,12 @@ EXAMPLES:
 USER QUERY: "{query}"
 CONTEXT: {context}
 
+CLASSIFICATION RULES (MANDATORY):
+- Prefer **is_this_good** whenever the query targets a single, concrete product or brand+product (e.g., "how is Veeba ketchup", "review of X", "nutrition of X", "price of X", "tell me about X").
+- If the query references 2–3 named items explicitly, choose **which_is_better**.
+- If the user asks for variations or alternatives to a known product, choose **show_me_alternate**.
+- If the user asks broadly for options without a specific item (category exploration), choose **show_me_options**.
+
 Return ONLY a tool call to classify_product_intent.
 """
 
@@ -856,8 +862,9 @@ class LLMService:
                 top_products_brief = []
                 log.error("UX_ENRICH_ERROR | failed during enrichment (import/fetch/mget/brief-build)", exc_info=True)
 
-        # Narrow LLM input: single product for SPM else pass the list; add enriched briefs separately
-        products_for_llm = products_data[:1] if (product_intent and product_intent == "is_this_good") else products_data[:10]
+        # Narrow LLM input: prefer small top-K for SPM to enable brand-aware selection later
+        spm_mode = bool(product_intent and product_intent == "is_this_good")
+        products_for_llm = products_data[:5] if spm_mode else products_data[:10]
 
         # Augmented prompt with enriched top products and percentile guidance
         try:
@@ -893,21 +900,64 @@ class LLMService:
             result = _strip_keys(tool_use.input or {})
 
             # Enforce exactly one product for SPM in final result
-            if product_intent and product_intent == "is_this_good":
+            if spm_mode:
                 one = []
                 if isinstance(result.get("products"), list) and result["products"]:
                     one = [result["products"][0]]
-                # If LLM didn't return products, synthesize minimal from ES top-1
+                # If LLM didn't return products, synthesize minimal from ES top-1 (text-only)
+                # Brand-aware selection among top-K using session brand hints
+                chosen_index = 0
+                try:
+                    brand_hints = []
+                    try:
+                        dbg = (ctx.session.get('debug', {}) or {})
+                        last_params = dbg.get('last_search_params', {}) or {}
+                        bval = last_params.get('brands')
+                        if isinstance(bval, list):
+                            brand_hints = [str(x).strip().lower() for x in bval if str(x).strip()]
+                        elif isinstance(bval, str) and bval.strip():
+                            brand_hints = [bval.strip().lower()]
+                    except Exception:
+                        brand_hints = []
+                    if brand_hints and isinstance(products_data, list):
+                        for idx, cand in enumerate(products_data[:5]):
+                            try:
+                                cbrand = str(cand.get('brand') or '').strip().lower()
+                                if cbrand and any(h in cbrand for h in brand_hints):
+                                    chosen_index = idx
+                                    break
+                            except Exception:
+                                continue
+                except Exception:
+                    chosen_index = 0
+
                 if not one and products_data:
-                    p = products_data[0]
+                    p = products_data[chosen_index]
                     one = [{
-                        "id": str(p.get("id") or f"prod_{hash(p.get('name',''))%1000000}"),
+                        "id": str(p.get("id") or "").strip(),
                         "text": p.get("name", "Product"),
                         "description": f"Solid choice at ₹{p.get('price','N/A')}",
                         "price": f"₹{p.get('price','N/A')}",
                         "special_features": ""
                     }]
                 result["products"] = one
+                # Ensure SPM carries a real ES product_id and propagate it consistently
+                spm_id: str = ""
+                try:
+                    if products_data and isinstance(products_data[chosen_index], dict):
+                        spm_id = str(products_data[chosen_index].get("id") or "").strip()
+                    if not spm_id and isinstance(top_products_brief, list) and top_products_brief:
+                        spm_id = str(top_products_brief[0].get("id") or "").strip()
+                except Exception:
+                    spm_id = ""
+                if spm_id:
+                    result["product_ids"] = [spm_id]
+                    try:
+                        if isinstance(result.get("products"), list) and result["products"]:
+                            if not result["products"][0].get("id"):
+                                result["products"][0]["id"] = spm_id
+                    except Exception:
+                        pass
             
             # Ensure product IDs exist for any returned products
             for i, product in enumerate(result.get("products", [])):

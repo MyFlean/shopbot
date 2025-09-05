@@ -952,7 +952,14 @@ class LLMService:
                     except Exception:
                         pass
                 if pid_list:
-                    result["product_ids"] = pid_list[:10]
+                    # Ensure uniqueness while preserving order
+                    seen_ids = set()
+                    unique_ids: List[str] = []
+                    for _pid in pid_list:
+                        if _pid not in seen_ids:
+                            seen_ids.add(_pid)
+                            unique_ids.append(_pid)
+                    result["product_ids"] = unique_ids[:10]
                 if "products" in result:
                     del result["products"]
             

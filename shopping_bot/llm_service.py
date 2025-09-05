@@ -380,14 +380,23 @@ Return a tool call to classify_follow_up.
 """
 
 DELTA_ASSESS_PROMPT = """
-Determine which backend functions must run after a follow-up patch.
+Determine which backend functions must run after a follow-up.
 
-### Query: "{query}"
-### Patch: {patch}
-### Current Context Keys:
-- permanent: {perm_keys}
-- session: {sess_keys}
-- fetched: {fetched_keys}
+Inputs:
+- Intent L3: {intent_l3}
+- Current user text: "{current_text}"
+- Canonical query (last turn): "{canonical_query}"
+- Last search params (compact): {last_params}
+- Last fetched keys: {fetched_keys}
+- Patch (delta from follow-up classifier): {patch}
+- Detected signals in CURRENT text: {detected_signals}
+
+Decision Rules (MANDATORY):
+1) If the user adds/changes any search constraint (query noun, preparation method like baked/fried, quality like premium/healthier, gifting/occasion, dietary terms, brand, price range), you MUST include FETCH "search_products".
+2) If the canonical query would change or keywords/phrase_boosts would change, include FETCH "search_products".
+3) If price_min/price_max, category_group/path, dietary_terms/labels, brands, or keywords change, include FETCH "search_products".
+4) If last_params exist but follow-up narrows/refines (e.g., premium, gifting), include FETCH "search_products".
+5) Only return no fetchers if the message is purely conversational with ZERO impact on search (e.g., "thanks"), else include "search_products".
 
 Return ONLY backend FETCH_* functions needed, not ASK_* slots.
 """
@@ -746,23 +755,7 @@ class LLMService:
                 "products": []
             }
         
-        # Log top-3 products from Redis-backed fetched data for debugging/traceability
-        try:
-            top_preview = []
-            for p in products_data[:3]:
-                if isinstance(p, dict):
-                    top_preview.append({
-                        "id": p.get("id"),
-                        "name": p.get("name"),
-                        "price": p.get("price"),
-                        "flean_percentile": p.get("flean_percentile"),
-                        "bonus": {k: v for k, v in (p.get("bonus_percentiles") or {}).items() if k in ["protein", "fiber", "wholefood"]},
-                        "penalty": {k: v for k, v in (p.get("penalty_percentiles") or {}).items() if k in ["sodium", "sugar", "oil", "sweetener"]}
-                    })
-            if top_preview:
-                log.info(f"REDIS_TOP3_PRODUCTS | items={json.dumps(top_preview, ensure_ascii=False)}")
-        except Exception:
-            pass
+        # Suppressed: verbose top-3 preview logging
 
         # Build enrichment: fetch full docs for top-3 (or top-1 for SPM) via ES mget
         top_k = 1 if (product_intent and product_intent == "is_this_good") else 3
@@ -789,21 +782,7 @@ class LLMService:
                 log.info("UX_ENRICH_BEFORE_MGET")
                 full_docs = await loop.run_in_executor(None, lambda: fetcher.mget_products(top_ids))
                 log.info(f"UX_ENRICH_AFTER_MGET | full_docs_count={len(full_docs) if isinstance(full_docs, list) else 'N/A'}")
-                try:
-                    # Log basic shape of full docs
-                    log.info(
-                        f"ES_MGET_TOP3_FULLDOCS | count={len(full_docs)} | fields_sample={list((full_docs[:1] or [{}])[0].keys())}"
-                    )
-                    # Print content of these ids as requested (capped to top_k)
-                    for _doc in full_docs[:top_k]:
-                        try:
-                            log.info(
-                                f"ES_DOC_CONTENT | id={_doc.get('id')} | doc={json.dumps(_doc, ensure_ascii=False)}"
-                            )
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+                # Suppressed: verbose doc content logging
                 # Build compact briefs for LLM (avoid token bloat) with rich attributes
                 for doc in full_docs[:top_k]:
                     try:
@@ -1121,13 +1100,30 @@ class LLMService:
     async def assess_delta_requirements(
         self, query: str, ctx: UserContext, patch: FollowUpPatch
     ) -> List[BackendFunction]:
-        """Assess what needs to be fetched for a follow-up."""
+        """Assess what needs to be fetched for a follow-up (robust, context-rich)."""
+        # Build rich context for reliable decisions
+        session = ctx.session or {}
+        debug_block = (session.get("debug", {}) or {})
+        last_params = debug_block.get("last_search_params", {}) or {}
+        canonical_query = str(session.get("canonical_query") or last_params.get("q") or "").strip()
+        current_text = str(getattr(ctx, "current_user_text", "") or session.get("current_user_text") or "").strip()
+        # Detected signals from current text if present
+        detected_signals = {}
+        try:
+            from .recommendation import ElasticsearchRecommendationEngine  # type: ignore
+            _tmp_engine = ElasticsearchRecommendationEngine()
+            detected_signals = await _tmp_engine._extract_constraints_from_text(current_text)
+        except Exception:
+            detected_signals = {}
+
         prompt = DELTA_ASSESS_PROMPT.format(
-            query=query,
-            patch=json.dumps(patch.__dict__, ensure_ascii=False),
-            perm_keys=list(ctx.permanent.keys()),
-            sess_keys=list(ctx.session.keys()),
+            intent_l3=session.get("intent_l3"),
+            current_text=current_text,
+            canonical_query=canonical_query,
+            last_params=json.dumps({k: last_params.get(k) for k in ["q", "category_group", "category_path", "price_min", "price_max", "brands", "dietary_terms", "keywords", "phrase_boosts"] if k in last_params}, ensure_ascii=False),
             fetched_keys=list(ctx.fetched_data.keys()),
+            patch=json.dumps(patch.__dict__, ensure_ascii=False),
+            detected_signals=json.dumps(detected_signals, ensure_ascii=False),
         )
         
         try:
@@ -1140,16 +1136,33 @@ class LLMService:
                 max_tokens=300,
             )
             tool_use = pick_tool(resp, "assess_delta_requirements")
-            if not tool_use:
-                return []
-            
-            items_raw = tool_use.input.get("fetch_functions", [])
+            items_raw = tool_use.input.get("fetch_functions", []) if tool_use else []
             out: List[BackendFunction] = []
             for it in items_raw:
                 try:
                     out.append(BackendFunction(it.strip() if isinstance(it, str) else it))
                 except ValueError:
                     pass
+            # Fallback safety: if no fetchers but current text changes constraints vs last_params, fetch search_products
+            try:
+                should_fetch = False
+                if not out:
+                    # Compare key fields for potential delta
+                    lp = last_params or {}
+                    # Basic signals
+                    if current_text and canonical_query:
+                        # if new method/quality/occasion words present
+                        low = current_text.lower()
+                        delta_markers = ["baked", "fried", "premium", "gift", "gifting", "healthier", "cleaner", "vegan", "gluten", "brand"]
+                        if any(m in low for m in delta_markers):
+                            should_fetch = True
+                    # If detected signals present
+                    if isinstance(detected_signals, dict) and any(k in detected_signals for k in ["price_min", "price_max", "dietary_terms", "dietary_labels", "brands", "keywords"]):
+                        should_fetch = True
+                if should_fetch:
+                    out.append(BackendFunction.SEARCH_PRODUCTS)
+            except Exception:
+                pass
             return out
         except Exception as exc:
             log.warning("Delta assess failed: %s", exc)

@@ -606,15 +606,7 @@ class ElasticsearchProductsFetcher:
             
             # No brand-specific fallback; brand handling is disabled (see note above)
             
-            # Show top results for debugging
-            if result['products']:
-                print("DEBUG: Top ES results:")
-                for i, product in enumerate(result['products'][:3], 1):
-                    score_info = f"(score: {product['score']}"
-                    if product.get('flean_percentile'):
-                        score_info += f", flean: {product['flean_percentile']}%"
-                    score_info += ")"
-                    print(f"  {i}. {product['name']} - ₹{product['price']} {score_info}")
+            # Suppressed: verbose top results logging
             
             return result
             
@@ -867,17 +859,9 @@ def _normalize_params(base_params: Dict[str, Any], llm_params: Dict[str, Any]) -
     # Start with base params
     final_params = dict(base_params)
     
-    # Overlay LLM-extracted params (but do not override non-empty base 'q')
+    # Overlay LLM-extracted params (allow LLM to override 'q' when provided)
     for key, value in (llm_params or {}).items():
         if value is not None:
-            if key == "q":
-                try:
-                    base_q = str(final_params.get("q", "")).strip()
-                except Exception:
-                    base_q = ""
-                if base_q:
-                    # Keep canonical base query; ignore LLM q override
-                    continue
             final_params[key] = value
     
     # Normalize lists
@@ -1047,11 +1031,17 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
     
     # Additional quality check: if we got results but they're all low quality
     if results.get('products'):
-        avg_flean = sum(p.get('flean_percentile', 50) for p in results['products']) / len(results['products'])
-        if avg_flean < 30 and params.get('brands'):
-            # Products are low quality, maybe try without brand constraint
-            print(f"DEBUG: Average flean percentile {avg_flean}% is low, considering fallback...")
-            results['meta']['quality_warning'] = f'average_flean_percentile_{avg_flean:.1f}'
+        numeric_fleans = [
+            p.get('flean_percentile')
+            for p in results['products']
+            if isinstance(p.get('flean_percentile'), (int, float))
+        ]
+        if numeric_fleans:
+            avg_flean = sum(numeric_fleans) / len(numeric_fleans)
+            if avg_flean < 30 and params.get('brands'):
+                # Products are low quality, maybe try without brand constraint
+                print(f"DEBUG: Average flean percentile {avg_flean}% is low, considering fallback...")
+                results['meta']['quality_warning'] = f'average_flean_percentile_{avg_flean:.1f}'
     
     return results
 

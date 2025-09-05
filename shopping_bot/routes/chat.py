@@ -156,7 +156,6 @@ async def chat() -> Response:
             ctx.session = ctx.session or {}
             ctx.session["current_user_text"] = message
             ctx.session["last_user_message"] = message
-            ctx.session["last_query"] = message
             ctx.session.setdefault("debug", {})["current_user_text"] = message
             log.info(f"INGRESS_SET_CURRENT_TEXT | user={user_id} | text='{message[:80]}'")
         except Exception as _ing_exc:

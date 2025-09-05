@@ -358,13 +358,20 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 current_constraints = {}
             context["current_constraints"] = current_constraints
 
-            # 1) Construct a context-aware search query (gate generic slot-only)
-            is_generic = self._is_generic_followup(current_user_text)
-            if is_generic and base_query:
-                constructed_q = base_query
-                log.info(f"CONSTRUCT_QUERY_GATED | using_base_q='{constructed_q}'")
-            else:
+            # 1) Construct a context-aware search query via LLM ALWAYS (no gating)
+            #    Fallbacks: canonical_query → assessment.original_query → session.last_query → current_user_text
+            try:
                 constructed_q = await self._construct_search_query(context, current_user_text)
+                if not constructed_q or constructed_q.upper().find("<UNKNOWN>") >= 0:
+                    raise ValueError("constructed_q_invalid")
+            except Exception:
+                # Safe fallbacks in priority order
+                constructed_q = (
+                    str(session.get("canonical_query") or "").strip()
+                    or str(assessment.get("original_query") or "").strip()
+                    or str(session.get("last_query") or "").strip()
+                    or str(current_user_text or "").strip()
+                )
             log.info(f"ES_CONSTRUCTED_QUERY | q='{constructed_q}'")
             try:
                 # Preview sanitization (no behavior change yet)
@@ -606,6 +613,14 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 }
             )
             
+            # Persist canonical query and last_query for downstream turns
+            try:
+                if isinstance(final_params.get("q"), str) and final_params["q"].strip():
+                    session["canonical_query"] = final_params["q"].strip()
+                    session["last_query"] = final_params["q"].strip()
+            except Exception:
+                pass
+
             # Caching disabled
             
             return response
@@ -820,7 +835,21 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
 
         # Defensive post-normalisation (ensure constraints)
         out: Dict[str, Any] = {}
-        out["q"] = (norm.get("q") or constructed_q or "").strip()
+        # Remove price/currency tokens from q if present
+        def _strip_price_tokens(text: str) -> str:
+            try:
+                t = text
+                # common currency/price words
+                for tok in ["₹", "rs.", "rupees", "rs", "under", "over", "below", "above", "less than", "more than"]:
+                    t = t.replace(tok, " ")
+                # remove standalone numbers
+                import re as _re
+                t = _re.sub(r"\b\d+[\d,\.]*\b", " ", t)
+                return " ".join(t.split()).strip()
+            except Exception:
+                return text
+        raw_q = (norm.get("q") or constructed_q or "").strip()
+        out["q"] = _strip_price_tokens(raw_q)
         try:
             out["size"] = max(1, min(10, int(norm.get("size", 10))))
         except Exception:
@@ -1034,8 +1063,9 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
             "- Only include brand if CURRENT_USER_TEXT mentions it; otherwise DO NOT carry prior brand.\n"
             "- For requests like 'options', 'alternatives', or category exploration, DROP prior brand constraints.\n"
             "- Map 'no/without palm oil' → 'PALM OIL FREE'.\n"
+            "- Absolutely DO NOT include prices, currency, ranges, or numbers related to budget in the query. Those belong to price_min/price_max only.\n"
             "- Avoid placeholders like <UNKNOWN>.\n"
-            "- Keep it concise: 2-6 words max.\n"
+            "- Keep it concise: 2-6 words max; use the product noun (e.g., 'chips').\n"
             "Return ONLY tool call to construct_search_query."
         )
         try:

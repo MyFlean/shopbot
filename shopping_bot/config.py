@@ -52,6 +52,10 @@ class BaseConfig:
     ELASTIC_TIMEOUT_SECONDS: int = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
     ELASTIC_MAX_RESULTS: int = int(os.getenv("ELASTIC_MAX_RESULTS", "50"))
 
+    # Feature flags
+    USE_COMBINED_CLASSIFY_ASSESS: bool = os.getenv("USE_COMBINED_CLASSIFY_ASSESS", "false").lower() in {"1", "true", "yes", "on"}
+    USE_CONVERSATION_AWARE_CLASSIFIER: bool = os.getenv("USE_CONVERSATION_AWARE_CLASSIFIER", "false").lower() in {"1", "true", "yes", "on"}
+
 
 class DevelopmentConfig(BaseConfig):
     DEBUG: bool = True

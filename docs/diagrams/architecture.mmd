@@ -1,0 +1,24 @@
+flowchart TD
+  A["User Client"] --> B["Flask /chat route\nshopping_bot/routes/chat.py"]
+  B --> C["RedisContextManager\nshopping_bot/redis_manager.py:get_context"]
+  B --> D["ShoppingBotCore\nshopping_bot/bot_core.py:process_query"]
+  D -->|classify/follow-up/requirements| E["LLMService\nshopping_bot/llm_service.py"]
+  D -->|fetchers| F["Data Fetchers\nshopping_bot/data_fetchers/"]
+  F --> F1["ES Products\nshopping_bot/data_fetchers/es_products.py:search"]
+  E -->|extract_es_params| R["RecommendationService\nshopping_bot/recommendation.py:extract_search_params"]
+  R --> F1
+  F1 --> E
+  E -->|product answer| U["UX Response Generator\nshopping_bot/ux_response_generator.py"]
+  U --> D
+  D --> G["FE Envelope\nshopping_bot/fe_payload.py:build_envelope"]
+  G --> H["HTTP Response"]
+  C <-->|save/merge status| D
+  subgraph External Services
+    X["Redis"]
+    Y["Elasticsearch"]
+    Z["Anthropic API"]
+  end
+  C <---> X
+  F1 <---> Y
+  E <---> Z
+

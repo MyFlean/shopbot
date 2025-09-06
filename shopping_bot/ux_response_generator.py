@@ -478,6 +478,20 @@ async def generate_ux_response_for_intent(
                     if isinstance(product, dict):
                         name = product.get("text", product.get("name", f"product_{i}"))
                         product_ids.append(f"prod_{hash(name)%1000000}")
+
+    # 4) Belt-and-suspenders: if still empty, backfill from fetched_data (ES results)
+    if not product_ids:
+        try:
+            fetched_block = (ctx.fetched_data or {}).get("search_products") or {}
+            payload = fetched_block.get("data", fetched_block)
+            products = payload.get("products", []) if isinstance(payload, dict) else []
+            for p in products[:10]:
+                pid = p.get("id") or f"prod_{hash(p.get('name','') or p.get('title',''))%1000000}"
+                sid = str(pid)
+                if sid and sid not in product_ids:
+                    product_ids.append(sid)
+        except Exception:
+            pass
     
     # Generate UX response
     generator = get_ux_response_generator()

@@ -61,24 +61,30 @@ class ShoppingBotCore:
                 self.smart_log.flow_decision(ctx.user_id, "CONTINUE_ASSESSMENT")
                 return await self._continue_assessment(query, ctx)
 
-            # 2) Classify as follow-up
-            fu = await self.llm_service.classify_follow_up(query, ctx)
-            if fu.is_follow_up and not fu.patch.reset_context:
-                effective_l3 = fu.patch.intent_override or ctx.session.get("intent_l3", "")
-                self.smart_log.follow_up_decision(
-                    ctx.user_id, "HANDLE_FOLLOW_UP", effective_l3, fu.reason
-                )
-                self._apply_follow_up_patch(fu.patch, ctx)
-                return await self._handle_follow_up(query, ctx, fu)
+            # 2) Follow-up handling (flag-gated): optionally skip LLM follow-up classifier
+            from .config import get_config as _cfg
+            if getattr(_cfg(), "USE_CONVERSATION_AWARE_CLASSIFIER", False):
+                # Treat as new/continue; rely on ES param extraction for deltas
+                self.smart_log.flow_decision(ctx.user_id, "NEW_ASSESSMENT")
+                return await self._start_new_assessment(query, ctx)
+            else:
+                fu = await self.llm_service.classify_follow_up(query, ctx)
+                if fu.is_follow_up and not fu.patch.reset_context:
+                    effective_l3 = fu.patch.intent_override or ctx.session.get("intent_l3", "")
+                    self.smart_log.follow_up_decision(
+                        ctx.user_id, "HANDLE_FOLLOW_UP", effective_l3, fu.reason
+                    )
+                    self._apply_follow_up_patch(fu.patch, ctx)
+                    return await self._handle_follow_up(query, ctx, fu)
 
             # 3) New or reset
-            if fu.patch.reset_context:
-                self.smart_log.flow_decision(ctx.user_id, "RESET_CONTEXT")
-                self._reset_session_only(ctx)
-            else:
-                self.smart_log.flow_decision(ctx.user_id, "NEW_ASSESSMENT")
-
-            return await self._start_new_assessment(query, ctx)
+            if not getattr(_cfg(), "USE_CONVERSATION_AWARE_CLASSIFIER", False):
+                if fu.patch.reset_context:
+                    self.smart_log.flow_decision(ctx.user_id, "RESET_CONTEXT")
+                    self._reset_session_only(ctx)
+                else:
+                    self.smart_log.flow_decision(ctx.user_id, "NEW_ASSESSMENT")
+                return await self._start_new_assessment(query, ctx)
 
         except Exception as exc:
             self.smart_log.error_occurred(
@@ -331,6 +337,89 @@ class ShoppingBotCore:
     # NEW: Enhanced new assessment with 4-intent support
     # ────────────────────────────────────────────────────────
     async def _start_new_assessment(self, query: str, ctx: UserContext) -> BotResponse:
+        # Optional fast path: combined classify+assess (flag-gated)
+        try:
+            from .config import get_config as _get_cfg_fast
+            _cfg_fast = _get_cfg_fast()
+            if getattr(_cfg_fast, "USE_COMBINED_CLASSIFY_ASSESS", False):
+                combined = await self.llm_service.classify_and_assess(query, ctx)
+                if isinstance(combined, dict) and combined.get("layer3") is not None:
+                    # Populate minimal session keys for compatibility
+                    l3 = str(combined.get("layer3") or "General_Help")
+                    is_prod = bool(combined.get("is_product_related", False))
+                    # Coerce to product L3 for product queries to ensure product pipeline
+                    if is_prod and l3 not in SERIOUS_PRODUCT_INTENTS:
+                        l3 = "Product_Discovery"
+                    ctx.session.update(
+                        intent_l1=ctx.session.get("intent_l1") or ("A" if is_prod else "E"),
+                        intent_l2=ctx.session.get("intent_l2") or ("A1" if is_prod else "E2"),
+                        intent_l3=l3,
+                        is_product_related=is_prod,
+                    )
+                    # If general → simple response and exit early
+                    if not is_prod:
+                        simple = combined.get("simple_response") or {}
+                        msg = simple.get("message") or "I can help you with shopping queries. What are you looking for?"
+                        self.ctx_mgr.save_context(ctx)
+                        return BotResponse(ResponseType.FINAL_ANSWER, {"message": msg})
+
+                    # Product-related → set product_intent (optional, default to show_me_options)
+                    p_intent = str(combined.get("product_intent") or "show_me_options")
+                    ctx.session["product_intent"] = p_intent
+
+                    # Follow-up detection from combined tool
+                    is_follow_up = bool(combined.get("is_follow_up", False))
+                    if is_follow_up:
+                        # No asks; ensure ES fetch downstream
+                        ctx.session["assessment"] = {
+                            "original_query": query,
+                            "intent": map_leaf_to_query_intent(l3).value,
+                            "missing_data": [],
+                            "priority_order": [],
+                            "fulfilled": [],
+                            "currently_asking": None,
+                        }
+                        self.ctx_mgr.save_context(ctx)
+                        # Continue assessment will force fetch for product queries
+                        return await self._continue_assessment(query, ctx)
+
+                    # Not a follow-up → build two ASK_* as usual
+                    ask = combined.get("ask") or {}
+                    ask_keys = list(ask.keys())[:2] if isinstance(ask, dict) else []
+                    missing_names = ask_keys[:]
+                    priority_order = ask_keys[:]
+                    ctx.session["contextual_questions"] = {}
+                    for k in ask_keys:
+                        payload = ask.get(k) or {}
+                        options = payload.get("options") or []
+                        ctx.session["contextual_questions"][k] = {
+                            "message": payload.get("message") or f"What's your {k.lower().replace('_', ' ')}?",
+                            "type": "multi_choice",
+                            "options": [{"label": o, "value": o} for o in options[:3]]
+                        }
+                    ctx.session["assessment"] = {
+                        "original_query": query,
+                        "intent": map_leaf_to_query_intent(l3).value,
+                        "missing_data": missing_names,
+                        "priority_order": priority_order,
+                        "fulfilled": [],
+                        "currently_asking": ask_keys[0] if ask_keys else None,
+                    }
+                    # Persist and return first question if present
+                    self.ctx_mgr.save_context(ctx)
+                    if ask_keys:
+                        first_key = ask_keys[0]
+                        q = {
+                            "message": ctx.session["contextual_questions"][first_key]["message"],
+                            "type": "multi_choice",
+                            "options": ctx.session["contextual_questions"][first_key]["options"],
+                            "currently_asking": first_key,
+                        }
+                        return BotResponse(ResponseType.QUESTION, q)
+                    # If no asks returned, fall through to existing flow
+        except Exception:
+            pass
+
         # STEP 1: Classify intent with product detection
         result = await self.llm_service.classify_intent(query, ctx)
         intent = map_leaf_to_query_intent(result.layer3)
@@ -477,6 +566,13 @@ class ShoppingBotCore:
             return BotResponse(ResponseType.QUESTION, q)
         
         # At this point, no user slots are pending; safe to fetch
+        # Guard: for product queries, always ensure ES fetch runs
+        try:
+            if not fetch_later and bool(ctx.session.get("is_product_related")):
+                fetch_later = [BackendFunction.SEARCH_PRODUCTS]
+        except Exception:
+            pass
+
         needs_bg = bool(ctx.session.get("needs_background")) and Cfg.ENABLE_ASYNC
         if fetch_later and needs_bg:
             a["phase"] = "processing"
@@ -510,6 +606,13 @@ class ShoppingBotCore:
         ctx: UserContext,
         fetchers: List[Union[BackendFunction, UserSlot]],
     ) -> BotResponse:
+
+        # Guard: for product queries, always ensure ES fetch runs
+        try:
+            if (not fetchers) and bool(ctx.session.get("is_product_related")):
+                fetchers = [BackendFunction.SEARCH_PRODUCTS]
+        except Exception:
+            pass
 
         backend_fetchers = [f for f in fetchers if isinstance(f, BackendFunction)]
         if backend_fetchers:

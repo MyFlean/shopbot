@@ -451,15 +451,19 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 if is_generic and (not final_params.get("category_path") or "<UNKNOWN>" in str(final_params.get("category_path", ""))):
                     last_params = ((context.get("session_data") or {}).get("debug") or {}).get("last_search_params") or {}
                     last_cat_path = last_params.get("category_path")
+                    last_cat_paths = last_params.get("category_paths") if isinstance(last_params.get("category_paths"), list) else []
                     last_fb_cat = last_params.get("fb_category")
                     last_fb_sub = last_params.get("fb_subcategory")
-                    if last_cat_path and "<UNKNOWN>" not in last_cat_path:
-                        final_params["category_path"] = last_cat_path
+                    if (last_cat_path and "<UNKNOWN>" not in last_cat_path) or last_cat_paths:
+                        if last_cat_path:
+                            final_params["category_path"] = last_cat_path
+                        if last_cat_paths:
+                            final_params["category_paths"] = last_cat_paths
                         if last_fb_cat:
                             final_params["fb_category"] = last_fb_cat
                         if last_fb_sub:
                             final_params["fb_subcategory"] = last_fb_sub
-                        log.info(f"CATEGORY_CARRY_OVER_APPLIED | carried_path='{last_cat_path}'")
+                        log.info("CATEGORY_CARRY_OVER_APPLIED | carried multi-paths")
                     else:
                         log.info("CATEGORY_CARRY_OVER_SKIPPED | no_valid_last_path")
                 else:
@@ -510,23 +514,47 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                         l3 = (final_params.get("fb_subcategory") or "").strip()
 
                     cat_path = cat_signals.get("cat_path")
+                    cat_paths_multi = cat_signals.get("cat_paths") or []
+                    cat_path_candidates: List[str] = []
                     if l2:
-                        cat_path_str = f"{l2}/{l3}".rstrip("/") if l3 else l2
+                        first = f"{l2}/{l3}".rstrip("/") if l3 else l2
+                        if first:
+                            cat_path_candidates.append(first)
                     else:
                         if isinstance(cat_path, list):
-                            cat_path_str = "/".join([str(x).strip() for x in cat_path if str(x).strip()])
+                            joined = "/".join([str(x).strip() for x in cat_path if str(x).strip()])
+                            if joined:
+                                cat_path_candidates.append(joined)
                         else:
-                            cat_path_str = str(cat_path or "").strip()
-
-                    if cat_path_str:
+                            raw = str(cat_path or "").strip()
+                            if raw:
+                                cat_path_candidates.append(raw)
+                    # Merge additional probable paths
+                    if isinstance(cat_paths_multi, list):
+                        for cp in cat_paths_multi:
+                            s = str(cp).strip()
+                            if s:
+                                cat_path_candidates.append(s)
+                    # Deduplicate and clamp to top-3
+                    dedup: List[str] = []
+                    for s in cat_path_candidates:
+                        if s not in dedup:
+                            dedup.append(s)
+                    if dedup:
                         group = final_params.get("category_group") or "f_and_b"
                         final_params["category_group"] = group
-                        if group == "f_and_b":
-                            final_params["category_path"] = f"f_and_b/food/{cat_path_str}"
-                        elif group == "personal_care":
-                            final_params["category_path"] = f"personal_care/{cat_path_str}"
-                        else:
-                            final_params["category_path"] = cat_path_str
+                        # Build full paths per group
+                        full_paths: List[str] = []
+                        for rel in dedup[:3]:
+                            if group == "f_and_b":
+                                full_paths.append(f"f_and_b/food/{rel}")
+                            elif group == "personal_care":
+                                full_paths.append(f"personal_care/{rel}")
+                            else:
+                                full_paths.append(rel)
+                        # Backward compatible single path + new multi-paths
+                        final_params["category_path"] = full_paths[0]
+                        final_params["category_paths"] = full_paths
 
                     if not final_params.get("category_group"):
                         final_params["category_group"] = "f_and_b"
@@ -1421,6 +1449,7 @@ Return ONLY the tool call to emit_es_params.
                     "l3": {"type": "string"},
                     "cat": {"type": "string"},
                     "cat_path": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+                    "cat_paths": {"type": "array", "items": {"type": "string"}},
                     "brands": {"type": "array", "items": {"type": "string"}},
                     "price_min": {"type": "number"},
                     "price_max": {"type": "number"},
@@ -1444,6 +1473,11 @@ Return ONLY the tool call to emit_es_params.
             "3) For l1=f_and_b, pick l3 from the corresponding subcategory list (e.g., chips_and_crisps under light_bites).\n"
             "4) If the query suggests snacks like chips, nachos, namkeen, popcorn → l2=light_bites; then choose l3 when appropriate.\n"
             "5) Build cat_path as [l2, l3] when l3 exists; else just [l2].\n"
+            "6) If the query is GENERIC (e.g., 'healthy snacks', 'evening snacks', 'breakfast options', 'snack ideas'), return 2-3 PROBABLE cat_path values (array).\n"
+            "   - Examples:\n"
+            "     • 'healthy snacks' → cat_path: ['light_bites/chips_and_crisps', 'light_bites/popcorn', 'dry_fruits_nuts_and_seeds']\n"
+            "     • 'evening snacks' → cat_path: ['light_bites/chips_and_crisps', 'light_bites/savory_namkeen', 'light_bites/popcorn']\n"
+            "     • 'breakfast options' → cat_path: ['breakfast_essentials/breakfast_cereals', 'breakfast_essentials/muesli_and_oats', 'dairy_and_bakery/bread_and_buns']\n"
             "6) brands: include any explicit brand mentions; keep original casing.\n"
             "7) price_min/price_max: parse ranges like 'under 60', '50-100'.\n"
             "8) dietary_labels: emit UPPERCASE terms (e.g., PALM OIL FREE, GLUTEN FREE, VEGAN) if present.\n"
@@ -1474,6 +1508,9 @@ Return ONLY the tool call to emit_es_params.
                 l3 = (data.get("l3") or "").strip()
                 if l2 and not data.get("cat_path"):
                     data["cat_path"] = [l2] + ([l3] if l3 else [])
+                # Ensure cat_paths is an array of strings if provided
+                if isinstance(data.get("cat_paths"), list):
+                    data["cat_paths"] = [str(x).strip() for x in data["cat_paths"] if str(x).strip()]
                 return data
         except Exception as exc:
             log.warning(f"CAT_SIGNAL_TOOL_FAILED | error={exc}")

@@ -194,54 +194,87 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(category_group, str) and category_group.strip():
         filters.append({"term": {"category_group": category_group.strip()}})
 
-    # Category path filter with improved handling
+    # Category path filter with improved handling (single and multi-paths)
     category_path = p.get("category_path") or p.get("cat_path")
-    if isinstance(category_path, str) and category_path.strip():
-        raw_path = category_path.strip()
-        parts = [x for x in raw_path.split("/") if x]
-        # Strip leading group and optional 'food' to get core l2/l3
+    category_paths = p.get("category_paths") if isinstance(p.get("category_paths"), list) else []
+    normalized_paths: List[str] = []
+    def _normalize_rel_path(path_str: str) -> str:
+        parts = [x for x in str(path_str).split("/") if x]
         core_parts = parts[:]
         if core_parts and core_parts[0] in ("f_and_b", "personal_care"):
             core_parts = core_parts[1:]
         if core_parts and core_parts[0] == "food":
             core_parts = core_parts[1:]
-        core_path = "/".join(core_parts)
-        if core_path:
-            group = (category_group or "").strip()
-            if group == "f_and_b":
-                full = f"f_and_b/food/{core_path}"
-                # More robust category matching
-                filters.append({
-                    "bool": {
-                        "should": [
-                            {"term": {"category_paths": full}},
-                            {"wildcard": {"category_paths": {"value": f"*{full}*"}}}
-                        ],
-                        "minimum_should_match": 1
-                    }
-                })
-            elif group == "personal_care":
-                full = f"personal_care/{core_path}"
-                filters.append({
-                    "bool": {
-                        "should": [
-                            {"term": {"category_paths": full}},
-                            {"wildcard": {"category_paths": {"value": f"*{full}*"}}}
-                        ],
-                        "minimum_should_match": 1
-                    }
-                })
+        return "/".join(core_parts)
+    if isinstance(category_path, str) and category_path.strip():
+        rel = _normalize_rel_path(category_path.strip())
+        if rel:
+            normalized_paths.append(rel)
+    for cp in category_paths[:3]:
+        try:
+            s = str(cp).strip()
+            if s:
+                rel = _normalize_rel_path(s)
+                if rel:
+                    normalized_paths.append(rel)
+        except Exception:
+            pass
+    if normalized_paths:
+        # Deduplicate
+        uniq: List[str] = []
+        for rel in normalized_paths:
+            if rel not in uniq:
+                uniq.append(rel)
+        group = (category_group or "").strip()
+        should_cat: List[Dict[str, Any]] = []
+        prefer_keyword = bool(p.get("_has_category_paths_keyword"))
+        if prefer_keyword:
+            try:
+                print("DEBUG: CAT_PATH_FILTER | using category_paths.keyword exact terms")
+            except Exception:
+                pass
+        else:
+            try:
+                print("DEBUG: CAT_PATH_FILTER | using wildcard on category_paths (no .keyword)")
+            except Exception:
+                pass
+        for rel in uniq[:3]:
+            if group == "personal_care":
+                full = f"personal_care/{rel}"
+                if prefer_keyword:
+                    should_cat.append({"term": {"category_paths.keyword": full}})
+                else:
+                    should_cat.extend([
+                        {"term": {"category_paths": full}},
+                        {"wildcard": {"category_paths": {"value": f"*{full}*"}}},
+                    ])
+            elif group == "f_and_b":
+                full = f"f_and_b/food/{rel}"
+                if prefer_keyword:
+                    should_cat.append({"term": {"category_paths.keyword": full}})
+                else:
+                    should_cat.extend([
+                        {"term": {"category_paths": full}},
+                        {"wildcard": {"category_paths": {"value": f"*{full}*"}}},
+                    ])
             else:
-                # Fallback: try both
-                filters.append({
-                    "bool": {
-                        "should": [
-                            {"wildcard": {"category_paths": {"value": f"*f_and_b/food/{core_path}*"}}},
-                            {"wildcard": {"category_paths": {"value": f"*personal_care/{core_path}*"}}}
-                        ],
-                        "minimum_should_match": 1
-                    }
-                })
+                # Unknown group, try both
+                fb = f"f_and_b/food/{rel}"
+                pc = f"personal_care/{rel}"
+                if prefer_keyword:
+                    should_cat.extend([
+                        {"term": {"category_paths.keyword": fb}},
+                        {"term": {"category_paths.keyword": pc}},
+                    ])
+                else:
+                    should_cat.extend([
+                        {"wildcard": {"category_paths": {"value": f"*{fb}*"}}},
+                        {"wildcard": {"category_paths": {"value": f"*{pc}*"}}},
+                    ])
+        if should_cat:
+            filters.append({
+                "bool": {"should": should_cat, "minimum_should_match": 1}
+            })
 
     # Price range filter
     price_min = p.get("price_min")
@@ -566,6 +599,7 @@ class ElasticsearchProductsFetcher:
         self.base_url = base_url or ELASTIC_BASE
         self.index = index or ELASTIC_INDEX
         self.api_key = api_key or ELASTIC_API_KEY
+        self._has_category_paths_keyword: Optional[bool] = None
         
         if not self.api_key:
             raise RuntimeError("ELASTIC_API_KEY (or ES_API_KEY) is required for Elasticsearch access")
@@ -577,11 +611,50 @@ class ElasticsearchProductsFetcher:
             "Authorization": f"ApiKey {self.api_key}"
         } if self.api_key else {}
     
+    def _ensure_mapping_hints(self) -> None:
+        """Lazy-load index mapping to detect availability of 'category_paths.keyword'."""
+        if self._has_category_paths_keyword is not None:
+            return
+        try:
+            mapping_endpoint = f"{self.base_url}/{self.index}/_mapping"
+            resp = requests.get(mapping_endpoint, headers=self.headers, timeout=TIMEOUT)
+            resp.raise_for_status()
+            data = resp.json() or {}
+            # Traverse to detect 'category_paths.keyword'
+            has_kw = False
+            try:
+                # mappings can be keyed by index name
+                for _idx, payload in (data or {}).items():
+                    mappings = (payload or {}).get("mappings", {}) or {}
+                    props = mappings.get("properties", {}) or {}
+                    cat = props.get("category_paths", {}) or {}
+                    fields = cat.get("fields", {}) or {}
+                    if isinstance(fields.get("keyword"), dict):
+                        has_kw = True
+                        break
+            except Exception:
+                has_kw = False
+            self._has_category_paths_keyword = has_kw
+            try:
+                print(f"DEBUG: MAPPING_HINT | category_paths.keyword={'yes' if has_kw else 'no'}")
+            except Exception:
+                pass
+        except Exception as exc:
+            try:
+                print(f"DEBUG: MAPPING_HINT_ERROR | {exc}")
+            except Exception:
+                pass
+            self._has_category_paths_keyword = False
+    
     def search(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute search against Elasticsearch with fallback strategies."""
         try:
             # Use the enhanced query builder
-            query_body = _build_enhanced_es_query(params)
+            # Ensure mapping hints for category_paths.keyword usage
+            self._ensure_mapping_hints()
+            p = dict(params or {})
+            p["_has_category_paths_keyword"] = bool(self._has_category_paths_keyword)
+            query_body = _build_enhanced_es_query(p)
             
             # Debug logging
             print(f"DEBUG: Enhanced ES Query Structure:")

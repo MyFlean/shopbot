@@ -1,0 +1,69 @@
+sequenceDiagram
+  participant U as "User"
+  participant R as "Routes /chat"
+  participant C as "Core (bot_core)"
+  participant L as "LLMService"
+  participant D as "Data Fetchers (ES)"
+  participant X as "UX Generator"
+  participant E as "Envelope"
+  participant S as "Redis"
+  participant ES as "Elasticsearch"
+  participant A as "Anthropic"
+
+  Note over U: Scenario A (MPM)
+  U->>R: POST /chat "show me protein bars"
+  R->>S: get_context(user, session)
+  R->>C: process_query(ctx, message)
+  C->>L: classify_intent
+  L-->>C: L3=Product_Discovery, product=true
+  C->>L: classify_product_intent
+  L-->>C: intent=show_me_options
+  C->>L: assess_requirements
+  L-->>C: missing=[ASK_USER_BUDGET,...]
+  C-->>R: QUESTION
+  R->>E: build_envelope -> ask_user
+  E-->>U: Ask budget
+
+  U->>R: POST /chat "under 200"
+  R->>S: get_context
+  R->>C: handle_follow_up
+  C->>L: classify_follow_up + assess_delta_requirements
+  L-->>C: delta=[SEARCH_PRODUCTS]
+  C->>D: search_products(ctx)
+  D->>ES: POST _search (function_score)
+  ES-->>D: hits
+  D-->>C: products
+  C->>L: generate_response (product)
+  L->>D: mget top-K
+  D->>ES: POST _mget
+  ES-->>D: docs
+  D-->>L: briefs
+  L-->>C: answer(summary, product_ids)
+  C->>X: generate_ux_response (MPM)
+  X-->>C: ux_response (DPL, QRs)
+  C->>E: build_envelope final_answer
+  E-->>U: MPM answer
+
+  Note over U: Scenario B (SPM)
+  U->>R: POST /chat "is this Veeba ketchup good?"
+  R->>S: get_context
+  R->>C: process_query
+  C->>L: classify_intent
+  L-->>C: L3=Specific_Product_Search, product=true
+  C->>L: classify_product_intent
+  L-->>C: intent=is_this_good
+  C->>D: search_products (size up, brand enforce)
+  D->>ES: POST _search
+  ES-->>D: hits
+  D-->>C: products(top)
+  C->>L: generate_response (SPM clamp)
+  L->>D: mget top-1
+  D->>ES: POST _mget
+  ES-->>D: doc
+  D-->>L: brief
+  L-->>C: answer(one product, id)
+  C->>X: generate_ux_response (SPM)
+  X-->>C: ux_response (DPL, QRs)
+  C->>E: build_envelope final_answer
+  E-->>U: SPM answer
+

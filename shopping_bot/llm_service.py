@@ -32,6 +32,62 @@ from .utils.helpers import extract_json_block
 
 Cfg = get_config()
 log = logging.getLogger(__name__)
+# ─────────────────────────────────────────────────────────────
+# NEW: Combined Classify+Assess Tool
+# ─────────────────────────────────────────────────────────────
+
+COMBINED_CLASSIFY_ASSESS_TOOL = {
+    "name": "classify_and_assess",
+    "description": "In one step: classify L3 + product_related, if product then 4-intent + two ASK_* questions (3 options each) and fetch_functions=['search_products']; if general, emit simple_response.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "is_follow_up": {"type": "boolean", "description": "Whether current turn is a follow-up to the immediate previous turn"},
+            "is_product_related": {"type": "boolean"},
+            "layer3": {"type": "string"},
+            "product_intent": {
+                "type": "string",
+                "enum": [
+                    "is_this_good",
+                    "which_is_better",
+                    "show_me_alternate",
+                    "show_me_options"
+                ]
+            },
+            "ask": {
+                "type": "object",
+                "description": "Map of up to 2 UserSlot keys (ASK_*) to question payloads",
+                "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                        "message": {"type": "string"},
+                        "options": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 3,
+                            "maxItems": 3
+                        }
+                    },
+                    "required": ["message", "options"]
+                }
+            },
+            "fetch_functions": {
+                "type": "array",
+                "items": {"type": "string", "enum": [f.value for f in BackendFunction]},
+                "description": "If product-related, must include ['search_products']"
+            },
+            "simple_response": {
+                "type": "object",
+                "properties": {
+                    "response_type": {"type": "string", "enum": ["final_answer"]},
+                    "message": {"type": "string"}
+                }
+            }
+        },
+        "required": ["is_product_related", "layer3"]
+    }
+}
+
 
 
 # ─────────────────────────────────────────────────────────────
@@ -613,6 +669,147 @@ class LLMService:
         self.anthropic = anthropic.AsyncAnthropic(api_key=api_key)
         self._recommendation_service = get_recommendation_service()
 
+    async def classify_and_assess(self, query: str, ctx: Optional[UserContext] = None) -> Dict[str, Any]:
+        """Combined classifier for latency reduction (flag-gated upstream).
+
+        Returns a dict with keys:
+        - is_product_related: bool
+        - layer3: str
+        - product_intent: Optional[str]
+        - ask: Optional[Dict[str, Dict[str, Any]]] (up to 2 slots)
+        - fetch_functions: Optional[List[str]]
+        - simple_response: Optional[Dict[str, str]] when general
+        """
+        # Build a compact context to keep token use low
+        recent_context: Dict[str, Any] = {}
+        convo_pairs: List[Dict[str, Any]] = []
+        try:
+            if ctx:
+                history = ctx.session.get("history", [])
+                if history:
+                    last = history[-1]
+                    recent_context = {
+                        "last_intent_l3": last.get("intent"),
+                        "last_slots": {k: v for k, v in (last.get("slots") or {}).items() if v},
+                    }
+                convo = ctx.session.get("conversation_history", []) or []
+                if isinstance(convo, list) and convo:
+                    for h in convo[-5:]:
+                        if isinstance(h, dict):
+                            convo_pairs.append({
+                                "user_query": str(h.get("user_query", ""))[:120],
+                                "bot_reply": str(h.get("bot_reply", ""))[:160],
+                            })
+        except Exception:
+            recent_context = {}
+
+        prompt = (
+            "You are an e-commerce assistant. In ONE tool call, do all three tasks.\n"
+            "Task 1: Classify the user's latest message into L3 and set is_product_related (true only for serious product queries).\n"
+            "Task 2: If product-related, classify one of 4 intents: is_this_good | which_is_better | show_me_alternate | show_me_options.\n"
+            "Task 3: If product-related, emit EXACTLY TWO ASK_* questions with EXACTLY 3 options each (short, concrete),\n"
+            "         optimized to refine Elasticsearch filters (prefer budget + dietary); and set fetch_functions=['search_products'].\n"
+            "FOLLOW-UP RULE: Decide is_follow_up by comparing the current message to the immediate last turn (and up to 5 recent turns).\n"
+            "If is_follow_up=true AND product_related=true → DO NOT emit ASK_*; set fetch_functions=['search_products'] only.\n"
+            "ALLOWED ASK_* SLOTS (choose only from this list):\n"
+            "- ASK_USER_BUDGET\n- ASK_DIETARY_REQUIREMENTS\n- ASK_USER_PREFERENCES\n- ASK_USE_CASE\n- ASK_QUANTITY\n- ASK_DELIVERY_ADDRESS\n"
+            "STRICT: The ask object MUST use keys only from the allowed list. If unsure, pick budget and dietary.\n"
+            "If NOT product-related, return simple_response {response_type:'final_answer', message}.\n"
+            "Return ONLY the tool call to classify_and_assess.\n\n"
+            f"RECENT_CONTEXT: {json.dumps(recent_context, ensure_ascii=False)}\n"
+            f"RECENT_TURNS: {json.dumps(convo_pairs, ensure_ascii=False)}\n"
+            f"QUERY: {query.strip()}\n"
+        )
+
+        resp = await self.anthropic.messages.create(
+            model=Cfg.LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            tools=[COMBINED_CLASSIFY_ASSESS_TOOL],
+            tool_choice={"type": "tool", "name": "classify_and_assess"},
+            temperature=0.2,
+            max_tokens=500,
+        )
+
+        tool_use = pick_tool(resp, "classify_and_assess")
+        if not tool_use:
+            return {}
+        data = tool_use.input or {}
+
+        # Light normalization of ask payload
+        try:
+            ask = data.get("ask") or {}
+            if isinstance(ask, dict):
+                # Canonical mapping for slot keys (food & personal care synonyms)
+                def _canon_slot(name: str) -> Optional[str]:
+                    if not isinstance(name, str):
+                        return None
+                    key = name.strip().upper()
+                    allowed = {
+                        "ASK_USER_BUDGET",
+                        "ASK_DIETARY_REQUIREMENTS",
+                        "ASK_USER_PREFERENCES",
+                        "ASK_USE_CASE",
+                        "ASK_QUANTITY",
+                        "ASK_DELIVERY_ADDRESS",
+                    }
+                    if key in allowed:
+                        return key
+                    # Synonyms
+                    if any(t in key for t in ["PRICE", "BUDGET", "UNDER", "OVER", "LESS THAN", "MORE THAN"]):
+                        return "ASK_USER_BUDGET"
+                    if any(t in key for t in ["DIET", "DIETARY", "PALM", "VEGAN", "GLUTEN", "SUGAR", "OIL"]):
+                        return "ASK_DIETARY_REQUIREMENTS"
+                    if any(t in key for t in ["SPICE", "SPICY", "FLAVOR", "TASTE", "BRAND", "PREFERENCE", "SKIN", "FRAGRANCE"]):
+                        return "ASK_USER_PREFERENCES"
+                    if any(t in key for t in ["USE", "OCCASION", "WHEN"]):
+                        return "ASK_USE_CASE"
+                    if any(t in key for t in ["QTY", "QUANTITY", "COUNT", "PACK"]):
+                        return "ASK_QUANTITY"
+                    if any(t in key for t in ["ADDRESS", "PIN", "PINCODE", "DELIVERY"]):
+                        return "ASK_DELIVERY_ADDRESS"
+                    return None
+
+                # Rebuild ask with canonical keys only
+                canon_ask: Dict[str, Dict[str, Any]] = {}
+                for k, v in list(ask.items()):
+                    if not isinstance(v, dict):
+                        continue
+                    ckey = _canon_slot(k)
+                    if not ckey:
+                        continue
+                    opts = v.get("options") or []
+                    # Clamp/pad options to exactly 3 strings
+                    norm_opts: List[str] = []
+                    for opt in opts[:3]:
+                        if isinstance(opt, str) and opt.strip():
+                            norm_opts.append(opt.strip())
+                    while len(norm_opts) < 3:
+                        norm_opts.append("Other")
+                    canon_ask[ckey] = {
+                        "message": v.get("message") or f"What's your {ckey.replace('ASK_', '').replace('_', ' ').lower()}?",
+                        "options": norm_opts[:3],
+                    }
+                # Deduplicate and clamp to 2; fallback if empty
+                if not canon_ask:
+                    canon_ask = {
+                        "ASK_USER_BUDGET": {
+                            "message": "What's your budget range?",
+                            "options": ["Under ₹100", "₹100-500", "Over ₹500"],
+                        },
+                        "ASK_DIETARY_REQUIREMENTS": {
+                            "message": "Any dietary requirements?",
+                            "options": ["No palm oil", "Low oil", "No preference"],
+                        },
+                    }
+                else:
+                    # Keep insertion order; take first two
+                    canon_ask = {k: canon_ask[k] for k in list(canon_ask.keys())[:2]}
+                data["ask"] = canon_ask
+        except Exception:
+            pass
+
+        return data
+
     # ---------------- UPDATED: INTENT CLASSIFICATION ----------------
     async def classify_intent(self, query: str, ctx: Optional[UserContext] = None) -> IntentResult:
         """Updated intent classification with product-related detection."""
@@ -1012,6 +1209,20 @@ class LLMService:
                     result["product_ids"] = unique_ids[:10]
                 if "products" in result:
                     del result["products"]
+
+            # Belt-and-suspenders: if product_ids still missing but ES fetched has products, backfill
+            try:
+                if (not result.get("product_ids")) and isinstance(products_data, list) and products_data:
+                    backfill_ids: List[str] = []
+                    for p in products_data[:10]:
+                        pid = p.get("id") or f"prod_{hash(p.get('name','') or p.get('title',''))%1000000}"
+                        sid = str(pid)
+                        if sid and sid not in backfill_ids:
+                            backfill_ids.append(sid)
+                    if backfill_ids:
+                        result["product_ids"] = backfill_ids
+            except Exception:
+                pass
             
             return result
             

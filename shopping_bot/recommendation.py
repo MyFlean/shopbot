@@ -1557,6 +1557,74 @@ class RecommendationService:
         self.engine_type = engine_type
 
     async def extract_es_params(self, ctx: UserContext) -> Dict[str, Any]:
+        from .config import get_config as _cfg
+        cfg = _cfg()
+        if getattr(cfg, "USE_TWO_CALL_ES_PIPELINE", False):
+            # Two-call pipeline: delegate ES planning to LLMService once
+            try:
+                from .llm_service import LLMService  # lazy import
+                llm = LLMService()
+                # Read current text and product_intent from session
+                product_intent = str(ctx.session.get("product_intent") or "show_me_options")
+                plan = await llm.plan_es_search(ctx.session.get("current_user_text") or ctx.session.get("last_user_message") or "", ctx, product_intent=product_intent)
+                es_params = (plan or {}).get("es_params") or {}
+                # Guard/normalize minimal fields (server-side safety)
+                out: Dict[str, Any] = {}
+                q = str(es_params.get("q") or ctx.session.get("canonical_query") or ctx.session.get("last_query") or "").strip()
+                if q:
+                    out["q"] = q
+                # Copy-through allowed keys
+                for k in [
+                    "size", "category_group", "category_path", "category_paths",
+                    "brands", "dietary_terms", "price_min", "price_max",
+                    "keywords", "phrase_boosts", "field_boosts"
+                ]:
+                    if es_params.get(k) is not None:
+                        out[k] = es_params[k]
+                # Clamp size
+                try:
+                    size = int(out.get("size", 10))
+                except Exception:
+                    size = 10
+                out["size"] = max(1, min(50, size))
+                # Uppercase dietary terms
+                if isinstance(out.get("dietary_terms"), list):
+                    out["dietary_terms"] = [str(x).upper() for x in out["dietary_terms"] if str(x).strip()]
+                # Sanitize category_group
+                try:
+                    valid_groups = {"f_and_b", "personal_care", "health_nutrition", "home_kitchen", "electronics"}
+                    cg_raw = str(out.get("category_group", "")).strip().lower()
+                    if cg_raw not in valid_groups:
+                        # Infer from category_path(s) if available
+                        inferred = None
+                        cp = str(out.get("category_path", "")).strip().lower()
+                        if cp.startswith("f_and_b/"):
+                            inferred = "f_and_b"
+                        elif cp.startswith("personal_care/"):
+                            inferred = "personal_care"
+                        if not inferred and isinstance(out.get("category_paths"), list):
+                            for pth in out["category_paths"]:
+                                s = str(pth).strip().lower()
+                                if s.startswith("f_and_b/"):
+                                    inferred = "f_and_b"; break
+                                if s.startswith("personal_care/"):
+                                    inferred = "personal_care"; break
+                        # Heuristic from q
+                        if not inferred:
+                            ql = (out.get("q") or "").lower()
+                            if any(tok in ql for tok in ["chips", "snack", "juice", "bread", "milk", "chocolate", "ketchup", "biscuit", "cookie"]):
+                                inferred = "f_and_b"
+                        out["category_group"] = inferred or ctx.session.get("category_group") or "f_and_b"
+                except Exception:
+                    out["category_group"] = ctx.session.get("category_group") or "f_and_b"
+                log.info(f"ES_PARAMS_PLANNED | keys={list(out.keys())}")
+                # Persist a hint for debugging
+                ctx.session.setdefault("debug", {})["last_search_params"] = out
+                return out
+            except Exception as exc:
+                log.warning(f"Two-call ES planning failed, falling back: {exc}")
+                # Fall back to legacy extraction below
+        # Legacy multi-call pipeline
         resp = await self.engine.extract_search_params(ctx)
         if resp.response_type == RecommendationResponseType.ERROR:
             log.error(f"Recommendation engine error: {resp.error_message}")

@@ -662,13 +662,17 @@ class ShoppingBotCore:
                 product_intent=product_intent
             )
             
-            # Generate UX-ready response
-            ux_enhanced_answer = await generate_ux_response_for_intent(
-                intent=product_intent,
-                previous_answer=answer_dict,
-                ctx=ctx,
-                user_query=original_q
-            )
+            # Generate UX-ready response (skip extra LLM if unified ux already present)
+            if isinstance(answer_dict.get("ux_response"), dict):
+                ux_enhanced_answer = answer_dict
+                log.info("UX_SKIP_SECOND_CALL | unified ux_response present in product answer")
+            else:
+                ux_enhanced_answer = await generate_ux_response_for_intent(
+                    intent=product_intent,
+                    previous_answer=answer_dict,
+                    ctx=ctx,
+                    user_query=original_q
+                )
             
             resp_type = ResponseType(ux_enhanced_answer.get("response_type", "final_answer"))
             

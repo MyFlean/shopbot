@@ -55,6 +55,7 @@ class BaseConfig:
     # Feature flags
     USE_COMBINED_CLASSIFY_ASSESS: bool = os.getenv("USE_COMBINED_CLASSIFY_ASSESS", "false").lower() in {"1", "true", "yes", "on"}
     USE_CONVERSATION_AWARE_CLASSIFIER: bool = os.getenv("USE_CONVERSATION_AWARE_CLASSIFIER", "false").lower() in {"1", "true", "yes", "on"}
+    USE_TWO_CALL_ES_PIPELINE: bool = os.getenv("USE_TWO_CALL_ES_PIPELINE", "false").lower() in {"1", "true", "yes", "on"}
 
 
 class DevelopmentConfig(BaseConfig):

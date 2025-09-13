@@ -33,6 +33,68 @@ from .utils.helpers import extract_json_block
 Cfg = get_config()
 log = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────
+# NEW: Two-call ES pipeline tools (flag-gated)
+# ─────────────────────────────────────────────────────────────
+
+PLAN_ES_SEARCH_TOOL = {
+    "name": "plan_es_search",
+    "description": "Plan Elasticsearch parameters in one step using conversation context and current text.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "is_product_related": {"type": "boolean"},
+            "product_intent": {"type": "string", "enum": [
+                "is_this_good", "which_is_better", "show_me_alternate", "show_me_options"
+            ]},
+            "ask_required": {"type": "boolean"},
+            "es_params": {
+                "type": "object",
+                "properties": {
+                    "q": {"type": "string"},
+                    "size": {"type": "integer"},
+                    "category_group": {"type": "string"},
+                    "category_path": {"type": "string"},
+                    "category_paths": {"type": "array", "items": {"type": "string"}},
+                    "brands": {"type": "array", "items": {"type": "string"}},
+                    "dietary_terms": {"type": "array", "items": {"type": "string"}},
+                    "price_min": {"type": "number"},
+                    "price_max": {"type": "number"},
+                    "keywords": {"type": "array", "items": {"type": "string"}},
+                    "phrase_boosts": {"type": "array", "items": {"type": "object"}},
+                    "field_boosts": {"type": "array", "items": {"type": "string"}}
+                },
+                "required": ["q", "category_group"]
+            }
+        },
+        "required": ["is_product_related", "product_intent", "ask_required"]
+    }
+}
+
+FINAL_ANSWER_UNIFIED_TOOL = {
+    "name": "generate_final_answer_unified",
+    "description": "Generate final product answer and UX in one step.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "response_type": {"type": "string", "enum": ["final_answer"]},
+            "summary_message": {"type": "string"},
+            "product_ids": {"type": "array", "items": {"type": "string"}},
+            "hero_product_id": {"type": "string"},
+            "ux": {
+                "type": "object",
+                "properties": {
+                    "ux_surface": {"type": "string", "enum": ["SPM", "MPM"]},
+                    "dpl_runtime_text": {"type": "string"},
+                    "quick_replies": {"type": "array", "items": {"type": "string"}, "minItems": 3, "maxItems": 4}
+                },
+                "required": ["ux_surface", "dpl_runtime_text", "quick_replies"]
+            }
+        },
+        "required": ["response_type", "summary_message", "ux"]
+    }
+}
+
+# ─────────────────────────────────────────────────────────────
 # NEW: Combined Classify+Assess Tool
 # ─────────────────────────────────────────────────────────────
 
@@ -669,6 +731,144 @@ class LLMService:
         self.anthropic = anthropic.AsyncAnthropic(api_key=api_key)
         self._recommendation_service = get_recommendation_service()
 
+    async def plan_es_search(self, query: str, ctx: UserContext, *, product_intent: str) -> Dict[str, Any]:
+        """Two-call pipeline: call 1. Returns {is_product_related, product_intent, ask_required, es_params?}."""
+        prompt = (
+            "You are the ES-PLANNER. In ONE tool call, build exactly what is needed to run Elasticsearch.\n"
+            "STRICT OUTPUT: Return tool plan_es_search with fields: is_product_related, product_intent, ask_required, and es_params (when ask_required=false).\n\n"
+            "DECISION TREE (MANDATORY):\n"
+            "1) Determine is_product_related from current + recent turns (≤5):\n"
+            "   - True only for serious product queries (discovery, recommendation, specific search, comparison).\n"
+            "2) Decide product_intent ∈ {is_this_good, which_is_better, show_me_alternate, show_me_options}.\n"
+            "3) Decide ask_required (boolean) under these hard rules:\n"
+            "   - NEVER ask for is_this_good or which_is_better.\n"
+            "   - For show_me_options/show_me_alternate: ask ONLY if BOTH budget AND dietary are UNKNOWN\n"
+            "     across (session snapshot) OR (current user text constraints) OR (last_search_params).\n"
+            "   - If ask_required=false → es_params MUST be provided.\n"
+            "4) If ask_required=true, do NOT provide es_params (server will ask the two slots).\n"
+            "5) If ask_required=false and product: construct es_params with DELTA logic from last_search_params:\n"
+            "   - q: concise product noun phrase (strip price/currency). If current text is constraint-only (e.g., 'under 200'),\n"
+            "     REUSE last noun phrase from recent turns/last_search_params and apply delta.\n"
+            "   - category_group: MUST be exactly one of ['f_and_b','personal_care'] — never 'snacks' or other l2/l3.\n"
+            "   - category_path(s): derive using the provided F&B taxonomy when applicable; include up to 3 full paths.\n"
+            "   - price_min/price_max: parse INR ranges and apply delta if present (e.g., 'under 100' → price_max=100).\n"
+            "   - dietary_terms/dietary_labels: UPPERCASE (e.g., 'GLUTEN FREE', 'PALM OIL FREE').\n"
+            "   - brands, keywords, phrase_boosts/field_boosts: include only when explicit or strongly implied.\n"
+            "   - size: suggest within [1,50] (server clamps).\n\n"
+            "FOLLOW-UP BEHAVIOR (MANDATORY):\n"
+            "- If the current text refines the previous result (e.g., 'under 100', 'gluten free'), treat it as DELTA and DO NOT change q noun phrase,\n"
+            "  only update constraints in es_params.\n\n"
+            "CATEGORY PATH CONSTRUCTION:\n"
+            "- Use the provided F&B taxonomy to choose l2 and l3. Build full paths as 'f_and_b/food/<l2>' or 'f_and_b/food/<l2>/<l3>'.\n"
+            "- For personal care, use 'personal_care/<l2>' or 'personal_care/<l2>/<l3>' as appropriate.\n\n"
+            "Return ONLY tool plan_es_search.\n"
+        )
+
+        # Build compact context
+        convo_pairs: List[Dict[str, Any]] = []
+        try:
+            convo = ctx.session.get("conversation_history", []) or []
+            for h in convo[-5:]:
+                if isinstance(h, dict):
+                    convo_pairs.append({
+                        "user_query": str(h.get("user_query", ""))[:120],
+                        "bot_reply": str(h.get("bot_reply", ""))[:160],
+                    })
+        except Exception:
+            pass
+
+        # Build a compact, structured session snapshot for deterministic reasoning
+        last_params = ((ctx.session.get("debug", {}) or {}).get("last_search_params", {}) or {}) if isinstance(ctx.session.get("debug"), dict) else {}
+        session_snapshot = {
+            "budget": ctx.session.get("budget"),
+            "dietary_requirements": ctx.session.get("dietary_requirements"),
+            "intent_l3": ctx.session.get("intent_l3"),
+            "product_intent": ctx.session.get("product_intent"),
+            "canonical_query": ctx.session.get("canonical_query"),
+            "last_query": ctx.session.get("last_query"),
+            "last_search_params": {k: last_params.get(k) for k in [
+                "q", "category_group", "category_path", "category_paths",
+                "brands", "dietary_terms", "price_min", "price_max", "keywords"
+            ] if k in last_params}
+        }
+        # Include outstanding asks/answers context if available
+        assessment = ctx.session.get("assessment", {}) or {}
+        contextual_qs = ctx.session.get("contextual_questions", {}) or {}
+        user_answers = (ctx.permanent or {}).get("user_answers") or ctx.session.get("user_answers")
+
+        # Optionally include F&B taxonomy for precise category mapping
+        try:
+            from .recommendation import ElasticsearchRecommendationEngine
+            _engine = ElasticsearchRecommendationEngine()
+            fnb_taxonomy = getattr(_engine, "_fnb_taxonomy", {})
+        except Exception:
+            fnb_taxonomy = {}
+
+        user_block = {
+            "query": query.strip(),
+            "product_intent": product_intent,
+            "recent_turns": convo_pairs,
+            "session": session_snapshot,
+            "assessment": {k: assessment.get(k) for k in ["missing_data", "priority_order", "currently_asking"]},
+            "contextual_questions": {k: {
+                "message": v.get("message"),
+                "options": [o.get("label") if isinstance(o, dict) else str(o) for o in (v.get("options") or [])][:3]
+            } for k, v in contextual_qs.items()} if isinstance(contextual_qs, dict) else {},
+            "user_answers": user_answers if isinstance(user_answers, dict) else {},
+            "fnb_taxonomy": fnb_taxonomy,
+        }
+
+        resp = await self.anthropic.messages.create(
+            model=Cfg.LLM_MODEL,
+            messages=[{"role": "user", "content": prompt + "\n" + json.dumps(user_block, ensure_ascii=False)}],
+            tools=[PLAN_ES_SEARCH_TOOL],
+            tool_choice={"type": "tool", "name": "plan_es_search"},
+            temperature=0,
+            max_tokens=600,
+        )
+        tool_use = pick_tool(resp, "plan_es_search")
+        return tool_use.input if tool_use else {}
+
+    async def generate_final_answer_unified(
+        self,
+        query: str,
+        ctx: UserContext,
+        *,
+        product_intent: str,
+        products_for_llm: List[Dict[str, Any]],
+        top_products_brief: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Two-call pipeline: call 2. Unified product answer + UX."""
+        prompt = (
+            "Generate the final product answer and UX in ONE tool call.\n"
+            "Inputs: user_query, product_intent, session snapshot (concise), ES results (top 10), enriched briefs (top 1 for SPM; top 3 for MPM).\n"
+            "Output: {response_type:'final_answer', summary_message(4 lines), product_ids(ordered; hero optional), ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}.\n"
+            "Rules:\n- SPM → clamp to 1 item and include product_ids[1].\n- MPM → choose a hero (healthiest/cleanest) and order product_ids with hero first.\n- Quick replies should be short, actionable pivots (budget/dietary/quality).\n"
+        )
+
+        session_snapshot = {
+            k: ctx.session.get(k) for k in [
+                "budget", "dietary_requirements", "intent_l3", "product_intent"
+            ] if k in ctx.session
+        }
+        payload = {
+            "user_query": query.strip(),
+            "product_intent": product_intent,
+            "session": session_snapshot,
+            "products": products_for_llm,
+            "briefs": top_products_brief,
+        }
+        resp = await self.anthropic.messages.create(
+            model=Cfg.LLM_MODEL,
+            messages=[{"role": "user", "content": prompt + "\n" + json.dumps(payload, ensure_ascii=False)}],
+            tools=[FINAL_ANSWER_UNIFIED_TOOL],
+            tool_choice={"type": "tool", "name": "generate_final_answer_unified"},
+            temperature=0.7,
+            max_tokens=900,
+        )
+        tool_use = pick_tool(resp, "generate_final_answer_unified")
+        return _strip_keys(tool_use.input or {}) if tool_use else {}
+
     async def classify_and_assess(self, query: str, ctx: Optional[UserContext] = None) -> Dict[str, Any]:
         """Combined classifier for latency reduction (flag-gated upstream).
 
@@ -939,7 +1139,7 @@ class LLMService:
         intent_l3: str,
         product_intent: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Generate structured product response with descriptions."""
+        """Generate structured product+UX response using a single LLM call."""
         products_data = []
         if 'search_products' in fetched:
             search_data = fetched['search_products']
@@ -1063,37 +1263,51 @@ class LLMService:
         spm_mode = bool(product_intent and product_intent == "is_this_good")
         products_for_llm = products_data[:5] if spm_mode else products_data[:10]
 
-        # Augmented prompt with enriched top products and percentile guidance
+        # Unified product + UX prompt and tool
         try:
-            log.info(
-                f"UX_ENRICHMENT_COUNTS | top_ids={len(top_ids)} | briefs={len(top_products_brief)} | products_for_llm={len(products_for_llm)}"
-            )
-        except Exception:
-            pass
+            try:
+                log.info(
+                    f"UX_ENRICHMENT_COUNTS | top_ids={len(top_ids)} | briefs={len(top_products_brief)} | products_for_llm={len(products_for_llm)}"
+                )
+            except Exception:
+                pass
 
-        prompt = PRODUCT_RESPONSE_PROMPT.format(
-            query=query,
-            intent_l3=intent_l3,
-            session=json.dumps(ctx.session, ensure_ascii=False),
-            permanent=json.dumps(ctx.permanent, ensure_ascii=False),
-            products_json=json.dumps(products_for_llm, ensure_ascii=False),
-            enriched_top=json.dumps(top_products_brief, ensure_ascii=False)
-        )
-        
-        try:
+            unified_context = {
+                "user_query": query,
+                "intent_l3": intent_l3,
+                "product_intent": product_intent or ctx.session.get("product_intent") or "show_me_options",
+                "session": {k: ctx.session.get(k) for k in ["budget", "dietary_requirements", "preferences"] if k in ctx.session},
+                "products": products_for_llm,
+                "enriched_top": top_products_brief,
+            }
+            unified_prompt = (
+                "You are producing BOTH the product answer and the UX block in a SINGLE tool call.\n"
+                "Inputs:\n- user_query\n- intent_l3\n- product_intent (one of is_this_good, which_is_better, show_me_alternate, show_me_options)\n- session snapshot (budget, dietary, preferences)\n- products (top 5-10)\n- enriched_top (top 1 for SPM; top 3 for MPM)\n\n"
+                "Output JSON (tool generate_final_answer_unified):\n"
+                "{response_type:'final_answer', summary_message, product_ids?, hero_product_id?, ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}\n\n"
+                "Rules (MANDATORY):\n"
+                "- For is_this_good (SPM): choose 1 best item → ux_surface='SPM'; product_ids=[that_id]; dpl_runtime_text should read like a concise expert verdict; keep summary to 4 lines with evidence.\n"
+                "- For others (MPM): choose a hero (healthiest/cleanest using enriched_top), set hero_product_id and order product_ids with hero first; ux_surface='MPM'.\n"
+                "- Quick replies: short and actionable pivots (budget ranges like 'Under ₹100', dietary like 'GLUTEN FREE', or quality pivots).\n"
+                "- Evidence: use flean score/percentiles, nutrition grams, and penalties correctly (penalties high = bad).\n"
+                "- Keep summary_message EXACTLY 4 sentences, evidence-based; avoid fluff.\n"
+                "Return ONLY the tool call.\n"
+            )
+
             resp = await self.anthropic.messages.create(
                 model=Cfg.LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                tools=[PRODUCT_RESPONSE_TOOL],
-                tool_choice={"type": "tool", "name": "generate_product_response"},
+                messages=[{"role": "user", "content": unified_prompt + "\n" + json.dumps(unified_context, ensure_ascii=False)}],
+                tools=[FINAL_ANSWER_UNIFIED_TOOL],
+                tool_choice={"type": "tool", "name": "generate_final_answer_unified"},
                 temperature=0.7,
-                max_tokens=800 if (product_intent and product_intent != "is_this_good") else 1500,
+                max_tokens=900,
             )
-            
-            tool_use = pick_tool(resp, "generate_product_response")
+
+            tool_use = pick_tool(resp, "generate_final_answer_unified")
             if not tool_use:
+                # Fallback to old two-step product response path
                 return self._create_fallback_product_response(products_data, query)
-            
+
             result = _strip_keys(tool_use.input or {})
 
             # Enforce exactly one product for SPM in final result
@@ -1156,59 +1370,52 @@ class LLMService:
                     except Exception:
                         pass
             
-            # Ensure product IDs exist for any returned products
-            for i, product in enumerate(result.get("products", [])):
-                if "id" not in product and i < len(products_data):
-                    product["id"] = f"prod_{hash(products_data[i].get('name', ''))%1000000}"
-            
-            # Attach enrichment for downstream UX/DPL
-            if top_products_brief:
-                result["top_products_brief"] = top_products_brief
-
-            # For MPM (non-SPM), remove per-product details but include product_ids for UX
-            if product_intent and product_intent != "is_this_good":
-                # Build product_ids from ES results
-                pid_list = []
-                for i, p in enumerate(products_data):
-                    pid = p.get("id") or f"prod_{hash(p.get('name','') or p.get('title',''))%1000000}"
-                    pid_list.append(str(pid))
-                # Reorder with hero first if provided
-                hero_id = (result.get("hero_product_id") or "").strip()
-                if hero_id and hero_id in pid_list:
-                    try:
-                        pid_list.remove(hero_id)
-                    except ValueError:
-                        pass
-                    pid_list = [hero_id] + pid_list
+            # Ensure product_ids exist and hero-first ordering
+            try:
+                # If tool returned product_ids, validate/order with hero
+                if isinstance(result.get("product_ids"), list) and result["product_ids"]:
+                    hero_id = str(result.get("hero_product_id", "")).strip()
+                    ids = [str(x) for x in result["product_ids"] if str(x).strip()]
+                    if hero_id and hero_id in ids:
+                        ids.remove(hero_id)
+                        ids = [hero_id] + ids
+                    # Replace with ES-backed ids if any missing
+                    es_ids = [str(p.get("id")) for p in products_data if p.get("id")]
+                    mapped = []
+                    for x in ids:
+                        mapped.append(x if x in es_ids else (es_ids[0] if es_ids else x))
+                    # Dedup and clamp
+                    seen = set()
+                    final_ids: List[str] = []
+                    for x in mapped:
+                        if x not in seen:
+                            seen.add(x)
+                            final_ids.append(x)
+                    result["product_ids"] = final_ids[:10]
                 else:
-                    # Heuristic hero: choose by highest flean percentile from briefs
-                    try:
-                        if isinstance(top_products_brief, list) and top_products_brief:
-                            scored = []
-                            for b in top_products_brief:
-                                bid = str(b.get("id"))
-                                perc = ((b.get("percentiles", {}) or {}).get("flean") or 0.0) or 0.0
-                                proc = (b.get("processing_type") or "")
-                                proc_bonus = 0.2 if proc == "minimally_processed" else (0.0 if proc == "processed" else -0.2)
-                                scored.append((perc + proc_bonus, bid))
-                            scored.sort(reverse=True)
-                            if scored and scored[0][1] in pid_list:
-                                best = scored[0][1]
-                                pid_list.remove(best)
-                                pid_list = [best] + pid_list
-                    except Exception:
-                        pass
-                if pid_list:
-                    # Ensure uniqueness while preserving order
-                    seen_ids = set()
-                    unique_ids: List[str] = []
-                    for _pid in pid_list:
-                        if _pid not in seen_ids:
-                            seen_ids.add(_pid)
-                            unique_ids.append(_pid)
-                    result["product_ids"] = unique_ids[:10]
+                    # Build from ES results
+                    result["product_ids"] = [str(p.get("id")) for p in products_data if p.get("id")] [:10]
+            except Exception:
+                pass
+
+            # SPM clamp and ensure single id
+            if spm_mode:
+                result["product_ids"] = result.get("product_ids", [])[:1]
+                # Drop products list to reduce payload; FE uses product_ids
                 if "products" in result:
-                    del result["products"]
+                    result.pop("products", None)
+
+            # Attach ux_response in top-level expected key and ensure product_ids are included for FE
+            if isinstance(result.get("ux"), dict):
+                result["ux_response"] = result.pop("ux")
+            try:
+                if isinstance(result.get("ux_response"), dict):
+                    ux_pid = result["ux_response"].get("product_ids") if isinstance(result["ux_response"].get("product_ids"), list) else None
+                    final_ids = result.get("product_ids") if isinstance(result.get("product_ids"), list) else []
+                    if (not ux_pid) or (isinstance(ux_pid, list) and len(ux_pid) == 0):
+                        result["ux_response"]["product_ids"] = final_ids
+            except Exception:
+                pass
 
             # Belt-and-suspenders: if product_ids still missing but ES fetched has products, backfill
             try:

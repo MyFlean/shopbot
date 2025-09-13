@@ -211,6 +211,72 @@ def build_envelope(
         ui_type = map_fe_response_type(bot_resp_type, content)
         normalized = normalize_content(bot_resp_type, content or {})
 
+        # Ensure minimal UX response for MPM when missing (safety net)
+        try:
+            if bot_resp_type == ResponseType.FINAL_ANSWER:
+                intent_lower = str(normalized.get("product_intent", "")).strip().lower()
+                is_mpm_intent = intent_lower in {"which_is_better", "show_me_options", "show_me_alternate"}
+                has_ux = isinstance(normalized.get("ux_response"), dict)
+                if is_mpm_intent and not has_ux:
+                    # Build product_ids from content.products or fetched_data
+                    product_ids: list[str] = []
+                    try:
+                        products = normalized.get("products") or []
+                        if isinstance(products, list):
+                            for p in products[:10]:
+                                pid = (p or {}).get("id") or (p or {}).get("product_id")
+                                if pid:
+                                    product_ids.append(str(pid))
+                    except Exception:
+                        pass
+                    if not product_ids:
+                        try:
+                            fetched_block = (ctx.fetched_data or {}).get("search_products") or {}
+                            payload = fetched_block.get("data", fetched_block)
+                            products = payload.get("products", []) if isinstance(payload, dict) else []
+                            for p in products[:10]:
+                                pid = p.get("id") or p.get("product_id") or f"prod_{hash(p.get('name','') or p.get('title',''))%1000000}"
+                                if pid:
+                                    product_ids.append(str(pid))
+                        except Exception:
+                            pass
+                    if product_ids:
+                        normalized["ux_response"] = {
+                            "ux_surface": "MPM",
+                            "product_ids": product_ids,
+                            "quick_replies": []
+                        }
+                # Also ensure ux_response.product_ids is populated when ux exists but ids missing/empty
+                if has_ux:
+                    try:
+                        ux = normalized.get("ux_response") or {}
+                        ux_ids = ux.get("product_ids") if isinstance(ux.get("product_ids"), list) else []
+                        if not ux_ids:
+                            # Prefer existing normalized product_ids if present
+                            from_content_ids = []
+                            try:
+                                for p in (normalized.get("products") or [])[:10]:
+                                    pid = (p or {}).get("id") or (p or {}).get("product_id")
+                                    if pid:
+                                        from_content_ids.append(str(pid))
+                            except Exception:
+                                pass
+                            if not from_content_ids:
+                                fetched_block = (ctx.fetched_data or {}).get("search_products") or {}
+                                payload = fetched_block.get("data", fetched_block)
+                                products = payload.get("products", []) if isinstance(payload, dict) else []
+                                for p in products[:10]:
+                                    pid = p.get("id") or p.get("product_id") or f"prod_{hash(p.get('name','') or p.get('title',''))%1000000}"
+                                    if pid:
+                                        from_content_ids.append(str(pid))
+                            if from_content_ids:
+                                ux["product_ids"] = from_content_ids
+                                normalized["ux_response"] = ux
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         meta = {
             "elapsed_time": f"{elapsed_time_seconds:.3f}s",
             "functions_executed": functions_executed or [],

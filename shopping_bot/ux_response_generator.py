@@ -457,6 +457,27 @@ async def generate_ux_response_for_intent(
     extracts product IDs, and returns UX-ready response.
     """
     
+    # Short-circuit: if previous_answer already contains a UX block from unified call, return as-is
+    try:
+        if isinstance(previous_answer.get("ux_response"), dict):
+            # Ensure product_intent present
+            if not previous_answer.get("product_intent") and isinstance(intent, str):
+                previous_answer["product_intent"] = intent
+            # Ensure product_ids live inside ux_response
+            if isinstance(previous_answer.get("product_ids"), list) and previous_answer["product_ids"]:
+                try:
+                    ux = previous_answer.get("ux_response") or {}
+                    if isinstance(ux, dict) and not ux.get("product_ids"):
+                        ux["product_ids"] = [str(x) for x in previous_answer["product_ids"] if str(x).strip()]
+                        previous_answer["ux_response"] = ux
+                except Exception:
+                    pass
+                previous_answer.pop("product_ids", None)
+            log.info("UX_EARLY_RETURN | using unified ux_response from previous_answer")
+            return previous_answer
+    except Exception:
+        pass
+
     # Extract product IDs for UX usage
     product_ids: List[str] = []
     # 1) Prefer explicit product_ids if provided by upstream (e.g., MPM flow)

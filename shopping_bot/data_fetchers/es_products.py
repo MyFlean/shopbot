@@ -903,13 +903,15 @@ def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Seed params
+    # Seed params (no cross-assessment carry-over; treat prior slots as hints only via LLM)
     params = {
         "q": query,
         "size": size_hint,
-        "category_group": session.get("category_group", "f_and_b"),  # default to f_and_b
-        "brands": session.get("brands"),
-        "dietary_terms": session.get("dietary_requirements"),
+        # Do NOT default category_group; let taxonomy/planner infer it
+        "category_group": session.get("category_group") or None,
+        # Do NOT carry prior brands/dietary directly; planner/normaliser will decide using current turn
+        "brands": None,
+        "dietary_terms": None,
         "price_min": price_min,
         "price_max": price_max,
         "protein_weight": 1.5,
@@ -954,140 +956,75 @@ def _normalize_params(base_params: Dict[str, Any], llm_params: Dict[str, Any]) -
                 else:
                     final_params[list_field] = [str(v).strip() for v in value if str(v).strip()]
     
-    # Ensure category_group is set
+    # Only ensure category_group for F&B when text or taxonomy signals it; else leave None to let ES planner decide
     if not final_params.get("category_group"):
-        final_params["category_group"] = "f_and_b"
+        try:
+            q_low = str(final_params.get("q") or "").lower()
+            if any(tok in q_low for tok in ["chips", "snack", "ketchup", "juice", "milk", "biscuit", "cookie", "chocolate", "bread"]):
+                final_params["category_group"] = "f_and_b"
+        except Exception:
+            pass
     
     # Clean up None values
     return {k: v for k, v in final_params.items() if v is not None}
 
 async def build_search_params(ctx) -> Dict[str, Any]:
-    """Build final search parameters from context + LLM analysis"""
+    """Build final search parameters - unified LLM source of truth with minimal fallback"""
     
-    # Resolve current user text once for downstream guards
-    current_text = _get_current_user_text(ctx)
+    # 1) Try unified ES params directly (authoritative)
     try:
-        print(f"DEBUG: BSP_START | current_text='{current_text}'")
-    except Exception:
-        pass
-    # Get base parameters from context
-    base_params = _extract_defaults_from_context(ctx)
-    try:
-        print(f"DEBUG: BSP_BASE | base_params={base_params}")
-    except Exception:
-        pass
-    
-    # Pre-merge heuristic: if current text is generic and we have last category, pre-fill
-    try:
-        import re as _re
-        generic_markers = ["options", "more", "cheaper", "budget", "sugar free", "no sugar", "healthier", "baked", "under", "over"]
-        product_nouns = ["ketchup", "chips", "juice", "candy", "chocolate", "soap", "shampoo", "cream", "oil", "powder"]
-        text_lower = (current_text or "").lower()
-        has_generic = any(marker in text_lower for marker in generic_markers)
-        has_product_noun = any(noun in text_lower for noun in product_nouns)
-        is_generic = has_generic and not has_product_noun
-        print(f"DEBUG: SLOT_ONLY_PREVIEW | text='{current_text}' | is_generic={is_generic} | has_generic={has_generic} | has_product_noun={has_product_noun}")
-    except Exception as exc:
-        print(f"DEBUG: SLOT_ONLY_PREVIEW_ERROR | {exc}")
-    
-    # Use LLM to extract/normalize additional parameters (always)
-    llm_params = {}
-    try:
-        # Lazy import to avoid circular import with llm_service importing this module
         from ..llm_service import LLMService  # type: ignore
         llm_service = LLMService()
-        # Inject current user text explicitly so LLM sees the latest delta
+        unified = await llm_service.generate_unified_es_params(ctx)
+        if isinstance(unified, dict) and unified.get("q"):
+            final_params: Dict[str, Any] = dict(unified)
+            # Ensure product_intent present
+            try:
+                final_params.setdefault("product_intent", str(ctx.session.get("product_intent") or "show_me_options"))
+            except Exception:
+                final_params.setdefault("product_intent", "show_me_options")
+            # Default protein weight for scoring
+            final_params.setdefault("protein_weight", 1.5)
+            # Clamp size to [1,50]
+            try:
+                s = int(final_params.get("size", 20) or 20)
+                final_params["size"] = max(1, min(50, s))
+            except Exception:
+                final_params["size"] = 20
+            # Persist for debugging
+            try:
+                print(f"DEBUG: USING_UNIFIED_PARAMS_DIRECT | q='{final_params.get('q')}' | dietary={final_params.get('dietary_terms')}")
+                ctx.session.setdefault("debug", {})["last_search_params"] = final_params
+            except Exception:
+                pass
+            return final_params
+    except Exception as exc:
         try:
-            ctx.session.setdefault("debug", {})["current_user_text"] = current_text
+            print(f"DEBUG: UNIFIED_CALL_FAILED | {exc}")
         except Exception:
             pass
-        llm_params = await llm_service.extract_es_params(ctx)
-        print(f"DEBUG: LLM extracted params = {llm_params}")
-    except Exception as e:
-        print(f"DEBUG: LLM param extraction failed: {e}")
-        llm_params = {}
     
-    # Merge and normalize
-    final_params = _normalize_params(base_params, llm_params)
+    # 2) Minimal safe fallback (no legacy merges/overwrites)
     try:
-        print(f"DEBUG: BSP_MERGED | merged_params={final_params}")
+        current_text = _get_current_user_text(ctx)
+        base = (_extract_defaults_from_context(ctx) or {})
+        anchor_q = str(base.get("q") or "").strip()
+        q = (current_text or anchor_q or "").strip()
+        if not q:
+            q = "snacks"  # ultimate minimal default
+        fallback: Dict[str, Any] = {
+            "q": q,
+            "size": 20,
+            "category_group": "f_and_b",
+            "product_intent": str(ctx.session.get("product_intent") or "show_me_options"),
+            "protein_weight": 1.5,
+        }
+        print(f"DEBUG: UNIFIED_MINIMAL_FALLBACK | q='{fallback['q']}'")
+        ctx.session.setdefault("debug", {})["last_search_params"] = fallback
+        return fallback
     except Exception:
-        pass
-
-    # SPM-specific upgrades: fetch a small top-K and enforce brand if provided
-    try:
-        if str(final_params.get('product_intent') or '').strip() == 'is_this_good':
-            # Increase size to allow brand-aware selection among top-K
-            try:
-                cur_size = int(final_params.get('size', 1) or 1)
-            except Exception:
-                cur_size = 1
-            final_params['size'] = max(cur_size, 5)
-            # Enforce strict brand filter when brand hints exist
-            brands_val = final_params.get('brands')
-            if (isinstance(brands_val, list) and len(brands_val) > 0) or (isinstance(brands_val, str) and brands_val.strip()):
-                final_params['enforce_brand'] = True
-    except Exception:
-        pass
-
-    # Apply query sanitization (strip noisy tokens)
-    try:
-        if isinstance(final_params.get('q'), str) and final_params['q']:
-            before_q = final_params['q']
-            after_q = before_q
-            for junk in ["products", "options", "show me", "alternatives"]:
-                after_q = after_q.replace(junk, "").strip()
-            if after_q != before_q:
-                print(f"DEBUG: BSP_Q_SANITIZED | before='{before_q}' | after='{after_q}'")
-                final_params['q'] = after_q
-    except Exception:
-        pass
-
-    # Heuristic: if q empty/meaningless AND no category, prefer to ask next slot rather than search
-    try:
-        qval = str(final_params.get('q') or '').strip()
-        has_category = bool(final_params.get('category_path'))
-        if (not qval or len(qval) <= 2) and not has_category:
-            print("DEBUG: ES_SKIP_SEARCH_PREVIEW | slot-only turn with no category; would ask next slot instead of searching")
-    except Exception:
-        pass
-    
-    # Heuristic upgrades based on current text
-    text_lower = (current_text or "").lower()
-    if any(token in text_lower for token in ["healthier", "healthy", "cleaner", "better for me", "low sugar", "less oil", "low sodium"]):
-        # Tighten quality threshold if user is asking for healthier options
-        try:
-            prev = float(final_params.get("min_flean_percentile", 30))
-        except Exception:
-            prev = 30.0
-        final_params["min_flean_percentile"] = max(prev, 50)
-
-    # Also consider preferences stored in session for keyword enrichment
-    try:
-        pref_text = str((ctx.session or {}).get("preferences", "") or "").lower()
-        if pref_text:
-            # crude tokenization
-            pref_tokens = [t for t in re.findall(r"[A-Za-z]+", pref_text) if t]
-            before_kw = list(final_params.get("keywords") or [])
-            existing = set(x.lower() for x in before_kw)
-            for t in pref_tokens:
-                if t.lower() not in existing:
-                    before_kw.append(t.lower())
-                    existing.add(t.lower())
-            final_params["keywords"] = before_kw[:8]
-            print(f"DEBUG: BSP_PREF_INJECT | prefs='{pref_text}' | keywords={final_params['keywords']}")
-    except Exception as _pref_exc:
-        print(f"DEBUG: BSP_PREF_INJECT_ERROR | {str(_pref_exc)}")
-    
-    print(f"DEBUG: Final search params = {final_params}")
-    
-    # Store for debugging
-    try:
-        ctx.session.setdefault("debug", {})["last_search_params"] = final_params
-    except:
-        pass
-    
-    return final_params
+        # Extreme fallback
+        return {"q": "snacks", "size": 20, "category_group": "f_and_b", "product_intent": "show_me_options", "protein_weight": 1.5}
 
 # Global fetcher instance
 _es_fetcher: Optional[ElasticsearchProductsFetcher] = None
@@ -1132,6 +1069,75 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
                 print(f"DEBUG: Average flean percentile {avg_flean}% is low, considering fallback...")
                 results['meta']['quality_warning'] = f'average_flean_percentile_{avg_flean:.1f}'
     
+    # Zero-result fallback strategy: relax constraints or probe siblings
+    try:
+        total = int(((results.get('meta') or {}).get('total_hits')) or 0)
+    except Exception:
+        total = 0
+    if total == 0:
+        print("DEBUG: ZERO_RESULT | attempting fallback strategies")
+        # Strategy A: relax price window slightly if price_max present
+        relaxed_ran = False
+        try:
+            p2 = dict(params)
+            if isinstance(p2.get('price_max'), (int, float)):
+                p2['price_max'] = float(p2['price_max']) * 1.25
+                relaxed_ran = True
+                print(f"DEBUG: RELAX_PRICE | new_price_max={p2['price_max']}")
+                alt = await loop.run_in_executor(None, lambda: fetcher.search(p2))
+                alt_total = int(((alt.get('meta') or {}).get('total_hits')) or 0)
+                if alt_total > 0:
+                    alt['meta']['fallback_applied'] = 'relax_price_max_25pct'
+                    return alt
+        except Exception:
+            pass
+
+        # Strategy B: category sibling probe within same l2
+        try:
+            cat_paths = params.get('category_paths') if isinstance(params.get('category_paths'), list) else []
+            primary = params.get('category_path') or (cat_paths[0] if cat_paths else '')
+            rel = ''
+            if isinstance(primary, str) and primary.strip():
+                # extract relative path l2/l3
+                parts = [x for x in primary.split('/') if x]
+                # expect f_and_b/food/l2/l3 or personal_care/l2/l3
+                if len(parts) >= 4 and parts[0] == 'f_and_b' and parts[1] == 'food':
+                    l2 = parts[2]
+                    # For sibling probe: replace l3 with None to broaden
+                    sibling_candidates = [f"f_and_b/food/{l2}"]
+                elif len(parts) >= 2 and parts[0] == 'personal_care':
+                    l2 = parts[1]
+                    sibling_candidates = [f"personal_care/{l2}"]
+                else:
+                    sibling_candidates = []
+                if sibling_candidates:
+                    p3 = dict(params)
+                    p3.pop('category_paths', None)
+                    p3['category_path'] = sibling_candidates[0]
+                    print(f"DEBUG: SIBLING_PROBE | path={p3['category_path']}")
+                    alt2 = await loop.run_in_executor(None, lambda: fetcher.search(p3))
+                    alt2_total = int(((alt2.get('meta') or {}).get('total_hits')) or 0)
+                    if alt2_total > 0:
+                        alt2['meta']['fallback_applied'] = 'sibling_probe_l2'
+                        return alt2
+        except Exception:
+            pass
+
+        # Strategy C: drop dietary terms if present but too restrictive
+        try:
+            if (params.get('dietary_terms') or params.get('dietary_labels')) and not relaxed_ran:
+                p4 = dict(params)
+                p4.pop('dietary_terms', None)
+                p4.pop('dietary_labels', None)
+                print("DEBUG: DROP_DIETARY_FALLBACK")
+                alt3 = await loop.run_in_executor(None, lambda: fetcher.search(p4))
+                alt3_total = int(((alt3.get('meta') or {}).get('total_hits')) or 0)
+                if alt3_total > 0:
+                    alt3['meta']['fallback_applied'] = 'drop_dietary'
+                    return alt3
+        except Exception:
+            pass
+
     return results
 
 async def fetch_user_profile_handler(ctx) -> Dict[str, Any]:

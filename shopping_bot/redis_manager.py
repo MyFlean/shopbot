@@ -159,6 +159,21 @@ class RedisContextManager:
             )
             
             log.info(f"CONTEXT_LOADED | user={user_id} | session={session_id} | permanent_keys={list(permanent.keys())} | session_keys={list(session.keys())} | fetched_keys={list(fetched.keys())}")
+            try:
+                print(f"CORE:REDIS_LOAD | session={session_id} | p={len(permanent)} | s={len(session)} | f={len(fetched)} | ch={len((session or {}).get('conversation_history', []))}")
+                ch_list = (session or {}).get('conversation_history') or []
+                if isinstance(ch_list, list) and 0 < len(ch_list) <= 5:
+                    preview = [
+                        {
+                            "i": idx + 1,
+                            "user": str((h or {}).get("user_query", ""))[:80],
+                            "bot": str((((h or {}).get("final_answer", {}) or {}).get("message_preview") or (h or {}).get("bot_reply") or ""))[:100],
+                        }
+                        for idx, h in enumerate(ch_list)
+                    ]
+                    print(f"CORE:REDIS_CONVO_DUMP | session={session_id} | {json.dumps(preview, ensure_ascii=False)}")
+            except Exception:
+                pass
             return ctx
             
         except Exception as e:
@@ -184,6 +199,21 @@ class RedisContextManager:
                 return False
 
             log.debug(f"CONTEXT_SAVE_START | user={ctx.user_id} | session={ctx.session_id}")
+            try:
+                print(f"CORE:REDIS_SAVE | session={ctx.session_id} | p={len(ctx.permanent)} | s={len(ctx.session)} | f={len(ctx.fetched_data)} | ch={len((ctx.session or {}).get('conversation_history', []))}")
+                ch_list = (ctx.session or {}).get('conversation_history') or []
+                if isinstance(ch_list, list) and 0 < len(ch_list) <= 5:
+                    preview = [
+                        {
+                            "i": idx + 1,
+                            "user": str((h or {}).get("user_query", ""))[:80],
+                            "bot": str((((h or {}).get("final_answer", {}) or {}).get("message_preview") or (h or {}).get("bot_reply") or ""))[:100],
+                        }
+                        for idx, h in enumerate(ch_list)
+                    ]
+                    print(f"CORE:REDIS_CONVO_DUMP_SAVE | session={ctx.session_id} | {json.dumps(preview, ensure_ascii=False)}")
+            except Exception:
+                pass
 
             # FIX: For Redis Cluster, save keys individually instead of pipeline
             try:

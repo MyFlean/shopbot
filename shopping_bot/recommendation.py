@@ -415,13 +415,11 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
                 # Caching disabled
                 return response
             
-            # 4) Normalise params via dedicated LLM tool
+            # 4) Normalise params via dedicated LLM tool (no unconditional overlay from session slots)
             final_params = await self._normalise_es_params(params_from_llm, context, constructed_q, current_user_text)
             
-            # Overlay session answers explicitly (budget/preferences/dietary)
+            # Overlay only preferences as keywords; do not auto-merge dietary/brands unless current turn affirms
             try:
-                if isinstance(session.get('dietary_requirements'), (list, str)) and session.get('dietary_requirements'):
-                    final_params['dietary_terms'] = session.get('dietary_requirements')
                 if isinstance(session.get('preferences'), str) and session.get('preferences').strip():
                     # preferences become keywords/phrase_boosts
                     ptxt = session.get('preferences').strip()
@@ -1568,9 +1566,29 @@ class RecommendationService:
                 product_intent = str(ctx.session.get("product_intent") or "show_me_options")
                 plan = await llm.plan_es_search(ctx.session.get("current_user_text") or ctx.session.get("last_user_message") or "", ctx, product_intent=product_intent)
                 es_params = (plan or {}).get("es_params") or {}
+                # Preserve composed dietary_terms if present (do not override downstream)
+                try:
+                    composed_dt = ((ctx.session.get("debug", {}) or {}).get("composed_dietary_terms") or []) if isinstance(ctx.session.get("debug"), dict) else []
+                    if (isinstance(es_params.get("dietary_terms"), list) and es_params.get("dietary_terms")):
+                        pass
+                    elif composed_dt:
+                        es_params["dietary_terms"] = composed_dt
+                except Exception:
+                    pass
                 # Guard/normalize minimal fields (server-side safety)
                 out: Dict[str, Any] = {}
-                q = str(es_params.get("q") or ctx.session.get("canonical_query") or ctx.session.get("last_query") or "").strip()
+                # Defensive: during an active assessment, prefer assessment.original_query as anchor for generic modifier turns
+                try:
+                    assessment = ctx.session.get("assessment", {}) or {}
+                    current_text = (ctx.session.get("current_user_text") or ctx.session.get("last_user_message") or "").strip().lower()
+                    generic_markers = ["under", "over", "below", "above", "cheaper", "premium", "gluten", "vegan", "no palm", "baked", "fried", "options", "alternatives", "alternate", "show me"]
+                    has_product_noun = any(n in current_text for n in ["ketchup", "chips", "juice", "soap", "shampoo", "bread", "milk", "biscuit", "cookie", "chocolate", "noodles", "vermicelli"])
+                    is_generic = any(m in current_text for m in generic_markers) and not has_product_noun
+                except Exception:
+                    assessment = {}
+                    is_generic = False
+                preferred_anchor = str(assessment.get("original_query") or "").strip()
+                q = str(es_params.get("q") or (preferred_anchor if (preferred_anchor and is_generic) else "") or ctx.session.get("canonical_query") or ctx.session.get("last_query") or "").strip()
                 if q:
                     out["q"] = q
                 # Copy-through allowed keys

@@ -56,6 +56,10 @@ class BaseConfig:
     USE_COMBINED_CLASSIFY_ASSESS: bool = os.getenv("USE_COMBINED_CLASSIFY_ASSESS", "false").lower() in {"1", "true", "yes", "on"}
     USE_CONVERSATION_AWARE_CLASSIFIER: bool = os.getenv("USE_CONVERSATION_AWARE_CLASSIFIER", "false").lower() in {"1", "true", "yes", "on"}
     USE_TWO_CALL_ES_PIPELINE: bool = os.getenv("USE_TWO_CALL_ES_PIPELINE", "false").lower() in {"1", "true", "yes", "on"}
+    # Ask-only mode: bypass assessment state machine except for sequential ASK_* prompts
+    ASK_ONLY_MODE: bool = os.getenv("ASK_ONLY_MODE", "false").lower() in {"1", "true", "yes", "on"}
+    # New: Use assessment only for ask_user; ignore for ES planning/anchoring
+    USE_ASSESSMENT_FOR_ASK_ONLY: bool = os.getenv("USE_ASSESSMENT_FOR_ASK_ONLY", "false").lower() in {"1", "true", "yes", "on"}
 
 
 class DevelopmentConfig(BaseConfig):

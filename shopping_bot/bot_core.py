@@ -217,7 +217,8 @@ class ShoppingBotCore:
                     "has_sections": False,
                     "has_products": bool(ux_enhanced_answer.get("products")),
                     "flow_triggered": False,
-                    "ux_intent": product_intent_result.intent
+                    "ux_intent": product_intent_result.intent,
+                    "message_full": ux_enhanced_answer.get("summary_message") or ux_enhanced_answer.get("message") or "",
                 }
                 
                 snapshot_and_trim(ctx, base_query=query, final_answer=final_answer_summary)
@@ -269,6 +270,7 @@ class ShoppingBotCore:
                         "has_products": bool(ux.get("products")),
                         "flow_triggered": False,
                         "ux_intent": fallback_intent,
+                        "message_full": ux.get("summary_message") or ux.get("message") or "",
                     },
                 )
                 self.ctx_mgr.save_context(ctx)
@@ -298,6 +300,7 @@ class ShoppingBotCore:
             "has_sections": False,
             "has_products": bool(answer_dict.get("products")),
             "flow_triggered": False,
+            "message_full": answer_dict.get("summary_message") or answer_dict.get("message") or "",
         }
 
         snapshot_and_trim(ctx, base_query=query, final_answer=final_answer_summary)
@@ -782,6 +785,7 @@ class ShoppingBotCore:
                         "has_products": bool(ux_enhanced_answer.get("products")),
                         "flow_triggered": False,
                         "ux_intent": fallback_intent,
+                        "message_full": ux_enhanced_answer.get("summary_message") or ux_enhanced_answer.get("message") or "",
                     },
                 )
                 ctx.session.pop("assessment", None)
@@ -813,6 +817,7 @@ class ShoppingBotCore:
             "has_sections": False,
             "has_products": bool(answer_dict.get("products")),
             "flow_triggered": False,
+            "message_full": answer_dict.get("summary_message") or answer_dict.get("message") or "",
         }
 
         snapshot_and_trim(ctx, base_query=original_q, final_answer=final_answer_summary)

@@ -310,7 +310,8 @@ UNIFIED_ES_PARAMS_TOOL = {
             "price_min": {"type": "number"},
             "price_max": {"type": "number"},
             "keywords": {"type": "array", "items": {"type": "string"}},
-            "phrase_boosts": {"type": "array", "items": {"type": "object"}}
+            "phrase_boosts": {"type": "array", "items": {"type": "object"}},
+            "anchor_product_noun": {"type": "string", "description": "The most recent, specific product noun/phrase identified from context that anchors q; if none, a generic noun like 'evening snacks'"}
         },
         "required": ["q", "category_group"]
     }
@@ -1051,7 +1052,7 @@ class LLMService:
                     }
                 convo = ctx.session.get("conversation_history", []) or []
                 if isinstance(convo, list) and convo:
-                    for h in convo[-5:]:
+                    for h in convo[-10:]:
                         if isinstance(h, dict):
                             convo_pairs.append({
                                 "user_query": str(h.get("user_query", ""))[:120],
@@ -1066,16 +1067,27 @@ class LLMService:
             "Task 2: If product-related, classify one of 4 intents: is_this_good | which_is_better | show_me_alternate | show_me_options.\n"
             "Task 3: If product-related, emit EXACTLY TWO ASK_* questions with EXACTLY 3 options each (short, concrete),\n"
             "         optimized to refine Elasticsearch filters (prefer budget + dietary); and set fetch_functions=['search_products'].\n"
-            "FOLLOW-UP RULE: Decide is_follow_up by comparing the current message to the immediate last turn (and up to 5 recent turns).\n"
-            "- If the CURRENT message introduces a NEW product noun/category versus the last canonical query, set is_follow_up=false (treat as NEW assessment).\n"
-            "If is_follow_up=true AND product_related=true → DO NOT emit ASK_*; set fetch_functions=['search_products'] only.\n"
+            "FOLLOW-UP GUIDANCE: Decide is_follow_up by comparing the current message to roughly the last 10 interactions, giving much more weight to the most recent turns.\n"
+            "- Think in terms of a decaying emphasis (e.g., recent ≫ older) rather than strict weights.\n"
+            "- If CURRENT message feels like a modifier-only turn (price/dietary/quality or a short ingredient/flavor), lean towards follow-up (is_follow_up=true).\n"
+            "- If CURRENT introduces a clear new product noun/category that diverges from the recent anchor, lean towards is_follow_up=false. Use judgment.\n"
+            "ASK DESIGN (MANDATORY):\n"
+            "- Infer likely category/subcategory from the latest query + recent turns; tailor ASK_* messages and options to that subcategory.\n"
+            "- One of the two asks MUST be ASK_USER_BUDGET. Budget options MUST be in INR (use the '₹' symbol) and calibrated to the subcategory's typical price bands.\n"
+            "  Examples:\n"
+            "   • chips_and_crisps → ['Under ₹50','₹50–150','Over ₹150']\n"
+            "   • sauces_condiments → ['Under ₹100','₹100–300','Over ₹300']\n"
+            "   • noodles_pasta → ['Under ₹50','₹50–150','Over ₹150']\n"
+            "   • shampoo (personal care) → ['Under ₹99','₹99–299','Over ₹299']\n"
+            "- If subcategory is unclear, use labeled bands: ['Budget friendly','Smart choice','Premium'].\n"
+            "- For the second ASK_* choose the most useful for the subcategory (dietary for F&B; preferences/brand/use_case otherwise) and ensure options are subcategory-appropriate and concise; include 'No preference' when applicable.\n"
             "ALLOWED ASK_* SLOTS (choose only from this list):\n"
             "- ASK_USER_BUDGET\n- ASK_DIETARY_REQUIREMENTS\n- ASK_USER_PREFERENCES\n- ASK_USE_CASE\n- ASK_QUANTITY\n- ASK_DELIVERY_ADDRESS\n"
             "STRICT: The ask object MUST use keys only from the allowed list. If unsure, pick budget and dietary.\n"
             "If NOT product-related, return simple_response {response_type:'final_answer', message}.\n"
             "Return ONLY the tool call to classify_and_assess.\n\n"
             f"RECENT_CONTEXT: {json.dumps(recent_context, ensure_ascii=False)}\n"
-            f"RECENT_TURNS: {json.dumps(convo_pairs, ensure_ascii=False)}\n"
+            f"RECENT_TURNS (last up to 10): {json.dumps(convo_pairs, ensure_ascii=False)}\n"
             f"QUERY: {query.strip()}\n"
         )
 
@@ -1141,8 +1153,14 @@ class LLMService:
                     for opt in opts[:3]:
                         if isinstance(opt, str) and opt.strip():
                             norm_opts.append(opt.strip())
-                    while len(norm_opts) < 3:
-                        norm_opts.append("Other")
+                    # Pad according to slot semantics
+                    if ckey == "ASK_USER_BUDGET":
+                        fillers = ["Budget friendly", "Smart choice", "Premium"]
+                        while len(norm_opts) < 3 and fillers:
+                            norm_opts.append(fillers.pop(0))
+                    else:
+                        while len(norm_opts) < 3:
+                            norm_opts.append("No preference")
                     canon_ask[ckey] = {
                         "message": v.get("message") or f"What's your {ckey.replace('ASK_', '').replace('_', ' ').lower()}?",
                         "options": norm_opts[:3],
@@ -1151,12 +1169,12 @@ class LLMService:
                 if not canon_ask:
                     canon_ask = {
                         "ASK_USER_BUDGET": {
-                            "message": "What's your budget range?",
-                            "options": ["Under ₹100", "₹100-500", "Over ₹500"],
+                            "message": "What's your budget range? (in ₹)",
+                            "options": ["Under ₹100", "₹100–300", "Over ₹300"],
                         },
                         "ASK_DIETARY_REQUIREMENTS": {
                             "message": "Any dietary requirements?",
-                            "options": ["No palm oil", "Low oil", "No preference"],
+                            "options": ["GLUTEN FREE", "LOW SODIUM", "No preference"],
                         },
                     }
                 else:
@@ -2126,12 +2144,22 @@ class LLMService:
 
             current_text = str(getattr(ctx, "current_user_text", "") or session.get("current_user_text") or session.get("last_user_message") or "").strip()
 
-            # Interactions (last 5)
-            convo_history = self._build_last_interactions(ctx, limit=5)
+            # Follow-up detection (Redis-driven; assessment state ignored if ASK_ONLY_MODE)
+            if ask_only_mode:
+                is_follow_up = self._is_follow_up_from_redis(ctx)
+            else:
+                is_follow_up = bool(assessment)
+            try:
+                print(f"CORE:FOLLOWUP_DECIDE | ask_only={ask_only_mode} | follow_up={is_follow_up}")
+            except Exception:
+                pass
+
+            # Interactions: use up to 10 for follow-up, 5 otherwise
+            hist_limit = 10 if is_follow_up else 5
+            convo_history = self._build_last_interactions(ctx, limit=hist_limit)
             try:
                 prev = (convo_history[-1]["user_query"] if convo_history else "")
                 print(f"CORE:HIST_READ | count={len(convo_history)} | last_user='{str(prev)[:60]}'")
-                # dump the convo immediately after
                 dump = [
                     {
                         "i": i + 1,
@@ -2151,16 +2179,6 @@ class LLMService:
             except Exception:
                 last_user_query = ""
 
-            # Follow-up detection (Redis-driven; assessment state ignored if ASK_ONLY_MODE)
-            if ask_only_mode:
-                is_follow_up = self._is_follow_up_from_redis(ctx)
-            else:
-                is_follow_up = bool(assessment)
-            try:
-                print(f"CORE:FOLLOWUP_DECIDE | ask_only={ask_only_mode} | follow_up={is_follow_up}")
-            except Exception:
-                pass
-
             slot_answers = {
                 "product_intent": session.get("product_intent"),
                 "budget": session.get("budget"),
@@ -2177,12 +2195,13 @@ class LLMService:
                     "You are expert at extracting Elasticsearch parameters.\n\n"
                     f"FOLLOW-UP QUERY: \"{current_text}\"\n"
                     f"PRODUCT_INTENT: {product_intent}\n"
-                    f"LAST 5 INTERACTIONS (user↔bot incl. asks/answers): {interactions_json}\n\n"
+                    f"LAST {hist_limit} INTERACTIONS (user↔bot incl. asks/answers): {interactions_json}\n\n"
                     "Task: Figure out the delta and regenerate adapted ES params.\n"
-                    "Return fields: q, category_group, subcategory, category_paths, brands[], dietary_terms[], price_min, price_max, keywords[], phrase_boosts[], size.\n"
-                    "Rules: Keep q to product nouns only. Dietary/price go to their fields. Subcategory should be a taxonomy leaf (e.g., 'chips_and_crisps').\n"
-                    "Recency weighting: Determine the primary product noun/phrase from the last 5 interactions with weights [0.5, 0.25, 0.15, 0.07, 0.03] for most→least recent.\n"
-                    "If CURRENT_USER_TEXT is modifier-only (attributes like price/dietary/quality or an ingredient/flavor word), ANCHOR q to the most recent weighted product noun/phrase (e.g., 'sauces' + 'tomato' → 'tomato sauce'). Prefer specific noun-phrases over generic parents.\n\n"
+                    "Return fields: q, category_group, subcategory, category_paths, brands[], dietary_terms[], price_min, price_max, keywords[], phrase_boosts[], size, anchor_product_noun.\n"
+                    "Guidance: Keep q to product nouns only. Dietary/price belong in their own fields. Subcategory should be a taxonomy leaf (e.g., 'chips_and_crisps').\n"
+                    "Recency weighting: Consider the last ~10 interactions, giving substantially more weight to the most recent turns. You may think in terms of a decaying pattern (e.g., 0.5 → 0.25 → 0.15 …) but use judgment rather than strict rules.\n"
+                    "Also RETURN anchor_product_noun: the most recent, specific product noun/phrase you identify as the anchor. CONSTRUCT q using anchor_product_noun plus any CURRENT modifiers (e.g., ingredient→combine with parent: 'tomato' + 'sauce' → 'tomato sauce'). If no product noun exists, set anchor_product_noun to a generic intent noun (e.g., 'breakfast options', 'evening snacks', 'healthy snacks') and construct q from that generic noun.\n\n"
+                    "Heuristic: If CURRENT_USER_TEXT looks like a modifier-only message (price/dietary/quality or a short ingredient/flavor), prefer to ANCHOR q to the most recent product noun/phrase. Prefer specific noun-phrases over generic parents.\n\n"
                     "Examples:\n"
                     "1) History: 'want some good sauces' → anchor=sauces; Current: 'tomato' → q='tomato sauce', category_group='f_and_b', subcategory='sauces_condiments'.\n"
                     "2) History: 'chips' → anchor=chips; Current: 'banana' → q='banana chips'.\n"
@@ -2192,12 +2211,13 @@ class LLMService:
                 prompt = (
                     "You are expert at extracting Elasticsearch parameters.\n\n"
                     f"USER QUERY: \"{current_text}\"\n"
-                    f"CONTEXT SO FAR (last 5 interactions): {interactions_json}\n"
+                    f"CONTEXT SO FAR (last {hist_limit} interactions): {interactions_json}\n"
                     f"PRODUCT_INTENT: {product_intent}\n\n"
                     "Task: Extract params for the user's latest concern.\n"
-                    "Return fields: q, category_group, subcategory, category_paths, brands[], dietary_terms[], price_min, price_max, keywords[], phrase_boosts[], size.\n"
-                    "Rules: Keep q to product nouns only. Dietary/price go to their fields. Subcategory should be a taxonomy leaf (e.g., 'chips_and_crisps').\n"
-                    "Recency weighting (non-follow-up): Treat CURRENT_USER_TEXT as primary (weight 0.7). Also consider the last 3 interactions with weights [0.2, 0.07, 0.03] for most→least recent. Prefer more specific noun-phrases (e.g., 'banana chips') over generic parents ('chips'). If CURRENT_USER_TEXT is generic or empty, fall back to the weighted phrase from history.\n"
+                    "Return fields: q, category_group, subcategory, category_paths, brands[], dietary_terms[], price_min, price_max, keywords[], phrase_boosts[], size, anchor_product_noun.\n"
+                    "Guidance: Keep q to product nouns only. Dietary/price belong in their own fields. Subcategory should be a taxonomy leaf (e.g., 'chips_and_crisps').\n"
+                    "Recency weighting (non-follow-up): Give the most weight to CURRENT_USER_TEXT; also consider the last 3–5 interactions with a lighter, decaying emphasis. Prefer more specific noun-phrases (e.g., 'banana chips') over generic parents ('chips'). If CURRENT_USER_TEXT is generic or ambiguous, fall back to a reasonable weighted phrase from history.\n"
+                    "Also RETURN anchor_product_noun: the specific product noun/phrase you identify (or a generic intent noun like 'breakfast options', 'evening snacks', 'healthy snacks' if no specific product is present). CONSTRUCT q using anchor_product_noun plus any CURRENT modifiers if appropriate.\n"
                 )
 
             # CORE log: LLM2 input
@@ -2267,7 +2287,7 @@ class LLMService:
 
             # CORE log: compact values
             try:
-                print(f"CORE:LLM2_OUT | q='{params.get('q')}' | cg='{params.get('category_group')}' | subcat='{params.get('subcategory')}' | price=({params.get('price_min')},{params.get('price_max')}) | dietary={params.get('dietary_terms')} | paths={len(params.get('category_paths') or [])}")
+                print(f"CORE:LLM2_OUT | q='{params.get('q')}' | cg='{params.get('category_group')}' | subcat='{params.get('subcategory')}' | price=({params.get('price_min')},{params.get('price_max')}) | dietary={params.get('dietary_terms')} | anchor='{params.get('anchor_product_noun')}' | paths={len(params.get('category_paths') or [])}")
             except Exception:
                 pass
 
@@ -2330,9 +2350,17 @@ class LLMService:
             # take last N
             for h in hist[-limit:]:
                 if isinstance(h, dict):
+                    fa = (h.get("final_answer", {}) or {})
+                    bot_text = (
+                        fa.get("message_full")
+                        or fa.get("summary_message")
+                        or fa.get("message_preview")
+                        or h.get("bot_reply")
+                        or ""
+                    )
                     out.append({
                         "user_query": str(h.get("user_query", ""))[:160],
-                        "bot_reply": str(((h.get("final_answer", {}) or {}).get("message_full") or h.get("bot_reply") or ""))[:240]
+                        "bot_reply": str(bot_text)[:240]
                     })
         except Exception:
             out = []

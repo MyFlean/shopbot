@@ -132,6 +132,16 @@ def already_have_data(func_str: str, ctx: UserContext) -> bool:
                 or "delivery_address" in ctx.permanent
             )
 
+        # For DIETARY_REQUIREMENTS: count only if answered in THIS assessment, ignore stale session values
+        if slot == UserSlot.DIETARY_REQUIREMENTS:
+            try:
+                a = ctx.session.get("assessment", {}) or {}
+                fulfilled = a.get("fulfilled", []) or []
+                return UserSlot.DIETARY_REQUIREMENTS.value in fulfilled
+            except Exception:
+                return False
+
+        # Default: session presence is sufficient
         return session_key in ctx.session
     except ValueError:
         pass
@@ -293,6 +303,12 @@ def snapshot_and_trim(
             "session_id": ctx.session_id,
         }
         ctx.session.setdefault("conversation_history", []).append(conv_unit)
+        try:
+            ch = ctx.session.get("conversation_history") or []
+            preview = str(conv_unit.get("user_query", ""))[:60]
+            print(f"CORE:HIST_WRITE | count={len(ch)} | last_user='{preview}'")
+        except Exception:
+            pass
 
         # ---- legacy snapshot (keep minimal set + NEW final answer fields)
         legacy_snapshot = {

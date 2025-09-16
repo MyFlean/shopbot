@@ -415,6 +415,22 @@ class ShoppingBotCore:
                             "options": ctx.session["contextual_questions"][first_key]["options"],
                             "currently_asking": first_key,
                         }
+                        # Snapshot this ask turn so it appears in conversation_history immediately
+                        try:
+                            snapshot_and_trim(
+                                ctx,
+                                base_query=query,
+                                final_answer={
+                                    "response_type": "question",
+                                    "message_preview": str(q.get("message") or q.get("question") or "")[0:200],
+                                    "has_sections": False,
+                                    "has_products": False,
+                                    "flow_triggered": False,
+                                },
+                            )
+                            self.ctx_mgr.save_context(ctx)
+                        except Exception:
+                            pass
                         return BotResponse(ResponseType.QUESTION, q)
                     # If no asks returned, fall through to existing flow
         except Exception:
@@ -496,6 +512,15 @@ class ShoppingBotCore:
             "currently_asking": None,
         }
 
+        # Seed canonical query for this assessment and clear stale planner hints
+        try:
+            ctx.session["canonical_query"] = query
+            ctx.session["last_query"] = query
+            dbg = ctx.session.setdefault("debug", {})
+            dbg["last_search_params"] = {}
+        except Exception:
+            pass
+
         # Heuristic: ensure essential slots for product queries when model under-specifies
         try:
             if result.is_product_related:
@@ -561,6 +586,22 @@ class ShoppingBotCore:
             try:
                 if isinstance(q, dict):
                     q["currently_asking"] = func_value
+            except Exception:
+                pass
+            # Snapshot this ask turn so it appears in conversation_history immediately
+            try:
+                snapshot_and_trim(
+                    ctx,
+                    base_query=query,
+                    final_answer={
+                        "response_type": "question",
+                        "message_preview": str(q.get("message") or q.get("question") or "")[0:200],
+                        "has_sections": False,
+                        "has_products": False,
+                        "flow_triggered": False,
+                    },
+                )
+                self.ctx_mgr.save_context(ctx)
             except Exception:
                 pass
             return BotResponse(ResponseType.QUESTION, q)

@@ -293,6 +293,29 @@ PRODUCT_RESPONSE_TOOL = {
     }
 }
 
+# Unified ES params generation tool - ONE authoritative call
+UNIFIED_ES_PARAMS_TOOL = {
+    "name": "generate_unified_es_params",
+    "description": "Generate ALL Elasticsearch parameters in one authoritative call using complete context: current text, assessment base, slot answers, and conversation history.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "q": {"type": "string", "description": "Search query (2-5 words, no prices/currency)"},
+            "size": {"type": "integer", "minimum": 1, "maximum": 50},
+            "category_group": {"type": "string", "enum": ["f_and_b", "personal_care", "health_nutrition", "home_kitchen", "electronics"]},
+            "category_paths": {"type": "array", "items": {"type": "string"}},
+            "subcategory": {"type": "string"},
+            "brands": {"type": "array", "items": {"type": "string"}},
+            "dietary_terms": {"type": "array", "items": {"type": "string"}},
+            "price_min": {"type": "number"},
+            "price_max": {"type": "number"},
+            "keywords": {"type": "array", "items": {"type": "string"}},
+            "phrase_boosts": {"type": "array", "items": {"type": "object"}}
+        },
+        "required": ["q", "category_group"]
+    }
+}
+
 SIMPLE_RESPONSE_TOOL = {
     "name": "generate_simple_response",
     "description": "Generate simple text response for non-product queries",
@@ -499,6 +522,9 @@ You are determining if the user's NEW message should be treated as a follow-up.
 
 ### New user message:
 "{query}"
+
+Rule: If the CURRENT message introduces a NEW product noun/category versus the last canonical query, set is_follow_up=false (treat as NEW assessment).
+Otherwise, set is_follow_up=true only if the message refines/qualifies the previous query (modifier-only deltas like budget/dietary/quality).
 
 Return a tool call to classify_follow_up.
 """
@@ -731,6 +757,94 @@ class LLMService:
         self.anthropic = anthropic.AsyncAnthropic(api_key=api_key)
         self._recommendation_service = get_recommendation_service()
 
+    def _extract_noun(self, text: str) -> str:
+        try:
+            low = (text or "").lower()
+            nouns = ["chips","noodles","bread","butter","jam","chocolate","soap","shampoo","juice","biscuit","cookie","ketchup","vermicelli"]
+            for n in nouns:
+                if n in low:
+                    return n
+        except Exception:
+            pass
+        return ""
+
+    def _extract_product_phrase(self, text: str) -> str:
+        try:
+            t = (text or "").strip()
+            low = t.lower()
+            # Avoid dietary adjectives as head words
+            stop_adj = {"gluten","vegan","palm","sugar","organic","low","less","no","free","sodium","fat"}
+            targets = ["chips","noodles","biscuits","biscuit","cookies","cookie","chocolate","shampoo","soap","ketchup","bread","butter","jam","juice","vermicelli"]
+            import re
+            for noun in targets:
+                # capture a single non-stop adjective word immediately before the noun
+                m = re.search(r"\b([a-z]+)\s+" + re.escape(noun) + r"\b", low)
+                if m:
+                    adj = m.group(1)
+                    if adj and adj not in stop_adj:
+                        phrase = f"{adj} {noun}"
+                        return phrase
+                # fall back to noun alone
+                if re.search(r"\b" + re.escape(noun) + r"\b", low):
+                    return noun
+        except Exception:
+            pass
+        return ""
+
+    def _recency_weighted_product(self, convo_history: list[dict[str, str]]) -> str:
+        try:
+            # weights: most recent first
+            weights = [0.5, 0.25, 0.15, 0.07, 0.03]
+            scored: dict[str, float] = {}
+            # iterate from latest to older
+            recent = list(reversed(convo_history[-5:]))  # oldest→latest after reverse
+            # We want latest first, so reverse back
+            recent = list(reversed(recent))
+            for idx, turn in enumerate(recent):
+                w = weights[idx] if idx < len(weights) else 0.01
+                user_q = str((turn or {}).get("user_query", ""))
+                phrase = self._extract_product_phrase(user_q)
+                if not phrase:
+                    continue
+                scored[phrase] = scored.get(phrase, 0.0) + w
+            # choose highest score; prefer longer phrase over single noun on tie
+            if not scored:
+                return ""
+            best = sorted(scored.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True)[0][0]
+            return best
+        except Exception:
+            return ""
+
+    def _recency_weighted_product_last3(self, convo_history: list[dict[str, str]]) -> str:
+        try:
+            weights = [0.2, 0.07, 0.03]
+            scored: dict[str, float] = {}
+            recent = list(reversed(convo_history[-3:]))
+            recent = list(reversed(recent))
+            for idx, turn in enumerate(recent):
+                w = weights[idx] if idx < len(weights) else 0.01
+                user_q = str((turn or {}).get("user_query", ""))
+                phrase = self._extract_product_phrase(user_q)
+                if not phrase:
+                    continue
+                scored[phrase] = scored.get(phrase, 0.0) + w
+            if not scored:
+                return ""
+            best = sorted(scored.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True)[0][0]
+            return best
+        except Exception:
+            return ""
+
+    def _extract_noun_from_texts(self, texts: list[str]) -> str:
+        try:
+            for t in texts:
+                noun = self._extract_noun(t)
+                if noun:
+                    return noun
+        except Exception:
+            pass
+        return ""
+
     async def plan_es_search(self, query: str, ctx: UserContext, *, product_intent: str) -> Dict[str, Any]:
         """Two-call pipeline: call 1. Returns {is_product_related, product_intent, ask_required, es_params?}."""
         prompt = (
@@ -756,11 +870,18 @@ class LLMService:
             "   - brands, keywords, phrase_boosts/field_boosts: include only when explicit or strongly implied.\n"
             "   - size: suggest within [1,50] (server clamps).\n\n"
             "FOLLOW-UP BEHAVIOR (MANDATORY):\n"
-            "- If the current text refines the previous result (e.g., 'under 100', 'gluten free'), treat it as DELTA and DO NOT change q noun phrase,\n"
-            "  only update constraints in es_params.\n\n"
+            "- If an assessment is active, prefer the current assessment's original_query as the anchor.\n"
+            "- If the current text is a generic modifier (e.g., 'under 100', 'gluten free'), DO NOT change the q noun phrase; only update constraints in es_params,\n"
+            "  using assessment.original_query as the noun anchor when present.\n\n"
             "CATEGORY PATH CONSTRUCTION:\n"
             "- Use the provided F&B taxonomy to choose l2 and l3. Build full paths as 'f_and_b/food/<l2>' or 'f_and_b/food/<l2>/<l3>'.\n"
             "- For personal care, use 'personal_care/<l2>' or 'personal_care/<l2>/<l3>' as appropriate.\n\n"
+            "CONSTRAINT REUSE POLICY:\n"
+            "- Treat last_search_params and session slots as HINTS only.\n"
+            "- If NOT a follow-up, DROP prior constraints unless explicitly present in CURRENT text or fresh slot answers.\n"
+            "- If follow-up with modifier-only text, APPLY ONLY the delta; reuse other constraints ONLY if compatible with the same product noun/category (carry_over_constraints_hint=true).\n"
+            "- NEVER carry brands into 'options/alternatives' turns unless re-mentioned.\n"
+            "- Apply dietary constraints ONLY for f_and_b; DROP for other domains.\n\n"
             "Return ONLY tool plan_es_search.\n"
         )
 
@@ -779,6 +900,7 @@ class LLMService:
 
         # Build a compact, structured session snapshot for deterministic reasoning
         last_params = ((ctx.session.get("debug", {}) or {}).get("last_search_params", {}) or {}) if isinstance(ctx.session.get("debug"), dict) else {}
+        assessment_block = ctx.session.get("assessment", {}) or {}
         session_snapshot = {
             "budget": ctx.session.get("budget"),
             "dietary_requirements": ctx.session.get("dietary_requirements"),
@@ -804,20 +926,55 @@ class LLMService:
         except Exception:
             fnb_taxonomy = {}
 
+        # Compute a simple carry-over hint for the planner (LLM decides reuse vs drop)
+        try:
+            text_lower = (query or "").lower()
+            # Prefer current assessment original_query as the anchor during an active assessment
+            anchor_q = str(assessment_block.get("original_query") or session_snapshot.get("canonical_query") or session_snapshot.get("last_query") or "").lower()
+            nouns = ["ketchup", "chips", "juice", "soap", "shampoo", "bread", "milk", "biscuit", "cookie", "chocolate"]
+            same_noun = any(n in text_lower and n in anchor_q for n in nouns)
+            delta_markers = ["under", "over", "below", "above", "cheaper", "premium", "gluten", "vegan", "no palm", "baked", "fried"]
+            has_delta = any(m in text_lower for m in delta_markers)
+            carry_over_hint = bool(same_noun and has_delta)
+        except Exception:
+            carry_over_hint = False
+
         user_block = {
             "query": query.strip(),
             "product_intent": product_intent,
             "recent_turns": convo_pairs,
             "session": session_snapshot,
-            "assessment": {k: assessment.get(k) for k in ["missing_data", "priority_order", "currently_asking"]},
+            # Include original_query so planner can favor the current assessment anchor
+            "assessment": {k: assessment.get(k) for k in ["original_query", "missing_data", "priority_order", "currently_asking"]},
             "contextual_questions": {k: {
                 "message": v.get("message"),
                 "options": [o.get("label") if isinstance(o, dict) else str(o) for o in (v.get("options") or [])][:3]
             } for k, v in contextual_qs.items()} if isinstance(contextual_qs, dict) else {},
             "user_answers": user_answers if isinstance(user_answers, dict) else {},
             "fnb_taxonomy": fnb_taxonomy,
+            "carry_over_constraints_hint": carry_over_hint,
         }
 
+        # Generate unified ES params in ONE authoritative call
+        try:
+            unified_params = await self.generate_unified_es_params(ctx)
+            if unified_params:
+                # Store in session for immediate use
+                ctx.session.setdefault("debug", {})["unified_es_params"] = unified_params
+                ctx.session["canonical_query"] = unified_params.get("q", query)
+                ctx.session["last_query"] = unified_params.get("q", query)
+                log.info(f"UNIFIED_ES_PARAMS | q='{unified_params.get('q')}' | dietary={unified_params.get('dietary_terms')} | category={unified_params.get('category_group')}")
+                # Return plan with unified params
+                return {
+                    "is_product_related": True,
+                    "product_intent": product_intent,
+                    "ask_required": False,
+                    "es_params": unified_params
+                }
+        except Exception as exc:
+            log.warning(f"UNIFIED_ES_PARAMS_FAILED | {exc}")
+        
+        # Fallback to old path if unified fails
         resp = await self.anthropic.messages.create(
             model=Cfg.LLM_MODEL,
             messages=[{"role": "user", "content": prompt + "\n" + json.dumps(user_block, ensure_ascii=False)}],
@@ -910,6 +1067,7 @@ class LLMService:
             "Task 3: If product-related, emit EXACTLY TWO ASK_* questions with EXACTLY 3 options each (short, concrete),\n"
             "         optimized to refine Elasticsearch filters (prefer budget + dietary); and set fetch_functions=['search_products'].\n"
             "FOLLOW-UP RULE: Decide is_follow_up by comparing the current message to the immediate last turn (and up to 5 recent turns).\n"
+            "- If the CURRENT message introduces a NEW product noun/category versus the last canonical query, set is_follow_up=false (treat as NEW assessment).\n"
             "If is_follow_up=true AND product_related=true → DO NOT emit ASK_*; set fetch_functions=['search_products'] only.\n"
             "ALLOWED ASK_* SLOTS (choose only from this list):\n"
             "- ASK_USER_BUDGET\n- ASK_DIETARY_REQUIREMENTS\n- ASK_USER_PREFERENCES\n- ASK_USE_CASE\n- ASK_QUANTITY\n- ASK_DELIVERY_ADDRESS\n"
@@ -1959,6 +2117,259 @@ class LLMService:
             log.warning("ES param extraction failed: %s", exc)
             return {}
 
+    async def generate_unified_es_params(self, ctx: UserContext) -> Dict[str, Any]:
+        """Generate ALL ES parameters in one authoritative LLM call with complete context."""
+        try:
+            session = ctx.session or {}
+            assessment = session.get("assessment", {}) or {}
+            ask_only_mode = bool(getattr(Cfg, "USE_ASSESSMENT_FOR_ASK_ONLY", False))
+
+            current_text = str(getattr(ctx, "current_user_text", "") or session.get("current_user_text") or session.get("last_user_message") or "").strip()
+
+            # Interactions (last 5)
+            convo_history = self._build_last_interactions(ctx, limit=5)
+            try:
+                prev = (convo_history[-1]["user_query"] if convo_history else "")
+                print(f"CORE:HIST_READ | count={len(convo_history)} | last_user='{str(prev)[:60]}'")
+                # dump the convo immediately after
+                dump = [
+                    {
+                        "i": i + 1,
+                        "user": str(h.get("user_query", ""))[:80],
+                        "bot": str(h.get("bot_reply", "") or "")[:100],
+                    }
+                    for i, h in enumerate(convo_history)
+                ]
+                print(f"CORE:HIST_READ_DUMP | {json.dumps(dump, ensure_ascii=False)}")
+            except Exception:
+                pass
+            last_user_query = ""
+            try:
+                raw_hist = (session.get("conversation_history", []) or [])
+                if raw_hist and isinstance(raw_hist[-1], dict):
+                    last_user_query = str(raw_hist[-1].get("user_query", "")).strip()
+            except Exception:
+                last_user_query = ""
+
+            # Follow-up detection (Redis-driven; assessment state ignored if ASK_ONLY_MODE)
+            if ask_only_mode:
+                is_follow_up = self._is_follow_up_from_redis(ctx)
+            else:
+                is_follow_up = bool(assessment)
+            try:
+                print(f"CORE:FOLLOWUP_DECIDE | ask_only={ask_only_mode} | follow_up={is_follow_up}")
+            except Exception:
+                pass
+
+            slot_answers = {
+                "product_intent": session.get("product_intent"),
+                "budget": session.get("budget"),
+                "dietary_requirements": session.get("dietary_requirements"),
+                "preferences": session.get("preferences"),
+            }
+
+            # Build prompts per your outline (no base_query)
+            interactions_json = json.dumps(convo_history, ensure_ascii=False)
+            product_intent = str(session.get("product_intent") or "").strip()
+
+            if is_follow_up:
+                prompt = (
+                    "You are expert at extracting Elasticsearch parameters.\n\n"
+                    f"FOLLOW-UP QUERY: \"{current_text}\"\n"
+                    f"PRODUCT_INTENT: {product_intent}\n"
+                    f"LAST 5 INTERACTIONS (user↔bot incl. asks/answers): {interactions_json}\n\n"
+                    "Task: Figure out the delta and regenerate adapted ES params.\n"
+                    "Return fields: q, category_group, subcategory, category_paths, brands[], dietary_terms[], price_min, price_max, keywords[], phrase_boosts[], size.\n"
+                    "Rules: Keep q to product nouns only. Dietary/price go to their fields. Subcategory should be a taxonomy leaf (e.g., 'chips_and_crisps').\n"
+                    "Recency weighting: Determine the primary product noun/phrase from the last 5 interactions with weights [0.5, 0.25, 0.15, 0.07, 0.03] for most→least recent.\n"
+                    "If CURRENT_USER_TEXT is modifier-only (attributes like price/dietary/quality or an ingredient/flavor word), ANCHOR q to the most recent weighted product noun/phrase (e.g., 'sauces' + 'tomato' → 'tomato sauce'). Prefer specific noun-phrases over generic parents.\n\n"
+                    "Examples:\n"
+                    "1) History: 'want some good sauces' → anchor=sauces; Current: 'tomato' → q='tomato sauce', category_group='f_and_b', subcategory='sauces_condiments'.\n"
+                    "2) History: 'chips' → anchor=chips; Current: 'banana' → q='banana chips'.\n"
+                    "3) History: 'noodles' → anchor=noodles; Current: 'gluten free under 100' → q='noodles', dietary_terms=['GLUTEN FREE'], price_max=100.\n"
+                )
+            else:
+                prompt = (
+                    "You are expert at extracting Elasticsearch parameters.\n\n"
+                    f"USER QUERY: \"{current_text}\"\n"
+                    f"CONTEXT SO FAR (last 5 interactions): {interactions_json}\n"
+                    f"PRODUCT_INTENT: {product_intent}\n\n"
+                    "Task: Extract params for the user's latest concern.\n"
+                    "Return fields: q, category_group, subcategory, category_paths, brands[], dietary_terms[], price_min, price_max, keywords[], phrase_boosts[], size.\n"
+                    "Rules: Keep q to product nouns only. Dietary/price go to their fields. Subcategory should be a taxonomy leaf (e.g., 'chips_and_crisps').\n"
+                    "Recency weighting (non-follow-up): Treat CURRENT_USER_TEXT as primary (weight 0.7). Also consider the last 3 interactions with weights [0.2, 0.07, 0.03] for most→least recent. Prefer more specific noun-phrases (e.g., 'banana chips') over generic parents ('chips'). If CURRENT_USER_TEXT is generic or empty, fall back to the weighted phrase from history.\n"
+                )
+
+            # CORE log: LLM2 input
+            try:
+                print(f"CORE:LLM2_IN | follow_up={is_follow_up} | current='{current_text[:60]}' | pi='{product_intent}' | interactions={len(convo_history)}")
+            except Exception:
+                pass
+
+            resp = await self.anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[UNIFIED_ES_PARAMS_TOOL],
+                tool_choice={"type": "tool", "name": "generate_unified_es_params"},
+                temperature=0,
+                max_tokens=900,
+            )
+            tool_use = pick_tool(resp, "generate_unified_es_params")
+            if not tool_use:
+                return {}
+
+            params = _strip_keys(tool_use.input or {})
+
+            # CORE log: raw out keys
+            try:
+                kset = list(params.keys())
+                print(f"CORE:LLM2_OUT_KEYS | keys={kset}")
+            except Exception:
+                pass
+
+            if isinstance(params.get("dietary_terms"), list):
+                params["dietary_terms"] = [str(x).strip().upper() for x in params["dietary_terms"] if str(x).strip()]
+
+            # Sanitize q from dietary words
+            try:
+                q_val_raw = str(params.get("q") or "")
+                q_val = q_val_raw.lower()
+                dts = params.get("dietary_terms") or []
+                diet_phrases = {
+                    "GLUTEN FREE": ["gluten free"],
+                    "VEGAN": ["vegan"],
+                    "PALM OIL FREE": ["palm oil free", "no palm oil"],
+                    "SUGAR FREE": ["sugar free", "no sugar", "no added sugar"],
+                    "ORGANIC": ["organic"],
+                }
+                for term in dts:
+                    for ph in diet_phrases.get(term, []):
+                        if ph in q_val:
+                            q_val = q_val.replace(ph, " ")
+                cleaned = " ".join(q_val.split()).strip()
+                if cleaned:
+                    params["q"] = cleaned
+            except Exception:
+                pass
+
+            # Guard: avoid generic q (no base_query fallback)
+            try:
+                bad = {"products","items","product","thing","things"}
+                q_after = str(params.get("q") or "").strip()
+                if q_after.lower() in bad or len(q_after) < 3:
+                    # prefer last user query noun, then from recent user queries, then current text
+                    recent_user_texts = [h.get("user_query", "") for h in convo_history if isinstance(h, dict)]
+                    fallback_noun = self._extract_noun(last_user_query) or self._extract_noun_from_texts(list(reversed(recent_user_texts))) or self._extract_noun(current_text)
+                    if fallback_noun:
+                        params["q"] = fallback_noun
+            except Exception:
+                pass
+
+            # CORE log: compact values
+            try:
+                print(f"CORE:LLM2_OUT | q='{params.get('q')}' | cg='{params.get('category_group')}' | subcat='{params.get('subcategory')}' | price=({params.get('price_min')},{params.get('price_max')}) | dietary={params.get('dietary_terms')} | paths={len(params.get('category_paths') or [])}")
+            except Exception:
+                pass
+
+            # Size bump
+            try:
+                if (params.get("dietary_terms") or (params.get("price_min") is not None) or (params.get("price_max") is not None)) and (params.get("category_path") or params.get("category_paths")):
+                    params["size"] = max(int(params.get("size", 20) or 20), 50)
+            except Exception:
+                pass
+
+            # Prefer more specific phrase from recency weighting when LLM produced a generic parent
+            try:
+                weighted = self._recency_weighted_product(convo_history) if is_follow_up else self._recency_weighted_product_last3(convo_history)
+                q_now = str(params.get("q") or "").strip().lower()
+                current_phrase = self._extract_product_phrase(current_text)
+                # For non-follow-up, prefer current phrase first
+                if not is_follow_up and current_phrase:
+                    cp = current_phrase.strip().lower()
+                    if q_now and (len(cp) > len(q_now)) and cp.endswith(q_now):
+                        params["q"] = current_phrase
+                        print("CORE:Q_REFINE | source=current_text_phrase")
+                # Otherwise use weighted phrase if it is a more specific suffix
+                q_now = str(params.get("q") or "").strip().lower()
+                if weighted:
+                    w = weighted.strip().lower()
+                    if q_now and (len(w) > len(q_now)) and w.endswith(q_now):
+                        params["q"] = weighted
+                        print("CORE:Q_REFINE | source=recency_weighted")
+            except Exception:
+                pass
+
+            # Compose modifier + anchor noun for follow-ups when current text is likely a modifier (ingredient/flavor)
+            try:
+                if is_follow_up:
+                    tokenized = (current_text or "").strip().lower().split()
+                    ingredient_like = {"tomato","banana","mango","garlic","onion","pepper","peri","peri peri","peri-peri","lemon","lime","masala","chilli","chili","mint","aloe","oats","wheat","saffron","turmeric","coconut","vanilla","strawberry","chocolate"}
+                    looks_modifier = (len(tokenized) <= 2) and any(tok in ingredient_like for tok in tokenized)
+                    anchor = self._recency_weighted_product(convo_history) or ""
+                    parent = anchor.split()[-1] if anchor else ""
+                    if looks_modifier and parent and parent not in ingredient_like:
+                        candidate = f"{current_text.strip()} {parent}".strip()
+                        # Only override if candidate is longer and meaningful
+                        q_now = str(params.get("q") or "").strip()
+                        if candidate and len(candidate) > len(q_now):
+                            params["q"] = candidate
+                            print("CORE:Q_REFINE | source=compose_modifier_anchor")
+            except Exception:
+                pass
+
+            return params
+        except Exception as exc:
+            log.error(f"UNIFIED_ES_PARAMS_ERROR | {exc}")
+            return {}
+
+    def _build_last_interactions(self, ctx: UserContext, limit: int = 5) -> list[dict[str, str]]:
+        """Build last N interactions, including ASK/answers if present."""
+        out: list[dict[str, str]] = []
+        try:
+            hist = (ctx.session.get("conversation_history", []) or [])
+            # take last N
+            for h in hist[-limit:]:
+                if isinstance(h, dict):
+                    out.append({
+                        "user_query": str(h.get("user_query", ""))[:160],
+                        "bot_reply": str(((h.get("final_answer", {}) or {}).get("message_full") or h.get("bot_reply") or ""))[:240]
+                    })
+        except Exception:
+            out = []
+        return out
+
+    def _is_follow_up_from_redis(self, ctx: UserContext) -> bool:
+        """Heuristic follow-up detection using session (Redis-backed)."""
+        try:
+            session = ctx.session or {}
+            current = str(getattr(ctx, "current_user_text", "") or session.get("current_user_text") or session.get("last_user_message") or "").strip().lower()
+            # If there are recent conversation turns and current text looks like a modifier, treat as follow-up
+            hist = session.get("conversation_history", []) or []
+            has_history = isinstance(hist, list) and len(hist) > 0
+            modifier_markers = ["under","over","below","above","budget","gluten","vegan","no palm","sugar free","organic","healthier","baked","fried"]
+            ingredient_markers = ["tomato","banana","mango","garlic","onion","pepper","peri","peri peri","lemon","lime","masala","chilli","chili","mint","aloe","oats","wheat","saffron","turmeric","vanilla","strawberry","chocolate"]
+            product_nouns = ["chips","noodles","bread","butter","jam","chocolate","soap","shampoo","juice","biscuit","cookie","ketchup","vermicelli","sauce","sauces","condiment","condiments"]
+            looks_modifier = (any(m in current for m in modifier_markers) or any(i in current for i in ingredient_markers)) and not any(n in current for n in product_nouns)
+            # Single-word or very short inputs that are ingredient-like should be follow-ups if history exists
+            short_and_ingredient = (len(current.split()) <= 2) and any(i in current for i in ingredient_markers)
+            decision = bool(has_history and (looks_modifier or short_and_ingredient))
+            try:
+                print(f"CORE:FOLLOWUP_RULE | has_hist={has_history} | looks_modifier={looks_modifier} | short_ing={short_and_ingredient} | current='{current}'")
+            except Exception:
+                pass
+            return decision
+        except Exception:
+            return False
+
+    def _get_fnb_taxonomy(self) -> Dict[str, Any]:
+        """Get F&B taxonomy for LLM context."""
+        try:
+            from .recommendation import ElasticsearchRecommendationEngine
+            engine = ElasticsearchRecommendationEngine()
+            return getattr(engine, "_fnb_taxonomy", {})
+        except Exception:
+            return {}
+
 
 # ─────────────────────────────────────────────────────────────
 # Helper function
@@ -1966,3 +2377,16 @@ class LLMService:
 
 def map_leaf_to_query_intent(leaf: str) -> QueryIntent:
     return INTENT_MAPPING.get(leaf, {}).get("query_intent", QueryIntent.GENERAL_HELP)
+
+DIETARY_CHANGE_TOOL = {
+    "name": "assess_dietary_change",
+    "description": "Given CURRENT_USER_TEXT and previous dietary_terms, decide if dietary needs change. Return {change:boolean, dietary_terms?:string[]}.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "change": {"type": "boolean"},
+            "dietary_terms": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["change"]
+    }
+}

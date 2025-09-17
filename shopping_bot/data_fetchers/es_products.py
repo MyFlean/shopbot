@@ -30,7 +30,7 @@ ELASTIC_BASE = (
         "https://adb98ad92e064025a9b2893e0589a3b5.asia-south1.gcp.elastic-cloud.com:443"
     )
 )
-ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v3")
+ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v4")
 ELASTIC_API_KEY = os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")
 TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
 
@@ -641,8 +641,38 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             pass
     if cat_paths:
-        # Use terms on keyword array for exact path matching
-        filters.append({"terms": {"category_paths": cat_paths}})
+        # Prefer exact terms on keyword array; also add a short-form path if possible
+        terms_list: List[str] = []
+        for full in cat_paths[:4]:
+            try:
+                s = str(full).strip()
+                if not s:
+                    continue
+                if s not in terms_list:
+                    terms_list.append(s)
+                parts = [x for x in s.split('/') if x]
+                # Build personal_care/<l2>/<leaf> short form when applicable
+                if len(parts) >= 3 and parts[0] == 'personal_care':
+                    l2 = parts[1]
+                    leaf = parts[-1]
+                    short = f"personal_care/{l2}/{leaf}"
+                    if short not in terms_list:
+                        terms_list.append(short)
+            except Exception:
+                pass
+        if terms_list:
+            filters.append({"terms": {"category_paths": terms_list}})
+    else:
+        # Fallback: wildcard on leaf + prefix on parent
+        cat = str(p.get('subcategory') or '').strip()
+        if cat:
+            cat_should: List[Dict[str, Any]] = []
+            try:
+                cat_should.append({"prefix": {"category_paths": "personal_care/hair"}})
+                cat_should.append({"wildcard": {"category_paths": f"*{cat}*"}})
+                filters.append({"bool": {"should": cat_should, "minimum_should_match": 1}})
+            except Exception:
+                pass
 
     # Price filter
     if price_min is not None or price_max is not None:
@@ -673,24 +703,30 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
             }
         })
 
-    # Skin types → strong should
+    # Skin types → nested strong should
     for st in (p.get("skin_types") or [])[:4]:
         st_s = str(st).strip().lower()
         if not st_s:
             continue
         shoulds.append({
-            "bool": {
-                "must": [
-                    {"term": {"skin_compatibility.skin_type": st_s}},
-                    {"range": {"skin_compatibility.sentiment_score": {"gte": 0.6}}},
-                    {"range": {"skin_compatibility.confidence_score": {"gte": 0.3}}},
-                ],
+            "nested": {
+                "path": "skin_compatibility",
+                "query": {
+                    "bool": {
+                        "must": [
+                            {"term": {"skin_compatibility.skin_type": st_s}},
+                            {"range": {"skin_compatibility.sentiment_score": {"gte": 0.6}}},
+                            {"range": {"skin_compatibility.confidence_score": {"gte": 0.3}}},
+                        ]
+                    }
+                },
+                "score_mode": "max",
                 "boost": 5.0,
             }
         })
 
-    # Concerns → efficacy signals (merge skin + hair), non-nested friendly separate boosts
-    concern_boost = 3.0 if bool(p.get("prioritize_concerns")) else 2.0
+    # Concerns → efficacy signals (merge skin + hair), nested with variant matches
+    concern_boost = 2.0 if not bool(p.get("prioritize_concerns")) else 3.0
     merged_concerns = []
     try:
         for lst in [p.get("skin_concerns") or [], p.get("hair_concerns") or []]:
@@ -699,28 +735,49 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                     merged_concerns.append(it)
     except Exception:
         merged_concerns = (p.get("skin_concerns") or [])
+    def _concern_variants(term: str) -> List[str]:
+        t = (term or "").lower()
+        if t == "dandruff":
+            return ["dandruff", "anti-dandruff", "scalp", "scalp care", "flaking"]
+        if t == "oil_control":
+            return ["oil control", "oil-control", "sebum", "oily"]
+        if t == "hydration":
+            return ["hydration", "moisturizing", "moisture", "dryness"]
+        return [t]
     for cn in merged_concerns[:4]:
-        cn_s = str(cn).strip().lower()
-        if not cn_s:
-            continue
+        variants = _concern_variants(str(cn))
         shoulds.append({
-            "term": {"efficacy.aspect_name": {"value": cn_s, "boost": concern_boost}}
-        })
-        shoulds.append({
-            "range": {"efficacy.sentiment_score": {"gte": 0.7, "boost": concern_boost}}
+            "nested": {
+                "path": "efficacy",
+                "query": {
+                    "bool": {
+                        "must": [
+                            {"terms": {"efficacy.aspect_name": variants}},
+                            {"range": {"efficacy.sentiment_score": {"gte": 0.7}}},
+                        ]
+                    }
+                },
+                "score_mode": "max",
+                "boost": concern_boost,
+            }
         })
 
-    # Avoid ingredients → side_effects only (drop ingredients.raw_text for now)
+    # Avoid ingredients → nested on side_effects (drop ingredients.raw_text for now)
     for ing in (p.get("avoid_ingredients") or [])[:6]:
         ing_s = str(ing).strip()
         if not ing_s:
             continue
         must_not.append({
-            "bool": {
-                "must": [
-                    {"match": {"side_effects.effect_name": ing_s}},
-                    {"range": {"side_effects.severity_score": {"gte": 0.3}}},
-                ]
+            "nested": {
+                "path": "side_effects",
+                "query": {
+                    "bool": {
+                        "must": [
+                            {"match": {"side_effects.effect_name": ing_s}},
+                            {"range": {"side_effects.severity_score": {"gte": 0.3}}},
+                        ]
+                    }
+                }
             }
         })
 

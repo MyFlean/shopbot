@@ -358,7 +358,17 @@ class ShoppingBotCore:
                         intent_l2=ctx.session.get("intent_l2") or ("A1" if is_prod else "E2"),
                         intent_l3=l3,
                         is_product_related=is_prod,
+                        domain=combined.get("domain") or ctx.session.get("domain"),
                     )
+                    # Store candidate subcategories for domain-specific planners (e.g., skin)
+                    try:
+                        cand = combined.get("candidate_subcategories")
+                        if isinstance(cand, list):
+                            ctx.session["candidate_subcategories"] = [str(x).strip() for x in cand if str(x).strip()]
+                        if isinstance(combined.get("domain_subcategory"), str) and combined.get("domain_subcategory").strip():
+                            ctx.session["domain_subcategory"] = combined.get("domain_subcategory").strip()
+                    except Exception:
+                        pass
                     # If general → simple response and exit early
                     if not is_prod:
                         simple = combined.get("simple_response") or {}
@@ -386,9 +396,11 @@ class ShoppingBotCore:
                         # Continue assessment will force fetch for product queries
                         return await self._continue_assessment(query, ctx)
 
-                    # Not a follow-up → build two ASK_* as usual
+                    # Not a follow-up → build domain-aware asks (up to 4 for personal_care, 2 for f_and_b)
                     ask = combined.get("ask") or {}
-                    ask_keys = list(ask.keys())[:2] if isinstance(ask, dict) else []
+                    domain_for_ask = str(combined.get("domain") or ctx.session.get("domain") or "").strip()
+                    max_asks = 4 if domain_for_ask == "personal_care" else 2
+                    ask_keys = list(ask.keys())[:max_asks] if isinstance(ask, dict) else []
                     missing_names = ask_keys[:]
                     priority_order = ask_keys[:]
                     ctx.session["contextual_questions"] = {}
@@ -400,6 +412,10 @@ class ShoppingBotCore:
                             "type": "multi_choice",
                             "options": [{"label": o, "value": o} for o in options[:3]]
                         }
+                    try:
+                        log.info(f"ASK_PLAN | domain={domain_for_ask or 'unknown'} | asks={ask_keys}")
+                    except Exception:
+                        pass
                     ctx.session["assessment"] = {
                         "original_query": query,
                         "intent": map_leaf_to_query_intent(l3).value,
@@ -564,10 +580,56 @@ class ShoppingBotCore:
                 log.info(
                     f"ASSESSMENT_STATE | user={ctx.user_id} | base_query='{a.get('original_query','')}' | missing={a.get('missing_data', [])} | priority={a.get('priority_order', [])}"
                 )
+                # Map answers to standardized profile keys for personal_care
+                dom = str(ctx.session.get("domain") or "").strip()
+                slot = str(a.get("currently_asking") or "").strip()
+                ans = str(query).strip()
+                if dom == "personal_care" and slot:
+                    try:
+                        if slot == "ASK_PC_CONCERN":
+                            # Store to unified and modality-specific buckets
+                            uc = ctx.session.get("user_care_concerns") or []
+                            if ans and ans not in uc:
+                                ctx.session["user_care_concerns"] = uc + [ans]
+                                log.info(f"PROFILE_SET | user_care_concerns={ctx.session['user_care_concerns']}")
+                            # Heuristic routing: if anchor suggests hair route
+                            anchor = (ctx.session.get("domain_subcategory") or "") + " " + (a.get("original_query") or "")
+                            anchor_l = anchor.lower()
+                            if any(t in anchor_l for t in ["shampoo", "conditioner", "hair", "dandruff", "hairfall"]):
+                                hc = ctx.session.get("user_hair_concerns") or []
+                                if ans not in hc:
+                                    ctx.session["user_hair_concerns"] = hc + [ans]
+                                    log.info(f"PROFILE_SET | user_hair_concerns={ctx.session['user_hair_concerns']}")
+                            else:
+                                sc = ctx.session.get("user_skin_concerns") or []
+                                if ans not in sc:
+                                    ctx.session["user_skin_concerns"] = sc + [ans]
+                                    log.info(f"PROFILE_SET | user_skin_concerns={ctx.session['user_skin_concerns']}")
+                        elif slot == "ASK_PC_COMPATIBILITY":
+                            # Heuristic: if anchor mentions shampoo/conditioner → hair type; else skin type
+                            anchor = (ctx.session.get("domain_subcategory") or "") + " " + (a.get("original_query") or "")
+                            anchor_l = anchor.lower()
+                            if any(t in anchor_l for t in ["shampoo", "conditioner"]):
+                                ctx.session["user_hair_type"] = ans
+                                log.info(f"PROFILE_SET | user_hair_type={ans}")
+                            else:
+                                ctx.session["user_skin_type"] = ans
+                                log.info(f"PROFILE_SET | user_skin_type={ans}")
+                        elif slot == "ASK_INGREDIENT_AVOID":
+                            avoids = ctx.session.get("user_allergies") or []
+                            if ans and ans.lower() != "no preference" and ans not in avoids:
+                                ctx.session["user_allergies"] = avoids + [ans]
+                                log.info(f"PROFILE_SET | user_allergies={ctx.session['user_allergies']}")
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
         still_missing = compute_still_missing(a, ctx)
+        try:
+            log.info(f"ASK_MISSING | remaining={still_missing}")
+        except Exception:
+            pass
         ask_first = [f for f in still_missing if is_user_slot(f)]
         fetch_later = [f for f in still_missing if not is_user_slot(f)]
 
@@ -585,6 +647,10 @@ class ShoppingBotCore:
             self.smart_log.user_question(ctx.user_id, func_value)
             self.ctx_mgr.save_context(ctx)
             q = build_question(func, ctx)
+            try:
+                log.info(f"ASK_NEXT | slot={func_value} | q='{q.get('message') if isinstance(q, dict) else 'n/a'}'")
+            except Exception:
+                pass
             # Include currently_asking so FE can render context like samples
             try:
                 if isinstance(q, dict):

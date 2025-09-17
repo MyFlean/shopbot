@@ -11,7 +11,7 @@ from typing import Dict, Any, List
 
 # Configuration - update these with your values
 ELASTIC_BASE = "https://adb98ad92e064025a9b2893e0589a3b5.asia-south1.gcp.elastic-cloud.com:443"
-ELASTIC_INDEX = "flean-v3"
+ELASTIC_INDEX = "flean-v4"
 ELASTIC_API_KEY = "QkFZT2VwZ0JWejF3T1VGQkJIYU46Y0Z1emhYRXU5bDV0U0hQOGRYYXExdw"  # Your API key
 TIMEOUT = 10
 

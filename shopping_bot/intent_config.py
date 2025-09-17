@@ -137,6 +137,10 @@ SLOT_TO_SESSION_KEY: Dict[UserSlot, str] = {
    UserSlot.USE_CASE: "use_case",
    UserSlot.QUANTITY: "quantity",
    UserSlot.ORDER_ID: "order_id",
+   # Personal care domain-specific
+   UserSlot.PC_CONCERN: "pc_concern",
+   UserSlot.PC_COMPATIBILITY: "pc_compatibility",
+   UserSlot.INGREDIENT_AVOID: "ingredient_avoid",
 }
 
 

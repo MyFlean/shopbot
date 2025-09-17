@@ -94,6 +94,106 @@ FINAL_ANSWER_UNIFIED_TOOL = {
     }
 }
 
+# Skin ES params tool (personal care)
+SKIN_ES_PARAMS_TOOL = {
+    "name": "emit_skin_es_params",
+    "description": "Extract Elasticsearch parameters for personal care/skin products based on user query and context.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "q": {"type": "string"},
+            "size": {"type": "integer", "minimum": 1, "maximum": 50},
+            "category_group": {"type": "string", "enum": ["personal_care"]},
+            "category_paths": {"type": "array", "items": {"type": "string"}},
+            "subcategory": {"type": "string"},
+            "brands": {"type": "array", "items": {"type": "string"}},
+            "price_min": {"type": "number"},
+            "price_max": {"type": "number"},
+            "keywords": {"type": "array", "items": {"type": "string"}},
+            "phrase_boosts": {"type": "array", "items": {"type": "object"}},
+            "anchor_product_noun": {"type": "string"},
+            "skin_types": {"type": "array", "items": {"type": "string"}},
+            "skin_concerns": {"type": "array", "items": {"type": "string"}},
+            "hair_types": {"type": "array", "items": {"type": "string"}},
+            "hair_concerns": {"type": "array", "items": {"type": "string"}},
+            "avoid_ingredients": {"type": "array", "items": {"type": "string"}},
+            "product_types": {"type": "array", "items": {"type": "string"}},
+            "prioritize_concerns": {"type": "boolean"},
+            "min_review_count": {"type": "integer"}
+        },
+        "required": ["q", "category_group"]
+    }
+}
+
+# Personal care v2 tool schemas (initial vs follow-up)
+FOLLOWUP_SKIN_PARAMS_TOOL = {
+    "name": "extract_followup_skin_params",
+    "description": "Extract search parameters for personal care follow-up queries",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "q": {"type": "string", "description": "Product noun only (e.g., shampoo)"},
+            "anchor_product_noun": {"type": "string"},
+            "category_group": {"type": "string", "enum": ["personal_care"], "default": "personal_care"},
+            "subcategory": {"type": "string"},
+            "category_paths": {"type": "array", "items": {"type": "string"}},
+            "skin_types": {"type": "array", "items": {"type": "string", "enum": ["oily","dry","combination","sensitive","normal"]}},
+            "skin_concerns": {"type": "array", "items": {"type": "string"}},
+            "hair_types": {"type": "array", "items": {"type": "string"}},
+            "hair_concerns": {"type": "array", "items": {"type": "string"}},
+            "avoid_ingredients": {"type": "array", "items": {"type": "string"}},
+            "product_types": {"type": "array", "items": {"type": "string"}},
+            "brands": {"type": "array", "items": {"type": "string"}},
+            "price_min": {"type": "number"},
+            "price_max": {"type": "number"},
+            "keywords": {"type": "array", "items": {"type": "string"}},
+            "phrase_boosts": {"type": "array", "items": {"type": "object"}},
+            "prioritize_concerns": {"type": "boolean"},
+            "min_review_count": {"type": "integer", "default": 10},
+            "size": {"type": "integer", "maximum": 10, "default": 10},
+            "carry_forward": {
+                "type": "object",
+                "properties": {
+                    "skin_types": {"type": "boolean"},
+                    "concerns": {"type": "boolean"},
+                    "product_types": {"type": "boolean"}
+                }
+            }
+        },
+        "required": ["q", "category_group", "category_paths"]
+    }
+}
+
+INITIAL_SKIN_PARAMS_TOOL = {
+    "name": "extract_initial_skin_params",
+    "description": "Extract search parameters for personal care initial queries",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "q": {"type": "string"},
+            "anchor_product_noun": {"type": "string"},
+            "category_group": {"type": "string", "enum": ["personal_care"], "default": "personal_care"},
+            "subcategory": {"type": "string"},
+            "category_paths": {"type": "array", "items": {"type": "string"}},
+            "skin_types": {"type": "array", "items": {"type": "string"}},
+            "skin_concerns": {"type": "array", "items": {"type": "string"}},
+            "hair_types": {"type": "array", "items": {"type": "string"}},
+            "hair_concerns": {"type": "array", "items": {"type": "string"}},
+            "avoid_ingredients": {"type": "array", "items": {"type": "string"}},
+            "product_types": {"type": "array", "items": {"type": "string"}},
+            "brands": {"type": "array", "items": {"type": "string"}},
+            "price_min": {"type": "number"},
+            "price_max": {"type": "number"},
+            "keywords": {"type": "array", "items": {"type": "string"}},
+            "phrase_boosts": {"type": "array", "items": {"type": "object"}},
+            "prioritize_concerns": {"type": "boolean"},
+            "min_review_count": {"type": "integer", "default": 10},
+            "size": {"type": "integer", "maximum": 10, "default": 10}
+        },
+        "required": ["q", "category_group"]
+    }
+}
+
 # ─────────────────────────────────────────────────────────────
 # NEW: Combined Classify+Assess Tool
 # ─────────────────────────────────────────────────────────────
@@ -107,6 +207,9 @@ COMBINED_CLASSIFY_ASSESS_TOOL = {
             "is_follow_up": {"type": "boolean", "description": "Whether current turn is a follow-up to the immediate previous turn"},
             "is_product_related": {"type": "boolean"},
             "layer3": {"type": "string"},
+            "domain": {"type": "string", "enum": ["f_and_b", "personal_care", "other"], "description": "High-level domain classification"},
+            "candidate_subcategories": {"type": "array", "items": {"type": "string"}, "description": "If personal care/skin, up to 3 likely subcategories from taxonomy"},
+            "domain_subcategory": {"type": "string", "description": "If domain=personal_care, the best-guess single subcategory string"},
             "product_intent": {
                 "type": "string",
                 "enum": [
@@ -214,11 +317,14 @@ INTENT_CLASSIFICATION_TOOL = {
 
 FOLLOW_UP_TOOL = {
     "name": "classify_follow_up",
-    "description": "Decide if the user query is a follow-up to the last conversation and provide a patch (delta).",
+    "description": "Classify whether user message is a follow-up or a new query with confidence and rationale.",
     "input_schema": {
         "type": "object",
         "properties": {
-            "is_follow_up": {"type": "boolean"},
+            "is_follow_up": {"type": "boolean", "description": "True if message refines/continues previous search"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "detected_product_focus": {"type": "string"},
+            "previous_product_context": {"type": "string"},
             "reason": {"type": "string"},
             "patch": {
                 "type": "object",
@@ -227,10 +333,9 @@ FOLLOW_UP_TOOL = {
                     "intent_override": {"type": "string"},
                     "reset_context": {"type": "boolean"},
                 },
-                "required": ["slots"],
             },
         },
-        "required": ["is_follow_up", "patch"],
+        "required": ["is_follow_up", "confidence", "reason"],
     },
 }
 
@@ -512,23 +617,58 @@ CLASSIFICATION RULES (MANDATORY):
 Return ONLY a tool call to classify_product_intent.
 """
 
-FOLLOW_UP_PROMPT_TEMPLATE = """
-You are determining if the user's NEW message should be treated as a follow-up.
+FOLLOW_UP_PROMPT_TEMPLATE = """You are a precise conversation analyzer for a shopping assistant specializing in food and personal care products.
 
-### Last snapshot:
+Your task: Determine if the user's new message continues their previous search (follow-up) or starts a completely new product search.
+
+<conversation_context>
+Previous conversation snapshot:
 {last_snapshot}
 
-### Current session slots:
+Current session state:
 {current_slots}
 
-### New user message:
-"{query}"
+New user message: "{query}"
+</conversation_context>
 
-Rule: If the CURRENT message introduces a NEW product noun/category versus the last canonical query, set is_follow_up=false (treat as NEW assessment).
-Otherwise, set is_follow_up=true only if the message refines/qualifies the previous query (modifier-only deltas like budget/dietary/quality).
+<classification_framework>
+FOLLOW-UP indicators (refinement of existing search):
+- Adds/modifies constraints without changing core product (e.g., "make it organic", "under $20", "fragrance-free version")
+- References previous context implicitly (e.g., "cheaper ones", "in vanilla flavor", "travel size")
+- Asks for alternatives within same category (e.g., "show me more brands", "any sulfate-free options?")
+- Adjusts quantity/size/form of same product (e.g., "family pack", "liquid instead", "bulk size")
 
-Return a tool call to classify_follow_up.
-"""
+NEW QUERY indicators (different product search):
+- Introduces distinctly different product category (e.g., shampoo → face serum, pasta → deodorant)
+- Contains complete product specification unrelated to previous (e.g., "I need toothpaste" after discussing shampoo)
+- Explicitly signals topic change (e.g., "actually, let me look for...", "forget that, show me...")
+- Time-based context shift (e.g., moving from breakfast items to dinner items)
+</classification_framework>
+
+<analysis_steps>
+1. Extract the core product noun from the previous query (if any)
+2. Identify the product intent in the new message
+3. Compare semantic relationship between previous and current product contexts
+4. Weight recency - more recent turns have stronger continuity signals
+5. Consider domain-specific patterns (personal care items often have modifier-heavy follow-ups)
+</analysis_steps>
+
+<examples>
+Previous: "Show me shampoos"
+New: "sulfate-free ones" → FOLLOW-UP (adds constraint to shampoo)
+New: "face moisturizer" → NEW (different product category)
+
+Previous: "organic pasta under $5"
+New: "what about rice?" → NEW (different food category)
+New: "any whole wheat options?" → FOLLOW-UP (modifies pasta type)
+
+Previous: "vitamin C serums"
+New: "with hyaluronic acid" → FOLLOW-UP (adds ingredient constraint)
+New: "sunscreen SPF 50" → NEW (different skincare category)
+</examples>
+
+Analyze the conversation and call the classify_follow_up tool with your determination.
+Focus your reason on specific textual evidence comparing previous vs current product context."""
 
 DELTA_ASSESS_PROMPT = """
 Determine which backend functions must run after a follow-up.
@@ -1064,6 +1204,8 @@ class LLMService:
         prompt = (
             "You are an e-commerce assistant. In ONE tool call, do all three tasks.\n"
             "Task 1: Classify the user's latest message into L3 and set is_product_related (true only for serious product queries).\n"
+            "Additionally, classify a high-level domain: f_and_b | personal_care | other.\n"
+            "If domain is personal_care, infer up to 3 likely subcategories using the provided personal_care taxonomy, and also emit a single best-guess domain_subcategory.\n"
             "Task 2: If product-related, classify one of 4 intents: is_this_good | which_is_better | show_me_alternate | show_me_options.\n"
             "Task 3: If product-related, emit EXACTLY TWO ASK_* questions with EXACTLY 3 options each (short, concrete),\n"
             "         optimized to refine Elasticsearch filters (prefer budget + dietary); and set fetch_functions=['search_products'].\n"
@@ -1080,15 +1222,23 @@ class LLMService:
             "   • noodles_pasta → ['Under ₹50','₹50–150','Over ₹150']\n"
             "   • shampoo (personal care) → ['Under ₹99','₹99–299','Over ₹299']\n"
             "- If subcategory is unclear, use labeled bands: ['Budget friendly','Smart choice','Premium'].\n"
-            "- For the second ASK_* choose the most useful for the subcategory (dietary for F&B; preferences/brand/use_case otherwise) and ensure options are subcategory-appropriate and concise; include 'No preference' when applicable.\n"
+            "- If domain=f_and_b, EMIT UP TO 2 asks: [ASK_USER_BUDGET, ASK_DIETARY_REQUIREMENTS].\n"
+            "- If domain=personal_care, EMIT UP TO 4 asks:\n"
+            "  1) ASK_PC_CONCERN (major concern: skin→['Acne','Dark spots','Aging'] | hair→['Dandruff','Hairfall','Frizz'])\n"
+            "  2) ASK_PC_COMPATIBILITY (skin type ['Oily','Dry','Combination'] | hair type ['Curly','Wavy/Straight','Oily scalp'])\n"
+            "  3) ASK_USER_BUDGET (₹-calibrated to subcategory)\n"
+            "  4) ASK_INGREDIENT_AVOID (e.g., ['Fragrance-free','Sulfate-free','No preference'])\n"
+            "  Ensure options are concise and subcategory-appropriate.\n"
             "ALLOWED ASK_* SLOTS (choose only from this list):\n"
-            "- ASK_USER_BUDGET\n- ASK_DIETARY_REQUIREMENTS\n- ASK_USER_PREFERENCES\n- ASK_USE_CASE\n- ASK_QUANTITY\n- ASK_DELIVERY_ADDRESS\n"
-            "STRICT: The ask object MUST use keys only from the allowed list. If unsure, pick budget and dietary.\n"
+            "- ASK_USER_BUDGET\n- ASK_DIETARY_REQUIREMENTS\n- ASK_USER_PREFERENCES\n- ASK_USE_CASE\n- ASK_QUANTITY\n- ASK_DELIVERY_ADDRESS\n- ASK_PC_CONCERN\n- ASK_PC_COMPATIBILITY\n- ASK_INGREDIENT_AVOID\n"
+            "STRICT: The ask object MUST use keys only from the allowed list. If unsure, pick budget and dietary for f_and_b; and pick the 4 listed for personal_care when relevant.\n"
             "If NOT product-related, return simple_response {response_type:'final_answer', message}.\n"
             "Return ONLY the tool call to classify_and_assess.\n\n"
             f"RECENT_CONTEXT: {json.dumps(recent_context, ensure_ascii=False)}\n"
             f"RECENT_TURNS (last up to 10): {json.dumps(convo_pairs, ensure_ascii=False)}\n"
             f"QUERY: {query.strip()}\n"
+            "PERSONAL_CARE TAXONOMY (for subcategory inference when domain=personal_care):\n"
+            f"{json.dumps(self._get_personal_care_taxonomy(), ensure_ascii=False)}\n"
         )
 
         resp = await self.anthropic.messages.create(
@@ -1104,6 +1254,12 @@ class LLMService:
         if not tool_use:
             return {}
         data = tool_use.input or {}
+        try:
+            raw_ask = data.get("ask") or {}
+            domain_dbg = data.get("domain")
+            print(f"CORE:ASK_RAW | domain={domain_dbg} | keys={list(raw_ask.keys()) if isinstance(raw_ask, dict) else []}")
+        except Exception:
+            pass
 
         # Light normalization of ask payload
         try:
@@ -1121,6 +1277,9 @@ class LLMService:
                         "ASK_USE_CASE",
                         "ASK_QUANTITY",
                         "ASK_DELIVERY_ADDRESS",
+                        "ASK_PC_CONCERN",
+                        "ASK_PC_COMPATIBILITY",
+                        "ASK_INGREDIENT_AVOID",
                     }
                     if key in allowed:
                         return key
@@ -1129,8 +1288,14 @@ class LLMService:
                         return "ASK_USER_BUDGET"
                     if any(t in key for t in ["DIET", "DIETARY", "PALM", "VEGAN", "GLUTEN", "SUGAR", "OIL"]):
                         return "ASK_DIETARY_REQUIREMENTS"
-                    if any(t in key for t in ["SPICE", "SPICY", "FLAVOR", "TASTE", "BRAND", "PREFERENCE", "SKIN", "FRAGRANCE"]):
+                    if any(t in key for t in ["SPICE", "SPICY", "FLAVOR", "TASTE", "BRAND", "PREFERENCE", "SKIN", "HAIR", "FRAGRANCE"]):
                         return "ASK_USER_PREFERENCES"
+                    if any(t in key for t in ["CONCERN", "ISSUE", "PROBLEM"]):
+                        return "ASK_PC_CONCERN"
+                    if any(t in key for t in ["SKIN TYPE", "HAIR TYPE", "COMPATIBILITY"]):
+                        return "ASK_PC_COMPATIBILITY"
+                    if any(t in key for t in ["AVOID", "FREE", "FRAGRANCE", "SULFATE", "SILICONE", "PARABEN"]):
+                        return "ASK_INGREDIENT_AVOID"
                     if any(t in key for t in ["USE", "OCCASION", "WHEN"]):
                         return "ASK_USE_CASE"
                     if any(t in key for t in ["QTY", "QUANTITY", "COUNT", "PACK"]):
@@ -1165,22 +1330,82 @@ class LLMService:
                         "message": v.get("message") or f"What's your {ckey.replace('ASK_', '').replace('_', ' ').lower()}?",
                         "options": norm_opts[:3],
                     }
-                # Deduplicate and clamp to 2; fallback if empty
+                # Ensure required asks per domain, then deduplicate and clamp to domain-aware max; fallback if empty
+                domain = str(data.get("domain") or "").strip()
+                max_asks = 4 if domain == "personal_care" else 2
+                try:
+                    print(f"CORE:ASK_CANON | domain={domain or 'unknown'} | canon_keys={list(canon_ask.keys())} | max={max_asks}")
+                except Exception:
+                    pass
+                required_pc = [
+                    ("ASK_PC_CONCERN", {
+                        "message": "What's your primary concern?",
+                        "options": ["Dandruff","Hairfall","No preference"],
+                    }),
+                    ("ASK_PC_COMPATIBILITY", {
+                        "message": "What's your hair/skin type?",
+                        "options": ["Oily","Dry","Combination"],
+                    }),
+                    ("ASK_USER_BUDGET", {
+                        "message": "What's your budget range? (in ₹)",
+                        "options": ["Under ₹100","₹100–300","Over ₹300"],
+                    }),
+                    ("ASK_INGREDIENT_AVOID", {
+                        "message": "Any ingredients to avoid?",
+                        "options": ["Fragrance-free","Sulfate-free","No preference"],
+                    }),
+                ]
+                required_fb = [
+                    ("ASK_USER_BUDGET", {
+                        "message": "What's your budget range? (in ₹)",
+                        "options": ["Under ₹100","₹100–300","Over ₹300"],
+                    }),
+                    ("ASK_DIETARY_REQUIREMENTS", {
+                        "message": "Any dietary requirements?",
+                        "options": ["GLUTEN FREE","LOW SODIUM","No preference"],
+                    }),
+                ]
                 if not canon_ask:
                     canon_ask = {
                         "ASK_USER_BUDGET": {
                             "message": "What's your budget range? (in ₹)",
                             "options": ["Under ₹100", "₹100–300", "Over ₹300"],
                         },
-                        "ASK_DIETARY_REQUIREMENTS": {
-                            "message": "Any dietary requirements?",
-                            "options": ["GLUTEN FREE", "LOW SODIUM", "No preference"],
+                        (
+                            "ASK_DIETARY_REQUIREMENTS" if domain != "personal_care" else "ASK_PC_CONCERN"
+                        ): {
+                            "message": "Any dietary requirements?" if domain != "personal_care" else "What's your primary concern?",
+                            "options": ["GLUTEN FREE", "LOW SODIUM", "No preference"] if domain != "personal_care" else ["Acne","Dark spots","No preference"],
                         },
                     }
                 else:
-                    # Keep insertion order; take first two
-                    canon_ask = {k: canon_ask[k] for k in list(canon_ask.keys())[:2]}
+                    # Prioritize for personal_care
+                    if domain == "personal_care":
+                        # Pad missing required asks
+                        for rk, rv in required_pc:
+                            if rk not in canon_ask:
+                                canon_ask[rk] = rv
+                        priority = ["ASK_PC_CONCERN", "ASK_PC_COMPATIBILITY", "ASK_USER_BUDGET", "ASK_INGREDIENT_AVOID"]
+                        ordered_keys = []
+                        for pk in priority:
+                            if pk in canon_ask and pk not in ordered_keys:
+                                ordered_keys.append(pk)
+                        for k in canon_ask.keys():
+                            if k not in ordered_keys:
+                                ordered_keys.append(k)
+                        canon_ask = {k: canon_ask[k] for k in ordered_keys[:max_asks]}
+                    else:
+                        # Pad missing required asks for food/bev
+                        for rk, rv in required_fb:
+                            if rk not in canon_ask:
+                                canon_ask[rk] = rv
+                        # Keep insertion order; take first two for food
+                        canon_ask = {k: canon_ask[k] for k in list(canon_ask.keys())[:max_asks]}
                 data["ask"] = canon_ask
+                try:
+                    print(f"CORE:ASK_PLAN | domain={domain or 'unknown'} | asks={list(canon_ask.keys())}")
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -1706,24 +1931,35 @@ class LLMService:
     async def classify_follow_up(self, query: str, ctx: UserContext) -> FollowUpResult:
         """Classify if query is a follow-up."""
         history = ctx.session.get("history", [])
-        if not history:
-            return FollowUpResult(False, FollowUpPatch(slots={}))
+        recent_history = history[-5:] if isinstance(history, list) else []
+        formatted_history = []
+        for i, snap in enumerate(recent_history):
+            weight = "recent" if i >= max(0, len(recent_history) - 2) else "older"
+            try:
+                formatted_history.append({
+                    "turn": i + 1,
+                    "weight": weight,
+                    "user_query": (snap.get("query") or snap.get("user_query") or ""),
+                    "detected_intent": snap.get("intent") or snap.get("intent_l3") or "",
+                    "product_focus": snap.get("product_noun") or snap.get("anchor_product_noun") or "",
+                })
+            except Exception:
+                formatted_history.append({"turn": i + 1, "weight": weight, "user_query": str(snap)[:120]})
 
-        last_snapshot = history[-1]
         prompt = FOLLOW_UP_PROMPT_TEMPLATE.format(
-            last_snapshot=json.dumps(last_snapshot, ensure_ascii=False, indent=2),
+            last_snapshot=json.dumps(formatted_history, ensure_ascii=False, indent=2),
             current_slots=json.dumps(ctx.session, ensure_ascii=False, indent=2),
             query=query,
         )
 
         try:
             resp = await self.anthropic.messages.create(
-                model=Cfg.LLM_MODEL,
+                model=getattr(Cfg, "LLM_CLASSIFIER_MODEL", Cfg.LLM_MODEL),
                 messages=[{"role": "user", "content": prompt}],
                 tools=[FOLLOW_UP_TOOL],
                 tool_choice={"type": "tool", "name": "classify_follow_up"},
-                temperature=0.1,
-                max_tokens=300,
+                temperature=0.0,
+                max_tokens=400,
             )
             tool_use = pick_tool(resp, "classify_follow_up")
             if not tool_use:
@@ -1732,13 +1968,13 @@ class LLMService:
             ipt = _strip_keys(tool_use.input or {})
             patch_dict = _safe_get(ipt, "patch", {}) or {}
             slots_dict = patch_dict.get("slots", {})
-            
+
             patch = FollowUpPatch(
                 slots=slots_dict,
                 intent_override=patch_dict.get("intent_override"),
-                reset_context=bool(patch_dict.get("reset_context", False)),
+                reset_context=bool(patch_dict.get("reset_context", not bool(ipt.get("is_follow_up", False)))),
             )
-            
+
             return FollowUpResult(
                 bool(ipt.get("is_follow_up", False)),
                 patch,
@@ -2396,6 +2632,234 @@ class LLMService:
             engine = ElasticsearchRecommendationEngine()
             return getattr(engine, "_fnb_taxonomy", {})
         except Exception:
+            return {}
+
+    def _get_personal_care_taxonomy(self) -> Dict[str, Any]:
+        """Load Personal Care taxonomy JSON if present."""
+        import os, json
+        try:
+            here = os.path.dirname(os.path.abspath(__file__))
+            path = os.path.join(here, "taxonomies", "personal_care.json")
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            # Embedded minimal fallback so taxonomy-dependent prompts still work
+            return {
+                "personal_care": {
+                    "skin": {
+                        "3_purifying_cleansers": {},
+                        "1_skin_hydrators": {},
+                        "11_uv_defense": {},
+                        "5_skin_toners": {},
+                        "2_active_serums": {}
+                    },
+                    "hair": {
+                        "17_hair_nurture": {
+                            "conditioner": {},
+                            "shampoo": {}
+                        }
+                    }
+                }
+            }
+
+    def _resolve_pc_paths(self, subcategory: Optional[str], taxonomy: Dict[str, Any]) -> List[str]:
+        """Resolve up to 2 full personal_care category_paths from a subcategory token."""
+        results: List[str] = []
+        try:
+            if not (subcategory and taxonomy and isinstance(taxonomy, dict)):
+                return results
+            sub = str(subcategory).strip().lower()
+            pc = taxonomy.get("personal_care") if isinstance(taxonomy.get("personal_care"), dict) else {}
+            def walk(node: Dict[str, Any], prefix: List[str]):
+                for k, v in node.items():
+                    key = str(k).strip()
+                    key_l = key.lower()
+                    path = prefix + [key]
+                    # Match if sub token is within key
+                    if sub in key_l and len(results) < 2:
+                        results.append("personal_care/" + "/".join(path))
+                    if isinstance(v, dict) and v and len(results) < 2:
+                        walk(v, path)
+            if isinstance(pc, dict):
+                for l2, l3s in pc.items():
+                    if isinstance(l3s, dict):
+                        walk(l3s, [l2])
+            return results[:2]
+        except Exception:
+            return results
+
+    async def generate_skin_es_params(self, ctx: UserContext) -> Dict[str, Any]:
+        """Skin-specific ES param extraction using history and personal care taxonomy."""
+        try:
+            session = ctx.session or {}
+            ask_only_mode = bool(getattr(Cfg, "USE_ASSESSMENT_FOR_ASK_ONLY", False))
+            current_text = str(getattr(ctx, "current_user_text", "") or session.get("current_user_text") or session.get("last_user_message") or "").strip()
+            # Determine follow-up via LLM1 classifier (no deterministic rules)
+            try:
+                fu_res = await self.classify_follow_up(current_text, ctx)
+                is_follow_up = bool(getattr(fu_res, "is_follow_up", False))
+            except Exception:
+                is_follow_up = False
+            hist_limit = 10 if is_follow_up else 5
+            convo_history = self._build_last_interactions(ctx, limit=hist_limit)
+            interactions_json = json.dumps(convo_history, ensure_ascii=False)
+            candidate_subcats = session.get("candidate_subcategories") or []
+            domain_subcat = str(session.get("domain_subcategory") or "").strip()
+            skin_taxonomy = self._get_personal_care_taxonomy()
+            product_intent = str(session.get("product_intent") or "show_me_options")
+            # Profile hints (best-effort)
+            profile_hints = {
+                "known_skin_type": session.get("user_skin_type"),
+                "known_concerns": session.get("user_skin_concerns", []),
+                "known_allergies": session.get("user_allergies", []),
+                "preferences": session.get("preferences")
+            }
+
+            # Rich input logging
+            try:
+                print(
+                    f"CORE:SKIN_CTX | follow_up={is_follow_up} | hist={len(convo_history)} | "
+                    f"cand_subcats={len(candidate_subcats)} | intent='{product_intent}' | current='{current_text[:80]}'"
+                )
+                # Compact history dump
+                dump = [
+                    {"i": i + 1, "user": (h.get("user_query", "") or "")[:80], "bot": (h.get("bot_reply", "") or "")[:100]}
+                    for i, h in enumerate(convo_history)
+                ]
+                print(f"CORE:SKIN_HIST_DUMP | {json.dumps(dump, ensure_ascii=False)}")
+                # Taxonomy summary
+                pc = skin_taxonomy.get("personal_care") if isinstance(skin_taxonomy, dict) else None
+                pc_keys = list(pc.keys())[:5] if isinstance(pc, dict) else []
+                print(
+                    f"CORE:SKIN_TAXO | has_pc={'yes' if pc else 'no'} | pc_top_keys={pc_keys}"
+                )
+                print(f"CORE:SKIN_PROFILE | {json.dumps(profile_hints, ensure_ascii=False)}")
+                # Expected output keys
+                expected = [
+                    "q","category_group","subcategory","category_paths","brands","price_min","price_max",
+                    "keywords","phrase_boosts","size","anchor_product_noun","skin_types","skin_concerns",
+                    "hair_types","hair_concerns","avoid_ingredients","product_types","prioritize_concerns","min_review_count"
+                ]
+                print(f"CORE:SKIN_EXPECT | keys={expected}")
+            except Exception:
+                pass
+
+            prompt = (
+                "You are a personal care search planner for skin and hair.\n\n"
+                f"QUERY: \"{current_text}\"\n"
+                f"FOLLOW_UP: {is_follow_up}\n"
+                f"RECENT INTERACTIONS (last {hist_limit}): {interactions_json}\n"
+                f"CANDIDATE_SUBCATEGORIES: {json.dumps(candidate_subcats, ensure_ascii=False)}\n"
+                f"DOMAIN_SUBCATEGORY_HINT: {domain_subcat}\n"
+                f"PROFILE_HINTS: {json.dumps(profile_hints, ensure_ascii=False)}\n"
+                f"PERSONAL_CARE TAXONOMY: {json.dumps(skin_taxonomy, ensure_ascii=False)}\n"
+                f"PRODUCT_INTENT: {product_intent}\n\n"
+                "Deliberate silently step-by-step to extract robust parameters. Do not output your reasoning; OUTPUT ONLY a tool call.\n"
+                "Task: Emit normalized ES params for personal_care (skin or hair). Keep q as product noun (no price/concern words).\n"
+                "Prefer specific noun-phrases; for modifier-only messages, anchor to most recent product noun.\n"
+                "Return fields: q, category_group='personal_care', subcategory, category_paths, brands[], price_min, price_max, keywords[], phrase_boosts[], size (<=10), anchor_product_noun,\n"
+                "               skin_types[], skin_concerns[], hair_types[], hair_concerns[], avoid_ingredients[], product_types[], prioritize_concerns, min_review_count.\n"
+                "Extraction guidance (use judgment, not rigid rules):\n"
+                "- Skin types: map phrases → [oily, dry, combination, sensitive, normal]. Examples: 'oily skin', 'shine', 'greasy' → oily; 'dry', 'flaky', 'tight' → dry; 'T-zone oily' → combination; 'itchy, redness' → sensitive.\n"
+                "- Skin concerns: [acne, dark_spots, aging, dullness, oil_control, hydration]. Examples: 'pimples, breakouts' → acne; 'pigmentation, dark spots' → dark_spots; 'wrinkles, fine lines' → aging; 'brightening, glow' → dullness; 'oil/shine control' → oil_control; 'dryness, moisture' → hydration.\n"
+                "- Hair types: [dry, oily, normal, curly, straight, wavy].\n"
+                "- Hair concerns: [dandruff, hairfall, frizz, dryness, damage, split_ends, color_protection, volume].\n"
+                "- Avoid ingredients: detect negatives and 'free of' (e.g., 'no fragrance', 'without parabens', 'sulfate-free', 'silicone-free', 'alcohol-free', 'no mineral oil').\n"
+                "- Product types: infer from nouns (e.g., 'face wash'/'facewash'→face_wash, 'moisturizer'/'cream'→moisturizer, 'serum', 'sunscreen', 'conditioner', 'shampoo').\n"
+                "- Use PROFILE_HINTS as soft priors; override only if CURRENT query clearly contradicts.\n"
+                "- If FOLLOW_UP and message is price-only or vague ('under 100', 'more like this'), carry over stable fields (product_types, skin_types, skin_concerns, avoid_ingredients) from recent turns unless explicitly changed.\n"
+                "- If DOMAIN_SUBCATEGORY_HINT present and consistent, set subcategory accordingly and build 1–2 category_paths from taxonomy.\n"
+                "- Always include arrays even if empty; do not omit keys.\n"
+            )
+
+            print(f"CORE:SKIN_LLM_IN | follow_up={is_follow_up} | interactions={len(convo_history)} | current='{current_text[:60]}'")
+
+            # Use dual tools: initial vs follow-up schemas per provided design
+            tool_set = [FOLLOWUP_SKIN_PARAMS_TOOL] if is_follow_up else [INITIAL_SKIN_PARAMS_TOOL]
+            tool_name = "extract_followup_skin_params" if is_follow_up else "extract_initial_skin_params"
+            resp = await self.anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                tools=tool_set,
+                tool_choice={"type": "tool", "name": tool_name},
+                temperature=0,
+                max_tokens=800,
+            )
+            tool_use = pick_tool(resp, tool_name)
+            params = _strip_keys(tool_use.input or {}) if tool_use else {}
+
+            try:
+                keys = list(params.keys())
+                print(f"CORE:SKIN_LLM_OUT_KEYS | keys={keys}")
+                expected = [
+                    "q","category_group","subcategory","category_paths","brands","price_min","price_max",
+                    "keywords","phrase_boosts","size","anchor_product_noun","skin_types","skin_concerns",
+                    "avoid_ingredients","product_types","prioritize_concerns","min_review_count"
+                ]
+                missing = [k for k in expected if k not in params]
+                extra = [k for k in keys if k not in expected]
+                print(f"CORE:SKIN_KEYS_CHECK | missing={missing} | extra={extra}")
+            except Exception:
+                pass
+
+            # Normalize and clamp
+            try:
+                s = int(params.get("size", 10) or 10)
+                params["size"] = max(1, min(10, s))
+            except Exception:
+                params["size"] = 10
+            params["category_group"] = "personal_care"
+
+            # Clean list fields
+            for lf in ["brands", "keywords", "skin_types", "skin_concerns", "hair_types", "hair_concerns", "avoid_ingredients", "product_types"]:
+                if isinstance(params.get(lf), list):
+                    params[lf] = [str(x).strip() for x in params[lf] if str(x).strip()]
+
+            # Normalize category_paths: convert dot → slash and ensure 'personal_care/' prefix
+            try:
+                norm_paths: List[str] = []
+                for cp in (params.get("category_paths") or [])[:3]:
+                    s = str(cp).strip()
+                    if not s:
+                        continue
+                    s = s.replace(".", "/")
+                    if not s.startswith("personal_care/"):
+                        s = ("personal_care/" + s.lstrip("/")) if "personal_care" in s else ("personal_care/" + s)
+                    if s not in norm_paths:
+                        norm_paths.append(s)
+                if norm_paths:
+                    params["category_paths"] = norm_paths
+                    print(f"CORE:SKIN_PATHS_NORM | {norm_paths}")
+            except Exception:
+                pass
+
+            try:
+                print(
+                    "CORE:SKIN_LLM_OUT_VALS | "
+                    f"q='{params.get('q')}' | subcat='{params.get('subcategory')}' | paths={len(params.get('category_paths') or [])} | "
+                    f"brands={len(params.get('brands') or [])} | price=({params.get('price_min')},{params.get('price_max')}) | "
+                    f"skin_types={params.get('skin_types')} | skin_concerns={params.get('skin_concerns')} | hair_types={params.get('hair_types')} | hair_concerns={params.get('hair_concerns')} | "
+                    f"avoid={len(params.get('avoid_ingredients') or [])} | types={params.get('product_types')} | prioritize_concerns={params.get('prioritize_concerns')} | "
+                    f"min_reviews={params.get('min_review_count')} | size={params.get('size')}"
+                )
+                # Planner stickiness report: what will be filled from profile if empty
+                sticky = []
+                profile_skin_type = ctx.session.get("user_skin_type") or ctx.session.get("user_hair_type")
+                if not params.get('skin_types') and profile_skin_type:
+                    sticky.append("skin_types←profile")
+                if not params.get('skin_concerns') and ctx.session.get('user_skin_concerns'):
+                    sticky.append("skin_concerns←profile")
+                if not params.get('avoid_ingredients') and ctx.session.get('user_allergies'):
+                    sticky.append("avoid_ingredients←profile")
+                if sticky:
+                    print(f"CORE:SKIN_STICKY | will_fill={sticky}")
+            except Exception:
+                pass
+
+            print(f"CORE:SKIN_LLM_OUT | q='{params.get('q')}' | subcat='{params.get('subcategory')}' | price=({params.get('price_min')},{params.get('price_max')}) | types={params.get('product_types')} | skin_concerns={params.get('skin_concerns')} | hair_concerns={params.get('hair_concerns')}")
+            return params
+        except Exception as exc:
+            log.error(f"SKIN_PARAMS_ERROR | {exc}")
             return {}
 
 

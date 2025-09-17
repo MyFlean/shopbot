@@ -15,6 +15,7 @@ import asyncio
 import os
 import re
 from typing import Any, Dict, List, Optional
+import json
 
 import requests
 
@@ -300,7 +301,76 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # 2) Soft re-ranking signals with boosts
+    # 2) Domain-specific filters (skin/personal care)
+    # Apply skin-specific params when category_group indicates personal care
+    try:
+        if str(p.get("category_group") or "").strip() == "personal_care":
+            # Minimum reviews threshold
+            min_reviews = p.get("min_review_count")
+            if isinstance(min_reviews, int) and min_reviews > 0:
+                filters.append({"range": {"review_stats.total_reviews": {"gte": min_reviews}}})
+
+            # Brand filter
+            if isinstance(p.get("brands"), list) and p.get("brands"):
+                filters.append({"terms": {"brand": p["brands"]}})
+
+            # Avoid ingredients → must_not side effects and ingredients.raw_text
+            avoid_list = p.get("avoid_ingredients") or []
+            if isinstance(avoid_list, list) and avoid_list:
+                for ing in avoid_list[:6]:
+                    ing_s = str(ing).strip()
+                    if not ing_s:
+                        continue
+                    bq.setdefault("must_not", []).append({
+                        "bool": {
+                            "must": [
+                                {"match": {"side_effects.effect_name": ing_s}},
+                                {"range": {"side_effects.severity_score": {"gte": 0.3}}}
+                            ]
+                        }
+                    })
+                    bq.setdefault("must_not", []).append({"match": {"ingredients.raw_text": ing_s}})
+
+            # Skin type compatibility scoring
+            skin_types = p.get("skin_types") or []
+            if isinstance(skin_types, list) and skin_types:
+                for st in skin_types[:4]:
+                    st_s = str(st).strip().lower()
+                    if not st_s:
+                        continue
+                    shoulds.append({
+                        "bool": {
+                            "must": [
+                                {"term": {"skin_compatibility.skin_type": st_s}},
+                                {"range": {"skin_compatibility.sentiment_score": {"gte": 0.6}}},
+                                {"range": {"skin_compatibility.confidence_score": {"gte": 0.3}}}
+                            ],
+                            "boost": 5.0
+                        }
+                    })
+
+            # Efficacy scoring for concerns
+            concerns = p.get("skin_concerns") or []
+            if isinstance(concerns, list) and concerns:
+                boost = 3.0 if bool(p.get("prioritize_concerns")) else 2.0
+                for c in concerns[:4]:
+                    c_s = str(c).strip().lower()
+                    if not c_s:
+                        continue
+                    shoulds.append({
+                        "bool": {
+                            "must": [
+                                {"match": {"efficacy.aspect_name": c_s}},
+                                {"range": {"efficacy.sentiment_score": {"gte": 0.7}}},
+                                {"range": {"efficacy.mention_count": {"gte": 5}}}
+                            ],
+                            "boost": boost
+                        }
+                    })
+    except Exception:
+        pass
+
+    # 3) Soft re-ranking signals with boosts
     
     # NOTE: Brand-based boosting is intentionally disabled.
     # Direct brand filtering/boosting proved brittle due to inconsistent brand tokenization
@@ -497,6 +567,176 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
 
     return body
 
+def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a personal care (skin) ES query matching the working Postman shape."""
+    p = params or {}
+
+    size = int(p.get("size", 10) or 10)
+    price_min = p.get("price_min")
+    price_max = p.get("price_max")
+    min_reviews = p.get("min_review_count")
+    q_text = str(p.get("q") or "").strip()
+
+    body: Dict[str, Any] = {
+        "size": size,
+        "track_total_hits": True,
+        "_source": {
+            "includes": [
+                "id", "name", "brand", "price", "mrp", "description",
+                "category_group", "category_paths", "hero_image.*",
+                "review_stats.*",
+                "skin_compatibility.*",
+                "efficacy.*",
+                "side_effects.*",
+            ]
+        },
+        "query": {
+            "function_score": {
+                "query": {"bool": {"filter": [], "must": [], "should": [], "must_not": [], "minimum_should_match": 0}},
+                "functions": [
+                    {
+                        "field_value_factor": {
+                            "field": "review_stats.avg_rating",
+                            "factor": 1.2,
+                            "modifier": "sqrt",
+                            "missing": 3.0,
+                        }
+                    },
+                    {
+                        "field_value_factor": {
+                            "field": "review_stats.total_reviews",
+                            "factor": 1.0,
+                            "modifier": "log1p",
+                            "missing": 1,
+                        }
+                    },
+                ],
+                "score_mode": "multiply",
+                "boost_mode": "multiply",
+            }
+        },
+        "sort": [{"_score": "desc"}],
+        "min_score": 0.5,
+    }
+
+    bq = body["query"]["function_score"]["query"]["bool"]
+    filters: List[Dict[str, Any]] = bq["filter"]
+    shoulds: List[Dict[str, Any]] = bq["should"]
+    musts: List[Dict[str, Any]] = bq["must"]
+    must_not: List[Dict[str, Any]] = bq["must_not"]
+
+    # Filters: category group
+    filters.append({"term": {"category_group": "personal_care"}})
+
+    # Category paths from params
+    cat_paths = []
+    primary_path = p.get("category_path")
+    if isinstance(primary_path, str) and primary_path.strip():
+        cat_paths.append(primary_path.strip())
+    for cp in (p.get("category_paths") or [])[:3]:
+        try:
+            s = str(cp).strip()
+            if s and s not in cat_paths:
+                cat_paths.append(s)
+        except Exception:
+            pass
+    if cat_paths:
+        # Use terms on keyword array for exact path matching
+        filters.append({"terms": {"category_paths": cat_paths}})
+
+    # Price filter
+    if price_min is not None or price_max is not None:
+        pr: Dict[str, Any] = {}
+        if isinstance(price_min, (int, float)):
+            pr["gte"] = float(price_min)
+        if isinstance(price_max, (int, float)):
+            pr["lte"] = float(price_max)
+        if pr:
+            filters.append({"range": {"price": pr}})
+
+    # Min reviews (apply only if provided)
+    if isinstance(min_reviews, int) and min_reviews > 0:
+        filters.append({"range": {"review_stats.total_reviews": {"gte": min_reviews}}})
+
+    # Brands
+    if isinstance(p.get("brands"), list) and p.get("brands"):
+        filters.append({"terms": {"brand": p["brands"]}})
+
+    # Must: main query
+    if q_text:
+        musts.append({
+            "multi_match": {
+                "query": q_text,
+                "type": "best_fields",
+                "fields": ["name^4", "description^2", "use", "combined_text"],
+                "fuzziness": "AUTO",
+            }
+        })
+
+    # Skin types → strong should
+    for st in (p.get("skin_types") or [])[:4]:
+        st_s = str(st).strip().lower()
+        if not st_s:
+            continue
+        shoulds.append({
+            "bool": {
+                "must": [
+                    {"term": {"skin_compatibility.skin_type": st_s}},
+                    {"range": {"skin_compatibility.sentiment_score": {"gte": 0.6}}},
+                    {"range": {"skin_compatibility.confidence_score": {"gte": 0.3}}},
+                ],
+                "boost": 5.0,
+            }
+        })
+
+    # Concerns → efficacy signals (merge skin + hair), non-nested friendly separate boosts
+    concern_boost = 3.0 if bool(p.get("prioritize_concerns")) else 2.0
+    merged_concerns = []
+    try:
+        for lst in [p.get("skin_concerns") or [], p.get("hair_concerns") or []]:
+            for it in lst:
+                if it and it not in merged_concerns:
+                    merged_concerns.append(it)
+    except Exception:
+        merged_concerns = (p.get("skin_concerns") or [])
+    for cn in merged_concerns[:4]:
+        cn_s = str(cn).strip().lower()
+        if not cn_s:
+            continue
+        shoulds.append({
+            "term": {"efficacy.aspect_name": {"value": cn_s, "boost": concern_boost}}
+        })
+        shoulds.append({
+            "range": {"efficacy.sentiment_score": {"gte": 0.7, "boost": concern_boost}}
+        })
+
+    # Avoid ingredients → side_effects only (drop ingredients.raw_text for now)
+    for ing in (p.get("avoid_ingredients") or [])[:6]:
+        ing_s = str(ing).strip()
+        if not ing_s:
+            continue
+        must_not.append({
+            "bool": {
+                "must": [
+                    {"match": {"side_effects.effect_name": ing_s}},
+                    {"range": {"side_effects.severity_score": {"gte": 0.3}}},
+                ]
+            }
+        })
+
+    # Personal care: treat should as pure boosts
+    bq["minimum_should_match"] = 0
+
+    # Highlight
+    body["highlight"] = {
+        "fields": {
+            "name": {"number_of_fragments": 0},
+            "ingredients.raw_text": {"fragment_size": 120, "number_of_fragments": 1},
+        }
+    }
+
+    return body
+
 def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
     """Transform ES response with enhanced field coverage"""
     hits = raw_response.get("hits", {}).get("hits", [])
@@ -649,12 +889,15 @@ class ElasticsearchProductsFetcher:
     def search(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute search against Elasticsearch with fallback strategies."""
         try:
-            # Use the enhanced query builder
             # Ensure mapping hints for category_paths.keyword usage
             self._ensure_mapping_hints()
             p = dict(params or {})
             p["_has_category_paths_keyword"] = bool(self._has_category_paths_keyword)
-            query_body = _build_enhanced_es_query(p)
+            # Route by domain: personal_care → skin builder; else generic
+            if str(p.get("category_group") or "").strip() == "personal_care":
+                query_body = _build_skin_es_query(p)
+            else:
+                query_body = _build_enhanced_es_query(p)
             
             # Debug logging
             print(f"DEBUG: Enhanced ES Query Structure:")
@@ -663,6 +906,17 @@ class ElasticsearchProductsFetcher:
             print(f"  - Brands: {params.get('brands', [])}")
             print(f"  - Price range: {params.get('price_min', 'no min')}-{params.get('price_max', 'no max')}")
             print(f"  - Dietary: {params.get('dietary_labels', [])}")
+            try:
+                print(f"DEBUG: ES endpoint: {self.endpoint}")
+                # Pretty-print the actual JSON body for Postman reproduction
+                body_str = json.dumps(query_body, ensure_ascii=False, indent=2)
+                # Truncate extremely long outputs to keep logs readable
+                if len(body_str) > 40000:
+                    print(body_str[:40000] + "\n... (truncated) ...")
+                else:
+                    print(body_str)
+            except Exception:
+                pass
             
             response = requests.post(
                 self.endpoint,
@@ -971,6 +1225,43 @@ def _normalize_params(base_params: Dict[str, Any], llm_params: Dict[str, Any]) -
 async def build_search_params(ctx) -> Dict[str, Any]:
     """Build final search parameters - unified LLM source of truth with minimal fallback"""
     
+    # Branch for personal care/skin domain to use skin-specific planner
+    try:
+        domain = str((ctx.session or {}).get("domain") or "").strip()
+        if domain == "personal_care":
+            from ..llm_service import LLMService  # type: ignore
+            llm_service = LLMService()
+            skin_params = await llm_service.generate_skin_es_params(ctx)
+            if isinstance(skin_params, dict) and skin_params.get("q"):
+                final_params: Dict[str, Any] = dict(skin_params)
+                # Ensure product_intent present
+                try:
+                    final_params.setdefault("product_intent", str(ctx.session.get("product_intent") or "show_me_options"))
+                except Exception:
+                    final_params.setdefault("product_intent", "show_me_options")
+                # Clamp size to [1,50]
+                try:
+                    s = int(final_params.get("size", 10) or 10)
+                    final_params["size"] = max(1, min(50, s))
+                except Exception:
+                    final_params["size"] = 10
+                try:
+                    merged = []
+                    for lst in [final_params.get('skin_concerns') or [], final_params.get('hair_concerns') or []]:
+                        for it in lst:
+                            if it and it not in merged:
+                                merged.append(it)
+                    print(f"DEBUG: USING_SKIN_PARAMS | q='{final_params.get('q')}' | types={final_params.get('product_types')} | skin_concerns={final_params.get('skin_concerns')} | hair_concerns={final_params.get('hair_concerns')} | merged_concerns={merged}")
+                    ctx.session.setdefault("debug", {})["last_skin_search_params"] = final_params
+                except Exception:
+                    pass
+                return final_params
+    except Exception as exc:
+        try:
+            print(f"DEBUG: SKIN_BRANCH_FAILED | {exc}")
+        except Exception:
+            pass
+
     # 1) Try unified ES params directly (authoritative)
     try:
         from ..llm_service import LLMService  # type: ignore

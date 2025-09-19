@@ -582,12 +582,13 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
         "track_total_hits": True,
         "_source": {
             "includes": [
-                "id", "name", "brand", "price", "mrp", "description",
-                "category_group", "category_paths", "hero_image.*",
-                "review_stats.*",
-                "skin_compatibility.*",
-                "efficacy.*",
-                "side_effects.*",
+                "id", "name", "brand", "price", "mrp",
+                "category_group", "category_paths", "hero_image.1080",
+                "review_stats.avg_rating", "review_stats.total_reviews",
+                "skin_compatibility.skin_type", "skin_compatibility.sentiment_score", "skin_compatibility.confidence_score",
+                "efficacy.aspect_name", "efficacy.sentiment_score", "efficacy.mention_count",
+                "side_effects.effect_name", "side_effects.severity_score", "side_effects.sentiment_score",
+                "package_claims.health_claims", "package_claims.dietary_labels",
             ]
         },
         "query": {
@@ -703,8 +704,22 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
             }
         })
 
-    # Skin types → nested strong should
-    for st in (p.get("skin_types") or [])[:4]:
+    # Skin/Hair suitability → nested strong should on skin_compatibility
+    # Map hair_types to scalp equivalents where possible (oily/dry/normal)
+    compat_types: List[str] = []
+    try:
+        for st in (p.get("skin_types") or [])[:4]:
+            s = str(st).strip().lower()
+            if s and s not in compat_types:
+                compat_types.append(s)
+        hair_map = {"oily": "oily", "dry": "dry", "normal": "normal"}
+        for ht in (p.get("hair_types") or [])[:4]:
+            m = hair_map.get(str(ht).strip().lower())
+            if m and m not in compat_types:
+                compat_types.append(m)
+    except Exception:
+        pass
+    for st in compat_types[:4]:
         st_s = str(st).strip().lower()
         if not st_s:
             continue
@@ -725,44 +740,57 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
             }
         })
 
-    # Concerns → efficacy signals (merge skin + hair), nested with variant matches
+    # Efficacy (positive) → from efficacy_terms if provided; else derive from concerns (ALWAYS include, even if empty)
     concern_boost = 2.0 if not bool(p.get("prioritize_concerns")) else 3.0
-    merged_concerns = []
+    efficacy_terms: List[str] = []
     try:
-        for lst in [p.get("skin_concerns") or [], p.get("hair_concerns") or []]:
-            for it in lst:
-                if it and it not in merged_concerns:
-                    merged_concerns.append(it)
+        for it in (p.get("efficacy_terms") or [])[:6]:
+            if it and it not in efficacy_terms:
+                efficacy_terms.append(str(it).strip())
     except Exception:
-        merged_concerns = (p.get("skin_concerns") or [])
-    def _concern_variants(term: str) -> List[str]:
-        t = (term or "").lower()
-        if t == "dandruff":
-            return ["dandruff", "anti-dandruff", "scalp", "scalp care", "flaking"]
-        if t == "oil_control":
-            return ["oil control", "oil-control", "sebum", "oily"]
-        if t == "hydration":
-            return ["hydration", "moisturizing", "moisture", "dryness"]
-        return [t]
-    for cn in merged_concerns[:4]:
-        variants = _concern_variants(str(cn))
-        shoulds.append({
-            "nested": {
-                "path": "efficacy",
-                "query": {
-                    "bool": {
-                        "must": [
-                            {"terms": {"efficacy.aspect_name": variants}},
-                            {"range": {"efficacy.sentiment_score": {"gte": 0.7}}},
-                        ]
-                    }
-                },
-                "score_mode": "max",
-                "boost": concern_boost,
-            }
-        })
+        pass
+    if not efficacy_terms:
+        merged_concerns = []
+        try:
+            for lst in [p.get("skin_concerns") or [], p.get("hair_concerns") or []]:
+                for it in lst:
+                    if it and it not in merged_concerns:
+                        merged_concerns.append(str(it).strip())
+        except Exception:
+            merged_concerns = (p.get("skin_concerns") or [])
+        efficacy_terms = merged_concerns[:6]
+    # Always add an efficacy nested block; if no terms, use empty-safe variant (no-op boost)
+    shoulds.append({
+        "nested": {
+            "path": "efficacy",
+            "query": {
+                "bool": {
+                    "must": (
+                        [{"terms": {"efficacy.aspect_name": efficacy_terms}}, {"range": {"efficacy.sentiment_score": {"gte": 0.7}}}]
+                        if efficacy_terms else [{"match_all": {}}]
+                    )
+                }
+            },
+            "inner_hits": {
+                "name": "efficacy_hits",
+                "size": 3,
+                "_source": ["efficacy.aspect_name", "efficacy.sentiment_score", "efficacy.mention_count"]
+            },
+            "score_mode": "max",
+            "boost": concern_boost,
+        }
+    })
 
-    # Avoid ingredients → nested on side_effects (drop ingredients.raw_text for now)
+    # Avoid negatives: side_effects nested + cons_list keywords
+    avoid_terms: List[str] = []
+    try:
+        for it in (p.get("avoid_terms") or [])[:6]:
+            if it and it not in avoid_terms:
+                avoid_terms.append(str(it).strip())
+    except Exception:
+        pass
+
+    # Side-effects exclusions (ALWAYS include block, even if empty will no-op)
     for ing in (p.get("avoid_ingredients") or [])[:6]:
         ing_s = str(ing).strip()
         if not ing_s:
@@ -780,9 +808,36 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 }
             }
         })
+    # Also use avoid_terms for side_effects
+    for term in avoid_terms:
+        t = str(term).strip()
+        if not t:
+            continue
+        must_not.append({
+            "nested": {
+                "path": "side_effects",
+                "query": {
+                    "bool": {
+                        "must": [
+                            {"match": {"side_effects.effect_name": t}},
+                            {"range": {"side_effects.severity_score": {"gte": 0.3}}},
+                        ]
+                    }
+                }
+            }
+        })
+    # And cons_list keyword exclusions
+    # Cons list exclusions (ALWAYS present; no-op when empty)
+    must_not.append({"terms": {"cons_list": (avoid_terms or [])}})
 
-    # Personal care: treat should as pure boosts
+    # Personal care: treat should as pure boosts (ensure the four sections exist)
     bq["minimum_should_match"] = 0
+    try:
+        print(
+            f"DEBUG: PC_SECTIONS | efficacy_terms={efficacy_terms} | avoid_terms={avoid_terms} | skin_types={p.get('skin_types')} | hair_types={p.get('hair_types')}"
+        )
+    except Exception:
+        pass
 
     # Highlight
     body["highlight"] = {
@@ -1417,14 +1472,59 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
                 print(f"DEBUG: Average flean percentile {avg_flean}% is low, considering fallback...")
                 results['meta']['quality_warning'] = f'average_flean_percentile_{avg_flean:.1f}'
     
-    # Zero-result fallback strategy: relax constraints or probe siblings
+    # Zero-result fallback strategy: RELAX CATEGORY FIRST, then price, then siblings
     try:
         total = int(((results.get('meta') or {}).get('total_hits')) or 0)
     except Exception:
         total = 0
     if total == 0:
         print("DEBUG: ZERO_RESULT | attempting fallback strategies")
-        # Strategy A: relax price window slightly if price_max present
+        # Strategy A: category sibling probe within same l2 (prefer first)
+        try:
+            cat_paths = params.get('category_paths') if isinstance(params.get('category_paths'), list) else []
+            primary = params.get('category_path') or (cat_paths[0] if cat_paths else '')
+            rel = ''
+            if isinstance(primary, str) and primary.strip():
+                parts = [x for x in primary.split('/') if x]
+                if len(parts) >= 4 and parts[0] == 'f_and_b' and parts[1] == 'food':
+                    l2 = parts[2]
+                    sibling_candidates = [f"f_and_b/food/{l2}"]
+                elif len(parts) >= 2 and parts[0] == 'personal_care':
+                    l2 = parts[1]
+                    sibling_candidates = [f"personal_care/{l2}"]
+                else:
+                    sibling_candidates = []
+                if sibling_candidates:
+                    p3 = dict(params)
+                    p3.pop('category_paths', None)
+                    p3['category_path'] = sibling_candidates[0]
+                    print(f"DEBUG: SIBLING_PROBE | path={p3['category_path']}")
+                    alt2 = await loop.run_in_executor(None, lambda: fetcher.search(p3))
+                    alt2_total = int(((alt2.get('meta') or {}).get('total_hits')) or 0)
+                    if alt2_total > 0:
+                        alt2['meta']['fallback_applied'] = 'sibling_probe_l2_first'
+                        return alt2
+        except Exception:
+            pass
+        # Strategy A: drop category_paths/category_path first
+        try:
+            p0 = dict(params)
+            dropped = False
+            if p0.pop('category_paths', None) is not None:
+                dropped = True
+            if p0.pop('category_path', None) is not None:
+                dropped = True
+            if dropped:
+                print("DEBUG: DROP_CATEGORY_FILTERS")
+                alt0 = await loop.run_in_executor(None, lambda: fetcher.search(p0))
+                alt0_total = int(((alt0.get('meta') or {}).get('total_hits')) or 0)
+                if alt0_total > 0:
+                    alt0['meta']['fallback_applied'] = 'drop_category_filters'
+                    return alt0
+        except Exception:
+            pass
+
+        # Strategy B: relax price window slightly if price_max present
         relaxed_ran = False
         try:
             p2 = dict(params)
@@ -1440,7 +1540,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
         except Exception:
             pass
 
-        # Strategy B: category sibling probe within same l2
+        # Strategy C: category sibling probe within same l2
         try:
             cat_paths = params.get('category_paths') if isinstance(params.get('category_paths'), list) else []
             primary = params.get('category_path') or (cat_paths[0] if cat_paths else '')
@@ -1471,7 +1571,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
         except Exception:
             pass
 
-        # Strategy C: drop dietary terms if present but too restrictive
+        # Strategy D: drop dietary terms if present but too restrictive
         try:
             if (params.get('dietary_terms') or params.get('dietary_labels')) and not relaxed_ran:
                 p4 = dict(params)

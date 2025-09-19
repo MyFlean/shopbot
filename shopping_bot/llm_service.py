@@ -104,22 +104,14 @@ SKIN_ES_PARAMS_TOOL = {
             "q": {"type": "string"},
             "size": {"type": "integer", "minimum": 1, "maximum": 50},
             "category_group": {"type": "string", "enum": ["personal_care"]},
-            "category_paths": {"type": "array", "items": {"type": "string"}},
-            "subcategory": {"type": "string"},
             "brands": {"type": "array", "items": {"type": "string"}},
             "price_min": {"type": "number"},
             "price_max": {"type": "number"},
-            "keywords": {"type": "array", "items": {"type": "string"}},
-            "phrase_boosts": {"type": "array", "items": {"type": "object"}},
             "anchor_product_noun": {"type": "string"},
             "skin_types": {"type": "array", "items": {"type": "string"}},
-            "skin_concerns": {"type": "array", "items": {"type": "string"}},
             "hair_types": {"type": "array", "items": {"type": "string"}},
-            "hair_concerns": {"type": "array", "items": {"type": "string"}},
-            "avoid_ingredients": {"type": "array", "items": {"type": "string"}},
-            "product_types": {"type": "array", "items": {"type": "string"}},
-            "prioritize_concerns": {"type": "boolean"},
-            "min_review_count": {"type": "integer"}
+            "efficacy_terms": {"type": "array", "items": {"type": "string"}},
+            "avoid_terms": {"type": "array", "items": {"type": "string"}}
         },
         "required": ["q", "category_group"]
     }
@@ -135,32 +127,16 @@ FOLLOWUP_SKIN_PARAMS_TOOL = {
             "q": {"type": "string", "description": "Product noun only (e.g., shampoo)"},
             "anchor_product_noun": {"type": "string"},
             "category_group": {"type": "string", "enum": ["personal_care"], "default": "personal_care"},
-            "subcategory": {"type": "string"},
-            "category_paths": {"type": "array", "items": {"type": "string"}},
             "skin_types": {"type": "array", "items": {"type": "string", "enum": ["oily","dry","combination","sensitive","normal"]}},
-            "skin_concerns": {"type": "array", "items": {"type": "string"}},
             "hair_types": {"type": "array", "items": {"type": "string"}},
-            "hair_concerns": {"type": "array", "items": {"type": "string"}},
-            "avoid_ingredients": {"type": "array", "items": {"type": "string"}},
-            "product_types": {"type": "array", "items": {"type": "string"}},
+            "efficacy_terms": {"type": "array", "items": {"type": "string"}},
+            "avoid_terms": {"type": "array", "items": {"type": "string"}},
             "brands": {"type": "array", "items": {"type": "string"}},
             "price_min": {"type": "number"},
             "price_max": {"type": "number"},
-            "keywords": {"type": "array", "items": {"type": "string"}},
-            "phrase_boosts": {"type": "array", "items": {"type": "object"}},
-            "prioritize_concerns": {"type": "boolean"},
-            "min_review_count": {"type": "integer", "default": 10},
-            "size": {"type": "integer", "maximum": 10, "default": 10},
-            "carry_forward": {
-                "type": "object",
-                "properties": {
-                    "skin_types": {"type": "boolean"},
-                    "concerns": {"type": "boolean"},
-                    "product_types": {"type": "boolean"}
-                }
-            }
+            "size": {"type": "integer", "maximum": 10, "default": 10}
         },
-        "required": ["q", "category_group", "category_paths"]
+        "required": ["q", "category_group"]
     }
 }
 
@@ -173,21 +149,13 @@ INITIAL_SKIN_PARAMS_TOOL = {
             "q": {"type": "string"},
             "anchor_product_noun": {"type": "string"},
             "category_group": {"type": "string", "enum": ["personal_care"], "default": "personal_care"},
-            "subcategory": {"type": "string"},
-            "category_paths": {"type": "array", "items": {"type": "string"}},
             "skin_types": {"type": "array", "items": {"type": "string"}},
-            "skin_concerns": {"type": "array", "items": {"type": "string"}},
             "hair_types": {"type": "array", "items": {"type": "string"}},
-            "hair_concerns": {"type": "array", "items": {"type": "string"}},
-            "avoid_ingredients": {"type": "array", "items": {"type": "string"}},
-            "product_types": {"type": "array", "items": {"type": "string"}},
+            "efficacy_terms": {"type": "array", "items": {"type": "string"}},
+            "avoid_terms": {"type": "array", "items": {"type": "string"}},
             "brands": {"type": "array", "items": {"type": "string"}},
             "price_min": {"type": "number"},
             "price_max": {"type": "number"},
-            "keywords": {"type": "array", "items": {"type": "string"}},
-            "phrase_boosts": {"type": "array", "items": {"type": "object"}},
-            "prioritize_concerns": {"type": "boolean"},
-            "min_review_count": {"type": "integer", "default": 10},
             "size": {"type": "integer", "maximum": 10, "default": 10}
         },
         "required": ["q", "category_group"]
@@ -1324,7 +1292,7 @@ class LLMService:
                         while len(norm_opts) < 3 and fillers:
                             norm_opts.append(fillers.pop(0))
                     else:
-                        while len(norm_opts) < 3:
+                    while len(norm_opts) < 3:
                             norm_opts.append("No preference")
                     canon_ask[ckey] = {
                         "message": v.get("message") or f"What's your {ckey.replace('ASK_', '').replace('_', ' ').lower()}?",
@@ -1559,106 +1527,35 @@ class LLMService:
                 "products": []
             }
         
-        # Suppressed: verbose top-3 preview logging
-
-        # Build enrichment: fetch full docs for top-3 (or top-1 for SPM) via ES mget
+        # Build compact briefs directly from search hits (no mget for personal care)
+        def _first_25_words(text: str) -> str:
+            if not text:
+                return ""
+            words = str(text).split()
+            return " ".join(words[:25])
+        
         top_k = 1 if (product_intent and product_intent == "is_this_good") else 3
-        top_ids: List[str] = []
-        try:
-            for p in products_data[:top_k]:
-                pid = str(p.get("id") or "").strip()
-                if pid:
-                    top_ids.append(pid)
-        except Exception:
-            top_ids = []
-
         top_products_brief: List[Dict[str, Any]] = []
-        if top_ids:
+        for p in products_data[:top_k]:
             try:
-                try:
-                    log.info(f"UX_ENRICH_START | top_ids_count={len(top_ids)} | ids_sample={top_ids[:3]}")
-                except Exception:
-                    pass
-                from .data_fetchers.es_products import get_es_fetcher  # type: ignore
-                loop = asyncio.get_running_loop()
-                log.info("UX_ENRICH_FETCHER_GET")
-                fetcher = get_es_fetcher()
-                log.info("UX_ENRICH_BEFORE_MGET")
-                full_docs = await loop.run_in_executor(None, lambda: fetcher.mget_products(top_ids))
-                log.info(f"UX_ENRICH_AFTER_MGET | full_docs_count={len(full_docs) if isinstance(full_docs, list) else 'N/A'}")
-                # Suppressed: verbose doc content logging
-                # Build compact briefs for LLM (avoid token bloat) with rich attributes
-                for doc in full_docs[:top_k]:
-                    try:
-                        stats = doc.get("stats", {}) or {}
-                        def _pp(key: str) -> Optional[float]:
-                            try:
-                                return (stats.get(key, {}) or {}).get("subcategory_percentile")
-                            except Exception:
-                                return None
-                        # Extract rich attributes
-                        pkg = (doc.get("package_claims", {}) or {})
-                        cat = (doc.get("category_data", {}) or {})
-                        nutr = (cat.get("nutritional", {}) or {}).get("nutri_breakdown", {})
-                        tags = (doc.get("tags_and_sentiments", {}) or {})
-                        ingredients = (doc.get("ingredients", {}) or {})
-                        flean = (doc.get("flean_score", {}) or {})
                         brief = {
-                            "id": doc.get("id"),
-                            "name": doc.get("name"),
-                            "brand": doc.get("brand"),
-                            "price": doc.get("price"),
-                            "description": doc.get("description"),
-                            "dietary_labels": pkg.get("dietary_labels", []),
-                            "health_claims": pkg.get("health_claims", []),
-                            "package_text": pkg.get("text"),
-                            "nutri": nutr,
-                            "processing_type": cat.get("processing_type"),
-                            "dietary_label": cat.get("dietary_label"),
-                            "ingredients_raw": ingredients.get("raw_text") or ingredients.get("raw_text_new"),
-                            "tags_and_sentiments": {
-                                "usage_tags": ((tags.get("tags", {}) or {}).get("usage_tags", []) if isinstance(tags.get("tags"), dict) else []),
-                                "occasion_tags": ((tags.get("tags", {}) or {}).get("occasion_tags", []) if isinstance(tags.get("tags"), dict) else []),
-                                "time_of_day_tags": ((tags.get("tags", {}) or {}).get("time_of_day_tags", []) if isinstance(tags.get("tags"), dict) else []),
-                                "social_context_tags": ((tags.get("tags", {}) or {}).get("social_context_tags", []) if isinstance(tags.get("tags"), dict) else []),
-                                "weather_season_tags": ((tags.get("tags", {}) or {}).get("weather_season_tags", []) if isinstance(tags.get("tags"), dict) else []),
-                                "emotional_trigger_tags": ((tags.get("tags", {}) or {}).get("emotional_trigger_tags", []) if isinstance(tags.get("tags"), dict) else []),
-                                "health_positioning_tags": ((tags.get("tags", {}) or {}).get("health_positioning_tags", []) if isinstance(tags.get("tags"), dict) else []),
-                                "processing_level_tags": ((tags.get("tags", {}) or {}).get("processing_level_tags", []) if isinstance(tags.get("tags"), dict) else []),
-                                "marketing_tags": ((tags.get("tags", {}) or {}).get("marketing_tags", []) if isinstance(tags.get("tags"), dict) else []),
-                            },
-                            "flean_score": flean.get("adjusted_score"),
-                            "bonuses": flean.get("bonuses"),
-                            "penalties": flean.get("penalties"),
-                            "percentiles": {
-                                "flean": _pp("adjusted_score_percentiles"),
-                                "protein": _pp("protein_percentiles"),
-                                "fiber": _pp("fiber_percentiles"),
-                                "wholefood": _pp("wholefood_percentiles"),
-                                "fortification": _pp("fortification_percentiles"),
-                                "simplicity": _pp("simplicity_percentiles"),
-                                "sugar_penalty": _pp("sugar_penalty_percentiles"),
-                                "sodium_penalty": _pp("sodium_penalty_percentiles"),
-                                "trans_fat_penalty": _pp("trans_fat_penalty_percentiles"),
-                                "saturated_fat_penalty": _pp("saturated_fat_penalty_percentiles"),
-                                "oil_penalty": _pp("oil_penalty_percentiles"),
-                                "sweetener_penalty": _pp("sweetener_penalty_percentiles"),
-                                "calories_penalty": _pp("calories_penalty_percentiles"),
-                                "empty_food_penalty": _pp("empty_food_penalty_percentiles"),
-                            },
+                    "id": p.get("id"),
+                    "name": p.get("name"),
+                    "brand": p.get("brand"),
+                    "price": p.get("price"),
+                    "review_stats": p.get("review_stats", {}),
+                    "skin_compatibility": p.get("skin_compatibility", {}),
+                    "efficacy": p.get("efficacy", {}),
+                    "side_effects": p.get("side_effects", {}),
+                    "claims": {
+                        "health_claims": ((p.get("package_claims", {}) or {}).get("health_claims") or []),
+                        "dietary_labels": ((p.get("package_claims", {}) or {}).get("dietary_labels") or []),
+                    },
+                    "review_snippet": _first_25_words(p.get("review_text", "")),
                         }
                         top_products_brief.append(brief)
-                        try:
-                            log.info(
-                                f"UX_ENRICHMENT_BRIEF | id={brief.get('id')} | has_nutri={bool(brief.get('nutri'))} | tags_keys={list((brief.get('tags_and_sentiments') or {}).keys())} | bonuses={bool(brief.get('bonuses'))} | penalties={bool(brief.get('penalties'))}"
-                            )
-                        except Exception:
-                            pass
                     except Exception:
                         continue
-            except Exception:
-                top_products_brief = []
-                log.error("UX_ENRICH_ERROR | failed during enrichment (import/fetch/mget/brief-build)", exc_info=True)
 
         # Narrow LLM input: prefer small top-K for SPM to enable brand-aware selection later
         spm_mode = bool(product_intent and product_intent == "is_this_good")
@@ -1668,7 +1565,7 @@ class LLMService:
         try:
             try:
                 log.info(
-                    f"UX_ENRICHMENT_COUNTS | top_ids={len(top_ids)} | briefs={len(top_products_brief)} | products_for_llm={len(products_for_llm)}"
+                    f"UX_ENRICHMENT_COUNTS | top_ids={len(top_products_brief)} | briefs={len(top_products_brief)} | products_for_llm={len(products_for_llm)}"
                 )
             except Exception:
                 pass
@@ -1680,6 +1577,15 @@ class LLMService:
                 "session": {k: ctx.session.get(k) for k in ["budget", "dietary_requirements", "preferences"] if k in ctx.session},
                 "products": products_for_llm,
                 "enriched_top": top_products_brief,
+                "personal_care": {
+                    "efficacy_terms": (ctx.session.get("debug", {}).get("last_skin_search_params", {}).get("efficacy_terms") if isinstance(ctx.session.get("debug", {}), dict) else None),
+                    "avoid_terms": (ctx.session.get("debug", {}).get("last_skin_search_params", {}).get("avoid_terms") if isinstance(ctx.session.get("debug", {}), dict) else None),
+                    "suitability": {
+                        "skin_types": (ctx.session.get("debug", {}).get("last_skin_search_params", {}).get("skin_types") if isinstance(ctx.session.get("debug", {}), dict) else None),
+                        "hair_types": (ctx.session.get("debug", {}).get("last_skin_search_params", {}).get("hair_types") if isinstance(ctx.session.get("debug", {}), dict) else None)
+                    },
+                    "reviews_hint": "Provide a short 'Reviews' line if two reviews are provided"
+                }
             }
             unified_prompt = (
                 "You are producing BOTH the product answer and the UX block in a SINGLE tool call.\n"
@@ -1692,6 +1598,9 @@ class LLMService:
                 "- Quick replies: short and actionable pivots (budget ranges like 'Under ₹100', dietary like 'GLUTEN FREE', or quality pivots).\n"
                 "- Evidence: use flean score/percentiles, nutrition grams, and penalties correctly (penalties high = bad).\n"
                 "- Keep summary_message EXACTLY 4 sentences, evidence-based; avoid fluff.\n"
+                "- PERSONAL CARE (MANDATORY when available): You MUST use the planning outputs efficacy_terms (positives) and avoid_terms (negatives) to contextualize both summary_message and DPL.\n"
+                "  Explicitly state how the recommendations address efficacy_terms and avoid avoid_terms (e.g., 'anti-dandruff focus, fragrance-free fit for oily scalp').\n"
+                "- If top 1–2 reviews are present in the product payload, add a final 'Reviews:' sentence summarizing 1–2 key user sentiments concisely.\n"
                 "Return ONLY the tool call.\n"
             )
 
@@ -1968,13 +1877,13 @@ class LLMService:
             ipt = _strip_keys(tool_use.input or {})
             patch_dict = _safe_get(ipt, "patch", {}) or {}
             slots_dict = patch_dict.get("slots", {})
-
+            
             patch = FollowUpPatch(
                 slots=slots_dict,
                 intent_override=patch_dict.get("intent_override"),
                 reset_context=bool(patch_dict.get("reset_context", not bool(ipt.get("is_follow_up", False)))),
             )
-
+            
             return FollowUpResult(
                 bool(ipt.get("is_follow_up", False)),
                 patch,
@@ -2752,22 +2661,20 @@ class LLMService:
                 f"CANDIDATE_SUBCATEGORIES: {json.dumps(candidate_subcats, ensure_ascii=False)}\n"
                 f"DOMAIN_SUBCATEGORY_HINT: {domain_subcat}\n"
                 f"PROFILE_HINTS: {json.dumps(profile_hints, ensure_ascii=False)}\n"
-                f"PERSONAL_CARE TAXONOMY: {json.dumps(skin_taxonomy, ensure_ascii=False)}\n"
+                # PERSONAL_CARE TAXONOMY removed from prompt to keep it lean\n"
                 f"PRODUCT_INTENT: {product_intent}\n\n"
                 "Deliberate silently step-by-step to extract robust parameters. Do not output your reasoning; OUTPUT ONLY a tool call.\n"
                 "Task: Emit normalized ES params for personal_care (skin or hair). Keep q as product noun (no price/concern words).\n"
                 "Prefer specific noun-phrases; for modifier-only messages, anchor to most recent product noun.\n"
-                "Return fields: q, category_group='personal_care', subcategory, category_paths, brands[], price_min, price_max, keywords[], phrase_boosts[], size (<=10), anchor_product_noun,\n"
-                "               skin_types[], skin_concerns[], hair_types[], hair_concerns[], avoid_ingredients[], product_types[], prioritize_concerns, min_review_count.\n"
+                "Return fields: q, category_group='personal_care', brands[], price_min, price_max, size (<=10), anchor_product_noun,\n"
+                "               skin_types[], hair_types[], efficacy_terms[], avoid_terms[].\n"
                 "Extraction guidance (use judgment, not rigid rules):\n"
                 "- Skin types: map phrases → [oily, dry, combination, sensitive, normal]. Examples: 'oily skin', 'shine', 'greasy' → oily; 'dry', 'flaky', 'tight' → dry; 'T-zone oily' → combination; 'itchy, redness' → sensitive.\n"
-                "- Skin concerns: [acne, dark_spots, aging, dullness, oil_control, hydration]. Examples: 'pimples, breakouts' → acne; 'pigmentation, dark spots' → dark_spots; 'wrinkles, fine lines' → aging; 'brightening, glow' → dullness; 'oil/shine control' → oil_control; 'dryness, moisture' → hydration.\n"
                 "- Hair types: [dry, oily, normal, curly, straight, wavy].\n"
-                "- Hair concerns: [dandruff, hairfall, frizz, dryness, damage, split_ends, color_protection, volume].\n"
-                "- Avoid ingredients: detect negatives and 'free of' (e.g., 'no fragrance', 'without parabens', 'sulfate-free', 'silicone-free', 'alcohol-free', 'no mineral oil').\n"
-                "- Product types: infer from nouns (e.g., 'face wash'/'facewash'→face_wash, 'moisturizer'/'cream'→moisturizer, 'serum', 'sunscreen', 'conditioner', 'shampoo').\n"
+                "- Efficacy terms (positive): 2–5 precise aspects (e.g., anti-dandruff, scalp care, hydration). Prefer taxonomy-aligned terms and common variants.\n"
+                "- Avoid terms (negative): 1–4 negatives the user does NOT want (e.g., fragrance, harsh, sulfates). These will be used for both side_effects and cons_list.\n"
                 "- Use PROFILE_HINTS as soft priors; override only if CURRENT query clearly contradicts.\n"
-                "- If FOLLOW_UP and message is price-only or vague ('under 100', 'more like this'), carry over stable fields (product_types, skin_types, skin_concerns, avoid_ingredients) from recent turns unless explicitly changed.\n"
+                "- If FOLLOW_UP: identify the delta (added or removed) and reflect it in efficacy_terms or avoid_terms accordingly. Always compute lists fresh from conversation context.\n"
                 "- If DOMAIN_SUBCATEGORY_HINT present and consistent, set subcategory accordingly and build 1–2 category_paths from taxonomy.\n"
                 "- Always include arrays even if empty; do not omit keys.\n"
             )
@@ -2811,9 +2718,16 @@ class LLMService:
             params["category_group"] = "personal_care"
 
             # Clean list fields
-            for lf in ["brands", "keywords", "skin_types", "skin_concerns", "hair_types", "hair_concerns", "avoid_ingredients", "product_types"]:
+            for lf in ["brands", "keywords", "skin_types", "skin_concerns", "hair_types", "hair_concerns", "efficacy_terms", "avoid_terms", "avoid_ingredients", "product_types"]:
                 if isinstance(params.get(lf), list):
                     params[lf] = [str(x).strip() for x in params[lf] if str(x).strip()]
+            # Ensure deterministic presence of expected arrays
+            for must_key in [
+                "skin_types", "hair_types", "skin_concerns", "hair_concerns",
+                "efficacy_terms", "avoid_terms", "avoid_ingredients"
+            ]:
+                if must_key not in params or params.get(must_key) is None:
+                    params[must_key] = []
 
             # Normalize category_paths: convert dot → slash and ensure 'personal_care/' prefix
             try:
@@ -2839,8 +2753,15 @@ class LLMService:
                     f"q='{params.get('q')}' | subcat='{params.get('subcategory')}' | paths={len(params.get('category_paths') or [])} | "
                     f"brands={len(params.get('brands') or [])} | price=({params.get('price_min')},{params.get('price_max')}) | "
                     f"skin_types={params.get('skin_types')} | skin_concerns={params.get('skin_concerns')} | hair_types={params.get('hair_types')} | hair_concerns={params.get('hair_concerns')} | "
+                    f"efficacy_terms={params.get('efficacy_terms')} | avoid_terms={params.get('avoid_terms')} | "
                     f"avoid={len(params.get('avoid_ingredients') or [])} | types={params.get('product_types')} | prioritize_concerns={params.get('prioritize_concerns')} | "
                     f"min_reviews={params.get('min_review_count')} | size={params.get('size')}"
+                )
+                # Explicit predictions block (deterministic visibility)
+                print(
+                    "CORE:PC_LLM_PRED | "
+                    f"efficacy_terms={params.get('efficacy_terms')} | cons_list_from_avoid_terms={params.get('avoid_terms')} | "
+                    f"side_effects_terms={params.get('avoid_terms')} | skin_types={params.get('skin_types')} | hair_types={params.get('hair_types')}"
                 )
                 # Planner stickiness report: what will be filled from profile if empty
                 sticky = []
@@ -2856,7 +2777,7 @@ class LLMService:
             except Exception:
                 pass
 
-            print(f"CORE:SKIN_LLM_OUT | q='{params.get('q')}' | subcat='{params.get('subcategory')}' | price=({params.get('price_min')},{params.get('price_max')}) | types={params.get('product_types')} | skin_concerns={params.get('skin_concerns')} | hair_concerns={params.get('hair_concerns')}")
+            print(f"CORE:SKIN_LLM_OUT | q='{params.get('q')}' | subcat='{params.get('subcategory')}' | price=({params.get('price_min')},{params.get('price_max')}) | types={params.get('product_types')} | skin_concerns={params.get('skin_concerns')} | hair_concerns={params.get('hair_concerns')} | efficacy_terms={params.get('efficacy_terms')} | avoid_terms={params.get('avoid_terms')}")
             return params
         except Exception as exc:
             log.error(f"SKIN_PARAMS_ERROR | {exc}")

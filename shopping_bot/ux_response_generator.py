@@ -284,6 +284,13 @@ Generate 3 components for this {intent} response:
 - BANNED PHRASES: great, awesome, amazing, healthy, good (use quantified statements instead)
 - Max 3 sentences; each ≤20 words; professional and concise
 
+### PERSONAL CARE CONTEXT (MANDATORY WHEN PRESENT)
+- You MUST incorporate the personal care planning outputs if available:
+  • efficacy_terms (positive aspects to emphasize)
+  • avoid_terms (negatives to avoid; reflect why excluded)
+  • skin_types / hair_types (suitability fit)
+- Make the DPL explicitly reference how recommendations match efficacy_terms and avoid avoid_terms (e.g., "anti-dandruff focus, fragrance-free fit for oily scalp").
+
 ### DPL HERO FOCUS
 - For MPM responses: First sentence features the TOP PICK with a specific metric; second sentence states a quantified benefit; third sentence mentions alternatives or a filter.
 - For SPM responses: Focus entirely on the single product with a clear BUY/CONSIDER/SKIP verdict; do not discuss other options.

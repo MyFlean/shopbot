@@ -1292,12 +1292,12 @@ class LLMService:
                         while len(norm_opts) < 3 and fillers:
                             norm_opts.append(fillers.pop(0))
                     else:
-                    while len(norm_opts) < 3:
-                            norm_opts.append("No preference")
-                    canon_ask[ckey] = {
-                        "message": v.get("message") or f"What's your {ckey.replace('ASK_', '').replace('_', ' ').lower()}?",
-                        "options": norm_opts[:3],
-                    }
+                        while len(norm_opts) < 3:
+                                norm_opts.append("No preference")
+                        canon_ask[ckey] = {
+                            "message": v.get("message") or f"What's your {ckey.replace('ASK_', '').replace('_', ' ').lower()}?",
+                            "options": norm_opts[:3],
+                        }
                 # Ensure required asks per domain, then deduplicate and clamp to domain-aware max; fallback if empty
                 domain = str(data.get("domain") or "").strip()
                 max_asks = 4 if domain == "personal_care" else 2
@@ -1554,8 +1554,8 @@ class LLMService:
                     "review_snippet": _first_25_words(p.get("review_text", "")),
                         }
                         top_products_brief.append(brief)
-                    except Exception:
-                        continue
+            except Exception:
+                continue
 
         # Narrow LLM input: prefer small top-K for SPM to enable brand-aware selection later
         spm_mode = bool(product_intent and product_intent == "is_this_good")
@@ -2335,6 +2335,21 @@ class LLMService:
             interactions_json = json.dumps(convo_history, ensure_ascii=False)
             product_intent = str(session.get("product_intent") or "").strip()
 
+            # Attempt Food-specific extraction first (anchor-as-q, must vs rerank) and adapt
+            try:
+                food_params = await self._try_food_es_extraction(ctx, current_text, convo_history, is_follow_up)
+                if isinstance(food_params, dict) and food_params.get("q"):
+                    try:
+                        print("CORE:LLM2_FOOD_ADAPTED | " + json.dumps(food_params, ensure_ascii=False))
+                    except Exception:
+                        pass
+                    return food_params
+            except Exception as _food_exc:
+                try:
+                    print(f"CORE:LLM2_FOOD_FALLBACK | {str(_food_exc)[:120]}")
+                except Exception:
+                    pass
+
             if is_follow_up:
                 prompt = (
                     "You are expert at extracting Elasticsearch parameters.\n\n"
@@ -2343,14 +2358,17 @@ class LLMService:
                     f"LAST {hist_limit} INTERACTIONS (user↔bot incl. asks/answers): {interactions_json}\n\n"
                     "Task: Figure out the delta and regenerate adapted ES params.\n"
                     "Return fields: q, category_group, subcategory, category_paths, brands[], dietary_terms[], price_min, price_max, keywords[], phrase_boosts[], size, anchor_product_noun.\n"
-                    "Guidance: Keep q to product nouns only. Dietary/price belong in their own fields. Subcategory should be a taxonomy leaf (e.g., 'chips_and_crisps').\n"
-                    "Recency weighting: Consider the last ~10 interactions, giving substantially more weight to the most recent turns. You may think in terms of a decaying pattern (e.g., 0.5 → 0.25 → 0.15 …) but use judgment rather than strict rules.\n"
-                    "Also RETURN anchor_product_noun: the most recent, specific product noun/phrase you identify as the anchor. CONSTRUCT q using anchor_product_noun plus any CURRENT modifiers (e.g., ingredient→combine with parent: 'tomato' + 'sauce' → 'tomato sauce'). If no product noun exists, set anchor_product_noun to a generic intent noun (e.g., 'breakfast options', 'evening snacks', 'healthy snacks') and construct q from that generic noun.\n\n"
-                    "Heuristic: If CURRENT_USER_TEXT looks like a modifier-only message (price/dietary/quality or a short ingredient/flavor), prefer to ANCHOR q to the most recent product noun/phrase. Prefer specific noun-phrases over generic parents.\n\n"
+                    "Anchor definition (MANDATORY): 'anchor_product_noun' is the most recent, specific product noun/phrase that best represents the user's product focus (e.g., 'tomato sauce', 'banana chips', 'face wash'). If none is present, set a reasonable generic anchor (e.g., 'breakfast options', 'evening snacks').\n"
+                    "STRICT RULES (MANDATORY):\n"
+                    "- q MUST be set EXACTLY to anchor_product_noun.\n"
+                    "- DO NOT synthesize a separate q, and DO NOT include budget/dietary/brand modifiers inside q. Those must go to price_min/price_max, dietary_terms, brands, keywords/phrase_boosts.\n"
+                    "- Subcategory must be a taxonomy leaf (e.g., 'chips_and_crisps') when inferable.\n"
+                    "Recency weighting: Consider the last ~10 interactions, giving substantially more weight to the most recent turns.\n"
+                    "Heuristic: If CURRENT_USER_TEXT looks like a modifier-only message (price/dietary/quality or a short ingredient/flavor), prefer to anchor to the most recent product noun/phrase from history. Prefer specific noun-phrases over generic parents.\n\n"
                     "Examples:\n"
-                    "1) History: 'want some good sauces' → anchor=sauces; Current: 'tomato' → q='tomato sauce', category_group='f_and_b', subcategory='sauces_condiments'.\n"
-                    "2) History: 'chips' → anchor=chips; Current: 'banana' → q='banana chips'.\n"
-                    "3) History: 'noodles' → anchor=noodles; Current: 'gluten free under 100' → q='noodles', dietary_terms=['GLUTEN FREE'], price_max=100.\n"
+                    "1) History: 'want some good sauces' → anchor='tomato sauce'; q='tomato sauce'; category_group='f_and_b'; subcategory='sauces_condiments'.\n"
+                    "2) History: 'chips' → Current: 'banana' → anchor='banana chips'; q='banana chips'.\n"
+                    "3) History: 'noodles' → Current: 'gluten free under 100' → anchor='noodles'; q='noodles'; dietary_terms=['GLUTEN FREE']; price_max=100.\n"
                 )
             else:
                 prompt = (
@@ -2360,9 +2378,12 @@ class LLMService:
                     f"PRODUCT_INTENT: {product_intent}\n\n"
                     "Task: Extract params for the user's latest concern.\n"
                     "Return fields: q, category_group, subcategory, category_paths, brands[], dietary_terms[], price_min, price_max, keywords[], phrase_boosts[], size, anchor_product_noun.\n"
-                    "Guidance: Keep q to product nouns only. Dietary/price belong in their own fields. Subcategory should be a taxonomy leaf (e.g., 'chips_and_crisps').\n"
-                    "Recency weighting (non-follow-up): Give the most weight to CURRENT_USER_TEXT; also consider the last 3–5 interactions with a lighter, decaying emphasis. Prefer more specific noun-phrases (e.g., 'banana chips') over generic parents ('chips'). If CURRENT_USER_TEXT is generic or ambiguous, fall back to a reasonable weighted phrase from history.\n"
-                    "Also RETURN anchor_product_noun: the specific product noun/phrase you identify (or a generic intent noun like 'breakfast options', 'evening snacks', 'healthy snacks' if no specific product is present). CONSTRUCT q using anchor_product_noun plus any CURRENT modifiers if appropriate.\n"
+                    "Anchor definition (MANDATORY): 'anchor_product_noun' is the most recent, specific product noun/phrase that best represents the user's product focus (e.g., 'tomato sauce', 'banana chips', 'face wash'). If none is present, set a reasonable generic anchor (e.g., 'breakfast options', 'evening snacks').\n"
+                    "STRICT RULES (MANDATORY):\n"
+                    "- q MUST be set EXACTLY to anchor_product_noun.\n"
+                    "- DO NOT synthesize a separate q, and DO NOT include budget/dietary/brand modifiers inside q. Those must go to price_min/price_max, dietary_terms, brands, keywords/phrase_boosts.\n"
+                    "- Subcategory must be a taxonomy leaf (e.g., 'chips_and_crisps') when inferable.\n"
+                    "Recency weighting: Give the most weight to CURRENT_USER_TEXT; also consider the last 3–5 interactions. Prefer specific noun-phrases (e.g., 'banana chips') over generic parents ('chips').\n"
                 )
 
             # CORE log: LLM2 input
@@ -2385,8 +2406,9 @@ class LLMService:
 
             params = _strip_keys(tool_use.input or {})
 
-            # CORE log: raw out keys
+            # CORE log: full raw output and keys
             try:
+                print("CORE:LLM2_OUT_FULL | " + json.dumps(params, ensure_ascii=False))
                 kset = list(params.keys())
                 print(f"CORE:LLM2_OUT_KEYS | keys={kset}")
             except Exception:
@@ -2395,10 +2417,18 @@ class LLMService:
             if isinstance(params.get("dietary_terms"), list):
                 params["dietary_terms"] = [str(x).strip().upper() for x in params["dietary_terms"] if str(x).strip()]
 
-            # Sanitize q from dietary words
+            # Anchor-as-q override: if anchor exists, force q = anchor (trimmed)
+            try:
+                anchor = str(params.get("anchor_product_noun") or "").strip()
+                if anchor:
+                    params["q"] = anchor
+            except Exception:
+                pass
+
+            # As a defensive fallback only, strip dietary phrases from q if model violated the rule
             try:
                 q_val_raw = str(params.get("q") or "")
-                q_val = q_val_raw.lower()
+                q_low = q_val_raw.lower()
                 dts = params.get("dietary_terms") or []
                 diet_phrases = {
                     "GLUTEN FREE": ["gluten free"],
@@ -2409,11 +2439,17 @@ class LLMService:
                 }
                 for term in dts:
                     for ph in diet_phrases.get(term, []):
-                        if ph in q_val:
-                            q_val = q_val.replace(ph, " ")
-                cleaned = " ".join(q_val.split()).strip()
-                if cleaned:
+                        if ph in q_low:
+                            q_low = q_low.replace(ph, " ")
+                cleaned = " ".join(q_low.split()).strip()
+                if cleaned and cleaned != q_val_raw:
                     params["q"] = cleaned
+            except Exception:
+                pass
+
+            # CORE log: final params after anchor/q normalization
+            try:
+                print("CORE:LLM2_OUT_FINAL | " + json.dumps(params, ensure_ascii=False))
             except Exception:
                 pass
 
@@ -2486,6 +2522,176 @@ class LLMService:
         except Exception as exc:
             log.error(f"UNIFIED_ES_PARAMS_ERROR | {exc}")
             return {}
+
+    async def _try_food_es_extraction(self, ctx: UserContext, current_text: str, convo_history: list[dict[str, str]], is_follow_up: bool) -> Dict[str, Any]:
+        """Food-specific extraction using extract_search_parameters tool and adapter mapping.
+        Backward-compatible: returns our standard params dict (q, category_paths, price_min/max, dietary_*, keywords, etc.)."""
+        # Tool schema definition (minimal fields we need)
+        FOOD_EXTRACT_TOOL = {
+            "name": "extract_search_parameters",
+            "description": "Extracts structured search parameters from user query for Elasticsearch",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "anchor_query": {"type": "string"},
+                    "must_clauses": {
+                        "type": "object",
+                        "properties": {
+                            "category_paths": {"type": "array", "items": {"type": "string"}},
+                            "price_range": {
+                                "type": "object",
+                                "properties": {
+                                    "min": {"type": "number"},
+                                    "max": {"type": "number"}
+                                }
+                            },
+                            "dietary_label": {"type": "string"},
+                            "availability": {
+                                "type": "object",
+                                "properties": {
+                                    "must_be_in_stock": {"type": "boolean"},
+                                    "platform": {"type": "string"}
+                                }
+                            },
+                            "excluded_ingredients": {"type": "array", "items": {"type": "string"}},
+                            "health_positioning_tags": {"type": "array", "items": {"type": "string"}},
+                            "marketing_tags": {"type": "array", "items": {"type": "string"}}
+                        }
+                    },
+                    "rerank_attributes": {"type": "array"},
+                    "confidence_score": {"type": "number"},
+                    "delta_analysis": {"type": "object"}
+                },
+                "required": ["anchor_query", "must_clauses", "confidence_score"]
+            }
+        }
+
+        # Build compact prompt with strict anchor-as-q rule
+        turns_json = json.dumps(convo_history, ensure_ascii=False)
+        prompt = (
+            "You are a search query parser for Food & Beverage. In ONE tool call, extract parameters.\n\n"
+            f"CURRENT_USER_TEXT: {current_text}\n"
+            f"IS_FOLLOW_UP: {bool(is_follow_up)}\n"
+            f"RECENT_TURNS (last {len(convo_history)}): {turns_json}\n\n"
+            "MANDATORY RULES:\n"
+            "- Determine a single anchor_query (product/category/use case).\n"
+            "- q MUST equal anchor_query (server will set q=anchor_query).\n"
+            "- DO NOT put price/dietary/brand words in anchor_query.\n"
+            "- Put hard requirements in must_clauses (category_paths, price_range, dietary_label, availability, excluded_ingredients).\n"
+            "- If present, include health_positioning_tags and marketing_tags in must_clauses (use only when clearly implied by user intent).\n"
+            "- Put preferences in rerank_attributes (keep small).\n"
+            "- For follow-ups, include delta_analysis of what changed (addition/removal/replacement/refinement).\n"
+            "Return ONLY the tool call to extract_search_parameters."
+        )
+
+        resp = await self.anthropic.messages.create(
+            model=Cfg.LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            tools=[FOOD_EXTRACT_TOOL],
+            tool_choice={"type": "tool", "name": "extract_search_parameters"},
+            temperature=0,
+            max_tokens=900,
+        )
+        tool_use = pick_tool(resp, "extract_search_parameters")
+        if not tool_use:
+            return {}
+
+        raw = _strip_keys(tool_use.input or {})
+        try:
+            print("CORE:LLM2_FOOD_OUT_FULL | " + json.dumps(raw, ensure_ascii=False))
+        except Exception:
+            pass
+
+        # Adapt to our param dict
+        params: Dict[str, Any] = {}
+        anchor = str(raw.get("anchor_query") or "").strip()
+        if not anchor:
+            return {}
+        params["q"] = anchor
+        params["category_group"] = "f_and_b"
+
+        mc = raw.get("must_clauses") or {}
+        # category_paths
+        try:
+            cps = mc.get("category_paths") or []
+            if isinstance(cps, list):
+                params["category_paths"] = [str(x).strip() for x in cps if str(x).strip()]
+        except Exception:
+            pass
+        # price_range
+        try:
+            pr = mc.get("price_range") or {}
+            if pr.get("min") is not None:
+                params["price_min"] = float(pr.get("min"))
+            if pr.get("max") is not None:
+                params["price_max"] = float(pr.get("max"))
+        except Exception:
+            pass
+        # dietary_label mapping
+        try:
+            dl = str(mc.get("dietary_label") or "").strip().lower()
+            if dl:
+                # Map to dietary_labels (keyword) when standardized; also pass through raw kind
+                params["dietary_label_raw"] = dl
+                mapped: list[str] = []
+                if dl in {"vegan"}:
+                    mapped = ["VEGAN"]
+                elif dl in {"gluten-free", "gluten free", "glutenfree"}:
+                    mapped = ["GLUTEN FREE"]
+                # Also allow "veg"/"non-veg" to be handled separately in builder
+                if mapped:
+                    params["dietary_labels"] = mapped
+        except Exception:
+            pass
+        # availability
+        try:
+            av = mc.get("availability") or {}
+            if bool(av.get("must_be_in_stock")) and str(av.get("platform") or "").strip().lower() in {"zepto", "any", "*", "all"}:
+                params["availability_zepto_in_stock"] = True
+        except Exception:
+            pass
+        # excluded_ingredients
+        try:
+            ex = mc.get("excluded_ingredients") or []
+            if isinstance(ex, list) and ex:
+                params["excluded_ingredients"] = [str(x).strip().lower() for x in ex if str(x).strip()]
+        except Exception:
+            pass
+        # tags
+        try:
+            hp = mc.get("health_positioning_tags") or []
+            if isinstance(hp, list) and hp:
+                params["health_positioning_tags"] = [str(x).strip() for x in hp if str(x).strip()]
+        except Exception:
+            pass
+        try:
+            mk = mc.get("marketing_tags") or []
+            if isinstance(mk, list) and mk:
+                params["marketing_tags"] = [str(x).strip() for x in mk if str(x).strip()]
+        except Exception:
+            pass
+
+        # Derive at most two lightweight keywords from marketing or simple flavor-like rerank attributes
+        try:
+            keywords: list[str] = []
+            for tag in (params.get("marketing_tags") or [])[:2]:
+                # take single tokens; drop if contained in q
+                tok = tag.lower()
+                if " " not in tok and tok not in (params.get("q") or "").lower():
+                    keywords.append(tok)
+            if keywords:
+                params["keywords"] = keywords[:2]
+        except Exception:
+            pass
+
+        # Size clamp (keep default behavior)
+        try:
+            s = int(ctx.session.get("size_hint", 20) or 20)
+            params["size"] = max(1, min(50, s))
+        except Exception:
+            params["size"] = 20
+
+        return params
 
     def _build_last_interactions(self, ctx: UserContext, limit: int = 5) -> list[dict[str, str]]:
         """Build last N interactions, including ASK/answers if present."""

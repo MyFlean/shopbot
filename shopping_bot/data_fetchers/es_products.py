@@ -419,21 +419,9 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             pass
     
-    # Main query matching
-    if isinstance(keywords, list) and keywords:
-        for kw in keywords[:5]:
-            kw_str = str(kw).strip()
-            if kw_str:
-                shoulds.append({
-                    "multi_match": {
-                        "query": kw_str,
-                        "type": "best_fields",
-                        "fields": dynamic_fields,
-                        "fuzziness": "AUTO"
-                    }
-                })
-    elif q_text:
-        shoulds.append({
+    # Main query matching (anchor q as MUST; keywords as optional SHOULD)
+    if q_text:
+        musts.append({
             "multi_match": {
                 "query": q_text,
                 "type": "best_fields",
@@ -441,6 +429,22 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 "fuzziness": "AUTO"
             }
         })
+    if isinstance(keywords, list) and keywords:
+        dedup_keywords: List[str] = []
+        q_low = q_text.lower()
+        for kw in keywords[:2]:  # cap to 2
+            kw_str = str(kw).strip()
+            if kw_str and (kw_str.lower() not in q_low) and (kw_str.lower() not in dedup_keywords):
+                dedup_keywords.append(kw_str.lower())
+        for kw in dedup_keywords:
+            shoulds.append({
+                "multi_match": {
+                    "query": kw,
+                    "type": "best_fields",
+                    "fields": dynamic_fields,
+                    "fuzziness": "AUTO"
+                }
+            })
 
     # 3b) Hard must keywords (e.g., flavor tokens like 'orange') to avoid mismatched variants
     must_keywords = p.get("must_keywords") or []
@@ -537,12 +541,15 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
             }
         }
 
-    # Set minimum_should_match to 1 if we have textual should clauses; else 0
+    # Set minimum_should_match: 0 when q is MUST; else 1 if textual SHOULD present
     try:
         has_text_should = any(
             any(k in s for k in ["multi_match", "match", "match_phrase"]) for s in shoulds
         )
-        bq["minimum_should_match"] = 1 if has_text_should else 0
+        if q_text:
+            bq["minimum_should_match"] = 0
+        else:
+            bq["minimum_should_match"] = 1 if has_text_should else 0
     except Exception:
         bq["minimum_should_match"] = 0
 
@@ -562,6 +569,56 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                     "ingredients.raw_text": {"fragment_size": 120, "number_of_fragments": 1}
                 }
             }
+    except Exception:
+        pass
+
+    # Availability filter (zepto)
+    try:
+        if bool(p.get("availability_zepto_in_stock")):
+            filters.append({"term": {"availability.zepto.in_stock": True}})
+    except Exception:
+        pass
+
+    # Excluded ingredients
+    try:
+        excl = p.get("excluded_ingredients") or []
+        if isinstance(excl, list) and excl:
+            for ing in excl[:6]:
+                sval = str(ing).strip()
+                if not sval:
+                    continue
+                musts.append({
+                    "bool": {
+                        "must_not": [
+                            {"match": {"ingredients.raw_text": sval}},
+                            {"match": {"ingredients.structured.ingredients.ingredients.name": sval}},
+                        ]
+                    }
+                })
+    except Exception:
+        pass
+
+    # Health positioning tags (soft boosts)
+    try:
+        hpt = p.get("health_positioning_tags") or []
+        if isinstance(hpt, list) and hpt:
+            for tag in hpt[:4]:
+                tv = str(tag).strip()
+                if not tv:
+                    continue
+                shoulds.append({"term": {"package_claims.health_claims": {"value": tv, "boost": 1.3}}})
+    except Exception:
+        pass
+
+    # Marketing tags (soft boosts)
+    try:
+        mkt = p.get("marketing_tags") or []
+        if isinstance(mkt, list) and mkt:
+            for tag in mkt[:2]:
+                tv = str(tag).strip()
+                if not tv:
+                    continue
+                shoulds.append({"term": {"package_claims.marketing_keywords": {"value": tv, "boost": 1.15}}})
     except Exception:
         pass
 

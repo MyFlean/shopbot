@@ -2566,17 +2566,41 @@ class LLMService:
             }
         }
 
-        # Build compact prompt with strict anchor-as-q rule
+        # Food taxonomy JSON for L1/L2 classification
+        food_taxonomy = {
+            "frozen_treats": ["ice_cream_cakes_and_sandwiches", "ice_cream_sticks", "light_ice_cream", "ice_cream_tubs", "ice_cream_cups", "ice_cream_cones", "frozen_pop_cubes", "kulfi"],
+            "light_bites": ["energy_bars", "nachos", "chips_and_crisps", "savory_namkeen", "dry_fruit_and_nut_snacks", "popcorn"],
+            "refreshing_beverages": ["soda_and_mixers", "flavored_milk_drinks", "instant_beverage_mixes", "fruit_juices", "energy_and_non_alcoholic_drinks", "soft_drinks", "iced_coffee_and_tea", "bottled_water", "enhanced_hydration"],
+            "breakfast_essentials": ["muesli_and_oats", "dates_and_seeds", "breakfast_cereals"],
+            "spreads_and_condiments": ["ketchup_and_sauces", "honey_and_spreads", "peanut_butter", "jams_and_jellies"],
+            "packaged_meals": ["papads_pickles_and_chutneys", "baby_food", "pasta_and_soups", "baking_mixes_and_ingredients", "ready_to_cook_meals", "ready_to_eat_meals"],
+            "brew_and_brew_alternatives": ["iced_coffee_and_tea", "green_and_herbal_tea", "tea", "beverage_mix", "coffee"],
+            "dairy_and_bakery": ["batter_and_mix", "butter", "paneer_and_cream", "cheese", "vegan_beverages", "yogurt_and_shrikhand", "curd_and_probiotic_drinks", "bread_and_buns", "eggs", "milk", "gourmet_specialties"],
+            "sweet_treats": ["pastries_and_cakes", "candies_gums_and_mints", "chocolates", "premium_chocolates", "indian_mithai", "dessert_mixes"],
+            "noodles_and_vermicelli": ["vermicelli_and_noodles"],
+            "biscuits_and_crackers": ["glucose_and_marie_biscuits", "cream_filled_biscuits", "rusks_and_khari", "digestive_biscuits", "wafer_biscuits", "cookies", "crackers"],
+            "frozen_foods": ["non_veg_frozen_snacks", "frozen_raw_meats", "frozen_vegetables_and_pulp", "frozen_vegetarian_snacks", "frozen_sausages_salami_and_ham", "momos_and_similar", "frozen_roti_and_paratha"],
+            "dry_fruits_nuts_and_seeds": ["almonds", "cashews", "raisins", "pistachios", "walnuts", "dates", "seeds"]
+        }
+
+        # Build compact prompt with strict anchor-as-q rule and taxonomy classification
         turns_json = json.dumps(convo_history, ensure_ascii=False)
+        taxonomy_json = json.dumps(food_taxonomy, ensure_ascii=False)
         prompt = (
             "You are a search query parser for Food & Beverage. In ONE tool call, extract parameters.\n\n"
             f"CURRENT_USER_TEXT: {current_text}\n"
             f"IS_FOLLOW_UP: {bool(is_follow_up)}\n"
             f"RECENT_TURNS (last {len(convo_history)}): {turns_json}\n\n"
+            f"FOOD TAXONOMY JSON: {taxonomy_json}\n\n"
             "MANDATORY RULES:\n"
             "- Determine a single anchor_query (product/category/use case).\n"
             "- q MUST equal anchor_query (server will set q=anchor_query).\n"
             "- DO NOT put price/dietary/brand words in anchor_query.\n"
+            "- Use the FOOD TAXONOMY JSON above to classify the query:\n"
+            "  * Pick the most probable L1 (top-level category key from taxonomy)\n"
+            "  * Pick the most probable L2 (subcategory from the L1 array)\n"
+            "  * In must_clauses.category_paths, set EXACTLY: [\"f_and_b/food/L1/L2\"]\n"
+            "  * Example: 'chips' → L1='light_bites', L2='chips_and_crisps' → category_paths=[\"f_and_b/food/light_bites/chips_and_crisps\"]\n"
             "- Put hard requirements in must_clauses (category_paths, price_range, dietary_label, availability, excluded_ingredients).\n"
             "- If present, include health_positioning_tags and marketing_tags in must_clauses (use only when clearly implied by user intent).\n"
             "- Put preferences in rerank_attributes (keep small).\n"
@@ -2611,11 +2635,24 @@ class LLMService:
         params["category_group"] = "f_and_b"
 
         mc = raw.get("must_clauses") or {}
-        # category_paths
+        # category_paths - extract L1/L2 from f_and_b/food/L1/L2 format
         try:
             cps = mc.get("category_paths") or []
             if isinstance(cps, list):
-                params["category_paths"] = [str(x).strip() for x in cps if str(x).strip()]
+                processed_paths = []
+                for cp in cps:
+                    path_str = str(cp).strip()
+                    if path_str:
+                        # If LLM returned full path like "f_and_b/food/light_bites/chips_and_crisps"
+                        # Extract just "light_bites/chips_and_crisps" for ES builder
+                        if path_str.startswith("f_and_b/food/"):
+                            rel_path = path_str[len("f_and_b/food/"):]
+                            if rel_path:
+                                processed_paths.append(rel_path)
+                        else:
+                            # Keep as-is if not in expected format
+                            processed_paths.append(path_str)
+                params["category_paths"] = processed_paths
         except Exception:
             pass
         # price_range

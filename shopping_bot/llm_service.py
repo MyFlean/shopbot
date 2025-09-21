@@ -212,8 +212,9 @@ COMBINED_CLASSIFY_ASSESS_TOOL = {
             "simple_response": {
                 "type": "object",
                 "properties": {
-                    "response_type": {"type": "string", "enum": ["final_answer"]},
-                    "message": {"type": "string"}
+                    "response_type": {"type": "string", "enum": ["final_answer", "support"]},
+                    "message": {"type": "string"},
+                    "is_support_query": {"type": "boolean", "description": "True if this is a customer support query"}
                 }
             }
         },
@@ -392,20 +393,25 @@ UNIFIED_ES_PARAMS_TOOL = {
 
 SIMPLE_RESPONSE_TOOL = {
     "name": "generate_simple_response",
-    "description": "Generate simple text response for non-product queries",
+    "description": "Generate simple text response for non-product queries, including support detection",
     "input_schema": {
         "type": "object",
         "properties": {
             "response_type": {
                 "type": "string",
-                "enum": ["final_answer", "error"],
+                "enum": ["final_answer", "error", "support"],
+                "description": "final_answer for normal responses, error for errors, support for customer support queries"
             },
             "message": {
                 "type": "string",
                 "description": "Response message"
+            },
+            "is_support_query": {
+                "type": "boolean",
+                "description": "True if this is a customer support query (order issues, complaints, help requests, etc.)"
             }
         },
-        "required": ["response_type", "message"]
+        "required": ["response_type", "message", "is_support_query"]
     }
 }
 
@@ -796,8 +802,22 @@ query_intent = {query_intent}
 {fetched}
 
 ### Instructions
-Write ONE clear, concise reply for this {query_intent} query.
-Be specific and actionable (1-3 sentences).
+1) First, determine if this is a customer support query by checking for:
+   - Order-related issues: "where is my order", "order status", "tracking", "delivery", "shipping"
+   - Complaints/problems: "problem with", "issue with", "not working", "broken", "wrong item"
+   - Help requests: "help", "support", "customer service", "contact support", "connect me to support"
+   - Account issues: "account problem", "login issue", "payment problem", "refund"
+   - General support: "how to", "troubleshooting", "can't find", "need assistance"
+
+2) If it's a support query:
+   - Set response_type = "support"
+   - Set is_support_query = true
+   - Set message = "Hello! Please contact support at 6388977169."
+
+3) If it's NOT a support query:
+   - Set response_type = "final_answer" 
+   - Set is_support_query = false
+   - Write ONE clear, concise reply for this {query_intent} query (1-3 sentences, specific and actionable)
 
 Return ONLY a tool call to generate_simple_response.
 """
@@ -1200,7 +1220,22 @@ class LLMService:
             "ALLOWED ASK_* SLOTS (choose only from this list):\n"
             "- ASK_USER_BUDGET\n- ASK_DIETARY_REQUIREMENTS\n- ASK_USER_PREFERENCES\n- ASK_USE_CASE\n- ASK_QUANTITY\n- ASK_DELIVERY_ADDRESS\n- ASK_PC_CONCERN\n- ASK_PC_COMPATIBILITY\n- ASK_INGREDIENT_AVOID\n"
             "STRICT: The ask object MUST use keys only from the allowed list. If unsure, pick budget and dietary for f_and_b; and pick the 4 listed for personal_care when relevant.\n"
-            "If NOT product-related, return simple_response {response_type:'final_answer', message}.\n"
+            "SUPPORT DETECTION (for non-product queries):\n"
+            "- First, determine if this is a customer support query by checking for:\n"
+            "  • Order-related issues: 'where is my order', 'order status', 'tracking', 'delivery', 'shipping'\n"
+            "  • Complaints/problems: 'problem with', 'issue with', 'not working', 'broken', 'wrong item'\n"
+            "  • Help requests: 'help', 'support', 'customer service', 'contact support', 'connect me to support'\n"
+            "  • Account issues: 'account problem', 'login issue', 'payment problem', 'refund'\n"
+            "  • General support: 'how to', 'troubleshooting', 'can't find', 'need assistance'\n"
+            "- If it's a support query:\n"
+            "  • Set response_type = 'support'\n"
+            "  • Set is_support_query = true\n"
+            "  • Set message = 'Hello! Please contact support at 6388977169.'\n"
+            "- If it's NOT a support query:\n"
+            "  • Set response_type = 'final_answer'\n"
+            "  • Set is_support_query = false\n"
+            "  • Write a helpful message (1-3 sentences, specific and actionable)\n"
+            "If NOT product-related, return simple_response with appropriate response_type and is_support_query.\n"
             "Return ONLY the tool call to classify_and_assess.\n\n"
             f"RECENT_CONTEXT: {json.dumps(recent_context, ensure_ascii=False)}\n"
             f"RECENT_TURNS (last up to 10): {json.dumps(convo_pairs, ensure_ascii=False)}\n"
@@ -1222,6 +1257,17 @@ class LLMService:
         if not tool_use:
             return {}
         data = tool_use.input or {}
+        
+        # Log support detection from LLM1
+        try:
+            simple_resp = data.get("simple_response") or {}
+            is_support = simple_resp.get("is_support_query", "NOT_FOUND")
+            response_type = simple_resp.get("response_type", "NOT_FOUND")
+            is_product_related = data.get("is_product_related", "NOT_FOUND")
+            print(f"CORE:LLM1_SUPPORT_DETECTION | is_product_related={is_product_related} | is_support_query={is_support} | response_type={response_type}")
+        except Exception:
+            pass
+            
         try:
             raw_ask = data.get("ask") or {}
             domain_dbg = data.get("domain")
@@ -1482,6 +1528,12 @@ class LLMService:
         }
         
         has_products = self._has_product_results(fetched)
+        
+        # Log which path we're taking
+        try:
+            print(f"CORE:LLM1_PATH_DECISION | intent_l3={intent_l3} | has_products={has_products} | product_intents={intent_l3 in product_intents}")
+        except Exception:
+            pass
         
         if intent_l3 in product_intents and has_products:
             result = await self._generate_product_response(query, ctx, fetched, intent_l3, product_intent)
@@ -1801,6 +1853,15 @@ class LLMService:
                 }
             
             result = _strip_keys(tool_use.input or {})
+            
+            # Log the is_support_query value for debugging
+            try:
+                is_support = result.get("is_support_query", "NOT_FOUND")
+                response_type = result.get("response_type", "NOT_FOUND")
+                print(f"CORE:LLM1_SUPPORT_DETECTION | is_support_query={is_support} | response_type={response_type}")
+            except Exception:
+                pass
+            
             return result
             
         except Exception:

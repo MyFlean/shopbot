@@ -45,6 +45,9 @@ def map_fe_response_type(bot_resp_type: ResponseType, content: Dict[str, Any] | 
     # For FINAL_ANSWER, check content structure
     if bot_resp_type == ResponseType.FINAL_ANSWER:
         c = content or {}
+        # Check for support response type from LLM
+        if c.get("response_type") == "support":
+            return "support"
         # If we have products or summary_message, it's a proper final_answer
         if c.get("products") or c.get("summary_message"):
             return "final_answer"
@@ -171,6 +174,13 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
             except Exception:
                 pass
             return c
+        
+        # Support response: return message with products array empty
+        if c.get("response_type") == "support":
+            return {
+                "summary_message": c.get("message", "Hello! Please contact support at 6388977169."),
+                "products": []
+            }
         
         # Fallback for backward compatibility when only a message is present
         return {

@@ -78,6 +78,9 @@ FINAL_ANSWER_UNIFIED_TOOL = {
         "properties": {
             "response_type": {"type": "string", "enum": ["final_answer"]},
             "summary_message": {"type": "string"},
+            "summary_message_part_1": {"type": "string"},
+            "summary_message_part_2": {"type": "string"},
+            "summary_message_part_3": {"type": "string"},
             "product_ids": {"type": "array", "items": {"type": "string"}},
             "hero_product_id": {"type": "string"},
             "ux": {
@@ -1126,21 +1129,43 @@ class LLMService:
     ) -> Dict[str, Any]:
         """Two-call pipeline: call 2. Unified product answer + UX."""
         prompt = (
+            "You are Flean’s WhatsApp copywriter. Write one concise message that proves we understood the user, explains why the picks fit, and ends with exactly three short follow-ups. Tone: friendly, plain English.\n\n"
+            "ABSOLUTE PRIVACY RULE (MANDATORY): NEVER include actual product IDs, SKUs, or internal identifiers in ANY text. If referring to an ID per instructions, include exactly the literal token '{product_id}' and DO NOT replace it with a real value.\n\n"
+            "FORMAT TAGS (MANDATORY): Use only <bold>...</bold> for emphasis and <newline> to indicate line breaks. DO NOT use any other HTML/Markdown tags or entities. The output will be post-processed for WhatsApp formatting.\n\n"
             "Generate the final product answer and UX in ONE tool call.\n"
-            "Inputs: user_query, product_intent, session snapshot (concise), ES results (top 10), enriched briefs (top 1 for SPM; top 3 for MPM).\n"
-            "Output: {response_type:'final_answer', summary_message(4 lines), product_ids(ordered; hero optional), ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}.\n"
-            "Rules:\n- SPM → clamp to 1 item and include product_ids[1].\n- MPM → choose a hero (healthiest/cleanest) and order product_ids with hero first.\n- Quick replies should be short, actionable pivots (budget/dietary/quality).\n"
+            "Inputs: user_query, product_intent, session snapshot (concise), last 5 user/bot pairs (10 turns), ES results (top 10), enriched briefs (top 1 for SPM; top 3 for MPM).\n"
+            "Output: {response_type:'final_answer', summary_message (constructed from 3 parts), summary_message_part_1, summary_message_part_2, summary_message_part_3, product_ids(ordered; hero optional), ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}.\n"
+            "3-PART SUMMARY (MANDATORY for both food & skin):\n"
+            "- summary_message_part_1: Mirror the brief (1–2 lines). Place 1 emoji to signal alignment (e.g., ✅ or 🔍). NEVER include actual product IDs.\n"
+            "- summary_message_part_2: Hero pick (2–3 lines): state one crisp reason it fits (protein/fiber/less oil/spice/budget). After the product name/brand, insert '{product_id}' as literal text (DO NOT substitute the real ID). If citing a percentile, use plain language with parentheses, e.g., ‘higher in protein than most chips (top 10%).’. Append star rating as ⭐ repeated N times based on review_stats.average (rounded to nearest integer, clamp 1–5). If rating missing, omit stars. NEVER include actual product IDs.\n"
+            "- summary_message_part_3: Other picks (1–2 lines): group with one shared reason (e.g., ‘also lower oil & budget-friendly’). Place 1 emoji here (e.g., 💡). Append star ratings for each product mentioned using ⭐ repeated N times from review_stats.average (rounded 1–5); if missing, omit stars. NEVER include actual product IDs.\n\n"
+            "Rules:\n- SPM → clamp to 1 item and include product_ids[1].\n- MPM → choose a hero (healthiest/cleanest) and order product_ids with hero first.\n- Quick replies should be short, actionable pivots (budget/dietary/quality).\n- Evidence: use flean score/percentiles, nutrition grams, and penalties correctly (penalties high = bad).\n"
+            "- REDACTION RULE: NEVER reveal product IDs/SKUs/internal identifiers anywhere in the output. If the model generates one, replace it with '{product_id}'.\n"
         )
 
         session_snapshot = {
             k: ctx.session.get(k) for k in [
-                "budget", "dietary_requirements", "intent_l3", "product_intent"
+                "budget", "dietary_requirements"
             ] if k in ctx.session
         }
+        # Include last 10 conversation turns as 5 user/bot pairs
+        conversation_pairs = []
+        try:
+            convo = ctx.session.get("conversation_history", []) or []
+            if isinstance(convo, list) and convo:
+                for h in convo[-10:]:
+                    if isinstance(h, dict):
+                        conversation_pairs.append({
+                            "user_query": str(h.get("user_query", ""))[:160],
+                            "bot_reply": str(h.get("bot_reply", ""))[:240],
+                        })
+        except Exception:
+            conversation_pairs = []
         payload = {
             "user_query": query.strip(),
             "product_intent": product_intent,
             "session": session_snapshot,
+            "conversation_history": conversation_pairs,
             "products": products_for_llm,
             "briefs": top_products_brief,
         }
@@ -1153,7 +1178,28 @@ class LLMService:
             max_tokens=900,
         )
         tool_use = pick_tool(resp, "generate_final_answer_unified")
-        return _strip_keys(tool_use.input or {}) if tool_use else {}
+        result = _strip_keys(tool_use.input or {}) if tool_use else {}
+        # Assemble 3-part summary into summary_message if parts present
+        try:
+            p1 = (result.get("summary_message_part_1") or "").strip()
+            p2 = (result.get("summary_message_part_2") or "").strip()
+            p3 = (result.get("summary_message_part_3") or "").strip()
+            if any([p1, p2, p3]):
+                joined = "\n".join([s for s in [p1, p2, p3] if s])
+                # Sanitize: If any accidental IDs appear, replace patterns like ids or numbers near braces with literal token
+                try:
+                    import re
+                    # Replace anything like {id: 123}, (#12345), or alphanumeric IDs following 'id' with '{product_id}' token
+                    joined = re.sub(r"\{\s*id\s*[:=]\s*[^}]+\}", "{product_id}", joined, flags=re.IGNORECASE)
+                    joined = re.sub(r"\b(id|sku)\s*[:#-]?\s*[A-Za-z0-9_-]{3,}\b", "{product_id}", joined, flags=re.IGNORECASE)
+                    joined = re.sub(r"#[0-9]{4,}", "{product_id}", joined)
+                except Exception:
+                    pass
+                # Preserve key name summary_message
+                result["summary_message"] = joined
+        except Exception:
+            pass
+        return result
 
     async def classify_and_assess(self, query: str, ctx: Optional[UserContext] = None) -> Dict[str, Any]:
         """Combined classifier for latency reduction (flag-gated upstream).
@@ -1622,11 +1668,26 @@ class LLMService:
             except Exception:
                 pass
 
+            # Include last 10 conversation turns as 5 user/bot pairs
+            _conversation_pairs = []
+            try:
+                _convo = ctx.session.get("conversation_history", []) or []
+                if isinstance(_convo, list) and _convo:
+                    for _h in _convo[-10:]:
+                        if isinstance(_h, dict):
+                            _conversation_pairs.append({
+                                "user_query": str(_h.get("user_query", ""))[:160],
+                                "bot_reply": str(_h.get("bot_reply", ""))[:240],
+                            })
+            except Exception:
+                _conversation_pairs = []
+
             unified_context = {
                 "user_query": query,
                 "intent_l3": intent_l3,
                 "product_intent": product_intent or ctx.session.get("product_intent") or "show_me_options",
-                "session": {k: ctx.session.get(k) for k in ["budget", "dietary_requirements", "preferences"] if k in ctx.session},
+                "session": {k: ctx.session.get(k) for k in ["budget", "dietary_requirements"] if k in ctx.session},
+                "conversation_history": _conversation_pairs,
                 "products": products_for_llm,
                 "enriched_top": top_products_brief,
                 "personal_care": {
@@ -1640,19 +1701,23 @@ class LLMService:
                 }
             }
             unified_prompt = (
+                "You are Flean’s WhatsApp copywriter. Write one concise message that proves we understood the user, explains why the picks fit, and ends with exactly three short follow-ups. Tone: friendly, plain English.\n\n"
+                "ABSOLUTE PRIVACY RULE (MANDATORY): NEVER include actual product IDs, SKUs, or internal identifiers in ANY text. If referring to an ID per instructions, include exactly the literal token '{product_id}' and DO NOT replace it with a real value.\n\n"
+                "FORMAT TAGS (MANDATORY): Use only <bold>...</bold> for emphasis and <newline> to indicate line breaks. DO NOT use any other HTML/Markdown tags or entities. The output will be post-processed for WhatsApp formatting.\n\n"
                 "You are producing BOTH the product answer and the UX block in a SINGLE tool call.\n"
-                "Inputs:\n- user_query\n- intent_l3\n- product_intent (one of is_this_good, which_is_better, show_me_alternate, show_me_options)\n- session snapshot (budget, dietary, preferences)\n- products (top 5-10)\n- enriched_top (top 1 for SPM; top 3 for MPM)\n\n"
+                "Inputs:\n- user_query\n- intent_l3\n- product_intent (one of is_this_good, which_is_better, show_me_alternate, show_me_options)\n- session snapshot (budget, dietary)\n- last 5 user/bot pairs (10 turns)\n- products (top 5-10)\n- enriched_top (top 1 for SPM; top 3 for MPM)\n\n"
                 "Output JSON (tool generate_final_answer_unified):\n"
-                "{response_type:'final_answer', summary_message, product_ids?, hero_product_id?, ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}\n\n"
+                "{response_type:'final_answer', summary_message (constructed from 3 parts), summary_message_part_1, summary_message_part_2, summary_message_part_3, product_ids?, hero_product_id?, ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}\n\n"
+                "3-PART SUMMARY (MANDATORY for both food & skin):\n"
+                "- summary_message_part_1: Mirror the brief (1–2 lines). Place 1 emoji to signal alignment (e.g., ✅ or 🔍). NEVER include actual product IDs.\n"
+                "- summary_message_part_2: Hero pick (2–3 lines): state one crisp reason it fits (protein/fiber/less oil/spice/budget). After the product name/brand, insert '{product_id}' as literal text (DO NOT substitute the real ID). If citing a percentile, use plain language with parentheses, e.g., ‘higher in protein than most chips (top 10%).’. Append star rating as ⭐ repeated N times based on review_stats.average (rounded to nearest integer, clamp 1–5). If rating missing, omit stars. NEVER include actual product IDs.\n"
+                "- summary_message_part_3: Other picks (1–2 lines): group with one shared reason (e.g., ‘also lower oil & budget-friendly’). Place 1 emoji here (e.g., 💡). Append star ratings for each product mentioned using ⭐ repeated N times from review_stats.average (rounded 1–5); if missing, omit stars. NEVER include actual product IDs.\n\n"
                 "Rules (MANDATORY):\n"
-                "- For is_this_good (SPM): choose 1 best item → ux_surface='SPM'; product_ids=[that_id]; dpl_runtime_text should read like a concise expert verdict; keep summary to 4 lines with evidence.\n"
+                "- For is_this_good (SPM): choose 1 best item → ux_surface='SPM'; product_ids=[that_id]; dpl_runtime_text should read like a concise expert verdict.\n"
                 "- For others (MPM): choose a hero (healthiest/cleanest using enriched_top), set hero_product_id and order product_ids with hero first; ux_surface='MPM'.\n"
                 "- Quick replies: short and actionable pivots (budget ranges like 'Under ₹100', dietary like 'GLUTEN FREE', or quality pivots).\n"
                 "- Evidence: use flean score/percentiles, nutrition grams, and penalties correctly (penalties high = bad).\n"
-                "- Keep summary_message EXACTLY 4 sentences, evidence-based; avoid fluff.\n"
-                "- PERSONAL CARE (MANDATORY when available): You MUST use the planning outputs efficacy_terms (positives) and avoid_terms (negatives) to contextualize both summary_message and DPL.\n"
-                "  Explicitly state how the recommendations address efficacy_terms and avoid avoid_terms (e.g., 'anti-dandruff focus, fragrance-free fit for oily scalp').\n"
-                "- If top 1–2 reviews are present in the product payload, add a final 'Reviews:' sentence summarizing 1–2 key user sentiments concisely.\n"
+                "- REDACTION RULE: NEVER reveal product IDs/SKUs/internal identifiers anywhere in the output. If the model generates one, replace it with '{product_id}'.\n"
                 "Return ONLY the tool call.\n"
             )
 
@@ -1671,6 +1736,24 @@ class LLMService:
                 return self._create_fallback_product_response(products_data, query)
 
             result = _strip_keys(tool_use.input or {})
+            # Assemble 3-part summary into summary_message if parts present
+            try:
+                _p1 = (result.get("summary_message_part_1") or "").strip()
+                _p2 = (result.get("summary_message_part_2") or "").strip()
+                _p3 = (result.get("summary_message_part_3") or "").strip()
+                if any([_p1, _p2, _p3]):
+                    _joined = "\n".join([s for s in [_p1, _p2, _p3] if s])
+                    # Sanitize accidental IDs
+                    try:
+                        import re as _re
+                        _joined = _re.sub(r"\{\s*id\s*[:=]\s*[^}]+\}", "{product_id}", _joined, flags=_re.IGNORECASE)
+                        _joined = _re.sub(r"\b(id|sku)\s*[:#-]?\s*[A-Za-z0-9_-]{3,}\b", "{product_id}", _joined, flags=_re.IGNORECASE)
+                        _joined = _re.sub(r"#[0-9]{4,}", "{product_id}", _joined)
+                    except Exception:
+                        pass
+                    result["summary_message"] = _joined
+            except Exception:
+                pass
 
             # Enforce exactly one product for SPM in final result
             if spm_mode:

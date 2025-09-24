@@ -196,6 +196,8 @@ async def process_image_query(ctx: UserContext, image_url: str) -> Dict[str, Any
             "q": product_name or ocr_text,
             "size": 3,
             "keywords": name_tokens[:4],
+            # Signal to ES builder that this request comes from vision
+            "is_image_query": True,
         }
         if category_group:
             params["category_group"] = category_group

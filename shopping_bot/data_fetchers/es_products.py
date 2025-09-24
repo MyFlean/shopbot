@@ -748,18 +748,71 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
 
     # Brands
     if isinstance(p.get("brands"), list) and p.get("brands"):
-        filters.append({"terms": {"brand": p["brands"]}})
+        # For image queries or when explicit enforcement is requested, apply robust brand gating
+        is_image_query = bool(p.get("is_image_query"))
+        enforce_brand = bool(p.get("enforce_brand")) or is_image_query
+        if enforce_brand:
+            try:
+                brand_value = str((p.get("brands") or [""])[0] or "").strip()
+                brand_clean = brand_value.strip("'\" ")
+                if brand_clean:
+                    def _variants(base: str) -> List[str]:
+                        s = base.strip()
+                        # Generate simple normalization variants
+                        title = " ".join([w.capitalize() for w in s.split()])
+                        lower = s.lower()
+                        upper = s.upper()
+                        no_amp = s.replace("&", "and")
+                        no_punct = s.replace("'", "").replace("`", "")
+                        uniq: List[str] = []
+                        for v in [s, title, lower, upper, no_amp, no_punct]:
+                            if v and v not in uniq:
+                                uniq.append(v)
+                        return uniq
 
-    # Must: main query
+                    brand_variants = _variants(brand_clean)
+                    should_brand: List[Dict[str, Any]] = []
+                    for v in brand_variants:
+                        # Exact term on brand (works if brand is keyword or non-analyzed)
+                        should_brand.append({"term": {"brand": v}})
+                        # Try keyword subfield when present (safe no-op if unmapped)
+                        should_brand.append({"term": {"brand.keyword": v}})
+                        # Wildcards to handle minor punctuation/case/tokenization differences
+                        should_brand.append({"wildcard": {"brand": {"value": f"{v}*"}}})
+                        should_brand.append({"wildcard": {"brand": {"value": f"*{v}*"}}})
+                        # Phrase match in analyzed text fields (name, combined_text)
+                        should_brand.append({"match_phrase": {"name": v}})
+                        should_brand.append({"match_phrase": {"combined_text": v}})
+
+                    filters.append({
+                        "bool": {"should": should_brand, "minimum_should_match": 1}
+                    })
+                    print(f"DEBUG: Enforcing brand filter (skin) | brand='{brand_clean}' | variants={brand_variants}")
+                else:
+                    # Fallback to simple terms when brand is empty after cleaning
+                    filters.append({"terms": {"brand": p["brands"]}})
+            except Exception:
+                # On any construction error, fallback to simple terms filter
+                filters.append({"terms": {"brand": p["brands"]}})
+        else:
+            # Non-image generic case: keep lightweight terms filter
+            filters.append({"terms": {"brand": p["brands"]}})
+
+    # Must/Should: main query
     if q_text:
-        musts.append({
+        text_clause = {
             "multi_match": {
                 "query": q_text,
                 "type": "best_fields",
                 "fields": ["name^4", "description^2", "use", "combined_text"],
                 "fuzziness": "AUTO",
             }
-        })
+        }
+        # For image-origin queries, treat text as a soft signal to avoid over-filtering
+        if is_image_query:
+            shoulds.append(text_clause)
+        else:
+            musts.append(text_clause)
 
     # Skin/Hair suitability → nested strong should on skin_compatibility
     # Map hair_types to scalp equivalents where possible (oily/dry/normal)

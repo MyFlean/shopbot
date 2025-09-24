@@ -46,6 +46,8 @@ logs.txt
 .env
 .env.local
 .env.production
+.env_prod
+.env_production
 
 # Terraform
 .terraform/
@@ -54,6 +56,25 @@ logs.txt
 
 # AWS
 .aws/
+
+# Secrets and Credentials
+github-secrets.txt
+setup-aws-credentials.sh
+setup-github-secrets.md
+*secret*.txt
+*secret*.md
+*credential*.txt
+*credential*.sh
+*credential*.md
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+
+# Exception: Allow security check script
+!check-secrets.sh
 
 # Temporary files
 *.tmp

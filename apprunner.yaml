@@ -8,7 +8,7 @@ build:
       - echo "Build completed successfully"
 run:
   runtime-version: 3.11
-  command: gunicorn -p :8080 run:app
+  command: python3 -m gunicorn -p :8080 run:app
   network:
     port: 8080
     env: PORT

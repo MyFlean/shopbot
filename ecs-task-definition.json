@@ -1,0 +1,144 @@
+{
+  "family": "shopbot",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::637607366584:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::637607366584:role/ecsTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "shopbot",
+      "image": "637607366584.dkr.ecr.ap-south-1.amazonaws.com/shopbot:latest",
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/shopbot",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "environment": [
+        {
+          "name": "PORT",
+          "value": "8000"
+        },
+        {
+          "name": "HOST",
+          "value": "0.0.0.0"
+        },
+        {
+          "name": "APP_ENV",
+          "value": "production"
+        },
+        {
+          "name": "FLASK_ENV",
+          "value": "production"
+        },
+        {
+          "name": "BOT_LOG_LEVEL",
+          "value": "STANDARD"
+        },
+        {
+          "name": "REDIS_TTL_SECONDS",
+          "value": "900"
+        },
+        {
+          "name": "LLM_MODEL",
+          "value": "claude-3-5-sonnet-20241022"
+        },
+        {
+          "name": "LLM_TEMPERATURE",
+          "value": "0.1"
+        },
+        {
+          "name": "LLM_MAX_TOKENS",
+          "value": "1000"
+        },
+        {
+          "name": "ELASTIC_INDEX",
+          "value": "flean-v4"
+        },
+        {
+          "name": "ELASTIC_TIMEOUT_SECONDS",
+          "value": "10"
+        },
+        {
+          "name": "ELASTIC_MAX_RESULTS",
+          "value": "50"
+        },
+        {
+          "name": "HISTORY_MAX_SNAPSHOTS",
+          "value": "5"
+        },
+        {
+          "name": "ENABLE_ASYNC",
+          "value": "false"
+        },
+        {
+          "name": "USE_COMBINED_CLASSIFY_ASSESS",
+          "value": "false"
+        },
+        {
+          "name": "USE_CONVERSATION_AWARE_CLASSIFIER",
+          "value": "false"
+        },
+        {
+          "name": "USE_TWO_CALL_ES_PIPELINE",
+          "value": "false"
+        },
+        {
+          "name": "ASK_ONLY_MODE",
+          "value": "false"
+        },
+        {
+          "name": "USE_ASSESSMENT_FOR_ASK_ONLY",
+          "value": "false"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/anthropic-api-key"
+        },
+        {
+          "name": "REDIS_HOST",
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/redis-host"
+        },
+        {
+          "name": "REDIS_PORT",
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/redis-port"
+        },
+        {
+          "name": "ES_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/es-api-key"
+        },
+        {
+          "name": "ES_URL",
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/es-url"
+        },
+        {
+          "name": "SECRET_KEY",
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/secret-key"
+        }
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/__system_health')\" || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      }
+    }
+  ]
+}

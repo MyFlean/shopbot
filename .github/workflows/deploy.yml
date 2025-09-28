@@ -9,8 +9,8 @@ on:
 env:
   AWS_REGION: ap-south-1
   ECR_REPOSITORY: shopbot
-  ECS_SERVICE: shopbot-service
-  ECS_CLUSTER: shopbot-cluster
+  ECS_SERVICE: shopbot
+  ECS_CLUSTER: flean-services-cluster
   ECS_TASK_DEFINITION: shopbot
   CONTAINER_NAME: shopbot
 
@@ -83,10 +83,10 @@ jobs:
           fi
         fi
         
-        if [ -n "$ALB_URL" ]; then
-          echo "Testing application health at: $ALB_URL/health"
-          curl -f -s "$ALB_URL/health" || exit 1
-          echo "✅ Application health check passed"
-        else
-          echo "⚠️  Could not determine ALB URL for health check"
-        fi
+        # Use the correct ALB URL
+        ALB_DNS="flean-services-alb-806741654.ap-south-1.elb.amazonaws.com"
+        ALB_URL="http://$ALB_DNS"
+        
+        echo "Testing application health at: $ALB_URL/rs/health"
+        curl -f -s "$ALB_URL/rs/health" || exit 1
+        echo "✅ Application health check passed"

@@ -627,6 +627,8 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
 def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     """Build a personal care (skin) ES query matching the working Postman shape."""
     p = params or {}
+    # Global flags
+    is_image_query: bool = bool(p.get("is_image_query"))
 
     size = int(p.get("size", 10) or 10)
     price_min = p.get("price_min")
@@ -749,7 +751,6 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     # Brands
     if isinstance(p.get("brands"), list) and p.get("brands"):
         # For image queries or when explicit enforcement is requested, apply robust brand gating
-        is_image_query = bool(p.get("is_image_query"))
         enforce_brand = bool(p.get("enforce_brand")) or is_image_query
         if enforce_brand:
             try:
@@ -1035,6 +1036,9 @@ def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
             
             # Ingredients
             "ingredients": _clean_text(src.get("ingredients", {}).get("raw_text", "")),
+            # Reviews (surface to LLM for stars)
+            "avg_rating": (src.get("review_stats", {}) or {}).get("avg_rating"),
+            "total_reviews": (src.get("review_stats", {}) or {}).get("total_reviews"),
         }
         
         # Add highlight if available

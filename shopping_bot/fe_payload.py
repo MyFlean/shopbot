@@ -5,7 +5,6 @@ from enum import Enum
 from typing import Any, Dict
 
 from .enums import ResponseType
-from .utils.whatsapp_formatter import format_summary_for_whatsapp
 from .models import UserContext
 
 
@@ -148,12 +147,7 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
                         c = {**c, "summary_message": "Choose an option:"}
             except Exception:
                 pass
-            # Format summary_message for WhatsApp UI
-            try:
-                if c.get("summary_message"):
-                    c["summary_message"] = format_summary_for_whatsapp(c.get("summary_message"))
-            except Exception:
-                pass
+            # Leave summary_message raw for external parser service
 
             # Lean MPM: keep only summary_message, ux_response (product_ids, quick_replies, ux_surface, dpl_runtime_text), and product_intent
             try:
@@ -173,11 +167,8 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
                             "product_ids": ux_payload.get("product_ids", []),
                         }
                         if ux_payload.get("dpl_runtime_text"):
-                            # Format DPL runtime text similarly to ensure consistent WhatsApp rendering
-                            try:
-                                lean_ux["dpl_runtime_text"] = format_summary_for_whatsapp(ux_payload.get("dpl_runtime_text"))
-                            except Exception:
-                                lean_ux["dpl_runtime_text"] = ux_payload.get("dpl_runtime_text")
+                            # Leave DPL runtime text raw for external parser
+                            lean_ux["dpl_runtime_text"] = ux_payload.get("dpl_runtime_text")
                     return {
                         "summary_message": c.get("summary_message", "Choose an option:"),
                         "ux_response": lean_ux,
@@ -196,7 +187,7 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
         
         # Fallback for backward compatibility when only a message is present
         return {
-            "summary_message": format_summary_for_whatsapp(c.get("message", "")),
+            "summary_message": c.get("message", ""),
             "products": []
         }
 
@@ -204,7 +195,7 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
     if bot_resp_type == ResponseType.IMAGE_IDS:
         ux = c.get("ux_response") if isinstance(c.get("ux_response"), dict) else {}
         out = {
-            "summary_message": format_summary_for_whatsapp(c.get("summary_message", "")),
+            "summary_message": c.get("summary_message", ""),
             "ux_response": ux,
         }
         return out

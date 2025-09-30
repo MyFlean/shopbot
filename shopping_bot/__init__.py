@@ -81,7 +81,7 @@ def create_app() -> Flask:
         
         # Import and register the simplified chat routes
         from .routes.chat import bp as chat_bp
-        app.register_blueprint(chat_bp)
+        app.register_blueprint(chat_bp, url_prefix='/rs')
         
         # Import other essential routes
         try:

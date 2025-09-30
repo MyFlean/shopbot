@@ -2,10 +2,10 @@
   "family": "shopbot",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
-  "cpu": "512",
-  "memory": "1024",
+  "cpu": "1024",
+  "memory": "2048",
   "executionRoleArn": "arn:aws:iam::637607366584:role/ecsTaskExecutionRole",
-  "taskRoleArn": "arn:aws:iam::637607366584:role/ecsTaskRole",
+  "taskRoleArn": "arn:aws:iam::637607366584:role/flean-services-ecs-task-role",
   "containerDefinitions": [
     {
       "name": "shopbot",
@@ -132,7 +132,7 @@
       "healthCheck": {
         "command": [
           "CMD-SHELL",
-          "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/__system_health')\" || exit 1"
+          "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/rs/health')\" || exit 1"
         ],
         "interval": 30,
         "timeout": 5,

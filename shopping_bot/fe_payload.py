@@ -147,6 +147,8 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
                         c = {**c, "summary_message": "Choose an option:"}
             except Exception:
                 pass
+            # Leave summary_message raw for external parser service
+
             # Lean MPM: keep only summary_message, ux_response (product_ids, quick_replies, ux_surface, dpl_runtime_text), and product_intent
             try:
                 ux_payload = c.get("ux_response") if isinstance(c.get("ux_response"), dict) else None
@@ -165,6 +167,7 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
                             "product_ids": ux_payload.get("product_ids", []),
                         }
                         if ux_payload.get("dpl_runtime_text"):
+                            # Leave DPL runtime text raw for external parser
                             lean_ux["dpl_runtime_text"] = ux_payload.get("dpl_runtime_text")
                     return {
                         "summary_message": c.get("summary_message", "Choose an option:"),

@@ -627,6 +627,8 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
 def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     """Build a personal care (skin) ES query matching the working Postman shape."""
     p = params or {}
+    # Global flags
+    is_image_query: bool = bool(p.get("is_image_query"))
 
     size = int(p.get("size", 10) or 10)
     price_min = p.get("price_min")
@@ -749,7 +751,6 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     # Brands
     if isinstance(p.get("brands"), list) and p.get("brands"):
         # For image queries or when explicit enforcement is requested, apply robust brand gating
-        is_image_query = bool(p.get("is_image_query"))
         enforce_brand = bool(p.get("enforce_brand")) or is_image_query
         if enforce_brand:
             try:
@@ -1035,6 +1036,9 @@ def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
             
             # Ingredients
             "ingredients": _clean_text(src.get("ingredients", {}).get("raw_text", "")),
+            # Reviews (surface to LLM for stars)
+            "avg_rating": (src.get("review_stats", {}) or {}).get("avg_rating"),
+            "total_reviews": (src.get("review_stats", {}) or {}).get("total_reviews"),
         }
         
         # Add highlight if available
@@ -1589,6 +1593,23 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
         total = 0
     if total == 0:
         print("DEBUG: ZERO_RESULT | attempting fallback strategies")
+        # 0th fallback: drop price filters (treat price as 'any')
+        try:
+            p_price = dict(params)
+            dropped_price = False
+            if p_price.pop('price_min', None) is not None:
+                dropped_price = True
+            if p_price.pop('price_max', None) is not None:
+                dropped_price = True
+            if dropped_price:
+                print("DEBUG: PRICE_ANY_FALLBACK | dropping price_min/price_max")
+                alt_price = await loop.run_in_executor(None, lambda: fetcher.search(p_price))
+                alt_price_total = int(((alt_price.get('meta') or {}).get('total_hits')) or 0)
+                if alt_price_total > 0:
+                    alt_price['meta']['fallback_applied'] = 'price_any'
+                    return alt_price
+        except Exception:
+            pass
         # Strategy A: category sibling probe within same l2 (prefer first)
         try:
             cat_paths = params.get('category_paths') if isinstance(params.get('category_paths'), list) else []

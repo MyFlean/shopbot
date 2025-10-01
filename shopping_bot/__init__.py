@@ -46,11 +46,18 @@ def create_app() -> Flask:
         log.info("INIT_REDIS | starting Redis connection")
         ctx_mgr = RedisContextManager()
         
-        # Test Redis connection
+        # Test Redis connection - use ping instead of full health check for startup
+        # Full health check (with set/get/delete test) is too strict for startup
         health = ctx_mgr.health_check()
-        if not health.get("connection_healthy"):
+        ping_success = health.get("ping_success", False)
+        
+        if not ping_success:
             log.error(f"INIT_REDIS_FAILED | health={health}")
             raise RuntimeError(f"Redis connection failed: {health.get('error')}")
+        
+        # Log warning if full health check failed but ping succeeded
+        if not health.get("connection_healthy"):
+            log.warning(f"INIT_REDIS_WARNING | Full health check failed but ping succeeded. health={health}")
             
         log.info(f"INIT_REDIS_SUCCESS | memory_usage={health.get('memory_info', {}).get('used_memory_human', 'unknown')}")
         app.extensions["ctx_mgr"] = ctx_mgr

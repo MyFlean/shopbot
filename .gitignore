@@ -1,3 +1,5 @@
+myenv/
+myflean/
 # Python
 *.pyc
 __pycache__/
@@ -6,6 +8,11 @@ env/
 venv/
 .env
 .flaskenv
+
+# .gitignore
+**/__pycache__/
+*.pyc
+
 
 # Flask instance folder
 instance/
@@ -32,3 +39,15 @@ build/
 # Python caches
 __pycache__/
 *.pyc
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+myenv/
+.venv/
+*.egg-info/
+.DS_Store

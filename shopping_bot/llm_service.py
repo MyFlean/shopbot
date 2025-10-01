@@ -1129,7 +1129,7 @@ class LLMService:
     ) -> Dict[str, Any]:
         """Two-call pipeline: call 2. Unified product answer + UX."""
         prompt = (
-            "You are Flean’s WhatsApp copywriter. Write one concise message that proves we understood the user, explains why the picks fit, and ends with exactly three short follow-ups. Tone: friendly, plain English.\n\n"
+            "You are Flean's WhatsApp copywriter. Write one concise message that proves we understood the user, explains why the picks fit, and ends with exactly three short follow-ups. Tone: friendly, plain English.\n\n"
             "ABSOLUTE PRIVACY RULE (MANDATORY): NEVER include actual product IDs, SKUs, or internal identifiers in ANY text. If referring to an ID per instructions, include exactly the literal token '{product_id}' and DO NOT replace it with a real value.\n\n"
             "FORMAT TAGS (MANDATORY): Use only <bold>...</bold> for emphasis and <newline> to indicate line breaks. DO NOT use any other HTML/Markdown tags or entities. The output will be post-processed for WhatsApp formatting.\n\n"
             "Generate the final product answer and UX in ONE tool call.\n"
@@ -1137,8 +1137,8 @@ class LLMService:
             "Output: {response_type:'final_answer', summary_message (constructed from 3 parts), summary_message_part_1, summary_message_part_2, summary_message_part_3, product_ids(ordered; hero optional), ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}.\n"
             "3-PART SUMMARY (MANDATORY for both food & skin):\n"
             "- summary_message_part_1: Mirror the brief (1–2 lines). Place 1 emoji to signal alignment (e.g., ✅ or 🔍). NEVER include actual product IDs.\n"
-            "- summary_message_part_2: Hero pick (2–3 lines): state one crisp reason it fits (protein/fiber/less oil/spice/budget). After the product name/brand, insert '{product_id}' as literal text (DO NOT substitute the real ID). If citing a percentile, use plain language with parentheses, e.g., ‘higher in protein than most chips (top 10%).’. Append star rating as ⭐ repeated N times based on review_stats.average (rounded to nearest integer, clamp 1–5). If rating missing, omit stars. NEVER include actual product IDs.\n"
-            "- summary_message_part_3: Other picks (1–2 lines): group with one shared reason (e.g., ‘also lower oil & budget-friendly’). Place 1 emoji here (e.g., 💡). Append star ratings for each product mentioned using ⭐ repeated N times from review_stats.average (rounded 1–5); if missing, omit stars. NEVER include actual product IDs.\n\n"
+            "- summary_message_part_2: Hero pick (2–3 lines): state one crisp reason it fits (protein/fiber/less oil/spice/budget). After the product name/brand, insert '{product_id}' as literal text (DO NOT substitute the real ID). If citing a percentile, use plain language with parentheses, e.g., 'higher in protein than most chips (top 10%).'. Append star rating as ⭐ repeated N times based on review_stats.average (rounded to nearest integer, clamp 1–5). If rating missing, omit stars. NEVER include actual product IDs.\n"
+            "- summary_message_part_3: Other picks (1–2 lines): group with one shared reason (e.g., 'also lower oil & budget-friendly'). Place 1 emoji here (e.g., 💡). Append star ratings for each product mentioned using ⭐ repeated N times from review_stats.average (rounded 1–5); if missing, omit stars. NEVER include actual product IDs.\n\n"
             "Rules:\n- SPM → clamp to 1 item and include product_ids[1].\n- MPM → choose a hero (healthiest/cleanest) and order product_ids with hero first.\n- Quick replies should be short, actionable pivots (budget/dietary/quality).\n- Evidence: use flean score/percentiles, nutrition grams, and penalties correctly (penalties high = bad).\n"
             "- REDACTION RULE: NEVER reveal product IDs/SKUs/internal identifiers anywhere in the output. If the model generates one, replace it with '{product_id}'.\n"
         )
@@ -1701,7 +1701,7 @@ class LLMService:
                 }
             }
             unified_prompt = (
-                "You are Flean’s WhatsApp copywriter. Write one concise message that proves we understood the user, explains why the picks fit, and ends with exactly three short follow-ups. Tone: friendly, plain English.\n\n"
+                "You are Flean's WhatsApp copywriter. Write one concise message that proves we understood the user, explains why the picks fit, and ends with exactly three short follow-ups. Tone: friendly, plain English.\n\n"
                 "ABSOLUTE PRIVACY RULE (MANDATORY): NEVER include actual product IDs, SKUs, or internal identifiers in ANY text. If referring to an ID per instructions, include exactly the literal token '{product_id}' and DO NOT replace it with a real value.\n\n"
                 "FORMAT TAGS (MANDATORY): Use only <bold>...</bold> for emphasis and <newline> to indicate line breaks. DO NOT use any other HTML/Markdown tags or entities. The output will be post-processed for WhatsApp formatting.\n\n"
                 "You are producing BOTH the product answer and the UX block in a SINGLE tool call.\n"
@@ -1710,8 +1710,8 @@ class LLMService:
                 "{response_type:'final_answer', summary_message (constructed from 3 parts), summary_message_part_1, summary_message_part_2, summary_message_part_3, product_ids?, hero_product_id?, ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}\n\n"
                 "3-PART SUMMARY (MANDATORY for both food & skin):\n"
                 "- summary_message_part_1: Mirror the brief (1–2 lines). Place 1 emoji to signal alignment (e.g., ✅ or 🔍). NEVER include actual product IDs.\n"
-                "- summary_message_part_2: Hero pick (2–3 lines): state one crisp reason it fits (protein/fiber/less oil/spice/budget). After the product name/brand, insert '{product_id}' as literal text (DO NOT substitute the real ID). If citing a percentile, use plain language with parentheses, e.g., ‘higher in protein than most chips (top 10%).’. Append star rating as ⭐ repeated N times based on review_stats.average (rounded to nearest integer, clamp 1–5). If rating missing, omit stars. NEVER include actual product IDs.\n"
-                "- summary_message_part_3: Other picks (1–2 lines): group with one shared reason (e.g., ‘also lower oil & budget-friendly’). Place 1 emoji here (e.g., 💡). Append star ratings for each product mentioned using ⭐ repeated N times from review_stats.average (rounded 1–5); if missing, omit stars. NEVER include actual product IDs.\n\n"
+                "- summary_message_part_2: Hero pick (2–3 lines): state one crisp reason it fits (protein/fiber/less oil/spice/budget). After the product name/brand, insert '{product_id}' as literal text (DO NOT substitute the real ID). If citing a percentile, use plain language with parentheses, e.g., 'higher in protein than most chips (top 10%).'. Append star rating as ⭐ repeated N times based on review_stats.average (rounded to nearest integer, clamp 1–5). If rating missing, omit stars. NEVER include actual product IDs.\n"
+                "- summary_message_part_3: Other picks (1–2 lines): group with one shared reason (e.g., 'also lower oil & budget-friendly'). Place 1 emoji here (e.g., 💡). Append star ratings for each product mentioned using ⭐ repeated N times from review_stats.average (rounded 1–5); if missing, omit stars. NEVER include actual product IDs.\n\n"
                 "Rules (MANDATORY):\n"
                 "- For is_this_good (SPM): choose 1 best item → ux_surface='SPM'; product_ids=[that_id]; dpl_runtime_text should read like a concise expert verdict.\n"
                 "- For others (MPM): choose a hero (healthiest/cleanest using enriched_top), set hero_product_id and order product_ids with hero first; ux_surface='MPM'.\n"
@@ -1875,7 +1875,18 @@ class LLMService:
                         result["product_ids"] = backfill_ids
             except Exception:
                 pass
-            
+            # Optional enrichment: if summary_message lacks stars, ask LLM to add them
+            try:
+                summary_text = str(result.get("summary_message", "")).strip()
+                if summary_text and ("⭐" not in summary_text):
+                    # Prefer the same top-K list we sent to the LLM for context
+                    products_for_stars = products_for_llm if isinstance(products_for_llm, list) else products_data
+                    enriched = await self._add_stars_if_missing(summary_text, products_for_stars)
+                    if isinstance(enriched, str) and enriched.strip():
+                        result["summary_message"] = enriched.strip()
+            except Exception:
+                pass
+
             return result
             
         except Exception as exc:
@@ -1952,6 +1963,57 @@ class LLMService:
                 "response_type": "final_answer",
                 "message": "I can help you with shopping queries. What are you looking for?"
             }
+
+    async def _add_stars_if_missing(self, summary_text: str, products: List[Dict[str, Any]]) -> str:
+        """Ask the LLM to append star ratings (⭐) in the summary text when missing.
+
+        Use avg_rating when available (round to nearest integer 1–5). If missing,
+        infer a reasonable rating (3–4). Only insert stars after product names' first
+        occurrence. Do not change other wording.
+        """
+        try:
+            compact_products = []
+            for p in (products or [])[:5]:
+                try:
+                    compact_products.append({
+                        "name": p.get("name") or p.get("text"),
+                        "avg_rating": (p.get("review_stats", {}) or {}).get("avg_rating") or p.get("avg_rating"),
+                        "total_reviews": (p.get("review_stats", {}) or {}).get("total_reviews") or p.get("total_reviews"),
+                    })
+                except Exception:
+                    continue
+
+            instructions = (
+                "Insert star ratings (⭐ repeated 1–5) immediately after each product name in the summary.\n"
+                "Use avg_rating when provided: round to nearest integer, clamp 1–5. If missing, infer 3–4 stars.\n"
+                "Preserve all other text and emojis exactly. Return ONLY the updated summary text."
+            )
+            payload = {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": instructions},
+                    {"type": "text", "text": "Products context:"},
+                    {"type": "text", "text": json.dumps({"products": compact_products}, ensure_ascii=False)},
+                    {"type": "text", "text": "Original summary:"},
+                    {"type": "text", "text": summary_text},
+                ],
+            }
+
+            resp = await self.anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[payload],
+                temperature=0,
+                max_tokens=400,
+            )
+
+            parts = []
+            for block in (resp.content or []):
+                if getattr(block, "type", None) == "text":
+                    parts.append(getattr(block, "text", ""))
+            updated = "".join(parts).strip()
+            return updated or summary_text
+        except Exception:
+            return summary_text
 
     # ---------------- EXISTING METHODS ----------------
     async def generate_answer(

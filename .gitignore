@@ -80,11 +80,6 @@ id_ed25519
 *.tmp
 *.temp
 
-# Documentation (allow tests; do not ignore test files)
-# docs and pdfs can be ignored on master if desired
-# docs/
-# *.pdf
-
 # Old deployment files
 apprunner.yaml*
 cloudformation-ecs.yaml

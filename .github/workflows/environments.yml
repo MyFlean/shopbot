@@ -1,0 +1,46 @@
+# GitHub Environments Configuration
+# This file defines environment-specific settings for GitHub Actions
+
+# Production environment
+production:
+  # Environment protection rules
+  protection_rules:
+    # Require manual approval for production deployments
+    required_reviewers: 1
+    # Wait for all checks to pass
+    wait_timer: 0
+    # Prevent self-review
+    prevent_self_review: true
+  
+  # Environment secrets (configured in GitHub UI)
+  secrets:
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+  
+  # Environment variables
+  variables:
+    AWS_REGION: ap-south-1
+    ECR_REPOSITORY: shopbot
+    ECS_SERVICE: shopbot-service
+    ECS_CLUSTER: shopbot-cluster
+    ECS_TASK_DEFINITION: shopbot
+    CONTAINER_NAME: shopbot
+
+# Staging environment (optional)
+staging:
+  protection_rules:
+    required_reviewers: 0
+    wait_timer: 0
+    prevent_self_review: false
+  
+  secrets:
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+  
+  variables:
+    AWS_REGION: ap-south-1
+    ECR_REPOSITORY: shopbot-staging
+    ECS_SERVICE: shopbot-staging-service
+    ECS_CLUSTER: shopbot-cluster
+    ECS_TASK_DEFINITION: shopbot-staging
+    CONTAINER_NAME: shopbot-staging

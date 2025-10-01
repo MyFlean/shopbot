@@ -1,5 +1,4 @@
 # Python
-<<<<<<< HEAD
 __pycache__/
 *.py[cod]
 *$py.class
@@ -80,12 +79,11 @@ id_ed25519
 # Temporary files
 *.tmp
 *.temp
-test_*.py
-testest.py
 
-# Documentation (keep only essential)
-docs/
-*.pdf
+# Documentation (allow tests; do not ignore test files)
+# docs and pdfs can be ignored on master if desired
+# docs/
+# *.pdf
 
 # Old deployment files
 apprunner.yaml*
@@ -100,38 +98,3 @@ ECS_DEPLOYMENT_GUIDE.md
 GITHUB_DEPLOYMENT.md
 QUICK_START_GITHUB.md
 SECRETS_MANAGER_GUIDE.md
-=======
-*.pyc
-__pycache__/
-.Python
-env/
-venv/
-.env
-.flaskenv
-
-# Flask instance folder
-instance/
-
-# Database
-*.sqlite3
-*.db
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Distribution and packaging
-dist/
-build/
-*.egg-info/
-
-# Editor-specific files (optional)
-.vscode/
-.idea/
-*.swp
-*~
-# Python caches
-__pycache__/
-*.pyc
->>>>>>> master

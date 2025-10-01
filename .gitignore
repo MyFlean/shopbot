@@ -1,53 +1,95 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
 myenv/
 myflean/
-# Python
-*.pyc
-__pycache__/
-.Python
-env/
-venv/
-.env
-.flaskenv
 
-# .gitignore
-**/__pycache__/
-*.pyc
-
-
-# Flask instance folder
-instance/
-
-# Database
-*.sqlite3
-*.db
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Distribution and packaging
-dist/
-build/
-*.egg-info/
-
-# Editor-specific files (optional)
+# IDE
 .vscode/
 .idea/
 *.swp
+*.swo
 *~
-# Python caches
-__pycache__/
-*.pyc
 
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-myenv/
-.venv/
-*.egg-info/
+# OS
 .DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs.txt
+
+# Environment variables
+.env
+.env.local
+.env.production
+.env_prod
+.env_production
+
+# Terraform
+.terraform/
+*.tfstate.backup
+.terraform.lock.hcl
+
+# AWS
+.aws/
+
+# Secrets and Credentials
+github-secrets.txt
+setup-aws-credentials.sh
+setup-github-secrets.md
+*secret*.txt
+*secret*.md
+*credential*.txt
+*credential*.sh
+*credential*.md
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+
+# Exception: Allow security check script
+!check-secrets.sh
+
+# Temporary files
+*.tmp
+*.temp
+
+# Old deployment files
+apprunner.yaml*
+cloudformation-ecs.yaml
+deploy-ecs.sh
+deploy-github.sh
+quick-deploy.sh
+setup-secrets.sh
+
+# Old guides
+ECS_DEPLOYMENT_GUIDE.md
+GITHUB_DEPLOYMENT.md
+QUICK_START_GITHUB.md
+SECRETS_MANAGER_GUIDE.md

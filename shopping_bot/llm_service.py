@@ -981,6 +981,7 @@ class LLMService:
         """Two-call pipeline: call 1. Returns {is_product_related, product_intent, ask_required, es_params?}."""
         prompt = (
             "You are the ES-PLANNER. In ONE tool call, build exactly what is needed to run Elasticsearch.\n"
+            "Before deciding, think silently through 5–8 steps comparing CURRENT text with recent context; weigh the latest turns more.\n"
             "STRICT OUTPUT: Return tool plan_es_search with fields: is_product_related, product_intent, ask_required, and es_params (when ask_required=false).\n\n"
             "DECISION TREE (MANDATORY):\n"
             "1) Determine is_product_related from current + recent turns (≤5):\n"
@@ -993,8 +994,8 @@ class LLMService:
             "   - If ask_required=false → es_params MUST be provided.\n"
             "4) If ask_required=true, do NOT provide es_params (server will ask the two slots).\n"
             "5) If ask_required=false and product: construct es_params with DELTA logic from last_search_params:\n"
-            "   - q: concise product noun phrase (strip price/currency). If current text is constraint-only (e.g., 'under 200'),\n"
-            "     REUSE last noun phrase from recent turns/last_search_params and apply delta.\n"
+            "   - q: a concise, noun-led product phrase (strip price/currency). If CURRENT text is modifier-only (e.g., 'under 200'),\n"
+            "     REUSE the most recent anchor noun phrase from recent turns/assessment.original_query and apply only the delta.\n"
             "   - category_group: MUST be exactly one of ['f_and_b','personal_care'] — never 'snacks' or other l2/l3.\n"
             "   - category_path(s): derive using the provided F&B taxonomy when applicable; include up to 3 full paths.\n"
             "   - price_min/price_max: parse INR ranges and apply delta if present (e.g., 'under 100' → price_max=100).\n"
@@ -1002,9 +1003,10 @@ class LLMService:
             "   - brands, keywords, phrase_boosts/field_boosts: include only when explicit or strongly implied.\n"
             "   - size: suggest within [1,50] (server clamps).\n\n"
             "FOLLOW-UP BEHAVIOR (MANDATORY):\n"
-            "- If an assessment is active, prefer the current assessment's original_query as the anchor.\n"
-            "- If the current text is a generic modifier (e.g., 'under 100', 'gluten free'), DO NOT change the q noun phrase; only update constraints in es_params,\n"
-            "  using assessment.original_query as the noun anchor when present.\n\n"
+            "- Keep the same noun for follow-ups unless the user clearly switches category.\n"
+            "- If an assessment is active, prefer assessment.original_query as the noun anchor.\n"
+            "- OPTIONS/ALTERNATIVES: DROP prior brand constraints but KEEP the noun.\n"
+            "- Generic modifiers ('under 100', 'gluten free', 'baked only'): DO NOT change the noun. Only update constraints in es_params.\n\n"
             "CATEGORY PATH CONSTRUCTION:\n"
             "- Use the provided F&B taxonomy to choose l2 and l3. Build full paths as 'f_and_b/food/<l2>' or 'f_and_b/food/<l2>/<l3>'.\n"
             "- For personal care, use 'personal_care/<l2>' or 'personal_care/<l2>/<l3>' as appropriate.\n\n"
@@ -2558,7 +2560,11 @@ class LLMService:
 
             if is_follow_up:
                 prompt = (
-                    "You are expert at extracting Elasticsearch parameters.\n\n"
+                    "You are expert at extracting Elasticsearch parameters. Your output must stay anchored to the user's core product noun across follow-ups.\n\n"
+                    "Deliberate Reasoning Directive (keep internal):\n"
+                    "- Think in 5–8 quiet steps about whether this is a modifier-only turn or a category switch.\n"
+                    "- Compare the new message with the last ~10 turns, weighting recent turns much more.\n"
+                    "- Identify the most specific product noun/phrase and treat it as the anchor unless the user clearly switches category.\n\n"
                     f"FOLLOW-UP QUERY: \"{current_text}\"\n"
                     f"PRODUCT_INTENT: {product_intent}\n"
                     f"LAST {hist_limit} INTERACTIONS (user↔bot incl. asks/answers): {interactions_json}\n\n"
@@ -2566,11 +2572,11 @@ class LLMService:
                     "Return fields: q, category_group, subcategory, category_paths, brands[], dietary_terms[], price_min, price_max, keywords[], phrase_boosts[], size, anchor_product_noun.\n"
                     "Anchor definition (MANDATORY): 'anchor_product_noun' is the most recent, specific product noun/phrase that best represents the user's product focus (e.g., 'tomato sauce', 'banana chips', 'face wash'). If none is present, set a reasonable generic anchor (e.g., 'breakfast options', 'evening snacks').\n"
                     "STRICT RULES (MANDATORY):\n"
-                    "- q MUST be set EXACTLY to anchor_product_noun.\n"
-                    "- DO NOT synthesize a separate q, and DO NOT include budget/dietary/brand modifiers inside q. Those must go to price_min/price_max, dietary_terms, brands, keywords/phrase_boosts.\n"
+                    "- q MUST be set EXACTLY to anchor_product_noun; never invent a separate q.\n"
+                    "- DO NOT include budget/dietary/brand modifiers inside q. Those must go to price_min/price_max, dietary_terms, brands, keywords/phrase_boosts.\n"
                     "- Subcategory must be a taxonomy leaf (e.g., 'chips_and_crisps') when inferable.\n"
-                    "Recency weighting: Consider the last ~10 interactions, giving substantially more weight to the most recent turns.\n"
-                    "Heuristic: If CURRENT_USER_TEXT looks like a modifier-only message (price/dietary/quality or a short ingredient/flavor), prefer to anchor to the most recent product noun/phrase from history. Prefer specific noun-phrases over generic parents.\n\n"
+                    "- OPTIONS/ALTERNATIVES turns: DROP prior brand constraints but KEEP the anchor noun.\n"
+                    "- Recency weighting: prioritize the latest 3–5 turns over older context. Prefer specific noun-phrases over generic parents.\n\n"
                     "Examples:\n"
                     "1) History: 'want some good sauces' → anchor='tomato sauce'; q='tomato sauce'; category_group='f_and_b'; subcategory='sauces_condiments'.\n"
                     "2) History: 'chips' → Current: 'banana' → anchor='banana chips'; q='banana chips'.\n"
@@ -2578,7 +2584,8 @@ class LLMService:
                 )
             else:
                 prompt = (
-                    "You are expert at extracting Elasticsearch parameters.\n\n"
+                    "You are expert at extracting Elasticsearch parameters. Reason carefully before choosing the anchor noun.\n\n"
+                    "Deliberate Reasoning Directive (keep internal): think through 5–8 steps comparing CURRENT text to the last few turns; prefer specific noun-phrases.\n\n"
                     f"USER QUERY: \"{current_text}\"\n"
                     f"CONTEXT SO FAR (last {hist_limit} interactions): {interactions_json}\n"
                     f"PRODUCT_INTENT: {product_intent}\n\n"
@@ -2586,10 +2593,10 @@ class LLMService:
                     "Return fields: q, category_group, subcategory, category_paths, brands[], dietary_terms[], price_min, price_max, keywords[], phrase_boosts[], size, anchor_product_noun.\n"
                     "Anchor definition (MANDATORY): 'anchor_product_noun' is the most recent, specific product noun/phrase that best represents the user's product focus (e.g., 'tomato sauce', 'banana chips', 'face wash'). If none is present, set a reasonable generic anchor (e.g., 'breakfast options', 'evening snacks').\n"
                     "STRICT RULES (MANDATORY):\n"
-                    "- q MUST be set EXACTLY to anchor_product_noun.\n"
-                    "- DO NOT synthesize a separate q, and DO NOT include budget/dietary/brand modifiers inside q. Those must go to price_min/price_max, dietary_terms, brands, keywords/phrase_boosts.\n"
+                    "- q MUST be set EXACTLY to anchor_product_noun; never invent a separate q.\n"
+                    "- DO NOT include budget/dietary/brand modifiers inside q. Those must go to price_min/price_max, dietary_terms, brands, keywords/phrase_boosts.\n"
                     "- Subcategory must be a taxonomy leaf (e.g., 'chips_and_crisps') when inferable.\n"
-                    "Recency weighting: Give the most weight to CURRENT_USER_TEXT; also consider the last 3–5 interactions. Prefer specific noun-phrases (e.g., 'banana chips') over generic parents ('chips').\n"
+                    "- Prefer specific noun-phrases (e.g., 'banana chips') over generic parents ('chips').\n"
                 )
 
             # CORE log: LLM2 input

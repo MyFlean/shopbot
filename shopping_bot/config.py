@@ -86,4 +86,29 @@ def get_config() -> BaseConfig:
         "test": TestingConfig,
     }
     config_class = mapping.get(env, DevelopmentConfig)
-    return config_class()
+    cfg = config_class()
+
+    # Optional local override to emulate production flag behavior exactly.
+    # Enable by running with: LOCAL_USE_PROD_FLAGS=true
+    if os.getenv("LOCAL_USE_PROD_FLAGS", "false").lower() in {"1", "true", "yes", "on"}:
+        # Mirrors the (previous) ECS task JSON values that produced ask-only flow
+        # This helps reproduce prod behavior locally for RCA.
+        try:
+            cfg.ASK_ONLY_MODE = True
+            cfg.USE_TWO_CALL_ES_PIPELINE = True
+            cfg.USE_ASSESSMENT_FOR_ASK_ONLY = True
+            cfg.USE_COMBINED_CLASSIFY_ASSESS = True
+            cfg.USE_CONVERSATION_AWARE_CLASSIFIER = True
+
+            # Model/token settings to match prod profile
+            cfg.LLM_MODEL = os.getenv("LLM_MODEL", "claude-3-5-sonnet-20241022")
+            cfg.LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1000"))
+
+            # TTL/logging if needed
+            cfg.REDIS_TTL_SECONDS = int(os.getenv("REDIS_TTL_SECONDS", "3600"))
+            os.environ.setdefault("BOT_LOG_LEVEL", os.getenv("BOT_LOG_LEVEL", "STANDARD"))
+        except Exception:
+            # Silent fallback – never break startup due to local override
+            pass
+
+    return cfg

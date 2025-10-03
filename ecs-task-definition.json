@@ -44,15 +44,15 @@
         },
         {
           "name": "BOT_LOG_LEVEL",
-          "value": "STANDARD"
+          "value": "DETAILED"
         },
         {
           "name": "REDIS_TTL_SECONDS",
-          "value": "9000"
+          "value": "36000000"
         },
         {
           "name": "LLM_MODEL",
-          "value": "claude-3-5-sonnet-20241022"
+          "value": "claude-sonnet-4-20250514"
         },
         {
           "name": "LLM_TEMPERATURE",
@@ -60,7 +60,7 @@
         },
         {
           "name": "LLM_MAX_TOKENS",
-          "value": "1000"
+          "value": "2000"
         },
         {
           "name": "ELASTIC_INDEX",
@@ -92,15 +92,15 @@
         },
         {
           "name": "USE_TWO_CALL_ES_PIPELINE",
-          "value": "true"
+          "value": "false"
         },
         {
           "name": "ASK_ONLY_MODE",
-          "value": "true"
+          "value": "false"
         },
         {
           "name": "USE_ASSESSMENT_FOR_ASK_ONLY",
-          "value": "true"
+          "value": "false"
         }
       ],
       "secrets": [

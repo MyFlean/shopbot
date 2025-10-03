@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict, is_dataclass
+import os
 from enum import Enum
 from typing import Any, Dict
 
@@ -74,6 +75,30 @@ def chat_test():
 
 
 # ─────────────────────────────────────────────────────────────
+# Runtime flags endpoint (debug)
+# ─────────────────────────────────────────────────────────────
+@bp.get("/chat/flags")
+def chat_flags() -> Response:
+    try:
+        _cfg_now = get_config()
+        app_env = os.getenv("APP_ENV") or os.getenv("FLASK_ENV") or "development"
+        payload = {
+            "env": app_env,
+            "ENABLE_ASYNC": getattr(_cfg_now, "ENABLE_ASYNC", False),
+            "USE_COMBINED_CLASSIFY_ASSESS": getattr(_cfg_now, "USE_COMBINED_CLASSIFY_ASSESS", False),
+            "USE_CONVERSATION_AWARE_CLASSIFIER": getattr(_cfg_now, "USE_CONVERSATION_AWARE_CLASSIFIER", False),
+            "USE_TWO_CALL_ES_PIPELINE": getattr(_cfg_now, "USE_TWO_CALL_ES_PIPELINE", False),
+            "ASK_ONLY_MODE": getattr(_cfg_now, "ASK_ONLY_MODE", False),
+            "USE_ASSESSMENT_FOR_ASK_ONLY": getattr(_cfg_now, "USE_ASSESSMENT_FOR_ASK_ONLY", False),
+            "LLM_MODEL": getattr(_cfg_now, "LLM_MODEL", "unknown"),
+            "ELASTIC_INDEX": getattr(_cfg_now, "ELASTIC_INDEX", "unknown"),
+        }
+        return jsonify(payload), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ─────────────────────────────────────────────────────────────
 # Main chat endpoint
 # ─────────────────────────────────────────────────────────────
 @bp.post("/chat")
@@ -124,6 +149,27 @@ async def chat() -> Response:
             f"channel={channel} | message='{message[:50]}...' | wa_id={wa_id}"
         )
 
+        # Runtime feature flag snapshot for debugging env diffs
+        try:
+            _cfg_now = get_config()
+            app_env = os.getenv("APP_ENV") or os.getenv("FLASK_ENV") or "development"
+            log.info(
+                "RUNTIME_FLAGS | env=%s | ENABLE_ASYNC=%s | USE_COMBINED_CLASSIFY_ASSESS=%s | "
+                "USE_CONVERSATION_AWARE_CLASSIFIER=%s | USE_TWO_CALL_ES_PIPELINE=%s | "
+                "ASK_ONLY_MODE=%s | USE_ASSESSMENT_FOR_ASK_ONLY=%s | LLM_MODEL=%s | ES_INDEX=%s",
+                app_env,
+                getattr(_cfg_now, "ENABLE_ASYNC", False),
+                getattr(_cfg_now, "USE_COMBINED_CLASSIFY_ASSESS", False),
+                getattr(_cfg_now, "USE_CONVERSATION_AWARE_CLASSIFIER", False),
+                getattr(_cfg_now, "USE_TWO_CALL_ES_PIPELINE", False),
+                getattr(_cfg_now, "ASK_ONLY_MODE", False),
+                getattr(_cfg_now, "USE_ASSESSMENT_FOR_ASK_ONLY", False),
+                getattr(_cfg_now, "LLM_MODEL", "unknown"),
+                getattr(_cfg_now, "ELASTIC_INDEX", "unknown"),
+            )
+        except Exception:
+            pass
+
         # ─────────────────────────────────────────────────────────────
         # 2. Get dependencies and load context
         # ─────────────────────────────────────────────────────────────
@@ -145,6 +191,15 @@ async def chat() -> Response:
                 f"CONTEXT_LOADED | user={user_id} | session={session_id} | "
                 f"has_assessment={bool(ctx.session.get('assessment'))}"
             )
+            # If assessment exists, log current slot for quicker RCA
+            if ctx.session.get("assessment"):
+                a = ctx.session.get("assessment", {})
+                log.info(
+                    "ASSESSMENT_SNAPSHOT | currently_asking=%s | missing=%s | priority=%s",
+                    a.get("currently_asking"),
+                    a.get("missing_data"),
+                    a.get("priority_order"),
+                )
         except Exception as e:
             log.error(f"CONTEXT_LOAD_ERROR | user={user_id} | session={session_id} | error={e}")
             return jsonify({"error": "Failed to load user context"}), 500

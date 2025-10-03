@@ -44,11 +44,11 @@
         },
         {
           "name": "BOT_LOG_LEVEL",
-          "value": "STANDARD"
+          "value": "DETAILED"
         },
         {
           "name": "REDIS_TTL_SECONDS",
-          "value": "9000"
+          "value": "36000000"
         },
         {
           "name": "LLM_MODEL",

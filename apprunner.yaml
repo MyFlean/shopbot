@@ -25,19 +25,7 @@ run:
     - name: BOT_LOG_LEVEL
       value: "STANDARD"
     
-    # Secrets from AWS Secrets Manager
-    - name: ANTHROPIC_API_KEY
-      value: "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/anthropic-api-key"
-    - name: REDIS_HOST
-      value: "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/redis-host"
-    - name: REDIS_PORT
-      value: "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/redis-port"
-    - name: ES_API_KEY
-      value: "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/es-api-key"
-    - name: ES_URL
-      value: "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/es-url"
-    - name: SECRET_KEY
-      value: "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/secret-key"
+    # (Non-secret) Note: Secrets moved to run.secrets below
     
     # Non-sensitive Configuration
     - name: REDIS_TTL_SECONDS
@@ -70,3 +58,18 @@ run:
       value: "false"
     - name: USE_ASSESSMENT_FOR_ASK_ONLY
       value: "false"
+  
+  # Secrets from AWS Secrets Manager (resolved by App Runner)
+  secrets:
+    - name: ANTHROPIC_API_KEY
+      value: arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/anthropic-api-key
+    - name: REDIS_HOST
+      value: arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/redis-host
+    - name: REDIS_PORT
+      value: arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/redis-port
+    - name: ES_API_KEY
+      value: arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/es-api-key
+    - name: ES_URL
+      value: arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/es-url
+    - name: SECRET_KEY
+      value: arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/secret-key

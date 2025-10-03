@@ -31,11 +31,11 @@ run:
     - name: REDIS_TTL_SECONDS
       value: "900"
     - name: LLM_MODEL
-      value: "claude-3-5-sonnet-20241022"
+      value: "claude-sonnet-4-20250514"
     - name: LLM_TEMPERATURE
       value: "0.1"
     - name: LLM_MAX_TOKENS
-      value: "1000"
+      value: "2000"
     - name: ELASTIC_INDEX
       value: "flean-v4"
     - name: ELASTIC_TIMEOUT_SECONDS
@@ -49,9 +49,9 @@ run:
     - name: ENABLE_ASYNC
       value: "false"
     - name: USE_COMBINED_CLASSIFY_ASSESS
-      value: "false"
+      value: "true"
     - name: USE_CONVERSATION_AWARE_CLASSIFIER
-      value: "false"
+      value: "true"
     - name: USE_TWO_CALL_ES_PIPELINE
       value: "false"
     - name: ASK_ONLY_MODE

@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify
 
 log = logging.getLogger(__name__)
 bp = Blueprint("health", __name__)
@@ -22,18 +22,13 @@ bp = Blueprint("health", __name__)
 
 @bp.get("/health")
 def health_check() -> tuple[Dict[str, Any], int]:
+    """Health check endpoint for ALB routing (with /rs prefix from blueprint)."""
     try:
         ctx_mgr = current_app.extensions["ctx_mgr"]  # RedisContextManager
         ctx_mgr.redis.ping()
-        return jsonify({"status": "healthy", "redis": "connected"}), 200
+        return jsonify({"status": "healthy", "redis": "connected", "service": "shopbot"}), 200
     except Exception as exc:  # noqa: BLE001
         log.warning("Redis ping failed: %s", exc)
-        return jsonify({"status": "unhealthy", "redis": "disconnected"}), 500
+        return jsonify({"status": "unhealthy", "redis": "disconnected", "service": "shopbot"}), 500
 
-@bp.post("/health_check")
-def health_check_new() -> tuple[Dict[str, Any], int]:
-    payload = request.get_json(silent=True) or {}
-    # ctx_mgr = current_app.extensions["ctx_mgr"]  # RedisContextManager
-    # ctx_mgr.redis.ping()
-    return jsonify(payload), 200
     

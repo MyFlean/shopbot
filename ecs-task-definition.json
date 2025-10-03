@@ -9,7 +9,7 @@
   "containerDefinitions": [
     {
       "name": "shopbot",
-      "image": "637607366584.dkr.ecr.ap-south-1.amazonaws.com/shopbot:latest",
+      "image": "637607366584.dkr.ecr.ap-south-1.amazonaws.com/shopbot:clean",
       "portMappings": [
         {
           "containerPort": 8000,

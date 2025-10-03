@@ -93,7 +93,7 @@ def create_app() -> Flask:
         # Import other essential routes
         try:
             from .routes.health import bp as health_bp
-            app.register_blueprint(health_bp)
+            app.register_blueprint(health_bp, url_prefix='/rs')
         except ImportError:
             log.info("REGISTER_ROUTES | health routes not found, using built-in health check")
 
@@ -111,59 +111,6 @@ def create_app() -> Flask:
         log.error(f"REGISTER_ROUTES_ERROR | error={e}", exc_info=True)
         raise RuntimeError(f"Failed to register routes: {e}")
 
-    # ────────────────────────────────────────────────────────
-    # STEP 4: Built-in Health Check (avoid conflicts with routes)
-    # ────────────────────────────────────────────────────────
-    @app.get("/__system_health")
-    def system_health_check():
-        """System health check - different endpoint to avoid conflicts."""
-        try:
-            health_status = {
-                "status": "healthy",
-                "timestamp": datetime.now().isoformat(),
-                "architecture": "simplified",
-                "components": {}
-            }
-            
-            # Redis health
-            redis_health = ctx_mgr.health_check()
-            health_status["components"]["redis"] = {
-                "healthy": redis_health.get("connection_healthy", False),
-                "ping": redis_health.get("ping_success", False),
-                "memory": redis_health.get("memory_info", {})
-            }
-            
-            # Bot core health
-            bot_core = app.extensions.get("bot_core")
-            health_status["components"]["bot_core"] = {
-                "available": bool(bot_core),
-                "features": {
-                    "4_intent_classification": True,
-                    "ux_generation": True,
-                    "product_search": True
-                }
-            }
-            
-            # Overall health assessment
-            redis_ok = health_status["components"]["redis"]["healthy"]
-            bot_ok = health_status["components"]["bot_core"]["available"]
-            
-            if not (redis_ok and bot_ok):
-                health_status["status"] = "degraded"
-                health_status["issues"] = []
-                if not redis_ok:
-                    health_status["issues"].append("Redis connection unhealthy")
-                if not bot_ok:
-                    health_status["issues"].append("Bot core unavailable")
-                
-            return health_status, 200 if health_status["status"] == "healthy" else 503
-            
-        except Exception as e:
-            return {
-                "status": "unhealthy", 
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            }, 500
 
     @app.get("/__diagnostics/<user_id>")
     def user_diagnostics(user_id: str):

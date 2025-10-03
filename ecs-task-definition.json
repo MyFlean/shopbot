@@ -52,11 +52,11 @@
         },
         {
           "name": "LLM_MODEL",
-          "value": "claude-3-5-sonnet-20241022"
+          "value": "claude-sonnet-4-20250514"
         },
         {
           "name": "LLM_TEMPERATURE",
-          "value": "0.1"
+          "value": "0"
         },
         {
           "name": "LLM_MAX_TOKENS",

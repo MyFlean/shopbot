@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
+from datetime import datetime
 from dataclasses import asdict, is_dataclass
 import os
 from enum import Enum
@@ -183,6 +185,39 @@ async def chat() -> Response:
         if not bot_core:
             log.error("CHAT_NO_BOT_CORE | bot core not available")
             return jsonify({"error": "Bot core not initialized"}), 500
+
+        # ─────────────────────────────────────────────────────────────
+        # Feedback capture: messages starting with "/r" are stored in Redis
+        # ─────────────────────────────────────────────────────────────
+        try:
+            prefix = next((p for p in ("/r", "@r", "-a") if message.startswith(p)), None)
+            if prefix:
+                feedback_text = message[len(prefix):].lstrip()
+                if feedback_text:
+                    feedback_payload = {
+                        "title": "User Feedback",
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "message": feedback_text,
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                    }
+                    # Store as a list item for easy retrieval of recent feedbacks
+                    ctx_mgr.redis.lpush("feedback:items", json.dumps(feedback_payload))
+                    log.info(
+                        f"USER_FEEDBACK_STORED | user={user_id} | session={session_id} | prefix={prefix} | length={len(feedback_text)}"
+                    )
+                    # Acknowledge and short-circuit normal processing
+                    return jsonify({
+                        "wa_id": wa_id,
+                        "session_id": session_id,
+                        "response_type": "final_answer",
+                        "content": {"message": "Thanks for your feedback!"},
+                        "meta": {"feedback": True, "prefix": prefix}
+                    }), 200
+        except Exception as e:
+            log.warning(
+                f"USER_FEEDBACK_STORE_FAILED | user={user_id} | session={session_id} | error={e}"
+            )
 
         # Load user context
         try:

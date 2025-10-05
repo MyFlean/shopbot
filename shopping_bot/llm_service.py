@@ -1817,31 +1817,13 @@ class LLMService:
                     except Exception:
                         pass
             
-            # Ensure product_ids exist and hero-first ordering
+            # Build product_ids strictly from ES results; hero-first ordering; clamp to max 10
             try:
-                # If tool returned product_ids, validate/order with hero
-                if isinstance(result.get("product_ids"), list) and result["product_ids"]:
-                    hero_id = str(result.get("hero_product_id", "")).strip()
-                    ids = [str(x) for x in result["product_ids"] if str(x).strip()]
-                    if hero_id and hero_id in ids:
-                        ids.remove(hero_id)
-                        ids = [hero_id] + ids
-                    # Replace with ES-backed ids if any missing
-                    es_ids = [str(p.get("id")) for p in products_data if p.get("id")]
-                    mapped = []
-                    for x in ids:
-                        mapped.append(x if x in es_ids else (es_ids[0] if es_ids else x))
-                    # Dedup and clamp
-                    seen = set()
-                    final_ids: List[str] = []
-                    for x in mapped:
-                        if x not in seen:
-                            seen.add(x)
-                            final_ids.append(x)
-                    result["product_ids"] = final_ids[:10]
-                else:
-                    # Build from ES results
-                    result["product_ids"] = [str(p.get("id")) for p in products_data if p.get("id")] [:10]
+                es_ids: List[str] = [str(p.get("id")) for p in products_data if p.get("id")]
+                hero_id = str(result.get("hero_product_id", "")).strip()
+                if hero_id and hero_id in es_ids:
+                    es_ids = [hero_id] + [x for x in es_ids if x != hero_id]
+                result["product_ids"] = es_ids[:10]
             except Exception:
                 pass
 
@@ -1864,19 +1846,7 @@ class LLMService:
             except Exception:
                 pass
 
-            # Belt-and-suspenders: if product_ids still missing but ES fetched has products, backfill
-            try:
-                if (not result.get("product_ids")) and isinstance(products_data, list) and products_data:
-                    backfill_ids: List[str] = []
-                    for p in products_data[:10]:
-                        pid = p.get("id") or f"prod_{hash(p.get('name','') or p.get('title',''))%1000000}"
-                        sid = str(pid)
-                        if sid and sid not in backfill_ids:
-                            backfill_ids.append(sid)
-                    if backfill_ids:
-                        result["product_ids"] = backfill_ids
-            except Exception:
-                pass
+            # Note: No backfilling beyond ES results; fewer than 10 is acceptable
             # Optional enrichment: if summary_message lacks stars, ask LLM to add them
             try:
                 summary_text = str(result.get("summary_message", "")).strip()
@@ -2558,46 +2528,242 @@ class LLMService:
                 except Exception:
                     pass
 
+            # Format history with explicit recency indicators
+            formatted_history = []
+            total = len(convo_history)
+            for idx, turn in enumerate(convo_history):
+                if idx >= total - 2:
+                    weight = "MOST_RECENT"
+                elif idx >= total - 5:
+                    weight = "RECENT"
+                else:
+                    weight = "OLDER"
+                formatted_history.append({
+                    "weight": weight,
+                    "user": turn.get("user_query", "")[:120],
+                    "bot": turn.get("bot_reply", "")[:100]
+                })
+
             if is_follow_up:
-                prompt = (
-                    "You are expert at extracting Elasticsearch parameters. Your output must stay anchored to the user's core product noun across follow-ups.\n\n"
-                    "Deliberate Reasoning Directive (keep internal):\n"
-                    "- Think in 5–8 quiet steps about whether this is a modifier-only turn or a category switch.\n"
-                    "- Compare the new message with the last ~10 turns, weighting recent turns much more.\n"
-                    "- Identify the most specific product noun/phrase and treat it as the anchor unless the user clearly switches category.\n\n"
-                    f"FOLLOW-UP QUERY: \"{current_text}\"\n"
-                    f"PRODUCT_INTENT: {product_intent}\n"
-                    f"LAST {hist_limit} INTERACTIONS (user↔bot incl. asks/answers): {interactions_json}\n\n"
-                    "Task: Figure out the delta and regenerate adapted ES params.\n"
-                    "Return fields: q, category_group, subcategory, category_paths, brands[], dietary_terms[], price_min, price_max, keywords[], phrase_boosts[], size, anchor_product_noun.\n"
-                    "Anchor definition (MANDATORY): 'anchor_product_noun' is the most recent, specific product noun/phrase that best represents the user's product focus (e.g., 'tomato sauce', 'banana chips', 'face wash'). If none is present, set a reasonable generic anchor (e.g., 'breakfast options', 'evening snacks').\n"
-                    "STRICT RULES (MANDATORY):\n"
-                    "- q MUST be set EXACTLY to anchor_product_noun; never invent a separate q.\n"
-                    "- DO NOT include budget/dietary/brand modifiers inside q. Those must go to price_min/price_max, dietary_terms, brands, keywords/phrase_boosts.\n"
-                    "- Subcategory must be a taxonomy leaf (e.g., 'chips_and_crisps') when inferable.\n"
-                    "- OPTIONS/ALTERNATIVES turns: DROP prior brand constraints but KEEP the anchor noun.\n"
-                    "- Recency weighting: prioritize the latest 3–5 turns over older context. Prefer specific noun-phrases over generic parents.\n\n"
-                    "Examples:\n"
-                    "1) History: 'want some good sauces' → anchor='tomato sauce'; q='tomato sauce'; category_group='f_and_b'; subcategory='sauces_condiments'.\n"
-                    "2) History: 'chips' → Current: 'banana' → anchor='banana chips'; q='banana chips'.\n"
-                    "3) History: 'noodles' → Current: 'gluten free under 100' → anchor='noodles'; q='noodles'; dietary_terms=['GLUTEN FREE']; price_max=100.\n"
-                )
+                prompt = f"""<task_definition>
+Extract ALL Elasticsearch parameters in ONE call, maintaining product focus across turns.
+</task_definition>
+
+<conversation_type>{"FOLLOW_UP" if is_follow_up else "NEW_QUERY"}</conversation_type>
+
+<inputs>
+<current_message>{current_text}</current_message>
+
+<conversation_history turns="{len(formatted_history)}">
+{json.dumps(formatted_history, ensure_ascii=False, indent=2)}
+</conversation_history>
+
+<product_intent>{product_intent}</product_intent>
+
+<user_slots>{json.dumps(slot_answers, ensure_ascii=False, indent=2)}</user_slots>
+</inputs>
+
+<reasoning_framework>
+Think through these steps:
+1. PRODUCT ANCHOR: What product noun appeared in last turns?
+2. MESSAGE TYPE: MODIFIER_ONLY vs CATEGORY_SWITCH?
+3. BUILD QUERY: Combine constraint + anchor for modifiers
+4. EXTRACT CATEGORY: Map to category_group and paths
+5. EXTRACT FILTERS: brands, dietary_terms, price, keywords
+6. SET ANCHOR: Core product being searched
+</reasoning_framework>
+
+<rules>
+<rule id="anchor_persistence" priority="CRITICAL">
+Keep same product noun for follow-ups unless explicitly changed.
+- "shampoo" → "dry scalp" → q: "dry scalp shampoo" ✓
+- "chips" → "banana" → q: "banana chips" ✓
+</rule>
+
+<rule id="field_separation" priority="CRITICAL">
+NEVER put budget/dietary/brand in q field.
+- ❌ q: "gluten free chips under 100"
+- ✓ q: "gluten free chips", price_max: 100
+</rule>
+
+<rule id="category_group" priority="CRITICAL">
+category_group MUST be: f_and_b | personal_care | health_nutrition | home_kitchen | electronics
+NEVER use subcategory names like "chips" or "snacks"
+</rule>
+
+<rule id="dietary_normalization" priority="HIGH">
+Normalize to UPPERCASE:
+- "no palm oil" → ["PALM OIL FREE"]
+- "gluten free" → ["GLUTEN FREE"]
+- "vegan" → ["VEGAN"]
+</rule>
+</rules>
+
+<examples>
+<example name="follow_up_attribute">
+Scenario: User: "shampoo" → Bot: shows shampoos → User: "dry scalp"
+Output:
+{{
+  "q": "dry scalp shampoo",
+  "category_group": "personal_care",
+  "size": 15,
+  "anchor_product_noun": "dry scalp shampoo",
+  "keywords": ["dry", "scalp"]
+}}
+</example>
+
+<example name="follow_up_flavor">
+Scenario: User: "chips" → Bot: shows chips → User: "banana"
+Output:
+{{
+  "q": "banana chips",
+  "category_group": "f_and_b",
+  "category_paths": ["light_bites/chips_and_crisps"],
+  "size": 20,
+  "anchor_product_noun": "banana chips"
+}}
+</example>
+
+<example name="follow_up_dietary">
+Scenario: User: "noodles" → Bot: shows noodles → User: "gluten free under 100"
+Output:
+{{
+  "q": "gluten free noodles",
+  "category_group": "f_and_b",
+  "dietary_terms": ["GLUTEN FREE"],
+  "price_max": 100,
+  "size": 20,
+  "anchor_product_noun": "gluten free noodles"
+}}
+</example>
+
+<example name="options_request">
+Scenario: User: "Lays chips" → Bot: shows Lays → User: "show me options"
+Output:
+{{
+  "q": "chips",
+  "category_group": "f_and_b",
+  "size": 25,
+  "anchor_product_noun": "chips",
+  "brands": []
+}}
+</example>
+</examples>
+
+<output>
+Return tool call to generate_unified_es_params with complete JSON.
+Validation: q has product noun (2-6 words), no prices/brands, category_group is valid, dietary_terms UPPERCASE
+</output>"""
             else:
-                prompt = (
-                    "You are expert at extracting Elasticsearch parameters. Reason carefully before choosing the anchor noun.\n\n"
-                    "Deliberate Reasoning Directive (keep internal): think through 5–8 steps comparing CURRENT text to the last few turns; prefer specific noun-phrases.\n\n"
-                    f"USER QUERY: \"{current_text}\"\n"
-                    f"CONTEXT SO FAR (last {hist_limit} interactions): {interactions_json}\n"
-                    f"PRODUCT_INTENT: {product_intent}\n\n"
-                    "Task: Extract params for the user's latest concern.\n"
-                    "Return fields: q, category_group, subcategory, category_paths, brands[], dietary_terms[], price_min, price_max, keywords[], phrase_boosts[], size, anchor_product_noun.\n"
-                    "Anchor definition (MANDATORY): 'anchor_product_noun' is the most recent, specific product noun/phrase that best represents the user's product focus (e.g., 'tomato sauce', 'banana chips', 'face wash'). If none is present, set a reasonable generic anchor (e.g., 'breakfast options', 'evening snacks').\n"
-                    "STRICT RULES (MANDATORY):\n"
-                    "- q MUST be set EXACTLY to anchor_product_noun; never invent a separate q.\n"
-                    "- DO NOT include budget/dietary/brand modifiers inside q. Those must go to price_min/price_max, dietary_terms, brands, keywords/phrase_boosts.\n"
-                    "- Subcategory must be a taxonomy leaf (e.g., 'chips_and_crisps') when inferable.\n"
-                    "- Prefer specific noun-phrases (e.g., 'banana chips') over generic parents ('chips').\n"
-                )
+                prompt = f"""<task_definition>
+Extract ALL Elasticsearch parameters in ONE call, maintaining product focus across turns.
+</task_definition>
+
+<conversation_type>{"FOLLOW_UP" if is_follow_up else "NEW_QUERY"}</conversation_type>
+
+<inputs>
+<current_message>{current_text}</current_message>
+
+<conversation_history turns="{len(formatted_history)}">
+{json.dumps(formatted_history, ensure_ascii=False, indent=2)}
+</conversation_history>
+
+<product_intent>{product_intent}</product_intent>
+
+<user_slots>{json.dumps(slot_answers, ensure_ascii=False, indent=2)}</user_slots>
+</inputs>
+
+<reasoning_framework>
+Think through these steps:
+1. PRODUCT ANCHOR: What product noun appeared in last turns?
+2. MESSAGE TYPE: MODIFIER_ONLY vs CATEGORY_SWITCH?
+3. BUILD QUERY: Combine constraint + anchor for modifiers
+4. EXTRACT CATEGORY: Map to category_group and paths
+5. EXTRACT FILTERS: brands, dietary_terms, price, keywords
+6. SET ANCHOR: Core product being searched
+</reasoning_framework>
+
+<rules>
+<rule id="anchor_persistence" priority="CRITICAL">
+Keep same product noun for follow-ups unless explicitly changed.
+- "shampoo" → "dry scalp" → q: "dry scalp shampoo" ✓
+- "chips" → "banana" → q: "banana chips" ✓
+</rule>
+
+<rule id="field_separation" priority="CRITICAL">
+NEVER put budget/dietary/brand in q field.
+- ❌ q: "gluten free chips under 100"
+- ✓ q: "gluten free chips", price_max: 100
+</rule>
+
+<rule id="category_group" priority="CRITICAL">
+category_group MUST be: f_and_b | personal_care | health_nutrition | home_kitchen | electronics
+NEVER use subcategory names like "chips" or "snacks"
+</rule>
+
+<rule id="dietary_normalization" priority="HIGH">
+Normalize to UPPERCASE:
+- "no palm oil" → ["PALM OIL FREE"]
+- "gluten free" → ["GLUTEN FREE"]
+- "vegan" → ["VEGAN"]
+</rule>
+</rules>
+
+<examples>
+<example name="follow_up_attribute">
+Scenario: User: "shampoo" → Bot: shows shampoos → User: "dry scalp"
+Output:
+{{
+  "q": "dry scalp shampoo",
+  "category_group": "personal_care",
+  "size": 15,
+  "anchor_product_noun": "dry scalp shampoo",
+  "keywords": ["dry", "scalp"]
+}}
+</example>
+
+<example name="follow_up_flavor">
+Scenario: User: "chips" → Bot: shows chips → User: "banana"
+Output:
+{{
+  "q": "banana chips",
+  "category_group": "f_and_b",
+  "category_paths": ["light_bites/chips_and_crisps"],
+  "size": 20,
+  "anchor_product_noun": "banana chips"
+}}
+</example>
+
+<example name="follow_up_dietary">
+Scenario: User: "noodles" → Bot: shows noodles → User: "gluten free under 100"
+Output:
+{{
+  "q": "gluten free noodles",
+  "category_group": "f_and_b",
+  "dietary_terms": ["GLUTEN FREE"],
+  "price_max": 100,
+  "size": 20,
+  "anchor_product_noun": "gluten free noodles"
+}}
+</example>
+
+<example name="options_request">
+Scenario: User: "Lays chips" → Bot: shows Lays → User: "show me options"
+Output:
+{{
+  "q": "chips",
+  "category_group": "f_and_b",
+  "size": 25,
+  "anchor_product_noun": "chips",
+  "brands": []
+}}
+</example>
+</examples>
+
+<output>
+Return tool call to generate_unified_es_params with complete JSON.
+Validation: q has product noun (2-6 words), no prices/brands, category_group is valid, dietary_terms UPPERCASE
+</output>"""
 
             # CORE log: LLM2 input
             try:
@@ -2800,25 +2966,46 @@ class LLMService:
         turns_json = json.dumps(convo_history, ensure_ascii=False)
         taxonomy_json = json.dumps(food_taxonomy, ensure_ascii=False)
         prompt = (
-            "You are a search query parser for Food & Beverage. In ONE tool call, extract parameters.\n\n"
+            "You are a search query parser for Food & Beverage. Extract parameters in ONE tool call.\n\n"
             f"CURRENT_USER_TEXT: {current_text}\n"
-            f"IS_FOLLOW_UP: {bool(is_follow_up)}\n"
-            f"RECENT_TURNS (last {len(convo_history)}): {turns_json}\n\n"
-            f"FOOD TAXONOMY JSON: {taxonomy_json}\n\n"
+            f"IS_FOLLOW_UP: {bool(is_follow_up)}\n\n"
+            # === CRITICAL: Add explicit recency structure ===
+            "<recent_turns weight='CRITICAL'>\n"
+            f"{json.dumps(convo_history[-3:], ensure_ascii=False, indent=2) if len(convo_history) >= 3 else json.dumps(convo_history, ensure_ascii=False, indent=2)}\n"
+            "</recent_turns>\n\n"
+            "<older_turns weight='REFERENCE_ONLY'>\n"
+            f"{json.dumps(convo_history[:-3], ensure_ascii=False, indent=2) if len(convo_history) > 3 else '[]'}\n"
+            "</older_turns>\n\n"
+            f"FOOD TAXONOMY: {taxonomy_json}\n\n"
+            # === NEW: Explicit anchor identification rule ===
+            "<anchor_identification_rule priority='MANDATORY'>\n"
+            "STEP 1: Look at the LAST 3 turns in <recent_turns> ONLY.\n"
+            "STEP 2: Find the most recent explicit product noun (e.g., 'ketchup', 'chips', 'noodles').\n"
+            "STEP 3: If CURRENT_USER_TEXT is a modifier (dietary/price/attribute), combine it with that product noun.\n"
+            "STEP 4: Only look at <older_turns> if NO product noun exists in recent turns.\n\n"
+            "Examples:\n"
+            "- Recent turns: 'ketchup', 'ketchup results', 'no onion garlic' → Current: 'low sodium' → anchor='ketchup' ✓\n"
+            "- Recent turns: 'chips', 'chips results' → Current: 'banana' → anchor='banana chips' ✓\n"
+            "- Recent turns: 'shampoo', 'shampoo results' → Current: 'dry scalp' → anchor='shampoo' ✓\n"
+            "</anchor_identification_rule>\n\n"
+            "<modifier_detection>\n"
+            "CURRENT_USER_TEXT is a MODIFIER if it contains:\n"
+            "- Dietary terms: 'gluten free', 'vegan', 'low sodium', 'no sugar', 'organic', 'no palm oil'\n"
+            "- Price terms: 'under X', 'cheap', 'budget', 'premium'\n"
+            "- Attributes: 'dry scalp', 'oily skin', 'baked', 'fried', 'spicy'\n"
+            "- Ingredients/flavors: 'banana', 'tomato', 'garlic', 'onion'\n\n"
+            "If MODIFIER detected:\n"
+            "  → Find product noun from last 3 turns\n"
+            "  → Set anchor_query = that product noun (NOT the modifier alone)\n"
+            "  → Put modifier constraints in must_clauses\n"
+            "</modifier_detection>\n\n"
             "MANDATORY RULES:\n"
-            "- Determine a single anchor_query (product/category/use case).\n"
-            "- q MUST equal anchor_query (server will set q=anchor_query).\n"
-            "- DO NOT put price/dietary/brand words in anchor_query.\n"
-            "- Use the FOOD TAXONOMY JSON above to classify the query:\n"
-            "  * Pick the most probable L1 (top-level category key from taxonomy)\n"
-            "  * Pick the most probable L2 (subcategory from the L1 array)\n"
-            "  * In must_clauses.category_paths, set EXACTLY: [\"f_and_b/food/L1/L2\"]\n"
-            "  * Example: 'chips' → L1='light_bites', L2='chips_and_crisps' → category_paths=[\"f_and_b/food/light_bites/chips_and_crisps\"]\n"
-            "- Put hard requirements in must_clauses (category_paths, price_range, dietary_label, availability, excluded_ingredients).\n"
-            "- If present, include health_positioning_tags and marketing_tags in must_clauses (use only when clearly implied by user intent).\n"
-            "- Put preferences in rerank_attributes (keep small).\n"
-            "- For follow-ups, include delta_analysis of what changed (addition/removal/replacement/refinement).\n"
-            "Return ONLY the tool call to extract_search_parameters."
+            "- anchor_query MUST be a product noun (e.g., 'ketchup', 'chips', 'noodles')\n"
+            "- NEVER set anchor_query to a modifier alone (e.g., ❌ 'low sodium', ❌ 'banana', ❌ 'dry scalp')\n"
+            "- For follow-ups, anchor_query = product noun from last 3 turns unless explicit category switch\n"
+            "- Use FOOD TAXONOMY to classify anchor_query → category_paths\n"
+            "- Put all constraints (dietary/price/ingredients) in must_clauses, NOT in anchor_query\n\n"
+            "Output: Return ONLY tool call to extract_search_parameters."
         )
 
         resp = await self.anthropic.messages.create(

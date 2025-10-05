@@ -1071,39 +1071,89 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
         except Exception:
             pass
 
-        prompt = (
-            "You are constructing a product search phrase that must remain anchored to the user's core product noun across follow-ups.\n\n"
-            "Deliberate Reasoning Directive (do NOT reveal your notes):\n"
-            "- Spend time thinking through at least 5 reasoning steps before deciding the anchor noun.\n"
-            "- Compare the new message with ~last 10 turns, weighting recent turns much more.\n"
-            "- Identify the most specific product noun/phrase in recent context; treat it as the anchor unless the user clearly switches category.\n"
-            "- Only after this silent analysis, output the final tool call.\n\n"
-            f"CURRENT_USER_TEXT: {current_user_text}\n\n"
-            f"CURRENT_CONSTRAINTS: {json.dumps(context.get('current_constraints', {}), ensure_ascii=False)}\n\n"
-            f"LAST_CATEGORY_CONTEXT: category={last_category}, subcategory={last_subcategory}, product_nouns={last_product_names}\n\n"
-            f"RECENT_TURNS (user↔bot): {json.dumps(context.get('conversation_history', []), ensure_ascii=False)}\n\n"
-            f"SLOTS/STATE: {json.dumps({'user_answers': context.get('user_answers', {}), 'session_data': context.get('session_data', {}), 'debug': context.get('debug', {})}, ensure_ascii=False)}\n\n"
-            f"LAST_RECOMMENDATION: {json.dumps(context.get('last_recommendation', {}), ensure_ascii=False)}\n\n"
-            "Rules for delta-aware construction (NON-DETERMINISTIC, judgment-based):\n"
-            "- FOLLOW-UP MODIFIER: If CURRENT_USER_TEXT is generic or modifier-only (e.g., 'sugar free options', 'cheaper', 'baked only', 'healthier'),\n"
-            "  then PRESERVE the last product noun/phrase exactly and MERGE constraints.\n"
-            "- CATEGORY SWITCH: If CURRENT_USER_TEXT explicitly introduces a different product noun/category ('face wash', 'candy', 'juice'),\n"
-            "  then switch the noun to the new category.\n"
-            "- BRANDS: Include brand ONLY if CURRENT_USER_TEXT mentions it; otherwise DO NOT carry prior brand.\n"
-            "- OPTIONS/ALTERNATIVES: When the user asks for 'options' or 'alternatives', DROP prior brand constraints but KEEP the noun.\n"
-            "- DIETARY TERM NORMALIZATION: Map 'no/without palm oil' → 'PALM OIL FREE'.\n"
-            "- BUDGET: Absolutely DO NOT include prices/currency/ranges/numbers in the query text; those belong to price_min/price_max only.\n"
-            "- PLACEHOLDERS: Avoid placeholders like <UNKNOWN>.\n"
-            "- LENGTH: Keep the final phrase concise (2–6 words) and noun-led (e.g., 'banana chips').\n\n"
-            "Positive Examples (noun retention on follow-ups):\n"
-            "- Previous: 'healthy ketchup' → Current: 'sugar free options' → Output: 'sugar free ketchup'\n"
-            "- Previous: 'spicy chips' → Current: 'baked only' → Output: 'baked chips'\n"
-            "- Previous: 'protein powder' → Current: 'under 500 rupees' → Output: 'protein powder'\n\n"
-            "Counter-Examples (what NOT to do):\n"
-            "- Previous: 'chips' → Current: 'cheaper please' → WRONG: 'cheap snacks' | RIGHT: 'chips'\n"
-            "- Previous: 'tomato sauce' → Current: 'vegan options' → WRONG: 'vegan food' | RIGHT: 'vegan tomato sauce'\n\n"
-            "Return ONLY the tool call to construct_search_query with {query: FINAL_PHRASE}."
-        )
+        # Format conversation with recency weights
+        formatted_history = []
+        convo = context.get('conversation_history', [])
+        total = len(convo)
+        for idx, turn in enumerate(convo[-10:]):
+            weight = "MOST_RECENT" if idx >= total - 2 else "RECENT" if idx >= total - 5 else "OLDER"
+            formatted_history.append({
+                "weight": weight,
+                "user": turn.get("user_query", "")[:120],
+                "bot": turn.get("bot_reply", "")[:100]
+            })
+
+        prompt = f"""<task_definition>
+You are a search query constructor for a WhatsApp shopping bot. Build a coherent product search phrase that maintains continuity across conversations.
+</task_definition>
+
+<inputs>
+<current_message>{current_user_text}</current_message>
+
+<conversation_history>
+{json.dumps(formatted_history, ensure_ascii=False, indent=2)}
+</conversation_history>
+
+<last_product_context>
+Category: {last_category} | Subcategory: {last_subcategory} | Products: {last_product_names}
+</last_product_context>
+
+<current_constraints>
+{json.dumps(context.get('current_constraints', {}), ensure_ascii=False, indent=2)}
+</current_constraints>
+</inputs>
+
+<reasoning_process>
+Think through these steps:
+1. CONVERSATION FLOW: What was the product focus in last 2-3 turns?
+2. MESSAGE TYPE: Is this REFINEMENT (adding constraints) or NEW SEARCH (different product)?
+3. ANCHOR: What is the core product noun?
+4. CONSTRAINTS: What new filters appear (brand, dietary, price, attribute)?
+5. CONSTRUCT: Combine anchor + modifiers, keep 2-6 words, noun-led
+</reasoning_process>
+
+<rules>
+<rule priority="critical">ANCHOR PERSISTENCE: Keep same product noun for follow-ups unless explicitly changed.
+- "shampoo" → "dry scalp" → "dry scalp shampoo" ✓
+- "chips" → "banana" → "banana chips" ✓
+- "noodles" → "gluten free" → "gluten free noodles" ✓
+</rule>
+
+<rule priority="critical">FIELD SEPARATION: Never put budget/dietary/brand in query text.
+- ❌ "gluten free chips under 100" 
+- ✓ q: "gluten free chips", price_max: 100
+</rule>
+
+<rule priority="high">BRAND HANDLING: Drop brands for "options/alternatives" unless re-mentioned.
+- "Lays chips" → "show me options" → "chips" (drop Lays) ✓
+</rule>
+</rules>
+
+<examples>
+<example>
+Conversation: User: "shampoo" → Bot: [shows shampoos] → User: "dry scalp"
+Output: {{"query": "dry scalp shampoo"}}
+</example>
+
+<example>
+Conversation: User: "chips" → Bot: [shows chips] → User: "banana"
+Output: {{"query": "banana chips"}}
+</example>
+
+<example>
+Conversation: User: "noodles" → Bot: [shows noodles] → User: "gluten free under 100"
+Output: {{"query": "gluten free noodles"}}
+Note: price_max goes to separate field
+</example>
+
+<example>
+Conversation: User: "Lays chips" → Bot: [shows Lays] → User: "show me other options"
+Output: {{"query": "chips"}}
+Note: Brand dropped per rule
+</example>
+</examples>
+
+<output>Return ONLY tool call to construct_search_query. Query must be 2-6 words, noun-led, no prices/brands.</output>"""
         try:
             resp = await self._anthropic.messages.create(
                 model=Cfg.LLM_MODEL,

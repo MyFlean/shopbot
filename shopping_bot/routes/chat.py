@@ -190,7 +190,7 @@ async def chat() -> Response:
         # Feedback capture: messages starting with "/r" are stored in Redis
         # ─────────────────────────────────────────────────────────────
         try:
-            prefix = next((p for p in ("/r", "@r", "-a") if message.startswith(p)), None)
+            prefix = next((p for p in ("/r", "@r", "-r") if message.startswith(p)), None)
             if prefix:
                 feedback_text = message[len(prefix):].lstrip()
                 if feedback_text:
@@ -206,14 +206,34 @@ async def chat() -> Response:
                     log.info(
                         f"USER_FEEDBACK_STORED | user={user_id} | session={session_id} | prefix={prefix} | length={len(feedback_text)}"
                     )
-                    # Acknowledge and short-circuit normal processing
-                    return jsonify({
-                        "wa_id": wa_id,
-                        "session_id": session_id,
-                        "response_type": "final_answer",
-                        "content": {"message": "Thanks for your feedback!"},
-                        "meta": {"feedback": True, "prefix": prefix}
-                    }), 200
+                    # Acknowledge and short-circuit normal processing with standard envelope
+                    content = {
+                        "message": "Thanks for your feedback!",
+                        # keep payload standard; include lightweight context
+                        "feedback": {
+                            "received": True,
+                            "prefix": prefix
+                        }
+                    }
+                    envelope = build_envelope(
+                        wa_id=wa_id,
+                        session_id=session_id,
+                        bot_resp_type=ResponseType.FINAL_ANSWER,
+                        content=content,
+                        ctx=ctx,
+                        elapsed_time_seconds=_elapsed_since(request_start_time),
+                        mode_async_enabled=getattr(Cfg, "ENABLE_ASYNC", False),
+                        timestamp=datetime.utcnow().isoformat() + "Z",
+                        functions_executed=["alpha_user_feedback"],
+                    )
+                    # Only the response type changes per requirement
+                    try:
+                        envelope["response_type"] = "alpha_user_feedback"
+                        # optional: mark in meta for analytics
+                        envelope.setdefault("meta", {}).update({"feedback": True, "prefix": prefix})
+                    except Exception:
+                        pass
+                    return jsonify(envelope), 200
         except Exception as e:
             log.warning(
                 f"USER_FEEDBACK_STORE_FAILED | user={user_id} | session={session_id} | error={e}"

@@ -2552,150 +2552,6 @@ class LLMService:
                     "bot": turn.get("bot_reply", "")[:100]
                 })
 
-            # Generic query handling template and mapping (appended to prompts below)
-            generic_query_prompt_template = """
-# Generic Query Handling Strategy - Decision Framework
-
-When a user says "want evening snack" or "breakfast options" without specific product nouns, here's how to handle it:
-
-## Core Strategy: Use-Case → Category Mapping + Smart Defaults
-
-| **Query Archetype** | **Extracted Signals** | **ES Parameters** | **ASK Strategy** | **Reasoning** |
-|---------------------|----------------------|-------------------|------------------|---------------|
-| **Time-based meal** <br>"breakfast options"<br>"evening snack"<br>"lunch ideas" | `use_case`: breakfast/evening/lunch<br>`meal_occasion`: morning/evening/afternoon | `category_paths`: [<br>  "breakfast_essentials/*",<br>  "dairy_and_bakery/bread_and_buns",<br>  "spreads_and_condiments/*"<br>] <br>`size`: 30-50<br>`keywords`: ["quick", "filling"] | **Ask:** budget first, then dietary | Cast wide net across multiple breakfast categories. Let user refine. |
-| **Time-based snack** <br>"evening snack"<br>"teatime snack"<br>"midnight munchies" | `use_case`: evening/tea/midnight<br>`snack_type`: crispy/savory | `category_paths`: [<br>  "light_bites/chips_and_crisps",<br>  "light_bites/savory_namkeen",<br>  "light_bites/popcorn",<br>  "biscuits_and_crackers/*"<br>] <br>`size`: 40<br>`phrase_boosts`: [{"field": "use", "phrase": "snacking", "boost": 1.5}] | **Ask:** budget + dietary/preferences | Snacks = high variety domain. Prioritize popular categories. |
-| **Attribute-led generic** <br>"something crispy"<br>"sweet things"<br>"spicy options" | `texture`: crispy/crunchy<br>`taste_profile`: sweet/spicy/savory | **Crispy:** `category_paths`: ["light_bites/*", "biscuits_and_crackers/*"]<br>**Sweet:** `category_paths`: ["sweet_treats/*", "biscuits_and_crackers/cookies"]<br>`keywords`: [texture/taste term]<br>`size`: 35 | **Ask:** use_case ("when will you eat this?"), then budget | Attribute alone is ambiguous. Need use-case to narrow down. |
-| **Health-goal generic** <br>"healthy options"<br>"protein rich food"<br>"low calorie snacks" | `health_goal`: healthy/protein/low-calorie<br>`dietary_constraint`: implicit | `category_paths`: Multiple based on goal<br>`phrase_boosts`: [{"field": "package_claims.health_claims", "phrase": goal, "boost": 2.0}]<br>`sort`: [{"flean_score.adjusted_score": "desc"}]<br>`size`: 25 | **Don't ask** - Search immediately with health filter | Health-conscious users likely have dietary prefs. Show clean options first. |
-| **Mood/craving generic** <br>"feel like munching"<br>"something light"<br>"want to try something new" | `intent_type`: explore/browse<br>`quantity_expectation`: light/substantial | `category_paths`: ["light_bites/*"]<br>`sort`: [{"_score": "desc"}, {"stats.adjusted_score_percentiles.subcategory_percentile": "desc"}]<br>`size`: 50<br>`diversity`: True (multi-category) | **Ask:** sweet vs savory first, then budget | Pure exploration. Offer variety, let user guide. |
-| **Gift/occasion** <br>"gift for friend"<br>"party snacks"<br>"festival sweets" | `occasion`: gift/party/festival<br>`recipient`: friend/family | `category_paths`: Based on occasion<br>**Party:** ["light_bites/*", "refreshing_beverages/*"]<br>**Festival:** ["sweet_treats/indian_mithai", "sweet_treats/premium_chocolates"]<br>`price_min`: 100 (assume gifting = higher budget)<br>`size`: 30 | **Ask:** recipient age/preferences, then budget | Gifting context = premium bias. Ask about recipient. |
-| **Replacement/substitute** <br>"instead of chips"<br>"healthier than biscuits"<br>"alternative to bread" | `base_category`: chips/biscuits/bread<br>`constraint`: healthier/alternative | **Logic:** <br>1. Identify base category<br>2. Find adjacent healthier categories<br>**Example (chips):**<br>`category_paths`: ["light_bites/popcorn", "light_bites/dry_fruit_and_nut_snacks"]<br>`phrase_boosts`: [{"field": "package_claims.dietary_labels", "phrase": "BAKED", "boost": 1.8}] | **Don't ask** - Implicit health preference | "Healthier alternative" = already filtered. Search with health bias. |
-
----
-
-## Implementation Logic Tree
-
-```
-IF query has NO product noun:
-  
-  STEP 1: Extract use-case/occasion signals
-    - Time mentions (morning/evening/night) → meal_occasion
-    - Activity mentions (work/travel/gym) → use_case
-    - Attribute mentions (crispy/sweet/healthy) → texture/taste
-  
-  STEP 2: Map to candidate categories (2-5 categories)
-    USE THIS MAPPING:
-    
-    breakfast → ["breakfast_essentials/*", "dairy_and_bakery/bread_and_buns", "spreads_and_condiments/*"]
-    
-    evening_snack → ["light_bites/chips_and_crisps", "light_bites/savory_namkeen", "light_bites/popcorn", "biscuits_and_crackers/cookies"]
-    
-    sweet_craving → ["sweet_treats/*", "biscuits_and_crackers/cookies", "frozen_treats/ice_cream_tubs"]
-    
-    healthy_snack → ["light_bites/popcorn", "light_bites/dry_fruit_and_nut_snacks", "breakfast_essentials/muesli_and_oats"]
-    
-    travel/on_the_go → ["light_bites/energy_bars", "biscuits_and_crackers/*", "light_bites/dry_fruit_and_nut_snacks"]
-  
-  STEP 3: Set ES params
-    q = use_case term (e.g., "evening snacks", "breakfast options")
-    category_paths = mapped categories (array of 2-5 paths)
-    size = 30-50 (generous for exploration)
-    phrase_boosts = use_case/texture/taste terms
-  
-  STEP 4: Decide ASK strategy
-    IF health/dietary signal detected → Search immediately
-    ELSE IF occasion/gift detected → Ask recipient preferences first
-    ELSE → Ask budget + dietary in parallel
-```
-
----
-
-## Prompt Template for Generic Queries
-
-```xml
-<task>
-Extract ES parameters for a GENERIC query without specific product noun.
-</task>
-
-<query>{current_text}</query>
-
-<signal_extraction>
-Identify ONE primary signal:
-1. TIME/MEAL: breakfast, lunch, dinner, evening, teatime, midnight
-2. ATTRIBUTE: crispy, sweet, spicy, salty, tangy, soft, crunchy
-3. HEALTH: healthy, protein, low calorie, sugar free, organic
-4. MOOD: light, heavy, filling, something new, trying, exploring
-5. OCCASION: gift, party, festival, travel, work, gym
-
-If MULTIPLE signals, prioritize in order: HEALTH > TIME/MEAL > OCCASION > ATTRIBUTE > MOOD
-</signal_extraction>
-
-<category_mapping>
-Based on primary signal, map to 2-5 category_paths:
-
-TIME/MEAL:
-  breakfast → ["breakfast_essentials", "dairy_and_bakery/bread_and_buns", "spreads_and_condiments"]
-  evening_snack → ["light_bites/chips_and_crisps", "light_bites/savory_namkeen", "biscuits_and_crackers/cookies"]
-  lunch/dinner → ["packaged_meals/ready_to_eat_meals", "noodles_and_vermicelli"]
-
-ATTRIBUTE:
-  crispy → ["light_bites/chips_and_crisps", "light_bites/popcorn", "biscuits_and_crackers"]
-  sweet → ["sweet_treats", "biscuits_and_crackers/cookies", "frozen_treats"]
-  spicy → ["light_bites/chips_and_crisps", "light_bites/savory_namkeen"]
-
-HEALTH:
-  healthy → ["light_bites/popcorn", "light_bites/dry_fruit_and_nut_snacks", "breakfast_essentials/muesli_and_oats"]
-  protein → ["light_bites/energy_bars", "light_bites/dry_fruit_and_nut_snacks", "dairy_and_bakery"]
-
-OCCASION:
-  party → ["light_bites", "refreshing_beverages", "sweet_treats"]
-  gift → ["sweet_treats/premium_chocolates", "sweet_treats/indian_mithai", "dry_fruits_nuts_and_seeds"]
-</category_mapping>
-
-<es_params_rules>
-- q: Use the extracted primary signal as search term (e.g., "evening snacks", "healthy options")
-- category_paths: Array of 2-5 full paths (e.g., ["light_bites/chips_and_crisps", "light_bites/popcorn"])
-- category_group: Always "f_and_b" for food queries
-- size: 30-50 (exploration mode = more results)
-- keywords: [primary signal, related terms] (max 3)
-- phrase_boosts: Optional, boost use/description fields with signal terms
-- sort: Default relevance, unless health signal detected → add flean_score sort
-</es_params_rules>
-
-<output>
-Return tool call with:
-{
-  "q": "<primary_signal_term>",
-  "category_group": "f_and_b",
-  "category_paths": ["path1", "path2", ...],
-  "size": 40,
-  "keywords": ["keyword1", "keyword2"],
-  "phrase_boosts": [{"field": "use", "phrase": "snacking", "boost": 1.5}]
-}
-</output>
-```
-
----
-
-## Key Insight for Your Bot
-
-**Generic queries = EXPLORATORY mode**
-
-Strategy:
-1. **Cast wide net** (multiple categories, high size)
-2. **Ask minimal questions** (only budget + dietary if needed)
-3. **Let search results guide** (user will refine after seeing options)
-4. **Use phrase_boosts** on `use` and `description` fields to surface contextually relevant products
-
-**Example Flow:**
-```
-User: "want evening snack"
-Bot: [Internally] → use_case=evening, no product noun
-     → category_paths = [chips, namkeen, popcorn, cookies]
-     → size = 40
-     → ASK: "What's your budget?" + "Any dietary preferences?"
-```
-"""
-
             if is_follow_up:
                 prompt = f"""<task_definition>
 Extract ALL Elasticsearch parameters in ONE call, maintaining product focus across turns.
@@ -2805,7 +2661,7 @@ Output:
 <output>
 Return tool call to generate_unified_es_params with complete JSON.
 Validation: q has product noun (2-6 words), no prices/brands, category_group is valid, dietary_terms UPPERCASE
-</output>""" + "\n\n" + generic_query_prompt_template
+</output>"""
             else:
                 prompt = f"""<task_definition>
 Extract ALL Elasticsearch parameters in ONE call, maintaining product focus across turns.
@@ -2915,7 +2771,7 @@ Output:
 <output>
 Return tool call to generate_unified_es_params with complete JSON.
 Validation: q has product noun (2-6 words), no prices/brands, category_group is valid, dietary_terms UPPERCASE
-</output>""" + "\n\n" + generic_query_prompt_template
+</output>"""
 
             # CORE log: LLM2 input
             try:
@@ -3152,101 +3008,12 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             "  → Put modifier constraints in must_clauses\n"
             "</modifier_detection>\n\n"
             "MANDATORY RULES:\n"
-            "- If a clear product noun exists in recent turns, anchor_query MUST be that noun/phrase (e.g., 'ketchup', 'chips', 'noodles').\n"
-            "- If NO explicit product noun exists (GENERIC query), follow the Generic Query Handling Strategy below to extract a primary signal and map 2–5 category_paths; set anchor_query/q to the primary signal phrase (e.g., 'evening snacks', 'breakfast options').\n"
+            "- anchor_query MUST be a product noun (e.g., 'ketchup', 'chips', 'noodles')\n"
             "- NEVER set anchor_query to a modifier alone (e.g., ❌ 'low sodium', ❌ 'banana', ❌ 'dry scalp')\n"
             "- For follow-ups, anchor_query = product noun from last 3 turns unless explicit category switch\n"
-            "- Use FOOD TAXONOMY to classify anchor_query → category_paths when a product noun exists\n"
+            "- Use FOOD TAXONOMY to classify anchor_query → category_paths\n"
             "- Put all constraints (dietary/price/ingredients) in must_clauses, NOT in anchor_query\n\n"
             "Output: Return ONLY tool call to extract_search_parameters."
-            "\n\n"
-            "# Generic Query Handling Strategy - Decision Framework\n\n"
-            "When a user says \"want evening snack\" or \"breakfast options\" without specific product nouns, here's how to handle it:\n\n"
-            "## Core Strategy: Use-Case → Category Mapping + Smart Defaults\n\n"
-            "| **Query Archetype** | **Extracted Signals** | **ES Parameters** | **ASK Strategy** | **Reasoning** |\n"
-            "|---------------------|----------------------|-------------------|------------------|---------------|\n"
-            "| **Time-based meal** <br>\"breakfast options\"<br>\"evening snack\"<br>\"lunch ideas\" | `use_case`: breakfast/evening/lunch<br>`meal_occasion`: morning/evening/afternoon | `category_paths`: [<br>  \"breakfast_essentials/*\",<br>  \"dairy_and_bakery/bread_and_buns\",<br>  \"spreads_and_condiments/*\"<br>] <br>`size`: 30-50<br>`keywords`: [\"quick\", \"filling\"] | **Ask:** budget first, then dietary | Cast wide net across multiple breakfast categories. Let user refine. |\n"
-            "| **Time-based snack** <br>\"evening snack\"<br>\"teatime snack\"<br>\"midnight munchies\" | `use_case`: evening/tea/midnight<br>`snack_type`: crispy/savory | `category_paths`: [<br>  \"light_bites/chips_and_crisps\",<br>  \"light_bites/savory_namkeen\",<br>  \"light_bites/popcorn\",<br>  \"biscuits_and_crackers/*\"<br>] <br>`size`: 40<br>`phrase_boosts`: [{\"field\": \"use\", \"phrase\": \"snacking\", \"boost\": 1.5}] | **Ask:** budget + dietary/preferences | Snacks = high variety domain. Prioritize popular categories. |\n"
-            "| **Attribute-led generic** <br>\"something crispy\"<br>\"sweet things\"<br>\"spicy options\" | `texture`: crispy/crunchy<br>`taste_profile`: sweet/spicy/savory | **Crispy:** `category_paths`: [\"light_bites/*\", \"biscuits_and_crackers/*\"]<br>**Sweet:** `category_paths`: [\"sweet_treats/*\", \"biscuits_and_crackers/cookies\"]<br>`keywords`: [texture/taste term]<br>`size`: 35 | **Ask:** use_case (\"when will you eat this?\"), then budget | Attribute alone is ambiguous. Need use-case to narrow down. |\n"
-            "| **Health-goal generic** <br>\"healthy options\"<br>\"protein rich food\"<br>\"low calorie snacks\" | `health_goal`: healthy/protein/low-calorie<br>`dietary_constraint`: implicit | `category_paths`: Multiple based on goal<br>`phrase_boosts`: [{\"field\": \"package_claims.health_claims\", \"phrase\": goal, \"boost\": 2.0}]<br>`sort`: [{\"flean_score.adjusted_score\": \"desc\"}]<br>`size`: 25 | **Don't ask** - Search immediately with health filter | Health-conscious users likely have dietary prefs. Show clean options first. |\n"
-            "| **Mood/craving generic** <br>\"feel like munching\"<br>\"something light\"<br>\"want to try something new\" | `intent_type`: explore/browse<br>`quantity_expectation`: light/substantial | `category_paths`: [\"light_bites/*\"]<br>`sort`: [{\"_score\": \"desc\"}, {\"stats.adjusted_score_percentiles.subcategory_percentile\": \"desc\"}]<br>`size`: 50<br>`diversity`: True (multi-category) | **Ask:** sweet vs savory first, then budget | Pure exploration. Offer variety, let user guide. |\n"
-            "| **Gift/occasion** <br>\"gift for friend\"<br>\"party snacks\"<br>\"festival sweets\" | `occasion`: gift/party/festival<br>`recipient`: friend/family | `category_paths`: Based on occasion<br>**Party:** [\"light_bites/*\", \"refreshing_beverages/*\"]<br>**Festival:** [\"sweet_treats/indian_mithai\", \"sweet_treats/premium_chocolates\"]<br>`price_min`: 100 (assume gifting = higher budget)<br>`size`: 30 | **Ask:** recipient age/preferences, then budget | Gifting context = premium bias. Ask about recipient. |\n"
-            "| **Replacement/substitute** <br>\"instead of chips\"<br>\"healthier than biscuits\"<br>\"alternative to bread\" | `base_category`: chips/biscuits/bread<br>`constraint`: healthier/alternative | **Logic:** <br>1. Identify base category<br>2. Find adjacent healthier categories<br>**Example (chips):**<br>`category_paths`: [\"light_bites/popcorn\", \"light_bites/dry_fruit_and_nut_snacks\"]<br>`phrase_boosts`: [{\"field\": \"package_claims.dietary_labels\", \"phrase\": \"BAKED\", \"boost\": 1.8}] | **Don't ask** - Implicit health preference | \"Healthier alternative\" = already filtered. Search with health bias. |\n\n"
-            "---\n\n"
-            "## Implementation Logic Tree\n\n"
-            "`````\n"
-            "IF query has NO product noun:\n\n  STEP 1: Extract use-case/occasion signals\n    - Time mentions (morning/evening/night) → meal_occasion\n    - Activity mentions (work/travel/gym) → use_case\n    - Attribute mentions (crispy/sweet/healthy) → texture/taste\n\n  STEP 2: Map to candidate categories (2-5 categories)\n    USE THIS MAPPING:\n\n    breakfast → [\"breakfast_essentials/*\", \"dairy_and_bakery/bread_and_buns\", \"spreads_and_condiments/*\"]\n\n    evening_snack → [\"light_bites/chips_and_crisps\", \"light_bites/savory_namkeen\", \"light_bites/popcorn\", \"biscuits_and_crackers/cookies\"]\n\n    sweet_craving → [\"sweet_treats/*\", \"biscuits_and_crackers/cookies\", \"frozen_treats/ice_cream_tubs\"]\n\n    healthy_snack → [\"light_bites/popcorn\", \"light_bites/dry_fruit_and_nut_snacks\", \"breakfast_essentials/muesli_and_oats\"]\n\n    travel/on_the_go → [\"light_bites/energy_bars\", \"biscuits_and_crackers/*\", \"light_bites/dry_fruit_and_nut_snacks\"]\n\n  STEP 3: Set ES params\n    q = use_case term (e.g., \"evening snacks\", \"breakfast options\")\n    category_paths = mapped categories (array of 2-5 paths)\n    size = 30-50 (generous for exploration)\n    phrase_boosts = use_case/texture/taste terms\n\n  STEP 4: Decide ASK strategy\n    IF health/dietary signal detected → Search immediately\n    ELSE IF occasion/gift detected → Ask recipient preferences first\n    ELSE → Ask budget + dietary in parallel\n"
-            "`````\n\n"
-            "---\n\n"
-            "## Prompt Template for Generic Queries\n\n"
-            "```xml\n"
-            "<task>\n"
-            "Extract ES parameters for a GENERIC query without specific product noun.\n"
-            "</task>\n\n"
-            "<query>{current_text}</query>\n\n"
-            "<signal_extraction>\n"
-            "Identify ONE primary signal:\n"
-            "1. TIME/MEAL: breakfast, lunch, dinner, evening, teatime, midnight\n"
-            "2. ATTRIBUTE: crispy, sweet, spicy, salty, tangy, soft, crunchy\n"
-            "3. HEALTH: healthy, protein, low calorie, sugar free, organic\n"
-            "4. MOOD: light, heavy, filling, something new, trying, exploring\n"
-            "5. OCCASION: gift, party, festival, travel, work, gym\n\n"
-            "If MULTIPLE signals, prioritize in order: HEALTH > TIME/MEAL > OCCASION > ATTRIBUTE > MOOD\n"
-            "</signal_extraction>\n\n"
-            "<category_mapping>\n"
-            "Based on primary signal, map to 2-5 category_paths:\n\n"
-            "TIME/MEAL:\n"
-            "  breakfast → [\"breakfast_essentials\", \"dairy_and_bakery/bread_and_buns\", \"spreads_and_condiments\"]\n"
-            "  evening_snack → [\"light_bites/chips_and_crisps\", \"light_bites/savory_namkeen\", \"biscuits_and_crackers/cookies\"]\n"
-            "  lunch/dinner → [\"packaged_meals/ready_to_eat_meals\", \"noodles_and_vermicelli\"]\n\n"
-            "ATTRIBUTE:\n"
-            "  crispy → [\"light_bites/chips_and_crisps\", \"light_bites/popcorn\", \"biscuits_and_crackers\"]\n"
-            "  sweet → [\"sweet_treats\", \"biscuits_and_crackers/cookies\", \"frozen_treats\"]\n"
-            "  spicy → [\"light_bites/chips_and_crisps\", \"light_bites/savory_namkeen\"]\n\n"
-            "HEALTH:\n"
-            "  healthy → [\"light_bites/popcorn\", \"light_bites/dry_fruit_and_nut_snacks\", \"breakfast_essentials/muesli_and_oats\"]\n"
-            "  protein → [\"light_bites/energy_bars\", \"light_bites/dry_fruit_and_nut_snacks\", \"dairy_and_bakery\"]\n\n"
-            "OCCASION:\n"
-            "  party → [\"light_bites\", \"refreshing_beverages\", \"sweet_treats\"]\n"
-            "  gift → [\"sweet_treats/premium_chocolates\", \"sweet_treats/indian_mithai\", \"dry_fruits_nuts_and_seeds\"]\n"
-            "</category_mapping>\n\n"
-            "<es_params_rules>\n"
-            "- q: Use the extracted primary signal as search term (e.g., \"evening snacks\", \"healthy options\")\n"
-            "- category_paths: Array of 2-5 full paths (e.g., [\"light_bites/chips_and_crisps\", \"light_bites/popcorn\"])\n"
-            "- category_group: Always \"f_and_b\" for food queries\n"
-            "- size: 30-50 (exploration mode = more results)\n"
-            "- keywords: [primary signal, related terms] (max 3)\n"
-            "- phrase_boosts: Optional, boost use/description fields with signal terms\n"
-            "- sort: Default relevance, unless health signal detected → add flean_score sort\n"
-            "</es_params_rules>\n\n"
-            "<output>\n"
-            "Return tool call with:\n"
-            "{\n"
-            "  \"q\": \"<primary_signal_term>\",\n"
-            "  \"category_group\": \"f_and_b\",\n"
-            "  \"category_paths\": [\"path1\", \"path2\", ...],\n"
-            "  \"size\": 40,\n"
-            "  \"keywords\": [\"keyword1\", \"keyword2\"],\n"
-            "  \"phrase_boosts\": [{\"field\": \"use\", \"phrase\": \"snacking\", \"boost\": 1.5}]\n"
-            "}\n"
-            "</output>\n"
-            "```\n\n"
-            "---\n\n"
-            "## Key Insight for Your Bot\n\n"
-            "**Generic queries = EXPLORATORY mode**\n\n"
-            "Strategy:\n"
-            "1. **Cast wide net** (multiple categories, high size)\n"
-            "2. **Ask minimal questions** (only budget + dietary if needed)\n"
-            "3. **Let search results guide** (user will refine after seeing options)\n"
-            "4. **Use phrase_boosts** on `use` and `description` fields to surface contextually relevant products\n\n"
-            "**Example Flow:**\n"
-            "```\n"
-            "User: \"want evening snack\"\n"
-            "Bot: [Internally] → use_case=evening, no product noun\n"
-            "     → category_paths = [chips, namkeen, popcorn, cookies]\n"
-            "     → size = 40\n"
-            "     → ASK: \"What's your budget?\" + \"Any dietary preferences?\"\n"
-            "```\n"
         )
 
         resp = await self.anthropic.messages.create(

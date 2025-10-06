@@ -69,6 +69,23 @@ def _to_json_safe(obj: Any) -> Any:
 
 
 # ─────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────
+def _extract_feedback(message: str) -> tuple[str | None, str]:
+    """Return (prefix, feedback_text) if message starts with feedback prefix else (None, '').
+
+    Supported prefixes: '/r', '@r', '-r'. The feedback text is trimmed of leading whitespace.
+    """
+    if not isinstance(message, str):
+        return None, ""
+    msg = message.strip()
+    for prefix in ("/r", "@r", "-r"):
+        if msg.startswith(prefix):
+            return prefix, msg[len(prefix):].lstrip()
+    return None, ""
+
+
+# ─────────────────────────────────────────────────────────────
 # Test endpoint
 # ─────────────────────────────────────────────────────────────
 @bp.get("/chat/test")
@@ -186,59 +203,6 @@ async def chat() -> Response:
             log.error("CHAT_NO_BOT_CORE | bot core not available")
             return jsonify({"error": "Bot core not initialized"}), 500
 
-        # ─────────────────────────────────────────────────────────────
-        # Feedback capture: messages starting with "/r" are stored in Redis
-        # ─────────────────────────────────────────────────────────────
-        try:
-            prefix = next((p for p in ("/r", "@r", "-r") if message.startswith(p)), None)
-            if prefix:
-                feedback_text = message[len(prefix):].lstrip()
-                if feedback_text:
-                    feedback_payload = {
-                        "title": "User Feedback",
-                        "user_id": user_id,
-                        "session_id": session_id,
-                        "message": feedback_text,
-                        "timestamp": datetime.utcnow().isoformat() + "Z",
-                    }
-                    # Store as a list item for easy retrieval of recent feedbacks
-                    ctx_mgr.redis.lpush("feedback:items", json.dumps(feedback_payload))
-                    log.info(
-                        f"USER_FEEDBACK_STORED | user={user_id} | session={session_id} | prefix={prefix} | length={len(feedback_text)}"
-                    )
-                    # Acknowledge and short-circuit normal processing with standard envelope
-                    content = {
-                        "message": "Thanks for your feedback!",
-                        # keep payload standard; include lightweight context
-                        "feedback": {
-                            "received": True,
-                            "prefix": prefix
-                        }
-                    }
-                    envelope = build_envelope(
-                        wa_id=wa_id,
-                        session_id=session_id,
-                        bot_resp_type=ResponseType.FINAL_ANSWER,
-                        content=content,
-                        ctx=ctx,
-                        elapsed_time_seconds=_elapsed_since(request_start_time),
-                        mode_async_enabled=getattr(Cfg, "ENABLE_ASYNC", False),
-                        timestamp=datetime.utcnow().isoformat() + "Z",
-                        functions_executed=["alpha_user_feedback"],
-                    )
-                    # Only the response type changes per requirement
-                    try:
-                        envelope["response_type"] = "alpha_user_feedback"
-                        # optional: mark in meta for analytics
-                        envelope.setdefault("meta", {}).update({"feedback": True, "prefix": prefix})
-                    except Exception:
-                        pass
-                    return jsonify(envelope), 200
-        except Exception as e:
-            log.warning(
-                f"USER_FEEDBACK_STORE_FAILED | user={user_id} | session={session_id} | error={e}"
-            )
-
         # Load user context
         try:
             ctx = ctx_mgr.get_context(user_id, session_id)
@@ -258,6 +222,61 @@ async def chat() -> Response:
         except Exception as e:
             log.error(f"CONTEXT_LOAD_ERROR | user={user_id} | session={session_id} | error={e}")
             return jsonify({"error": "Failed to load user context"}), 500
+
+        # ─────────────────────────────────────────────────────────────
+        # Feedback capture: messages starting with "/r", "@r", or "-r"
+        # Build standard envelope and override response_type to alpha_user_feedback
+        # ─────────────────────────────────────────────────────────────
+        try:
+            prefix, feedback_text = _extract_feedback(message)
+            if prefix and feedback_text:
+                feedback_payload = {
+                    "title": "User Feedback",
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "message": feedback_text,
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                }
+                # Persist feedback for offline review
+                try:
+                    ctx_mgr.redis.lpush("feedback:items", json.dumps(feedback_payload))
+                except Exception as re:
+                    log.warning(
+                        f"USER_FEEDBACK_PERSIST_FAIL | user={user_id} | session={session_id} | error={re}"
+                    )
+                log.info(
+                    f"USER_FEEDBACK_STORED | user={user_id} | session={session_id} | prefix={prefix} | length={len(feedback_text)}"
+                )
+                # Acknowledge with standard envelope shape
+                content = {
+                    "summary_message": "Thanks for your feedback!",
+                    "feedback": {
+                        "received": True,
+                        "prefix": prefix
+                    }
+                }
+                envelope = build_envelope(
+                    wa_id=wa_id,
+                    session_id=session_id,
+                    bot_resp_type=ResponseType.FINAL_ANSWER,
+                    content=content,
+                    ctx=ctx,
+                    elapsed_time_seconds=_elapsed_since(request_start_time),
+                    mode_async_enabled=getattr(Cfg, "ENABLE_ASYNC", False),
+                    timestamp=datetime.utcnow().isoformat() + "Z",
+                    functions_executed=["alpha_user_feedback"],
+                )
+                # Force response type per requirement and annotate meta
+                envelope["response_type"] = "alpha_user_feedback"
+                envelope.setdefault("meta", {}).update({
+                    "feedback": True,
+                    "prefix": prefix
+                })
+                return jsonify(envelope), 200
+        except Exception as e:
+            log.warning(
+                f"USER_FEEDBACK_HANDLE_FAILED | user={user_id} | session={session_id} | error={e}"
+            )
 
         # Inject CURRENT user text directly into ctx so downstream ES/LLM always see it
         try:

@@ -166,64 +166,186 @@ INITIAL_SKIN_PARAMS_TOOL = {
 }
 
 # ─────────────────────────────────────────────────────────────
-# NEW: Combined Classify+Assess Tool
+# NEW: Combined Classify+Assess Tool (updated LLM1 schema)
 # ─────────────────────────────────────────────────────────────
 
 COMBINED_CLASSIFY_ASSESS_TOOL = {
     "name": "classify_and_assess",
-    "description": "In one step: classify L3 + product_related, if product then 4-intent + two ASK_* questions (3 options each) and fetch_functions=['search_products']; if general, emit simple_response.",
+    "description": (
+        "Single-call classifier for WhatsApp shopping bot. Routes queries to product search, "
+        "support, or general responses. For product queries, classifies domain/category/intent "
+        "and generates contextual clarifying questions (ASK slots). "
+        "IMPORTANT: If route='product', you MUST provide: domain, category, product_intent, ask_slots, and fetch_functions. "
+        "If route='support' or 'general', provide simple_response instead."
+    ),
     "input_schema": {
         "type": "object",
         "properties": {
-            "is_follow_up": {"type": "boolean", "description": "Whether current turn is a follow-up to the immediate previous turn"},
-            "is_product_related": {"type": "boolean"},
-            "layer3": {"type": "string"},
-            "domain": {"type": "string", "enum": ["f_and_b", "personal_care", "other"], "description": "High-level domain classification"},
-            "candidate_subcategories": {"type": "array", "items": {"type": "string"}, "description": "If personal care/skin, up to 3 likely subcategories from taxonomy"},
-            "domain_subcategory": {"type": "string", "description": "If domain=personal_care, the best-guess single subcategory string"},
+            # === ROUTING & CLASSIFICATION ===
+            "reasoning": {
+                "type": "string",
+                "description": "Brief chain-of-thought explaining classification decisions (2-3 sentences)"
+            },
+            "route": {
+                "type": "string",
+                "enum": ["product", "support", "general"],
+                "description": "Primary routing decision"
+            },
+
+            # === FOLLOW-UP DETECTION ===
+            "is_follow_up": {
+                "type": "boolean",
+                "description": "True if current query modifies/refines previous product search"
+            },
+            "follow_up_confidence": {
+                "type": "string",
+                "enum": ["high", "medium", "low"],
+                "description": "Confidence in follow-up detection"
+            },
+
+            # === PRODUCT CLASSIFICATION (required if route=product) ===
+            "domain": {
+                "type": "string",
+                "enum": ["f_and_b", "personal_care", "other"],
+                "description": "High-level product domain"
+            },
+            "category": {
+                "type": "string",
+                "description": "Specific product category (e.g., 'chips_and_crisps', 'shampoo')"
+            },
+            "subcategories": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 3,
+                "description": "Up to 3 likely subcategories for personal_care (from taxonomy)"
+            },
             "product_intent": {
                 "type": "string",
-                "enum": [
-                    "is_this_good",
-                    "which_is_better",
-                    "show_me_alternate",
-                    "show_me_options"
-                ]
+                "enum": ["is_this_good", "which_is_better", "show_me_alternate", "show_me_options"],
+                "description": "User's product query intent"
             },
-            "ask": {
-                "type": "object",
-                "description": "Map of up to 2 UserSlot keys (ASK_*) to question payloads",
-                "additionalProperties": {
+
+            # === ASK SLOTS (contextual questions) ===
+            "ask_slots": {
+                "type": "array",
+                "items": {
                     "type": "object",
                     "properties": {
-                        "message": {"type": "string"},
+                        "slot_name": {
+                            "type": "string",
+                            "enum": [
+                                "ASK_USER_BUDGET",
+                                "ASK_DIETARY_REQUIREMENTS",
+                                "ASK_USER_PREFERENCES",
+                                "ASK_USE_CASE",
+                                "ASK_QUANTITY",
+                                "ASK_PC_CONCERN",
+                                "ASK_PC_COMPATIBILITY",
+                                "ASK_INGREDIENT_AVOID"
+                            ],
+                            "description": "Slot type: BUDGET (prices), DIETARY (gluten-free/vegan), PREFERENCES (flavor/brand), USE_CASE (daily/party), QUANTITY (servings/people), PC_CONCERN (acne/dandruff), PC_COMPATIBILITY (skin/hair type), INGREDIENT_AVOID (sulfate/paraben-free)"
+                        },
+                        "message": {
+                            "type": "string",
+                            "description": "Natural language question to ask user (conversational tone)"
+                        },
                         "options": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "minItems": 3,
-                            "maxItems": 3
+                            "maxItems": 3,
+                            "description": "Up to 3 discrete, actionable options (2-5 words each)"
+                        },
+                        "needs_options": {
+                            "type": "boolean",
+                            "description": "True if this slot needs predefined options from backend"
                         }
                     },
-                    "required": ["message", "options"]
-                }
+                    "required": ["slot_name", "message", "options"]
+                },
+                "minItems": 2,
+                "maxItems": 4,
+                "description": "Ordered list of questions to ask (2-4 based on domain)"
             },
+
+            # === BACKEND ACTIONS ===
             "fetch_functions": {
                 "type": "array",
-                "items": {"type": "string", "enum": [f.value for f in BackendFunction]},
-                "description": "If product-related, must include ['search_products']"
+                "items": {"type": "string"},
+                "description": "Backend functions to call (e.g., ['search_products'])"
             },
+
+            # === NON-PRODUCT RESPONSES ===
             "simple_response": {
                 "type": "object",
                 "properties": {
-                    "response_type": {"type": "string", "enum": ["final_answer", "support"]},
-                    "message": {"type": "string"},
-                    "is_support_query": {"type": "boolean", "description": "True if this is a customer support query"}
-                }
+                    "message": {
+                        "type": "string",
+                        "description": "Direct response message (for support/general queries)"
+                    },
+                    "response_type": {
+                        "type": "string",
+                        "enum": ["support_routing", "friendly_chat", "clarification_needed"]
+                    }
+                },
+                "required": ["message", "response_type"]
             }
         },
-        "required": ["is_product_related", "layer3"]
+        "required": ["reasoning", "route"]
     }
 }
+
+# ─────────────────────────────────────────────────────────────
+# ASK enrichment constants (moved from prompt to code)
+# ─────────────────────────────────────────────────────────────
+
+BUDGET_BANDS_MAP = {
+    # Food & Beverage
+    "chips_and_crisps": ["Under ₹50", "₹50–150", "Over ₹150"],
+    "noodles_pasta": ["Under ₹50", "₹50–150", "Over ₹150"],
+    "cookies_biscuits": ["Under ₹60", "₹60–180", "Over ₹180"],
+    "sauces_condiments": ["Under ₹100", "₹100–300", "Over ₹300"],
+    "beverages": ["Under ₹80", "₹80–200", "Over ₹200"],
+    "dairy_products": ["Under ₹60", "₹60–150", "Over ₹150"],
+    "protein_bars": ["Under ₹100", "₹100–300", "Over ₹300"],
+    "breakfast_cereals": ["Under ₹150", "₹150–400", "Over ₹400"],
+
+    # Personal Care
+    "shampoo": ["Under ₹99", "₹99–299", "Over ₹299"],
+    "conditioner": ["Under ₹99", "₹99–299", "Over ₹299"],
+    "face_wash": ["Under ₹99", "₹99–249", "Over ₹249"],
+    "moisturizer": ["Under ₹199", "₹199–499", "Over ₹499"],
+    "sunscreen": ["Under ₹199", "₹199–599", "Over ₹599"],
+    "body_wash": ["Under ₹99", "₹99–299", "Over ₹299"],
+    "hair_oil": ["Under ₹99", "₹99–299", "Over ₹299"],
+    "serum": ["Under ₹299", "₹299–799", "Over ₹799"],
+
+    # Fallback
+    "default": ["Budget friendly", "Smart choice", "Premium"]
+}
+
+DIETARY_OPTIONS = ["Gluten free", "Vegan", "Low sodium", "Low sugar", "No palm oil", "No preference"]
+
+# Personal Care specific
+PC_CONCERN_SKIN = ["Acne", "Dark spots", "Aging", "Dryness", "No specific concern"]
+PC_CONCERN_HAIR = ["Dandruff", "Hairfall", "Frizz", "Dryness", "No specific concern"]
+PC_SKIN_TYPE = ["Oily", "Dry", "Combination", "Sensitive", "Not sure"]
+PC_HAIR_TYPE = ["Curly", "Wavy", "Straight", "Oily scalp", "Dry scalp"]
+PC_AVOID = ["Fragrance-free", "Sulfate-free", "Paraben-free", "Silicone-free", "No preference"]
+
+# Quantity options (context-aware)
+QUANTITY_PARTY = ["10-20 people", "20-30 people", "30+ people", "Not sure yet"]
+QUANTITY_PERSONAL = ["Just for me", "2-3 people", "Family (4-6)", "Not sure"]
+QUANTITY_BULK = ["1-2 packs", "3-5 packs", "Bulk order (6+)", "Flexible"]
+
+# Use case options (category-specific)
+USE_CASE_SNACKS = ["Party/gathering", "Daily snacking", "Kids lunch box", "Travel/on-the-go"]
+USE_CASE_BEVERAGES = ["Morning boost", "Post-workout", "Throughout the day", "Special occasions"]
+USE_CASE_PERSONAL_CARE = ["Daily use", "Special occasions", "Specific concern", "Trying something new"]
+
+# User preferences (generic fallback)
+USER_PREFERENCES_BRAND = ["Popular brands", "Budget-friendly", "Premium/imported", "No preference"]
+USER_PREFERENCES_FLAVOR = ["Sweet", "Savory", "Tangy/spicy", "No preference"]
+USER_PREFERENCES_TEXTURE = ["Crunchy", "Soft", "Creamy", "No preference"]
 
 
 
@@ -1204,272 +1326,162 @@ class LLMService:
         return result
 
     async def classify_and_assess(self, query: str, ctx: Optional[UserContext] = None) -> Dict[str, Any]:
-        """Combined classifier for latency reduction (flag-gated upstream).
-
-        Returns a dict with keys:
-        - is_product_related: bool
-        - layer3: str
-        - product_intent: Optional[str]
-        - ask: Optional[Dict[str, Dict[str, Any]]] (up to 2 slots)
-        - fetch_functions: Optional[List[str]]
-        - simple_response: Optional[Dict[str, str]] when general
-        """
-        # Build a compact context to keep token use low
-        recent_context: Dict[str, Any] = {}
-        convo_pairs: List[Dict[str, Any]] = []
+        """Single-call classifier with staged reasoning and minimal integration changes."""
+        # ============== STAGE 1: Build Minimal Context ==============
+        context_summary = {
+            "has_history": False,
+            "last_intent": None,
+            "last_category": None,
+            "last_slots": {},
+            "recent_turns": []
+        }
         try:
             if ctx:
                 history = ctx.session.get("history", [])
                 if history:
                     last = history[-1]
-                    recent_context = {
-                        "last_intent_l3": last.get("intent"),
-                        "last_slots": {k: v for k, v in (last.get("slots") or {}).items() if v},
-                    }
+                    context_summary.update({
+                        "has_history": True,
+                        "last_intent": last.get("intent"),
+                        "last_category": last.get("category"),
+                        "last_slots": {k: v for k, v in (last.get("slots") or {}).items() if v}
+                    })
                 convo = ctx.session.get("conversation_history", []) or []
                 if isinstance(convo, list) and convo:
-                    for h in convo[-10:]:
-                        if isinstance(h, dict):
-                            convo_pairs.append({
-                                "user_query": str(h.get("user_query", ""))[:120],
-                                "bot_reply": str(h.get("bot_reply", ""))[:160],
+                    for turn in convo[-6:]:
+                        if isinstance(turn, dict):
+                            context_summary["recent_turns"].append({
+                                "user": str(turn.get("user_query", ""))[:100],
+                                "bot": str(turn.get("bot_reply", ""))[:120]
                             })
-        except Exception:
-            recent_context = {}
+        except Exception as e:
+            log.warning(f"Context extraction failed: {e}")
 
-        prompt = (
-            "You are an e-commerce assistant. In ONE tool call, do all three tasks.\n"
-            "Task 1: Classify the user's latest message into L3 and set is_product_related (true only for serious product queries).\n"
-            "Additionally, classify a high-level domain: f_and_b | personal_care | other.\n"
-            "If domain is personal_care, infer up to 3 likely subcategories using the provided personal_care taxonomy, and also emit a single best-guess domain_subcategory.\n"
-            "Task 2: If product-related, classify one of 4 intents: is_this_good | which_is_better | show_me_alternate | show_me_options.\n"
-            "Task 3: If product-related, emit EXACTLY TWO ASK_* questions with EXACTLY 3 options each (short, concrete),\n"
-            "         optimized to refine Elasticsearch filters (prefer budget + dietary); and set fetch_functions=['search_products'].\n"
-            "FOLLOW-UP GUIDANCE: Decide is_follow_up by comparing the current message to roughly the last 10 interactions, giving much more weight to the most recent turns.\n"
-            "- Think in terms of a decaying emphasis (e.g., recent ≫ older) rather than strict weights.\n"
-            "- If CURRENT message feels like a modifier-only turn (price/dietary/quality or a short ingredient/flavor), lean towards follow-up (is_follow_up=true).\n"
-            "- If CURRENT introduces a clear new product noun/category that diverges from the recent anchor, lean towards is_follow_up=false. Use judgment.\n"
-            "ASK DESIGN (MANDATORY):\n"
-            "- Infer likely category/subcategory from the latest query + recent turns; tailor ASK_* messages and options to that subcategory.\n"
-            "- One of the two asks MUST be ASK_USER_BUDGET. Budget options MUST be in INR (use the '₹' symbol) and calibrated to the subcategory's typical price bands.\n"
-            "  Examples:\n"
-            "   • chips_and_crisps → ['Under ₹50','₹50–150','Over ₹150']\n"
-            "   • sauces_condiments → ['Under ₹100','₹100–300','Over ₹300']\n"
-            "   • noodles_pasta → ['Under ₹50','₹50–150','Over ₹150']\n"
-            "   • shampoo (personal care) → ['Under ₹99','₹99–299','Over ₹299']\n"
-            "- If subcategory is unclear, use labeled bands: ['Budget friendly','Smart choice','Premium'].\n"
-            "- If domain=f_and_b, EMIT UP TO 2 asks: [ASK_USER_BUDGET, ASK_DIETARY_REQUIREMENTS].\n"
-            "- If domain=personal_care, EMIT UP TO 4 asks:\n"
-            "  1) ASK_PC_CONCERN (major concern: skin→['Acne','Dark spots','Aging'] | hair→['Dandruff','Hairfall','Frizz'])\n"
-            "  2) ASK_PC_COMPATIBILITY (skin type ['Oily','Dry','Combination'] | hair type ['Curly','Wavy/Straight','Oily scalp'])\n"
-            "  3) ASK_USER_BUDGET (₹-calibrated to subcategory)\n"
-            "  4) ASK_INGREDIENT_AVOID (e.g., ['Fragrance-free','Sulfate-free','No preference'])\n"
-            "  Ensure options are concise and subcategory-appropriate.\n"
-            "ALLOWED ASK_* SLOTS (choose only from this list):\n"
-            "- ASK_USER_BUDGET\n- ASK_DIETARY_REQUIREMENTS\n- ASK_USER_PREFERENCES\n- ASK_USE_CASE\n- ASK_QUANTITY\n- ASK_DELIVERY_ADDRESS\n- ASK_PC_CONCERN\n- ASK_PC_COMPATIBILITY\n- ASK_INGREDIENT_AVOID\n"
-            "STRICT: The ask object MUST use keys only from the allowed list. If unsure, pick budget and dietary for f_and_b; and pick the 4 listed for personal_care when relevant.\n"
-            "SUPPORT DETECTION (for non-product queries):\n"
-            "- First, determine if this is a customer support query by checking for:\n"
-            "  • Order-related issues: 'where is my order', 'order status', 'tracking', 'delivery', 'shipping'\n"
-            "  • Complaints/problems: 'problem with', 'issue with', 'not working', 'broken', 'wrong item'\n"
-            "  • Help requests: 'help', 'support', 'customer service', 'contact support', 'connect me to support'\n"
-            "  • Account issues: 'account problem', 'login issue', 'payment problem', 'refund'\n"
-            "  • General support: 'how to', 'troubleshooting', 'can't find', 'need assistance'\n"
-            "- If it's a support query:\n"
-            "  • Set response_type = 'support'\n"
-            "  • Set is_support_query = true\n"
-            "  • Set message = 'Hello! Please contact support at 6388977169.'\n"
-            "- If it's NOT a support query:\n"
-            "  • Set response_type = 'final_answer'\n"
-            "  • Set is_support_query = false\n"
-            "  • Write a helpful message (1-3 sentences, specific and actionable)\n"
-            "If NOT product-related, return simple_response with appropriate response_type and is_support_query.\n"
-            "Return ONLY the tool call to classify_and_assess.\n\n"
-            f"RECENT_CONTEXT: {json.dumps(recent_context, ensure_ascii=False)}\n"
-            f"RECENT_TURNS (last up to 10): {json.dumps(convo_pairs, ensure_ascii=False)}\n"
-            f"QUERY: {query.strip()}\n"
-            "PERSONAL_CARE TAXONOMY (for subcategory inference when domain=personal_care):\n"
-            f"{json.dumps(self._get_personal_care_taxonomy(), ensure_ascii=False)}\n"
-        )
+        # ============== STAGE 2: Build Structured Prompt ==============
+        personal_care_taxonomy = self._get_personal_care_taxonomy()
+        prompt = f"""You are a classification engine for a WhatsApp shopping bot selling food/beverages and personal care products.
 
-        resp = await self.anthropic.messages.create(
-            model=Cfg.LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            tools=[COMBINED_CLASSIFY_ASSESS_TOOL],
-            tool_choice={"type": "tool", "name": "classify_and_assess"},
-            temperature=0.2,
-            max_tokens=500,
-        )
+Your job: Analyze the user's message and classify it in ONE tool call using chain-of-thought reasoning.
 
-        tool_use = pick_tool(resp, "classify_and_assess")
-        if not tool_use:
-            return {}
-        data = tool_use.input or {}
-        
-        # Log support detection from LLM1
+<context>
+Previous conversation:
+{json.dumps(context_summary, ensure_ascii=False, indent=2)}
+
+Current user message: "{query.strip()}"
+</context>
+
+<personal_care_taxonomy>
+{json.dumps(personal_care_taxonomy, ensure_ascii=False)}
+</personal_care_taxonomy>
+
+<critical_instructions>
+1. Always start with "reasoning" field explaining your classification
+2. Be decisive - avoid hedging in classifications
+3. For follow-up detection, heavily weight the most recent turn (last 1-2 exchanges)
+4. Write ASK messages in natural, conversational tone (not robotic)
+5. Question count (MANDATORY):
+   - If domain == personal_care: return EXACTLY 4 ask_slots (no more, no less)
+   - Else (food & beverages/other): return EXACTLY 2 ask_slots (no more, no less)
+6. Options (MANDATORY for each ask_slot):
+   - Provide EXACTLY 3 options per question
+   - Each option must be 2-5 words, discrete, and actionable
+   - Avoid generic placeholders like "Option 1" or "Other"
+   - Include a flexible option when relevant (e.g., "No preference", "Not sure yet", "Flexible")
+7. Order ask_slots by priority (most important first)
+8. For support queries, be warm and provide the phone number clearly
+9. For general queries, be friendly and redirect to product search
+</critical_instructions>
+
+<ask_slot_guidance>
+**Smart Question Selection (choose 2-4 most relevant):**
+
+For Food & Beverage products:
+- ASK_USER_BUDGET: Always valuable for price filtering
+- ASK_DIETARY_REQUIREMENTS: For health-conscious users (gluten-free, vegan, etc.)
+- ASK_QUANTITY: If context suggests party/event/bulk (e.g., "party tonight", "gathering", "need many")
+- ASK_USE_CASE: For snacks/beverages (daily vs party vs travel)
+- ASK_USER_PREFERENCES: For flavor/texture preferences when category is broad
+
+For Personal Care products:
+- ASK_USER_BUDGET: Always useful for cosmetics/skincare
+- ASK_PC_CONCERN: Critical for skincare/haircare (acne, dandruff, aging, etc.)
+- ASK_PC_COMPATIBILITY: Hair type (curly, oily) or skin type (oily, dry, sensitive)
+- ASK_INGREDIENT_AVOID: For sensitive users (fragrance-free, sulfate-free, etc.)
+
+**Examples:**
+- Query: "chips for party tonight" → ASK_USER_BUDGET, ASK_QUANTITY, ASK_DIETARY_REQUIREMENTS, ASK_USER_PREFERENCES
+- Query: "shampoo for my hair" → ASK_USER_BUDGET, ASK_PC_CONCERN, ASK_PC_COMPATIBILITY, ASK_INGREDIENT_AVOID  
+- Query: "healthy breakfast cereal" → ASK_USER_BUDGET, ASK_DIETARY_REQUIREMENTS, ASK_USE_CASE
+- Query: "face cream" → ASK_USER_BUDGET, ASK_PC_CONCERN, ASK_PC_COMPATIBILITY, ASK_INGREDIENT_AVOID
+
+**Message writing tips:**
+- Reference the user's query naturally (e.g., "Great! For your party tonight, how many guests...")
+- Keep questions short and conversational (10-15 words max)
+- Use friendly, helpful tone (not interrogative)
+- Make options feel guided, not restrictive
+</ask_slot_guidance>
+
+Now classify the user's current message. Return ONLY the tool call."""
+
+        # ============== STAGE 3: LLM Call ==============
         try:
-            simple_resp = data.get("simple_response") or {}
-            is_support = simple_resp.get("is_support_query", "NOT_FOUND")
-            response_type = simple_resp.get("response_type", "NOT_FOUND")
-            is_product_related = data.get("is_product_related", "NOT_FOUND")
-            print(f"CORE:LLM1_SUPPORT_DETECTION | is_product_related={is_product_related} | is_support_query={is_support} | response_type={response_type}")
-        except Exception:
-            pass
-            
-        try:
-            raw_ask = data.get("ask") or {}
-            domain_dbg = data.get("domain")
-            print(f"CORE:ASK_RAW | domain={domain_dbg} | keys={list(raw_ask.keys()) if isinstance(raw_ask, dict) else []}")
-        except Exception:
-            pass
+            resp = await self.anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[COMBINED_CLASSIFY_ASSESS_TOOL],
+                tool_choice={"type": "tool", "name": "classify_and_assess"},
+                temperature=0.2,
+                max_tokens=800,
+            )
+            tool_use = pick_tool(resp, "classify_and_assess")
+            if not tool_use:
+                return self._fallback_response()
+            data = tool_use.input or {}
+        except Exception as e:
+            log.error(f"LLM classification failed: {e}")
+            return self._fallback_response()
 
-        # Light normalization of ask payload
-        try:
-            ask = data.get("ask") or {}
-            if isinstance(ask, dict):
-                # Canonical mapping for slot keys (food & personal care synonyms)
-                def _canon_slot(name: str) -> Optional[str]:
-                    if not isinstance(name, str):
-                        return None
-                    key = name.strip().upper()
-                    allowed = {
-                        "ASK_USER_BUDGET",
-                        "ASK_DIETARY_REQUIREMENTS",
-                        "ASK_USER_PREFERENCES",
-                        "ASK_USE_CASE",
-                        "ASK_QUANTITY",
-                        "ASK_DELIVERY_ADDRESS",
-                        "ASK_PC_CONCERN",
-                        "ASK_PC_COMPATIBILITY",
-                        "ASK_INGREDIENT_AVOID",
-                    }
-                    if key in allowed:
-                        return key
-                    # Synonyms
-                    if any(t in key for t in ["PRICE", "BUDGET", "UNDER", "OVER", "LESS THAN", "MORE THAN"]):
-                        return "ASK_USER_BUDGET"
-                    if any(t in key for t in ["DIET", "DIETARY", "PALM", "VEGAN", "GLUTEN", "SUGAR", "OIL"]):
-                        return "ASK_DIETARY_REQUIREMENTS"
-                    if any(t in key for t in ["SPICE", "SPICY", "FLAVOR", "TASTE", "BRAND", "PREFERENCE", "SKIN", "HAIR", "FRAGRANCE"]):
-                        return "ASK_USER_PREFERENCES"
-                    if any(t in key for t in ["CONCERN", "ISSUE", "PROBLEM"]):
-                        return "ASK_PC_CONCERN"
-                    if any(t in key for t in ["SKIN TYPE", "HAIR TYPE", "COMPATIBILITY"]):
-                        return "ASK_PC_COMPATIBILITY"
-                    if any(t in key for t in ["AVOID", "FREE", "FRAGRANCE", "SULFATE", "SILICONE", "PARABEN"]):
-                        return "ASK_INGREDIENT_AVOID"
-                    if any(t in key for t in ["USE", "OCCASION", "WHEN"]):
-                        return "ASK_USE_CASE"
-                    if any(t in key for t in ["QTY", "QUANTITY", "COUNT", "PACK"]):
-                        return "ASK_QUANTITY"
-                    if any(t in key for t in ["ADDRESS", "PIN", "PINCODE", "DELIVERY"]):
-                        return "ASK_DELIVERY_ADDRESS"
-                    return None
+        # ============== STAGE 4: Validate and passthrough ASK slots ==============
+        route = data.get("route")
+        if route == "product":
+            ask_slots = list(data.get("ask_slots", []) or [])
+            domain = str(data.get("domain", "")).lower()
 
-                # Rebuild ask with canonical keys only
-                canon_ask: Dict[str, Dict[str, Any]] = {}
-                for k, v in list(ask.items()):
-                    if not isinstance(v, dict):
-                        continue
-                    ckey = _canon_slot(k)
-                    if not ckey:
-                        continue
-                    opts = v.get("options") or []
-                    # Clamp/pad options to exactly 3 strings
-                    norm_opts: List[str] = []
-                    for opt in opts[:3]:
-                        if isinstance(opt, str) and opt.strip():
-                            norm_opts.append(opt.strip())
-                    # Pad according to slot semantics
-                    if ckey == "ASK_USER_BUDGET":
-                        fillers = ["Budget friendly", "Smart choice", "Premium"]
-                        while len(norm_opts) < 3 and fillers:
-                            norm_opts.append(fillers.pop(0))
-                    else:
-                        while len(norm_opts) < 3:
-                                norm_opts.append("No preference")
-                        canon_ask[ckey] = {
-                            "message": v.get("message") or f"What's your {ckey.replace('ASK_', '').replace('_', ' ').lower()}?",
-                            "options": norm_opts[:3],
-                        }
-                # Ensure required asks per domain, then deduplicate and clamp to domain-aware max; fallback if empty
-                domain = str(data.get("domain") or "").strip()
-                max_asks = 4 if domain == "personal_care" else 2
-                try:
-                    print(f"CORE:ASK_CANON | domain={domain or 'unknown'} | canon_keys={list(canon_ask.keys())} | max={max_asks}")
-                except Exception:
-                    pass
-                required_pc = [
-                    ("ASK_PC_CONCERN", {
-                        "message": "What's your primary concern?",
-                        "options": ["Dandruff","Hairfall","No preference"],
-                    }),
-                    ("ASK_PC_COMPATIBILITY", {
-                        "message": "What's your hair/skin type?",
-                        "options": ["Oily","Dry","Combination"],
-                    }),
-                    ("ASK_USER_BUDGET", {
-                        "message": "What's your budget range? (in ₹)",
-                        "options": ["Under ₹100","₹100–300","Over ₹300"],
-                    }),
-                    ("ASK_INGREDIENT_AVOID", {
-                        "message": "Any ingredients to avoid?",
-                        "options": ["Fragrance-free","Sulfate-free","No preference"],
-                    }),
-                ]
-                required_fb = [
-                    ("ASK_USER_BUDGET", {
-                        "message": "What's your budget range? (in ₹)",
-                        "options": ["Under ₹100","₹100–300","Over ₹300"],
-                    }),
-                    ("ASK_DIETARY_REQUIREMENTS", {
-                        "message": "Any dietary requirements?",
-                        "options": ["GLUTEN FREE","LOW SODIUM","No preference"],
-                    }),
-                ]
-                if not canon_ask:
-                    canon_ask = {
-                        "ASK_USER_BUDGET": {
-                            "message": "What's your budget range? (in ₹)",
-                            "options": ["Under ₹100", "₹100–300", "Over ₹300"],
-                        },
-                        (
-                            "ASK_DIETARY_REQUIREMENTS" if domain != "personal_care" else "ASK_PC_CONCERN"
-                        ): {
-                            "message": "Any dietary requirements?" if domain != "personal_care" else "What's your primary concern?",
-                            "options": ["GLUTEN FREE", "LOW SODIUM", "No preference"] if domain != "personal_care" else ["Acne","Dark spots","No preference"],
-                        },
-                    }
-                else:
-                    # Prioritize for personal_care
-                    if domain == "personal_care":
-                        # Pad missing required asks
-                        for rk, rv in required_pc:
-                            if rk not in canon_ask:
-                                canon_ask[rk] = rv
-                        priority = ["ASK_PC_CONCERN", "ASK_PC_COMPATIBILITY", "ASK_USER_BUDGET", "ASK_INGREDIENT_AVOID"]
-                        ordered_keys = []
-                        for pk in priority:
-                            if pk in canon_ask and pk not in ordered_keys:
-                                ordered_keys.append(pk)
-                        for k in canon_ask.keys():
-                            if k not in ordered_keys:
-                                ordered_keys.append(k)
-                        canon_ask = {k: canon_ask[k] for k in ordered_keys[:max_asks]}
-                    else:
-                        # Pad missing required asks for food/bev
-                        for rk, rv in required_fb:
-                            if rk not in canon_ask:
-                                canon_ask[rk] = rv
-                        # Keep insertion order; take first two for food
-                        canon_ask = {k: canon_ask[k] for k in list(canon_ask.keys())[:max_asks]}
-                data["ask"] = canon_ask
-                try:
-                    print(f"CORE:ASK_PLAN | domain={domain or 'unknown'} | asks={list(canon_ask.keys())}")
-                except Exception:
-                    pass
-        except Exception:
-            pass
+            # Enforce exact question count by domain
+            expected_count = 4 if domain == "personal_care" else 2
+            if len(ask_slots) != expected_count:
+                log.warning(
+                    "ASK slot count mismatch for domain=%s; expected=%s got=%s",
+                    domain,
+                    expected_count,
+                    len(ask_slots),
+                )
+            # Trim or keep as-is (do not synthesize new questions)
+            if len(ask_slots) > expected_count:
+                ask_slots = ask_slots[:expected_count]
+
+            enriched_asks: Dict[str, Dict[str, Any]] = {}
+            for slot in ask_slots:
+                slot_name = slot.get("slot_name")
+                message = slot.get("message")
+                options = slot.get("options") or []
+                if not isinstance(options, list):
+                    options = [str(options)]
+                # Enforce MAX 3 options per question
+                if len(options) > 3:
+                    options = options[:3]
+
+                enriched_asks[slot_name] = {"message": message, "options": options}
+
+            data["ask"] = enriched_asks
+            data.pop("ask_slots", None)
+
+            # Back-compat flags used elsewhere
+            data["is_product_related"] = True
+            data["layer3"] = str(data.get("category", ""))
+        else:
+            data["is_product_related"] = False
+            data["layer3"] = "general"
 
         return data
 
@@ -1590,6 +1602,19 @@ class LLMService:
             return result
         else:
             return await self._generate_simple_response(query, ctx, fetched, intent_l3, query_intent)
+
+    def _fallback_response(self) -> Dict[str, Any]:
+        """Fallback used when LLM1 classification fails; aligns with existing response types."""
+        return {
+            "reasoning": "LLM failure, using fallback",
+            "route": "general",
+            "is_product_related": False,
+            "layer3": "error",
+            "simple_response": {
+                "message": "I'm having trouble understanding. Could you rephrase what you're looking for?",
+                "response_type": "clarification_needed",
+            },
+        }
 
     def _has_product_results(self, fetched: Dict[str, Any]) -> bool:
         """Check if fetched data contains product results."""

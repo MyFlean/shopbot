@@ -1821,9 +1821,17 @@ class LLMService:
             try:
                 es_ids: List[str] = [str(p.get("id")) for p in products_data if p.get("id")]
                 hero_id = str(result.get("hero_product_id", "")).strip()
+                ordered: List[str] = list(es_ids)
                 if hero_id and hero_id in es_ids:
-                    es_ids = [hero_id] + [x for x in es_ids if x != hero_id]
-                result["product_ids"] = es_ids[:10]
+                    ordered = [hero_id] + [x for x in es_ids if x != hero_id]
+                # Deduplicate while preserving order
+                seen_ids: set[str] = set()
+                unique_ids: List[str] = []
+                for pid in ordered:
+                    if pid and pid not in seen_ids:
+                        seen_ids.add(pid)
+                        unique_ids.append(pid)
+                result["product_ids"] = unique_ids[:10]
             except Exception:
                 pass
 

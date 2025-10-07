@@ -97,7 +97,156 @@ FINAL_ANSWER_UNIFIED_TOOL = {
     }
 }
 
-# Skin ES params tool (personal care)
+# Personal Care ES params tool - 2025 unified schema
+PERSONAL_CARE_ES_PARAMS_TOOL_2025 = {
+    "name": "generate_personal_care_es_params",
+    "description": "Extract Elasticsearch parameters for personal care products. Maintains product focus across conversation turns.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            # Core fields (required)
+            "anchor_product_noun": {
+                "type": "string",
+                "description": "Primary product being searched (2-6 words). Examples: 'shampoo', 'face serum', 'body lotion'",
+                "minLength": 2,
+                "maxLength": 60
+            },
+            "category_group": {
+                "type": "string",
+                "enum": ["personal_care"],
+                "description": "Category group (always personal_care)"
+            },
+            
+            # Taxonomy
+            "category_paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 3,
+                "description": "Full paths like 'personal_care/hair/shampoo'"
+            },
+            
+            # Domain-specific compatibility
+            "skin_types": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["oily", "dry", "combination", "sensitive", "normal"]
+                },
+                "maxItems": 3,
+                "description": "Detected or inferred skin types"
+            },
+            "hair_types": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["dry", "oily", "normal", "curly", "straight", "wavy", "frizzy", "thin", "thick"]
+                },
+                "maxItems": 3,
+                "description": "Detected or inferred hair types"
+            },
+            
+            # Positive signals (like keywords for food)
+            "efficacy_terms": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 5,
+                "description": "MANDATORY: Desired benefits/efficacy (anti-dandruff, hydration, brightening). NEVER leave empty."
+            },
+            "skin_concerns": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 4,
+                "description": "Specific skin concerns (acne, pigmentation, dryness, aging)"
+            },
+            "hair_concerns": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 4,
+                "description": "Specific hair concerns (dandruff, hair fall, frizz, split ends)"
+            },
+            
+            # Negative signals (clean-ingredient focus)
+            "avoid_terms": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "sulfates", "parabens", "silicones", "mineral oil", "fragrance",
+                        "alcohol", "phthalates", "formaldehyde", "harsh chemicals",
+                        "artificial colors", "comedogenic"
+                    ]
+                },
+                "maxItems": 4,
+                "description": "Ingredients/attributes to avoid (clean-ingredient focus)"
+            },
+            "avoid_ingredients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 5,
+                "description": "Specific ingredients to exclude (SLS, SLES, DEA, etc.)"
+            },
+            
+            # Filters
+            "price_min": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Minimum price in INR"
+            },
+            "price_max": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Maximum price in INR"
+            },
+            "brands": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 5,
+                "description": "Brand names mentioned"
+            },
+            
+            # Soft ranking (like food keywords)
+            "keywords": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 4,
+                "description": "MANDATORY: Quality attributes for reranking (gentle, nourishing, lightweight). NEVER leave empty."
+            },
+            "must_keywords": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 3,
+                "description": "Hard requirements (product variants like 'rose water', 'tea tree', 'aloe vera')"
+            },
+            
+            # Product form
+            "product_types": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["serum", "cream", "lotion", "oil", "gel", "foam", "mask", "scrub", "cleanser", "toner", "balm"]
+                },
+                "maxItems": 3,
+                "description": "Product form factors"
+            },
+            
+            # Metadata
+            "size": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 15,
+                "default": 10,
+                "description": "Number of results (max 15 for personal care)"
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation of anchor, concerns, and clean-ingredient decisions (1 sentence)"
+            }
+        },
+        "required": ["anchor_product_noun", "category_group", "category_paths", "efficacy_terms", "keywords"]
+    }
+}
+
+# Legacy skin tool (kept for backward compatibility)
 SKIN_ES_PARAMS_TOOL = {
     "name": "emit_skin_es_params",
     "description": "Extract Elasticsearch parameters for personal care/skin products based on user query and context.",
@@ -119,6 +268,55 @@ SKIN_ES_PARAMS_TOOL = {
         "required": ["q", "category_group"]
     }
 }
+
+# ============================================================================
+# PERSONAL CARE 2025 OPTIMIZATION - IMPLEMENTATION STATE
+# ============================================================================
+# 
+# COMPLETED:
+# ✅ Step 1: Created PERSONAL_CARE_ES_PARAMS_TOOL_2025 unified schema
+#    - Added comprehensive schema with domain-specific fields
+#    - Includes skin_types, hair_types, efficacy_terms, avoid_terms
+#    - Added keywords/must_keywords for soft/hard filtering
+#    - Added product_types, skin_concerns, hair_concerns
+#    - Clean-ingredient focus with avoid_terms enum
+#
+# NEXT STEPS TO IMPLEMENT:
+# 🔄 Step 2: Write _build_personal_care_optimized_prompt method
+#    - 7 priority rules following 2025 best practices
+#    - Generic anchor refinement for personal care
+#    - Proactive skin/hair type suggestions
+#    - Mandatory keyword extraction
+#    - Clean-ingredient awareness
+#
+# 🔄 Step 3: Implement _generate_personal_care_es_params_2025 method
+#    - Session persistence and merge logic
+#    - Generic anchor refinement logic
+#    - Proactive skin/hair type suggestions
+#    - Mandatory keyword generation
+#
+# 🔄 Step 4: Add session persistence for PC fields
+#    - Store in ctx.session["debug"]["personal_care_es_params"]
+#    - Merge user-provided vs LLM-suggested values
+#    - Clear PC-specific slots on new assessments
+#
+# 🔄 Step 5: Add fuzzy matching to nested efficacy/skin_type queries
+#    - Update _build_skin_es_query in es_products.py
+#    - Change exact terms queries to fuzzy multi_match
+#
+# 🔄 Step 6: Route personal_care traffic to 2025 method
+#    - Update generate_skin_es_params to use new method
+#    - Maintain backward compatibility
+#
+# 🔄 Step 7: Clean up logging (keep only essential outputs)
+#    - Remove verbose logging, keep only LLM outputs
+#    - Show extracted keys like food path
+#
+# 🔄 Step 8: Run lints and validate
+#    - Fix any syntax errors
+#    - Test integration
+#
+# ============================================================================
 
 # Personal care v2 tool schemas (initial vs follow-up)
 FOLLOWUP_SKIN_PARAMS_TOOL = {
@@ -492,27 +690,95 @@ PRODUCT_RESPONSE_TOOL = {
     }
 }
 
-# Unified ES params generation tool - ONE authoritative call
+# Unified ES params generation tool - ONE authoritative call (2025 best practices)
 UNIFIED_ES_PARAMS_TOOL = {
     "name": "generate_unified_es_params",
-    "description": "Generate ALL Elasticsearch parameters in one authoritative call using complete context: current text, assessment base, slot answers, and conversation history.",
+    "description": "Extract Elasticsearch parameters from user query and conversation context. Maintains product focus across follow-up turns.",
     "input_schema": {
         "type": "object",
         "properties": {
-            "q": {"type": "string", "description": "Search query (2-5 words, no prices/currency)"},
-            "size": {"type": "integer", "minimum": 1, "maximum": 50},
-            "category_group": {"type": "string", "enum": ["f_and_b", "personal_care", "health_nutrition", "home_kitchen", "electronics"]},
-            "category_paths": {"type": "array", "items": {"type": "string"}},
-            "subcategory": {"type": "string"},
-            "brands": {"type": "array", "items": {"type": "string"}},
-            "dietary_terms": {"type": "array", "items": {"type": "string"}},
-            "price_min": {"type": "number"},
-            "price_max": {"type": "number"},
-            "keywords": {"type": "array", "items": {"type": "string"}},
-            "phrase_boosts": {"type": "array", "items": {"type": "object"}},
-            "anchor_product_noun": {"type": "string", "description": "The most recent, specific product noun/phrase identified from context that anchors q; if none, a generic noun like 'evening snacks'"}
+            # Core fields (required)
+            "anchor_product_noun": {
+                "type": "string",
+                "description": "Primary product being searched (2-6 words). Examples: 'chips', 'banana chips', 'dry scalp shampoo'",
+                "minLength": 2,
+                "maxLength": 60
+            },
+            "category_group": {
+                "type": "string",
+                "enum": ["f_and_b", "personal_care"],
+                "description": "Top-level category"
+            },
+            
+            # Taxonomy
+            "category_paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 3,
+                "description": "Full paths like 'f_and_b/food/light_bites/chips_and_crisps'"
+            },
+            
+            # Filters (extracted, not in anchor)
+            "dietary_terms": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "GLUTEN FREE", "VEGAN", "VEGETARIAN", "PALM OIL FREE",
+                        "SUGAR FREE", "LOW SODIUM", "LOW SUGAR", "ORGANIC",
+                        "NO ADDED SUGAR", "DAIRY FREE", "NUT FREE", "SOY FREE",
+                        "KETO", "HIGH PROTEIN", "LOW FAT", "ETC", "ETC"
+                    ]
+                },
+                "maxItems": 5,
+                "description": "Dietary constraints extracted from query (UPPERCASE only)"
+            },
+            "price_min": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Minimum price in INR"
+            },
+            "price_max": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Maximum price in INR"
+            },
+            "brands": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 5,
+                "description": "Brand names mentioned"
+            },
+            
+            # Boost signals
+            "keywords": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 4,
+                "description": "Additional search keywords NOT in anchor (for reranking)"
+            },
+            "must_keywords": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 3,
+                "description": "Hard requirements (e.g., flavor variants like 'orange', 'peri peri')"
+            },
+            
+            # Metadata
+            "size": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50,
+                "default": 20,
+                "description": "Number of results"
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation of anchor choice and follow-up detection (1 sentence)"
+            }
         },
-        "required": ["q", "category_group"]
+        "required": ["anchor_product_noun", "category_group","category_paths","dietary_terms","price_min","price_max","brands",
+        "keywords","must_keywords","size"]
     }
 }
 
@@ -2500,6 +2766,10 @@ Now classify the user's current message. Return ONLY the tool call."""
 
             current_text = str(getattr(ctx, "current_user_text", "") or session.get("current_user_text") or session.get("last_user_message") or "").strip()
 
+            # 2025 unified ES params fast-path
+            if current_text:
+                return await self._generate_unified_es_params_2025(ctx, current_text)
+
             # Follow-up detection (Redis-driven; assessment state ignored if ASK_ONLY_MODE)
             if ask_only_mode:
                 is_follow_up = self._is_follow_up_from_redis(ctx)
@@ -2935,6 +3205,1277 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             log.error(f"UNIFIED_ES_PARAMS_ERROR | {exc}")
             return {}
 
+    async def _generate_unified_es_params_2025(self, ctx: UserContext, current_text: str) -> Dict[str, Any]:
+        """2025 best-practices: schema-first, concise prompt, forced tool call, minimal post-processing."""
+        session = ctx.session or {}
+        is_follow_up = bool(session.get("assessment", {}) or {})
+        
+        # Canonical path→noun mapping for de-genericization
+        CATEGORY_PATH_TO_NOUNS = {
+            "light_bites/savory_namkeen": "namkeen",
+            "light_bites/chips_and_crisps": "chips",
+            "light_bites/popcorn": "popcorn",
+            "light_bites/dry_fruit_and_nut_snacks": "dry fruits",
+            "biscuits_and_crackers/cookies": "cookies",
+            "biscuits_and_crackers/cream_filled_biscuits": "biscuits",
+            "biscuits_and_crackers/glucose_and_marie_biscuits": "biscuits",
+            "biscuits_and_crackers/rusks_and_khari": "rusks",
+            "biscuits_and_crackers/digestive_biscuits": "digestive biscuits",
+            "sweet_treats/chocolates": "chocolates",
+            "sweet_treats/premium_chocolates": "chocolates",
+            "sweet_treats/candies_gums_and_mints": "candies",
+            "sweet_treats/indian_mithai": "sweets",
+            "breakfast_essentials/breakfast_cereals": "cereals",
+            "breakfast_essentials/muesli_and_oats": "oats",
+            "dairy_and_bakery/bread_and_buns": "bread",
+            "dairy_and_bakery/butter": "butter",
+            "dairy_and_bakery/cheese": "cheese",
+            "refreshing_beverages/fruit_juices": "juice",
+            "refreshing_beverages/soft_drinks": "soft drinks",
+            "refreshing_beverages/flavored_milk_drinks": "flavored milk",
+            "noodles_and_vermicelli/vermicelli_and_noodles": "noodles",
+            "spreads_and_condiments/ketchup_and_sauces": "sauce",
+            "spreads_and_condiments/peanut_butter": "peanut butter",
+            "spreads_and_condiments/jams_and_jellies": "jam",
+        }
+        GENERIC_ANCHORS = {
+            "snacks", "treats", "items", "products", "something", "options",
+            "sweet treats", "savory snacks", "evening snacks", "breakfast items"
+        }
+
+        # Build conversation context (recency-weighted)
+        hist_limit = 10 if is_follow_up else 2
+        convo_history = self._build_last_interactions(ctx, limit=hist_limit)
+
+        # Extract slot answers
+        slot_answers = {
+            "product_intent": session.get("product_intent"),
+            "budget": session.get("budget"),
+            "dietary": session.get("dietary_requirements"),
+            "preferences": session.get("preferences"),
+        }
+
+        # Format history with explicit recency signals
+        history_turns: list[dict[str, Any]] = []
+        total = len(convo_history)
+        for idx, turn in enumerate(convo_history):
+            recency = "MOST_RECENT" if idx >= total - 2 else ("RECENT" if idx >= total - 5 else "OLDER")
+            history_turns.append({
+                "recency": recency,
+                "user": turn.get("user_query", "")[:100],
+                "bot_summary": turn.get("bot_reply", "")[:80]
+            })
+
+        # Build optimized prompt
+        prompt = self._build_optimized_prompt(
+            current_text=current_text,
+            history=history_turns,
+            is_follow_up=is_follow_up,
+            product_intent=str(session.get("product_intent") or ""),
+            slots=slot_answers,
+        )
+
+        # Call LLM with forced tool use
+        resp = await self.anthropic.messages.create(
+            model=Cfg.LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            tools=[UNIFIED_ES_PARAMS_TOOL],
+            tool_choice={"type": "tool", "name": "generate_unified_es_params"},
+            temperature=0,
+            max_tokens=700,
+        )
+        tool_use = pick_tool(resp, "generate_unified_es_params")
+        if not tool_use:
+            return {}
+
+        params: Dict[str, Any] = tool_use.input or {}
+
+        # Minimal post-processing (schema handles most validation)
+        anchor = str(params.get("anchor_product_noun") or "").strip()
+        if anchor:
+            params["q"] = anchor
+        if isinstance(params.get("dietary_terms"), list):
+            params["dietary_terms"] = [
+                str(x).strip().upper()
+                for x in params["dietary_terms"]
+                if str(x).strip()
+            ]
+
+        # Clamp size
+        try:
+            s = int(ctx.session.get("size_hint", 20) or 20)
+            params["size"] = max(1, min(50, s))
+        except Exception:
+            params["size"] = 20
+
+        # De-genericize anchor using category_paths or history (2025 enhancement)
+        anchor_lower = anchor.lower()
+        if anchor_lower in GENERIC_ANCHORS:
+            # Strategy 1: Derive 2-3 nouns from category_paths for broader search surface
+            cat_paths = params.get("category_paths") or []
+            refined_nouns = []
+            if isinstance(cat_paths, list) and cat_paths:
+                for cp in cat_paths[:3]:  # Take up to 3 paths
+                    # Strip full prefix if present
+                    rel_path = str(cp).replace("f_and_b/food/", "").replace("personal_care/", "")
+                    if rel_path in CATEGORY_PATH_TO_NOUNS:
+                        noun = CATEGORY_PATH_TO_NOUNS[rel_path]
+                        if noun not in refined_nouns:  # Avoid duplicates
+                            refined_nouns.append(noun)
+            
+            # Strategy 2: Carry-over from history if topic unchanged
+            if not refined_nouns and is_follow_up and convo_history:
+                try:
+                    last_params = (session.get("debug", {}) or {}).get("last_search_params", {}) or {}
+                    last_anchor = str(last_params.get("anchor_product_noun") or "").strip()
+                    if last_anchor and last_anchor.lower() not in GENERIC_ANCHORS:
+                        refined_nouns.append(last_anchor)
+                except Exception:
+                    pass
+            
+            if refined_nouns:
+                # Use first as anchor_product_noun, all in q for broader search
+                params["anchor_product_noun"] = refined_nouns[0]
+                params["q"] = ", ".join(refined_nouns[:3])  # Max 3 for search surface
+
+        # Optional: Only show 2nd LLM outputs when explicitly requested
+        import os
+        if os.getenv("ONLY_LLM2_OUTPUTS", "false").lower() in {"1", "true", "yes", "on"}:
+            try:
+                print(params)
+            except Exception:
+                pass
+
+        # Persist unified and last_search_params snapshot into session for next turn reuse
+        try:
+            dbg = ctx.session.setdefault("debug", {})
+            # Full unified snapshot
+            dbg["unified_es_params"] = dict(params)
+            # Curated last_search_params used by downstream and follow-up deltas
+            safe_keys = [
+                "q",
+                "anchor_product_noun",
+                "category_group",
+                "category_paths",
+                "price_min",
+                "price_max",
+                "brands",
+                "dietary_terms",
+                "keywords",
+                "must_keywords",
+                "size",
+            ]
+            dbg["last_search_params"] = {k: params.get(k) for k in safe_keys if k in params}
+            dbg["last_params_updated_at"] = __import__("datetime").datetime.utcnow().isoformat() + "Z"
+
+            # FIX: Smart merge logic - preserve user-provided values, merge with LLM suggestions
+            assessment = session.get("assessment", {}) or {}
+            user_provided_slots = assessment.get("user_provided_slots", [])
+            
+            # Promote important fields to session-level slots for broader access
+            if params.get("category_group"):
+                ctx.session["category_group"] = params.get("category_group")
+            if params.get("category_paths"):
+                ctx.session["category_paths"] = params.get("category_paths")
+                try:
+                    cp_list = params.get("category_paths") or []
+                    if isinstance(cp_list, list) and cp_list:
+                        ctx.session["category_path"] = str(cp_list[0])
+                except Exception:
+                    pass
+            if params.get("brands"):
+                ctx.session["brands"] = params.get("brands")
+            
+            # FIX: Merge dietary_terms (don't overwrite user-provided)
+            if params.get("dietary_terms"):
+                llm_dietary = params.get("dietary_terms", [])
+                if "ASK_DIETARY_REQUIREMENTS" in user_provided_slots:
+                    # User explicitly provided dietary - merge with LLM suggestions
+                    user_dietary = ctx.session.get("dietary_requirements", [])
+                    if isinstance(user_dietary, str):
+                        user_dietary = [user_dietary]
+                    if not isinstance(user_dietary, list):
+                        user_dietary = []
+                    # Union merge (deduplicate)
+                    merged_dietary = list(set(user_dietary + llm_dietary))
+                    ctx.session["dietary_requirements"] = merged_dietary
+                else:
+                    # No user input - just use LLM suggestions
+                    ctx.session["dietary_requirements"] = llm_dietary
+            
+            if params.get("price_min") is not None:
+                ctx.session["price_min"] = params.get("price_min")
+            if params.get("price_max") is not None:
+                ctx.session["price_max"] = params.get("price_max")
+            if params.get("size"):
+                ctx.session["size_hint"] = int(params.get("size") or 20)
+        except Exception:
+            pass
+
+        return params
+
+    def _build_optimized_prompt(
+        self,
+        *,
+        current_text: str,
+        history: list[dict[str, Any]],
+        is_follow_up: bool,
+        product_intent: str,
+        slots: dict[str, Any]
+    ) -> str:
+        """Build optimized prompt using 2025 best practices."""
+        import json
+        history_json = json.dumps(history, ensure_ascii=False, indent=2)
+        slots_json = json.dumps({k: v for k, v in slots.items() if v}, ensure_ascii=False)
+
+        return (
+            "<task>\n"
+            "Extract Elasticsearch parameters from user query while maintaining product continuity across conversation turns.\n"
+            "</task>\n\n"
+            "<context>\n"
+            f"<conversation_mode>{'FOLLOW_UP' if is_follow_up else 'NEW_QUERY'}</conversation_mode>\n"
+            f"<current_query>{current_text}</current_query>\n"
+            f"<history>{history_json if history else '[]'}</history>\n"
+            f"<intent>{product_intent or 'show_me_options'}</intent>\n"
+            f"<user_preferences>{slots_json}</user_preferences>\n"
+            "</context>\n\n"
+
+            "<reasoning_steps>\n"
+            "1. IDENTIFY ANCHOR: Extract product noun from current OR most recent history\n"
+            "2. DETECT MODE: Is current a modifier (flavor/price/attribute) or new product?\n"
+            "3. COMPOSE ANCHOR: If modifier, combine with historical anchor; else use current\n"
+            "4. EXTRACT FILTERS: Separate dietary/price/brand from anchor\n"
+            "5. MAP TAXONOMY: Assign category_group and paths\n"
+
+            "</reasoning_steps>\n\n"
+            "<critical_rules>\n"
+            "<rule priority=\"1\">\n"
+
+            "ANCHOR COMPOSITION\n"
+            "- Modifier + History → combine: \"banana\" + \"chips\" = \"banana chips\"\n"
+            "- New Product → replace: \"pasta\" after \"chips\" = \"pasta\"\n"
+            "- Modifiers: flavors (banana, tomato), attributes (baked, crunchy), concerns (dry scalp)\n"
+            "- New Products: different categories or explicit requests\n"
+            "</rule>\n\n"
+            "<rule priority=\"2\">\n"
+            "FIELD SEPARATION (extract to separate fields, NOT anchor)\n"
+            "✓ EXTRACT: prices, dietary terms, brands, generic attributes\n"
+            "✗ KEEP IN ANCHOR: product noun, flavors, specific concerns\n\n"
+            "Examples:\n"
+            "- \"gluten free chips under 100\" → anchor:\"chips\" + dietary:[\"GLUTEN FREE\"] + price_max:100\n"
+            "- \"Lays banana chips\" → anchor:\"banana chips\" + brands:[\"Lays\"]\n"
+            "- \"baked chips\" → anchor:\"baked chips\" (baked is product-specific)\n"
+            "</rule>\n\n"
+            "<rule priority=\"3\">\n"
+            "CATEGORY MAPPING\n"
+            "- f_and_b: food, snacks, beverages, condiments\n"
+            "- personal_care: skincare, haircare, oral care, body care\n"
+
+            "</rule>\n\n"
+            "<rule priority=\"4\">\n"
+            "DIETARY NORMALIZATION\n"
+            "Map to UPPERCASE enum values:\n"
+            "- \"no palm oil\", \"palm free\" → [\"PALM OIL FREE\"]\n"
+            "- \"gluten free\", \"no gluten\" → [\"GLUTEN FREE\"]\n"
+            "- \"sugar free\", \"no sugar\" → [\"SUGAR FREE\"]\n"
+            "- \"low sodium\", \"less salt\" → [\"LOW SODIUM\"]\n"
+            "</rule>\n\n"
+            "<rule priority=\"5\">\n"
+            "GENERIC ANCHOR REFINEMENT (CRITICAL FOR SEARCH QUALITY)\n"
+            "If anchor is generic (snacks, treats, items, something) BUT category_paths is specific:\n"
+            "→ DERIVE 2-3 concrete nouns from category_paths for broader search surface\n\n"
+            "Path-to-Noun Examples:\n"
+            "- light_bites/savory_namkeen → \"namkeen\"\n"
+            "- biscuits_and_crackers/cookies → \"cookies\"\n"
+            "- sweet_treats/chocolates → \"chocolates\"\n"
+            "- breakfast_essentials/breakfast_cereals → \"cereals\"\n\n"
+            "Multi-Path Strategy (IMPORTANT):\n"
+            "- When multiple category_paths present → derive noun from EACH path\n"
+            "- Example: [savory_namkeen, cookies] → use 2-3 nouns for better coverage\n"
+            "- Post-processing will join them: q = \"namkeen, cookies, biscuits\"\n\n"
+            "Context-Based Queries (chai, evening, breakfast):\n"
+            "- \"with chai\" + [savory_namkeen, cookies] → anchor: \"namkeen\" + q: \"namkeen, cookies\"\n"
+            "- \"evening snacks\" + [chips, popcorn] → anchor: \"chips\" + q: \"chips, popcorn\"\n"
+            "- \"breakfast\" + [cereals, oats] → anchor: \"cereals\" + q: \"cereals, oats\"\n\n"
+            "Carry-Over Strategy:\n"
+            "- If follow-up AND history has concrete anchor AND topic unchanged → reuse history anchor\n"
+            "- Example: History: \"chips\" → Current: \"something under 100\" → Keep: \"chips\"\n"
+            "</rule>\n\n"
+            "<rule priority=\"6\">\n"
+            "PROACTIVE HEALTH-ORIENTED DIETARY SUGGESTIONS (PRODUCT VISION)\n"
+            "Our mission: Surface healthier alternatives by default.\n"
+            "When user hasn't specified dietary constraints, intelligently suggest 1-2 health-relevant terms based on product category.\n\n"
+            "Category-Specific Health Priorities:\n"
+            "- Chips/Namkeen/Savory Snacks → [\"LOW SODIUM\", \"PALM OIL FREE\"] or [\"BAKED\"] (use keywords for baked)\n"
+            "- Chocolates/Candies/Sweets → [\"LOW SUGAR\"] or [\"ORGANIC\"]\n"
+            "- Juice/Beverages → [\"NO ADDED SUGAR\"]\n"
+            "- Noodles/Pasta → [\"LOW SODIUM\"] (also consider \"whole wheat\" in keywords)\n"
+            "- Biscuits/Cookies → [\"LOW SUGAR\", \"DIGESTIVE\"] (digestive as keyword)\n"
+            "- Bread/Bakery → Use keywords [\"whole grain\", \"multigrain\"] instead of dietary_terms\n"
+            "- Dairy (Butter/Cheese) → [\"LOW FAT\"] or [\"ORGANIC\"]\n\n"
+            "Decision Logic:\n"
+            "1. Check user_preferences for existing dietary constraints\n"
+            "2. If user explicitly mentioned dietary needs → USE THOSE (don't override)\n"
+            "3. If user said \"healthy\"/\"healthier\" → amplify with 2 suggestions\n"
+            "4. If no user dietary specified → suggest 1-2 common health-oriented terms\n"
+            "5. Never suggest more than 2 terms to avoid over-restriction\n\n"
+            "Smart Suggestions:\n"
+            "- \"chips\" → [\"LOW SODIUM\"] (most common health concern)\n"
+            "- \"juice\" → [\"NO ADDED SUGAR\"] (critical for beverages)\n"
+            "- \"chocolates\" + \"healthy\" keyword → [\"LOW SUGAR\", \"ORGANIC\"]\n"
+            "- \"namkeen\" → [\"PALM OIL FREE\"] (common request in Indian market)\n\n"
+            "DON'T Suggest When:\n"
+            "- User already specified dietary (e.g., \"vegan chips\" → keep [\"VEGAN\"], don't add sodium)\n"
+            "- Product intent is brand-specific (\"Lays chips\" → user wants specific brand taste)\n"
+            "- Query is very generic without health context (\"evening snacks\" → maybe suggest 1, not 2)\n"
+            "</rule>\n\n"
+            "<rule priority=\"7\">\n"
+            "KEYWORD EXTRACTION (Hard Filters vs Soft Reranking)\n"
+            "CRITICAL: Generate keywords and must_keywords for EVERY query. Never leave both empty.\n\n"
+            "must_keywords (Hard Filters - ES MUST clauses):\n"
+            "- PURPOSE: Enforce exact flavor/variant/type; filter out non-matches\n"
+            "- ES BEHAVIOR: Products WITHOUT these tokens are EXCLUDED from results\n"
+            "- WHEN TO USE:\n"
+            "  • Flavor modifiers: banana, tomato, mango, orange, peri peri, masala\n"
+            "  • Critical variants: dark/milk/white (chocolate), hakka/schezwan (noodles)\n"
+            "  • Specific types: whole wheat, basmati, jasmine\n"
+            "- MAX: 3 tokens\n"
+            "- EXTRACTION: From current query OR anchor_product_noun\n\n"
+            "keywords (Soft Reranking - ES SHOULD clauses):\n"
+            "- PURPOSE: Boost products with attributes; don't exclude others\n"
+            "- ES BEHAVIOR: Products WITH these rank higher; products without still show\n"
+            "- WHEN TO USE:\n"
+            "  • Textural attributes: crispy, crunchy, soft, smooth, creamy\n"
+            "  • Quality signals: premium, artisanal, fresh, natural\n"
+            "  • Preparation methods: baked, roasted, fried, grilled\n"
+            "  • Health attributes: light, wholesome, multigrain, cold-pressed\n"
+            "- MAX: 4 tokens\n"
+            "- EXTRACTION: From query OR infer common attributes for category\n\n"
+            "Category-Specific Extraction Guide:\n"
+            "1. Chips/Namkeen/Savory:\n"
+            "   - must: banana, tomato, peri peri, masala, garlic, onion, pudina, jeera\n"
+            "   - keywords: baked, crispy, crunchy, light, roasted, multigrain\n\n"
+            "2. Chocolates/Candies/Sweets:\n"
+            "   - must: dark, milk, white, hazelnut, almond, orange, mint\n"
+            "   - keywords: premium, artisanal, smooth, rich, Belgian, sugar-free\n\n"
+            "3. Juice/Beverages:\n"
+            "   - must: orange, mango, apple, mixed fruit, pomegranate, grape\n"
+            "   - keywords: fresh, cold-pressed, pulpy, no-pulp, natural, organic\n\n"
+            "4. Noodles/Pasta:\n"
+            "   - must: hakka, schezwan, penne, fusilli, macaroni, spaghetti\n"
+            "   - keywords: whole wheat, instant, masala, ready-to-cook\n\n"
+            "5. Biscuits/Cookies:\n"
+            "   - must: chocolate chip, butter, oat, coconut, digestive\n"
+            "   - keywords: crunchy, soft, cream-filled, sugar-free\n\n"
+            "6. Ketchup/Sauces:\n"
+            "   - must: tomato, chilli, garlic, mint, tamarind\n"
+            "   - keywords: no-onion, jain, tangy, sweet, spicy\n\n"
+            "Decision Flowchart:\n"
+            "STEP 1: Extract explicit tokens from current query\n"
+            "STEP 2: Classify each token:\n"
+            "  → Flavor/variant/fruit/spice → must_keywords\n"
+            "  → Texture/quality/method → keywords\n"
+            "STEP 3: If NO explicit tokens:\n"
+            "  → Infer 1-2 common keywords for category (never leave empty)\n"
+            "  → Example: \"chips\" → keywords: [\"crunchy\"] (common expectation)\n"
+            "  → Example: \"juice\" → keywords: [\"fresh\"] (quality signal)\n"
+            "STEP 4: If health context (\"healthy\", \"light\"):\n"
+            "  → Amplify keywords with health attributes\n"
+            "  → Example: \"healthy chips\" → keywords: [\"baked\", \"light\"]\n"
+            "STEP 5: Dedup against anchor_product_noun\n"
+            "STEP 6: Validate counts (must≤3, keywords≤4)\n\n"
+            "Override & Edge Cases:\n"
+            "- User says \"plain chips\" → must_keywords: [], keywords: [] (respect 'plain')\n"
+            "- Brand-specific → reduce keyword suggestions (user wants brand taste)\n"
+            "- \"baked tomato chips\" → must: [\"tomato\"], keywords: [\"baked\"] (classify correctly)\n"
+            "- Flavor already in anchor → don't duplicate in must_keywords\n"
+            "</rule>\n"
+            "</critical_rules>\n\n"
+            "<examples>\n"
+            "<example type=\"new_query\">\n"
+            "<input>\n"
+            "current: \"chips\"\n"
+            "history: []\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/light_bites/chips_and_crisps\"],\n"
+            "  \"dietary_terms\": [\"LOW SODIUM\"],\n"
+            "  \"keywords\": [\"crunchy\"],\n"
+            "  \"must_keywords\": [],\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"New chips query; suggesting LOW SODIUM + inferred 'crunchy' keyword for common expectation\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<example type=\"follow_up_flavor\">\n"
+            "<input>\n"
+            "current: \"banana\"\n"
+            "history: [{recency:\"MOST_RECENT\", user:\"chips\", bot_summary:\"Showing chips...\"}]\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"banana chips\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/light_bites/chips_and_crisps\"],\n"
+            "  \"must_keywords\": [\"banana\"],\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"Follow-up: flavor modifier 'banana' combined with anchor 'chips'\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<example type=\"follow_up_constraints\">\n"
+            "<input>\n"
+            "current: \"under 100 gluten free\"\n"
+            "history: [{recency:\"MOST_RECENT\", user:\"noodles\", bot_summary:\"Showing noodles...\"}]\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"noodles\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/noodles_pasta/noodles\"],\n"
+            "  \"dietary_terms\": [\"GLUTEN FREE\"],\n"
+            "  \"keywords\": [\"instant\"],\n"
+            "  \"must_keywords\": [],\n"
+            "  \"price_max\": 100,\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"Follow-up: applying dietary + price filters; inferred 'instant' keyword for noodles category\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<example type=\"category_switch\">\n"
+            "<input>\n"
+            "current: \"show me pasta\"\n"
+            "history: [{recency:\"RECENT\", user:\"chips under 100\", bot_summary:\"Showed chips...\"}]\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"pasta\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/noodles_pasta/pasta\"],\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"New product: 'pasta' replaces previous 'chips' anchor\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<example type=\"personal_care\">\n"
+            "<input>\n"
+            "current: \"dry scalp\"\n"
+            "history: [{recency:\"MOST_RECENT\", user:\"shampoo\", bot_summary:\"Showing shampoos...\"}]\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"dry scalp shampoo\",\n"
+            "  \"category_group\": \"personal_care\",\n"
+            "  \"category_paths\": [\"personal_care/hair/shampoo\"],\n"
+            "  \"keywords\": [\"moisturizing\", \"anti-dandruff\"],\n"
+            "  \"size\": 15,\n"
+            "  \"reasoning\": \"Follow-up: concern 'dry scalp' combined with anchor 'shampoo'\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<example type=\"generic_to_concrete_path\">\n"
+            "<input>\n"
+            "current: \"want sweet treats\"\n"
+            "history: []\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chocolates\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/sweet_treats/chocolates\"],\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"Refined generic 'sweet treats' to concrete 'chocolates' based on category_paths\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<example type=\"context_based_chai\">\n"
+            "<input>\n"
+            "current: \"want something to eat with chai\"\n"
+            "history: []\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"namkeen\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/light_bites/savory_namkeen\", \"f_and_b/food/biscuits_and_crackers/cookies\"],\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"Context 'with chai' mapped to multiple paths; using 2-3 concrete nouns for broader search surface\"\n"
+            "}\n"
+            "</output>\n"
+            "<note>Post-processing will expand q to 'namkeen, cookies' for better coverage</note>\n"
+            "</example>\n\n"
+            "<example type=\"carry_over_concrete\">\n"
+            "<input>\n"
+            "current: \"something under 100\"\n"
+            "history: [{recency:\"MOST_RECENT\", user:\"chips\", bot_summary:\"Showed chips results\"}]\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/light_bites/chips_and_crisps\"],\n"
+            "  \"price_max\": 100,\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"Follow-up: carried over concrete anchor 'chips' from history since topic unchanged\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<example type=\"health_aware_chips\">\n"
+            "<input>\n"
+            "current: \"chips\"\n"
+            "history: []\n"
+            "user_preferences: {}\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/light_bites/chips_and_crisps\"],\n"
+            "  \"dietary_terms\": [\"LOW SODIUM\"],\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"New query for chips; proactively suggesting LOW SODIUM for healthier alternatives\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<example type=\"health_aware_juice\">\n"
+            "<input>\n"
+            "current: \"fruit juice\"\n"
+            "history: []\n"
+            "user_preferences: {}\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"juice\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/refreshing_beverages/fruit_juices\"],\n"
+            "  \"dietary_terms\": [\"NO ADDED SUGAR\"],\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"Juice query; suggesting NO ADDED SUGAR for healthier beverage options\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<example type=\"health_aware_with_user_context\">\n"
+            "<input>\n"
+            "current: \"want healthy chocolates\"\n"
+            "history: []\n"
+            "user_preferences: {}\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chocolates\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/sweet_treats/chocolates\"],\n"
+            "  \"dietary_terms\": [\"LOW SUGAR\", \"ORGANIC\"],\n"
+            "  \"keywords\": [\"dark\"],\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"Health-focused query; suggesting LOW SUGAR + ORGANIC + 'dark' keyword for healthier chocolate options\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<example type=\"respect_user_explicit\">\n"
+            "<input>\n"
+            "current: \"vegan chips\"\n"
+            "history: []\n"
+            "user_preferences: {}\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/light_bites/chips_and_crisps\"],\n"
+            "  \"dietary_terms\": [\"VEGAN\"],\n"
+            "  \"keywords\": [\"crunchy\"],\n"
+            "  \"must_keywords\": [],\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"User explicitly requested vegan; respecting intent + inferred 'crunchy' for quality boost\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<example type=\"flavor_extraction_must\">\n"
+            "<input>\n"
+            "current: \"tomato ketchup\"\n"
+            "history: []\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"ketchup\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/spreads_and_condiments/ketchup_and_sauces\"],\n"
+            "  \"dietary_terms\": [],\n"
+            "  \"keywords\": [\"tangy\"],\n"
+            "  \"must_keywords\": [\"tomato\"],\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"Tomato variant required (must_keywords); 'tangy' for quality ranking (keywords)\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<example type=\"attribute_extraction_soft\">\n"
+            "<input>\n"
+            "current: \"baked chips\"\n"
+            "history: []\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"baked chips\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/light_bites/chips_and_crisps\"],\n"
+            "  \"dietary_terms\": [\"LOW SODIUM\"],\n"
+            "  \"keywords\": [\"baked\", \"light\"],\n"
+            "  \"must_keywords\": [],\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"Baked is preparation method (soft keyword); LOW SODIUM for health; 'light' inferred\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<example type=\"combined_hard_soft\">\n"
+            "<input>\n"
+            "current: \"crispy banana chips\"\n"
+            "history: []\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"banana chips\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/light_bites/chips_and_crisps\"],\n"
+            "  \"dietary_terms\": [],\n"
+            "  \"keywords\": [\"crispy\"],\n"
+            "  \"must_keywords\": [\"banana\"],\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"Banana is flavor variant (must filter); crispy is texture (soft ranking boost)\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<example type=\"health_context_keywords\">\n"
+            "<input>\n"
+            "current: \"healthy juice\"\n"
+            "history: []\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"juice\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/refreshing_beverages/fruit_juices\"],\n"
+            "  \"dietary_terms\": [\"NO ADDED SUGAR\"],\n"
+            "  \"keywords\": [\"fresh\", \"natural\"],\n"
+            "  \"must_keywords\": [],\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"Health-focused juice query; NO ADDED SUGAR + fresh/natural keywords for quality ranking\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            "<contrastive_examples>\n"
+            "❌ INCORRECT:\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"gluten free noodles under 100\",\n"
+            "  \"dietary_terms\": [],\n"
+            "  \"price_max\": null\n"
+            "}\n"
+            "Problem: Constraints in anchor instead of separate fields\n\n"
+            "✓ CORRECT:\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"noodles\",\n"
+            "  \"dietary_terms\": [\"GLUTEN FREE\"],\n"
+            "  \"price_max\": 100\n"
+            "}\n\n"
+            "❌ INCORRECT:\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"category_group\": \"snacks\"\n"
+            "}\n"
+            "Problem: Invalid category_group (must use enum)\n\n"
+            "✓ CORRECT:\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"category_group\": \"f_and_b\"\n"
+            "}\n\n"
+            "❌ INCORRECT (Generic Anchor with Specific Paths):\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"sweet treats\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/sweet_treats/chocolates\"]\n"
+            "}\n"
+            "Problem: Generic anchor when category_paths clearly indicates \"chocolates\"\n\n"
+            "✓ CORRECT:\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chocolates\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/sweet_treats/chocolates\"]\n"
+            "}\n\n"
+            "❌ INCORRECT (Context Query with Generic Anchor):\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"snacks\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/light_bites/savory_namkeen\"]\n"
+            "}\n"
+            "Problem: Should derive \"namkeen\" from the specific category_path\n\n"
+            "✓ CORRECT:\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"namkeen\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/light_bites/savory_namkeen\"]\n"
+            "}\n\n"
+            "❌ INCORRECT (Missed Carry-Over):\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"items\",\n"
+            "  \"category_paths\": [\"f_and_b/food/light_bites/chips_and_crisps\"],\n"
+            "  \"price_max\": 50\n"
+            "}\n"
+            "Context: Follow-up after user searched \"chips\"\n"
+            "Problem: Should reuse concrete \"chips\" from history\n\n"
+            "✓ CORRECT:\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"category_paths\": [\"f_and_b/food/light_bites/chips_and_crisps\"],\n"
+            "  \"price_max\": 50\n"
+            "}\n\n"
+            "❌ INCORRECT (Missed Health Suggestion):\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"dietary_terms\": [],\n"
+            "  \"keywords\": []\n"
+            "}\n"
+            "Problem: No health-oriented suggestion when user hasn't specified dietary needs\n\n"
+            "✓ CORRECT:\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"dietary_terms\": [\"LOW SODIUM\"],\n"
+            "  \"reasoning\": \"Proactively suggesting LOW SODIUM for healthier chips\"\n"
+            "}\n\n"
+            "❌ INCORRECT (Over-Suggesting):\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chocolates\",\n"
+            "  \"dietary_terms\": [\"LOW SUGAR\", \"ORGANIC\", \"VEGAN\", \"GLUTEN FREE\"],\n"
+            "}\n"
+            "Problem: Too many suggestions (max 2 unless user explicitly requests)\n\n"
+            "✓ CORRECT:\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chocolates\",\n"
+            "  \"dietary_terms\": [\"LOW SUGAR\"],\n"
+            "  \"reasoning\": \"Suggesting LOW SUGAR as primary health concern for chocolates\"\n"
+            "}\n\n"
+            "❌ INCORRECT (Overriding User Intent):\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"dietary_terms\": [\"VEGAN\", \"LOW SODIUM\"],\n"
+            "}\n"
+            "Context: User said \"vegan chips\"\n"
+            "Problem: Added LOW SODIUM when user only asked for vegan\n\n"
+            "✓ CORRECT:\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"dietary_terms\": [\"VEGAN\"],\n"
+            "  \"reasoning\": \"Respecting user's explicit vegan requirement\"\n"
+            "}\n\n"
+            "❌ INCORRECT (Brand-Specific with Health Override):\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"brands\": [\"Lays\"],\n"
+            "  \"dietary_terms\": [\"LOW SODIUM\"]\n"
+            "}\n"
+            "Context: User said \"Lays chips\"\n"
+            "Problem: User wants specific brand taste; don't restrict with health filters\n\n"
+            "✓ CORRECT:\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"brands\": [\"Lays\"],\n"
+            "  \"dietary_terms\": [],\n"
+            "  \"keywords\": [],\n"
+            "  \"must_keywords\": [],\n"
+            "  \"reasoning\": \"Brand-specific query; respecting user's brand preference\"\n"
+            "}\n\n"
+            "❌ INCORRECT (Empty Keywords):\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"keywords\": [],\n"
+            "  \"must_keywords\": []\n"
+            "}\n"
+            "Problem: No keywords generated when common attributes exist for category\n\n"
+            "✓ CORRECT:\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"keywords\": [\"crunchy\"],\n"
+            "  \"must_keywords\": [],\n"
+            "  \"reasoning\": \"Inferred 'crunchy' as common quality attribute for chips\"\n"
+            "}\n\n"
+            "❌ INCORRECT (Flavor in Soft Keywords):\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"keywords\": [\"banana\"],\n"
+            "  \"must_keywords\": []\n"
+            "}\n"
+            "Problem: Flavor should be must_keywords (hard filter), not soft keyword\n\n"
+            "✓ CORRECT:\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"banana chips\",\n"
+            "  \"keywords\": [\"crunchy\"],\n"
+            "  \"must_keywords\": [\"banana\"],\n"
+            "  \"reasoning\": \"Banana is critical variant (must); crunchy is texture (soft boost)\"\n"
+            "}\n\n"
+            "❌ INCORRECT (Attribute in Hard Filter):\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"must_keywords\": [\"crispy\", \"crunchy\"],\n"
+            "  \"keywords\": []\n"
+            "}\n"
+            "Problem: Texture attributes too restrictive as must; should be soft keywords\n\n"
+            "✓ CORRECT:\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"chips\",\n"
+            "  \"must_keywords\": [],\n"
+            "  \"keywords\": [\"crispy\", \"crunchy\"],\n"
+            "  \"reasoning\": \"Texture attributes as soft keywords for ranking boost\"\n"
+            "}\n"
+            "</contrastive_examples>\n"
+            "</examples>\n\n"
+            "<output_instructions>\n"
+
+            "Generate the tool call with:\n"
+            "1. anchor_product_noun: Clean, CONCRETE product phrase (2-6 words)\n"
+            "   - If generic (snacks/treats/items) → derive from category_paths or history\n"
+            "   - NEVER return generic anchor when category_paths is specific\n"
+            "2. category_group: ONE of the enum values\n"
+            "3. category_paths: Specific paths that match the anchor\n"
+            "4. dietary_terms: THINK HEALTH-FIRST\n"
+            "   - If user hasn't specified → suggest 1-2 category-appropriate health terms\n"
+            "   - If user explicit (vegan, gluten free) → use ONLY user's terms\n"
+            "   - If user said \"healthy\" → amplify with 2 suggestions\n"
+            "   - If brand-specific query → NO health suggestions\n"
+            "   - MAX 2 suggestions to avoid over-restriction\n"
+            "5. must_keywords: EXTRACT FLAVOR/VARIANT TOKENS (MANDATORY STEP)\n"
+            "   - From query: banana, tomato, peri peri, dark, orange, etc.\n"
+            "   - From anchor if flavor embedded: \"banana chips\" → [\"banana\"]\n"
+            "   - If NO flavors/variants present → leave empty (don't force)\n"
+            "   - MAX 3 tokens\n"
+            "6. keywords: INFER QUALITY ATTRIBUTES (NEVER LEAVE EMPTY)\n"
+            "   - Explicit from query: crispy, baked, fresh, premium\n"
+            "   - Inferred for category: chips→\"crunchy\", juice→\"fresh\", chocolates→\"smooth\"\n"
+            "   - ALWAYS generate at least 1 keyword per query\n"
+            "   - MAX 4 tokens\n"
+            "7. Other filters: price_min/max, brands\n"
+            "8. reasoning: One sentence explaining anchor + dietary + keyword decisions\n"
+            "9. Validate against examples before finalizing\n\n"
+            "Remember:\n"
+            "- Anchor MUST be searchable, concrete noun (chips, not snacks)\n"
+            "- HEALTH-FIRST: Suggest relevant dietary terms by default\n"
+            "- KEYWORDS MANDATORY: Always generate at least 1 keyword (never leave empty)\n"
+            "- CLASSIFY CORRECTLY: Flavors→must_keywords, Attributes→keywords\n"
+            "- Extract constraints to separate fields\n"
+            "- Use MOST_RECENT history for follow-ups\n"
+            "- Refine generic anchors using category_paths\n"
+            "- Carry-over concrete anchors when topic unchanged\n"
+            "- Default to f_and_b when uncertain\n"
+            "</output_instructions>\n"
+        )
+
+    # ============================================================================
+    # PERSONAL CARE 2025 METHODS (Parallel to Food Path)
+    # ============================================================================
+
+    async def _generate_personal_care_es_params_2025(self, ctx: UserContext, current_text: str) -> Dict[str, Any]:
+        """2025 best-practices for Personal Care: schema-first, optimized prompt, forced tool, minimal post-process."""
+        session = ctx.session or {}
+        
+        # Determine follow-up
+        is_follow_up = bool(session.get("assessment", {}))
+        
+        # Build recency-weighted history
+        hist_limit = 10 if is_follow_up else 5
+        history = self._build_last_interactions(ctx, limit=hist_limit)
+        history_json = json.dumps(history, ensure_ascii=False)
+        
+        # Profile hints for personal care
+        profile_hints = {
+            "known_skin_type": session.get("user_skin_type"),
+            "known_hair_type": session.get("user_hair_type"),
+            "known_skin_concerns": session.get("user_skin_concerns", []),
+            "known_hair_concerns": session.get("user_hair_concerns", []),
+            "known_allergies": session.get("user_allergies", []),
+            "preferences": session.get("preferences"),
+        }
+        
+        # Build optimized prompt
+        prompt = self._build_personal_care_optimized_prompt(
+            current_text=current_text,
+            is_follow_up=is_follow_up,
+            history_json=history_json,
+            profile_hints=profile_hints,
+        )
+        
+        # Force tool call
+        resp = await self.anthropic.messages.create(
+            model=Cfg.LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            tools=[PERSONAL_CARE_ES_PARAMS_TOOL_2025],
+            tool_choice={"type": "tool", "name": "generate_personal_care_es_params"},
+            temperature=0,
+            max_tokens=800,
+        )
+        
+        tool_use = pick_tool(resp, "generate_personal_care_es_params")
+        params = _strip_keys(tool_use.input or {}) if tool_use else {}
+        
+        # Minimal normalization
+        try:
+            params["category_group"] = "personal_care"
+            
+            # Map anchor_product_noun to q
+            anchor = str(params.get("anchor_product_noun") or "").strip()
+            if anchor and not params.get("q"):
+                params["q"] = anchor
+            
+            # Clamp size (max 15 for personal care)
+            try:
+                s = int(params.get("size", 10) or 10)
+                params["size"] = max(1, min(15, s))
+            except Exception:
+                params["size"] = 10
+            
+            # Clean list fields
+            for lf in [
+                "brands", "skin_types", "hair_types", "efficacy_terms", "avoid_terms",
+                "avoid_ingredients", "keywords", "must_keywords", "product_types",
+                "skin_concerns", "hair_concerns", "category_paths"
+            ]:
+                if isinstance(params.get(lf), list):
+                    params[lf] = [str(x).strip() for x in params[lf] if str(x).strip()]
+            
+            # Ensure mandatory arrays exist (per schema requirements)
+            if not isinstance(params.get("efficacy_terms"), list) or not params.get("efficacy_terms"):
+                params["efficacy_terms"] = ["hydration"]
+            if not isinstance(params.get("keywords"), list) or not params.get("keywords"):
+                params["keywords"] = ["gentle"]
+            if not isinstance(params.get("must_keywords"), list):
+                params["must_keywords"] = []
+            if not isinstance(params.get("category_paths"), list) or not params.get("category_paths"):
+                params["category_paths"] = ["personal_care/skin/moisturizers"]
+        except Exception:
+            pass
+        
+        # Persistence to session (inspired by food path)
+        try:
+            dbg = session.setdefault("debug", {})
+            dbg["personal_care_es_params_raw"] = params
+            dbg["last_skin_search_params"] = {
+                k: params.get(k)
+                for k in [
+                    "q", "anchor_product_noun", "category_group", "category_paths",
+                    "price_min", "price_max", "brands", "skin_types", "hair_types",
+                    "efficacy_terms", "avoid_terms", "avoid_ingredients", "keywords",
+                    "must_keywords", "product_types", "skin_concerns", "hair_concerns", "size"
+                ]
+            }
+            import datetime
+            dbg["last_skin_params_updated_at"] = datetime.datetime.utcnow().isoformat()
+            
+            # Promote to slots (merge logic for follow-ups handled by caller)
+            session["category_group"] = "personal_care"
+            if params.get("category_paths"):
+                session["category_paths"] = params.get("category_paths")
+                session["category_path"] = (params.get("category_paths") or [None])[0]
+            session["brands"] = params.get("brands") or []
+            session["price_min"] = params.get("price_min")
+            session["price_max"] = params.get("price_max")
+            
+            # PC-specific slots
+            session["skin_types_slot"] = params.get("skin_types") or []
+            session["hair_types_slot"] = params.get("hair_types") or []
+            session["efficacy_terms_slot"] = params.get("efficacy_terms") or []
+            session["avoid_terms_slot"] = params.get("avoid_terms") or []
+            session["pc_keywords_slot"] = params.get("keywords") or []
+            session["pc_must_keywords_slot"] = params.get("must_keywords") or []
+            
+            ctx.session = session
+        except Exception:
+            pass
+        
+        # Essential logging (clean, structured)
+        try:
+            import os
+            show_logs = os.getenv("ONLY_LLM2_OUTPUTS", "false").lower() not in {"1", "true", "yes", "on"}
+            if show_logs or True:  # Always show PC LLM outputs
+                print(
+                    f"CORE:PC_LLM2_OUT | q='{params.get('q')}' | anchor='{params.get('anchor_product_noun')}' | "
+                    f"paths={params.get('category_paths')} | brands={params.get('brands')} | "
+                    f"price=({params.get('price_min')},{params.get('price_max')}) | types={params.get('product_types')} | "
+                    f"skin_types={params.get('skin_types')} | hair_types={params.get('hair_types')} | "
+                    f"efficacy={params.get('efficacy_terms')} | avoid={params.get('avoid_terms')} | "
+                    f"keywords={params.get('keywords')} | must={params.get('must_keywords')} | "
+                    f"concerns_skin={params.get('skin_concerns')} | concerns_hair={params.get('hair_concerns')} | "
+                    f"size={params.get('size')}"
+                )
+        except Exception:
+            pass
+        
+        return params
+
+    def _build_personal_care_optimized_prompt(
+        self,
+        *,
+        current_text: str,
+        is_follow_up: bool,
+        history_json: str,
+        profile_hints: Dict[str, Any],
+    ) -> str:
+        """Optimized 2025 prompt for Personal Care (parallels food path structure)."""
+        
+        profile_str = json.dumps(profile_hints, ensure_ascii=False)
+        
+        return (
+            # Task definition
+            "<task>\n"
+            "Extract personal care product search parameters via the generate_personal_care_es_params tool.\n"
+            "Goal: Convert natural language queries into structured Elasticsearch parameters for skin/hair products.\n"
+            "</task>\n\n"
+            
+            # Context
+            f"<context>\n"
+            f"FOLLOW_UP: {is_follow_up}\n"
+            f"HISTORY: {history_json}\n"
+            f"PROFILE_HINTS: {profile_str}\n"
+            f"</context>\n\n"
+            
+            f"<current_query>{current_text}</current_query>\n\n"
+            
+            # Reasoning steps
+            "<reasoning_steps>\n"
+            "1. Identify the product type (shampoo, face wash, moisturizer, serum, etc.)\n"
+            "2. Detect skin/hair type signals (oily, dry, sensitive, curly, frizzy, etc.)\n"
+            "3. Extract efficacy needs (anti-dandruff, hydration, brightening, anti-aging, etc.)\n"
+            "4. Identify concerns (acne, pigmentation, hair fall, split ends, etc.)\n"
+            "5. Detect clean-ingredient preferences (sulfate-free, paraben-free, fragrance-free, etc.)\n"
+            "6. Extract quality attributes (keywords) and variants (must_keywords)\n"
+            "7. Map to category_paths in personal_care taxonomy\n"
+            "8. Handle follow-ups by merging with history context\n"
+            "</reasoning_steps>\n\n"
+            
+            # Critical rules (7 priority rules like food path)
+            "<critical_rules>\n"
+            "PRIORITY 1 - Category Group:\n"
+            "- ALWAYS set category_group='personal_care'\n"
+            "- Never use f_and_b for personal care queries\n\n"
+            
+            "PRIORITY 2 - Anchor Product Noun:\n"
+            "- Use concrete, searchable product nouns (shampoo, face wash, moisturizer, serum, body lotion)\n"
+            "- For generic queries ('something for my dry skin'), infer 2-3 relevant products from context\n"
+            "- Join multiple products with commas in q field: 'moisturizer, face cream, lotion'\n"
+            "- Carry over concrete anchors from history if topic unchanged\n"
+            "- NEVER use vague terms like 'product', 'item', 'thing'\n\n"
+            
+            "PRIORITY 3 - Category Paths:\n"
+            "- Choose 1-2 specific paths from personal_care taxonomy\n"
+            "- Examples: 'personal_care/hair/shampoo', 'personal_care/skin/moisturizers'\n"
+            "- Align with anchor noun and detected concerns\n"
+            "- For generic queries, select paths matching inferred products\n\n"
+            
+            "PRIORITY 4 - Skin/Hair Type Detection:\n"
+            "- Explicit signals: 'oily skin' → [\"oily\"], 'dry hair' → [\"dry\"]\n"
+            "- Implicit signals: 'T-zone shine' → [\"combination\"], 'flaky scalp' → [\"dry\"]\n"
+            "- Problem-based inference: 'acne' → [\"oily\"], 'tight feeling' → [\"dry\", \"sensitive\"]\n"
+            "- Use profile_hints as fallback, override with current query signals\n"
+            "- Enums: skin_types=[oily, dry, combination, sensitive, normal]\n"
+            "- Enums: hair_types=[dry, oily, normal, curly, straight, wavy, frizzy, thin, thick]\n\n"
+            
+            "PRIORITY 5 - Efficacy Terms (MANDATORY - NEVER EMPTY):\n"
+            "- Extract 2-5 desired benefits: anti-dandruff, hydration, brightening, nourishment, repair\n"
+            "- Map problems to efficacy: 'acne' → [\"acne control\"], 'dull skin' → [\"brightening\"]\n"
+            "- Default suggestions by category:\n"
+            "  * Shampoo: [\"hair care\", \"scalp health\"]\n"
+            "  * Face wash: [\"cleansing\", \"gentle\"]\n"
+            "  * Moisturizer: [\"hydration\", \"nourishment\"]\n"
+            "  * Serum: [\"targeted treatment\", \"absorption\"]\n"
+            "- ALWAYS provide at least 1 efficacy term (required by schema)\n\n"
+            
+            "PRIORITY 6 - Clean-Ingredient Awareness (avoid_terms):\n"
+            "- Populate when user signals sensitivity, clean beauty, or natural preference\n"
+            "- Common avoids: sulfates, parabens, silicones, mineral oil, fragrance, alcohol\n"
+            "- Triggers: 'sensitive skin', 'chemical-free', 'natural', 'gentle', 'harsh'\n"
+            "- Be conservative - don't force avoids unless signaled\n"
+            "- Use enum values from schema\n\n"
+            
+            "PRIORITY 7 - Keywords & Must_Keywords (Mandatory):\n"
+            "- keywords (soft filters for reranking): Quality attributes\n"
+            "  * Explicit: gentle, nourishing, lightweight, rich, refreshing\n"
+            "  * Inferred by category: shampoo→\"nourishing\", face wash→\"gentle\", serum→\"lightweight\"\n"
+            "  * ALWAYS generate at least 1 keyword (required by schema)\n"
+            "  * MAX 4 keywords\n"
+            "- must_keywords (hard filters): Product variants or active ingredients\n"
+            "  * Examples: rose water, tea tree, niacinamide, vitamin C, aloe vera, charcoal\n"
+            "  * Only extract when explicitly mentioned or strongly implied\n"
+            "  * If not present → leave empty\n"
+            "  * MAX 3 must_keywords\n"
+            "</critical_rules>\n\n"
+            
+            # Examples (positive)
+            "<examples>\n"
+            "<example type=\"explicit_shampoo\">\n"
+            "<input>\n"
+            "current: \"anti-dandruff shampoo for oily scalp\"\n"
+            "history: []\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"shampoo\",\n"
+            "  \"category_group\": \"personal_care\",\n"
+            "  \"category_paths\": [\"personal_care/hair/shampoo\"],\n"
+            "  \"hair_types\": [\"oily\"],\n"
+            "  \"efficacy_terms\": [\"anti-dandruff\", \"scalp care\", \"oil control\"],\n"
+            "  \"keywords\": [\"cleansing\"],\n"
+            "  \"must_keywords\": [],\n"
+            "  \"size\": 10,\n"
+            "  \"reasoning\": \"Explicit shampoo for oily hair with anti-dandruff efficacy\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            
+            "<example type=\"generic_dry_skin\">\n"
+            "<input>\n"
+            "current: \"something for my dry skin\"\n"
+            "history: []\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"moisturizer\",\n"
+            "  \"q\": \"moisturizer, face cream, lotion\",\n"
+            "  \"category_group\": \"personal_care\",\n"
+            "  \"category_paths\": [\"personal_care/skin/moisturizers\", \"personal_care/skin/face_creams\"],\n"
+            "  \"skin_types\": [\"dry\"],\n"
+            "  \"efficacy_terms\": [\"hydration\", \"nourishment\"],\n"
+            "  \"keywords\": [\"rich\", \"nourishing\"],\n"
+            "  \"must_keywords\": [],\n"
+            "  \"size\": 10,\n"
+            "  \"reasoning\": \"Generic query for dry skin; inferred 3 concrete products in q for better coverage\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            
+            "<example type=\"clean_ingredient\">\n"
+            "<input>\n"
+            "current: \"gentle face wash without harsh chemicals\"\n"
+            "history: []\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"face wash\",\n"
+            "  \"category_group\": \"personal_care\",\n"
+            "  \"category_paths\": [\"personal_care/skin/face_wash\"],\n"
+            "  \"skin_types\": [\"sensitive\"],\n"
+            "  \"efficacy_terms\": [\"cleansing\", \"gentle care\"],\n"
+            "  \"avoid_terms\": [\"sulfates\", \"harsh chemicals\", \"fragrance\"],\n"
+            "  \"keywords\": [\"gentle\", \"mild\"],\n"
+            "  \"must_keywords\": [],\n"
+            "  \"size\": 10,\n"
+            "  \"reasoning\": \"Gentle face wash with clean-ingredient focus (sulfate-free, fragrance-free)\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            
+            "<example type=\"tea_tree_variant\">\n"
+            "<input>\n"
+            "current: \"tea tree shampoo for dandruff\"\n"
+            "history: []\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"shampoo\",\n"
+            "  \"category_group\": \"personal_care\",\n"
+            "  \"category_paths\": [\"personal_care/hair/shampoo\"],\n"
+            "  \"efficacy_terms\": [\"anti-dandruff\", \"scalp care\"],\n"
+            "  \"keywords\": [\"cleansing\"],\n"
+            "  \"must_keywords\": [\"tea tree\"],\n"
+            "  \"size\": 10,\n"
+            "  \"reasoning\": \"Explicit tea tree variant in must_keywords for hard filtering\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n\n"
+            
+            "<example type=\"followup_price\">\n"
+            "<input>\n"
+            "current: \"under 500\"\n"
+            "history: [{\"recency\":\"MOST_RECENT\", \"user\":\"vitamin C serum\", \"bot_summary\":\"Showed serum results\"}]\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"serum\",\n"
+            "  \"category_group\": \"personal_care\",\n"
+            "  \"category_paths\": [\"personal_care/skin/serums\"],\n"
+            "  \"efficacy_terms\": [\"brightening\", \"targeted treatment\"],\n"
+            "  \"keywords\": [\"lightweight\"],\n"
+            "  \"must_keywords\": [\"vitamin c\"],\n"
+            "  \"price_max\": 500,\n"
+            "  \"size\": 10,\n"
+            "  \"reasoning\": \"Follow-up: carried over vitamin C serum anchor with price constraint\"\n"
+            "}\n"
+            "</output>\n"
+            "</example>\n"
+            "</examples>\n\n"
+            
+            # Contrastive examples (what NOT to do)
+            "<contrastive_examples>\n"
+            "<example type=\"vague_anchor_BAD\">\n"
+            "<input>current: \"something for acne\"</input>\n"
+            "<output_BAD>{\"anchor_product_noun\": \"product\", ...}</output_BAD>\n"
+            "<output_GOOD>{\"anchor_product_noun\": \"face wash\", \"q\": \"face wash, acne cream, spot treatment\", ...}</output_GOOD>\n"
+            "<reason>Never use generic 'product'; infer concrete products from concern</reason>\n"
+            "</example>\n\n"
+            
+            "<example type=\"empty_efficacy_BAD\">\n"
+            "<input>current: \"shampoo\"</input>\n"
+            "<output_BAD>{\"efficacy_terms\": [], ...}</output_BAD>\n"
+            "<output_GOOD>{\"efficacy_terms\": [\"hair care\", \"cleansing\"], \"keywords\": [\"nourishing\"], ...}</output_GOOD>\n"
+            "<reason>efficacy_terms and keywords are MANDATORY (schema requirement)</reason>\n"
+            "</example>\n\n"
+            
+            "<example type=\"wrong_category_group_BAD\">\n"
+            "<input>current: \"moisturizer\"</input>\n"
+            "<output_BAD>{\"category_group\": \"f_and_b\", ...}</output_BAD>\n"
+            "<output_GOOD>{\"category_group\": \"personal_care\", ...}</output_GOOD>\n"
+            "<reason>Personal care products ALWAYS use 'personal_care' category_group</reason>\n"
+            "</example>\n"
+            "</contrastive_examples>\n\n"
+            
+            # Output instructions
+            "<output_instructions>\n"
+            "Return ONLY a tool call to generate_personal_care_es_params.\n"
+            "Required fields:\n"
+            "1. anchor_product_noun: Concrete product (2-6 words)\n"
+            "2. category_group: 'personal_care'\n"
+            "3. category_paths: 1-2 paths (e.g., 'personal_care/skin/moisturizers')\n"
+            "4. efficacy_terms: 2-5 benefits (MANDATORY, never empty)\n"
+            "5. keywords: 1-4 quality attributes (MANDATORY, never empty)\n"
+            "6. must_keywords: 0-3 variants/actives (only when explicit)\n"
+            "7. skin_types / hair_types: Detected from query or profile\n"
+            "8. avoid_terms: Only when clean-ingredient signals present\n"
+            "9. price_min/max, brands: Extract if mentioned\n"
+            "10. size: Max 15 for personal care\n"
+            "11. reasoning: One sentence explaining anchor + efficacy + clean-ingredient decisions\n\n"
+            
+            "Decision flowchart:\n"
+            "1. Extract anchor noun → if generic, infer 2-3 products → join in q\n"
+            "2. Detect skin/hair types → map signals to enums\n"
+            "3. Extract efficacy (ALWAYS ≥1) → map problems to benefits\n"
+            "4. Generate keywords (ALWAYS ≥1) → infer quality attributes\n"
+            "5. Extract must_keywords (if present) → variants/actives only\n"
+            "6. Check for clean-ingredient signals → populate avoid_terms\n"
+            "7. Map to category_paths → align with anchor\n"
+            "8. Write reasoning → summarize key decisions\n"
+            "9. Validate against examples → finalize output\n\n"
+            
+            "Remember:\n"
+            "- Anchor MUST be searchable, concrete (shampoo, not 'haircare product')\n"
+            "- EFFICACY & KEYWORDS MANDATORY: Always generate at least 1 of each\n"
+            "- CLASSIFY CORRECTLY: Variants→must_keywords, Attributes→keywords\n"
+            "- CLEAN-INGREDIENT AWARE: Populate avoid_terms when signaled\n"
+            "- Use profile_hints as soft priors, override with current query\n"
+            "- For follow-ups, merge with MOST_RECENT history context\n"
+            "- Default size=10 for personal care (max 15)\n"
+            "</output_instructions>\n"
+        )
+
     async def _try_food_es_extraction(self, ctx: UserContext, current_text: str, convo_history: list[dict[str, str]], is_follow_up: bool) -> Dict[str, Any]:
         """Food-specific extraction using extract_search_parameters tool and adapter mapping.
         Backward-compatible: returns our standard params dict (q, category_paths, price_min/max, dietary_*, keywords, etc.)."""
@@ -3276,9 +4817,26 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
     async def generate_skin_es_params(self, ctx: UserContext) -> Dict[str, Any]:
         """Skin-specific ES param extraction using history and personal care taxonomy."""
         try:
+            # Fast-path: Use 2025 unified personal care generator when there is current text
             session = ctx.session or {}
+            current_text = str(
+                getattr(ctx, "current_user_text", "")
+                or session.get("current_user_text")
+                or session.get("last_user_message")
+                or ""
+            ).strip()
+            
+            if current_text:
+                try:
+                    params_2025 = await self._generate_personal_care_es_params_2025(ctx, current_text)
+                    if isinstance(params_2025, dict) and params_2025.get("q"):
+                        return params_2025
+                except Exception as e:
+                    print(f"CORE:PC_2025_FALLBACK | {e}")
+                    # Fall through to legacy path
+            
+            # Legacy path (backward compatibility)
             ask_only_mode = bool(getattr(Cfg, "USE_ASSESSMENT_FOR_ASK_ONLY", False))
-            current_text = str(getattr(ctx, "current_user_text", "") or session.get("current_user_text") or session.get("last_user_message") or "").strip()
             # Determine follow-up via LLM1 classifier (no deterministic rules)
             try:
                 fu_res = await self.classify_follow_up(current_text, ctx)
@@ -3300,32 +4858,9 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
                 "preferences": session.get("preferences")
             }
 
-            # Rich input logging
+            # Essential logging only
             try:
-                print(
-                    f"CORE:SKIN_CTX | follow_up={is_follow_up} | hist={len(convo_history)} | "
-                    f"cand_subcats={len(candidate_subcats)} | intent='{product_intent}' | current='{current_text[:80]}'"
-                )
-                # Compact history dump
-                dump = [
-                    {"i": i + 1, "user": (h.get("user_query", "") or "")[:80], "bot": (h.get("bot_reply", "") or "")[:100]}
-                    for i, h in enumerate(convo_history)
-                ]
-                print(f"CORE:SKIN_HIST_DUMP | {json.dumps(dump, ensure_ascii=False)}")
-                # Taxonomy summary
-                pc = skin_taxonomy.get("personal_care") if isinstance(skin_taxonomy, dict) else None
-                pc_keys = list(pc.keys())[:5] if isinstance(pc, dict) else []
-                print(
-                    f"CORE:SKIN_TAXO | has_pc={'yes' if pc else 'no'} | pc_top_keys={pc_keys}"
-                )
-                print(f"CORE:SKIN_PROFILE | {json.dumps(profile_hints, ensure_ascii=False)}")
-                # Expected output keys
-                expected = [
-                    "q","category_group","subcategory","category_paths","brands","price_min","price_max",
-                    "keywords","phrase_boosts","size","anchor_product_noun","skin_types","skin_concerns",
-                    "hair_types","hair_concerns","avoid_ingredients","product_types","prioritize_concerns","min_review_count"
-                ]
-                print(f"CORE:SKIN_EXPECT | keys={expected}")
+                print(f"CORE:SKIN_LEGACY | follow_up={is_follow_up} | current='{current_text[:60]}'")
             except Exception:
                 pass
 
@@ -3355,7 +4890,7 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
                 "- Always include arrays even if empty; do not omit keys.\n"
             )
 
-            print(f"CORE:SKIN_LLM_IN | follow_up={is_follow_up} | interactions={len(convo_history)} | current='{current_text[:60]}'")
+            # LLM call (no verbose logging)
 
             # Use dual tools: initial vs follow-up schemas per provided design
             tool_set = [FOLLOWUP_SKIN_PARAMS_TOOL] if is_follow_up else [INITIAL_SKIN_PARAMS_TOOL]
@@ -3371,19 +4906,7 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             tool_use = pick_tool(resp, tool_name)
             params = _strip_keys(tool_use.input or {}) if tool_use else {}
 
-            try:
-                keys = list(params.keys())
-                print(f"CORE:SKIN_LLM_OUT_KEYS | keys={keys}")
-                expected = [
-                    "q","category_group","subcategory","category_paths","brands","price_min","price_max",
-                    "keywords","phrase_boosts","size","anchor_product_noun","skin_types","skin_concerns",
-                    "avoid_ingredients","product_types","prioritize_concerns","min_review_count"
-                ]
-                missing = [k for k in expected if k not in params]
-                extra = [k for k in keys if k not in expected]
-                print(f"CORE:SKIN_KEYS_CHECK | missing={missing} | extra={extra}")
-            except Exception:
-                pass
+            # Essential output logging only
 
             # Normalize and clamp
             try:
@@ -3419,7 +4942,7 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
                         norm_paths.append(s)
                 if norm_paths:
                     params["category_paths"] = norm_paths
-                    print(f"CORE:SKIN_PATHS_NORM | {norm_paths}")
+                    # Path normalization (no verbose logging)
             except Exception:
                 pass
 
@@ -3449,7 +4972,8 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
                 if not params.get('avoid_ingredients') and ctx.session.get('user_allergies'):
                     sticky.append("avoid_ingredients←profile")
                 if sticky:
-                    print(f"CORE:SKIN_STICKY | will_fill={sticky}")
+                    # Sticky profile logic (no verbose logging)
+                    pass
             except Exception:
                 pass
 

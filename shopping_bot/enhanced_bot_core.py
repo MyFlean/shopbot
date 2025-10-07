@@ -285,6 +285,30 @@ class EnhancedShoppingBotCore:
             "phase": "active",  # FIX: Explicit phase tracking
             "started_at": datetime.now().isoformat(),
         }
+        
+        # Seed canonical query and clear stale params
+        try:
+            ctx.session["canonical_query"] = query
+            ctx.session["last_query"] = query
+            dbg = ctx.session.setdefault("debug", {})
+            dbg["last_search_params"] = {}
+        except Exception:
+            pass
+        
+        # FIX: Clear product-specific slots to prevent pollution across product switches
+        try:
+            product_slots_to_clear = [
+                "dietary_requirements", "preferences", "brands",
+                "price_min", "price_max", "category_group", "category_paths", "category_path",
+                # PC-specific slots
+                "skin_types_slot", "hair_types_slot", "efficacy_terms_slot", 
+                "avoid_terms_slot", "pc_keywords_slot", "pc_must_keywords_slot"
+            ]
+            for slot_key in product_slots_to_clear:
+                ctx.session.pop(slot_key, None)
+            log.info(f"PRODUCT_SLOTS_CLEARED | user={ctx.user_id} | slots={product_slots_to_clear}")
+        except Exception:
+            pass
 
         log.info(f"ASSESSMENT_INITIALIZED | user={ctx.user_id} | phase=active")
         self.ctx_mgr.save_context(ctx)

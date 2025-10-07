@@ -378,17 +378,17 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     # to noisy brand mentions in text. If we need brand handling later, prefer exact keyword
     # fields (e.g., brand.keyword) and a carefully normalized brand map.
 
-    # Dietary labels with boost
+    # Dietary labels with boost (fuzzy enabled for variant tolerance)
     dietary_labels = p.get("dietary_labels") or p.get("dietary_terms") or []
     if isinstance(dietary_labels, list) and dietary_labels:
         for label in dietary_labels:
             if label and str(label).strip():
                 shoulds.append({
-            "match": {
-                "package_claims.dietary_labels": {
-                            "query": str(label).strip(),
-                            "boost": 3.0
-                        }
+                    "multi_match": {
+                        "query": str(label).strip(),
+                        "fields": ["package_claims.dietary_labels^3.0"],
+                        "type": "best_fields",
+                        "fuzziness": "AUTO"
                     }
                 })
 
@@ -446,7 +446,7 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 }
             })
 
-    # 3b) Hard must keywords (e.g., flavor tokens like 'orange') to avoid mismatched variants
+    # 3b) Hard must keywords with fuzzy tolerance (e.g., flavor tokens like 'orange', 'peri peri')
     must_keywords = p.get("must_keywords") or []
     if isinstance(must_keywords, list) and must_keywords:
         for kw in must_keywords[:3]:
@@ -455,8 +455,9 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 musts.append({
                     "multi_match": {
                         "query": kw_str,
-                        "type": "phrase",
+                        "type": "best_fields",
                         "fields": ["name^6", "description^2", "combined_text"],
+                        "fuzziness": "AUTO"
                     }
                 })
 
@@ -840,7 +841,14 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 "query": {
                     "bool": {
                         "must": [
-                            {"term": {"skin_compatibility.skin_type": st_s}},
+                            {
+                                "multi_match": {
+                                    "query": st_s,
+                                    "fields": ["skin_compatibility.skin_type^3.0"],
+                                    "fuzziness": "AUTO",
+                                    "type": "best_fields"
+                                }
+                            },
                             {"range": {"skin_compatibility.sentiment_score": {"gte": 0.6}}},
                             {"range": {"skin_compatibility.confidence_score": {"gte": 0.3}}},
                         ]
@@ -877,7 +885,17 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
             "query": {
                 "bool": {
                     "must": (
-                        [{"terms": {"efficacy.aspect_name": efficacy_terms}}, {"range": {"efficacy.sentiment_score": {"gte": 0.7}}}]
+                        [
+                            {
+                                "multi_match": {
+                                    "query": " ".join(efficacy_terms),
+                                    "fields": ["efficacy.aspect_name^3.0"],
+                                    "fuzziness": "AUTO",
+                                    "type": "best_fields"
+                                }
+                            },
+                            {"range": {"efficacy.sentiment_score": {"gte": 0.7}}}
+                        ]
                         if efficacy_terms else [{"match_all": {}}]
                     )
                 }

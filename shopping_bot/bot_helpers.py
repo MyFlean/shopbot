@@ -204,6 +204,14 @@ def store_user_answer(text: str, assessment: Dict[str, Any], ctx: UserContext) -
         return
 
     log.info(f"STORE_ANSWER | user={ctx.user_id} | slot={target}")
+    
+    # Mark as fulfilled
+    assessment["fulfilled"] = assessment.get("fulfilled", []) + [target]
+    
+    # FIX: Track user-provided slots for merge logic (prevent LLM overwrite)
+    assessment.setdefault("user_provided_slots", [])
+    if target not in assessment["user_provided_slots"]:
+        assessment["user_provided_slots"].append(target)
 
     try:
         slot = UserSlot(target)

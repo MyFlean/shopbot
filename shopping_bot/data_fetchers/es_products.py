@@ -12,6 +12,7 @@ Enhanced with:
 from __future__ import annotations
 
 import asyncio
+from logging import log
 import os
 import re
 from typing import Any, Dict, List, Optional
@@ -1472,12 +1473,38 @@ async def build_search_params(ctx) -> Dict[str, Any]:
     # Branch for personal care/skin domain to use skin-specific planner
     try:
         domain = str((ctx.session or {}).get("domain") or "").strip()
+        
+        # ✅ SAFETY CHECK: Validate domain matches current query intent
         if domain == "personal_care":
-            from ..llm_service import LLMService  # type: ignore
-            llm_service = LLMService()
-            skin_params = await llm_service.generate_skin_es_params(ctx)
-            if isinstance(skin_params, dict) and skin_params.get("q"):
-                final_params: Dict[str, Any] = dict(skin_params)
+            current_text = _get_current_user_text(ctx)
+            
+            # Heuristic: check if current query has food signals
+            food_signals = [
+                "chips", "snack", "ketchup", "juice", "milk", "biscuit", 
+                "cookie", "chocolate", "bread", "preservative", "organic",
+                "sugar", "salt", "sodium", "ingredient", "flavor", "sauce",
+                "pickle", "jam", "butter", "cheese", "pasta", "noodle"
+            ]
+            
+            query_lower = current_text.lower()
+            is_likely_food = any(signal in query_lower for signal in food_signals)
+            
+            # If query seems food-related, reset stale personal_care domain
+            if is_likely_food:
+                
+                log.info(
+                    f"DOMAIN_MISMATCH_DETECTED | user={ctx.user_id} | "
+                    f"stored_domain={domain} | query='{current_text}' | "
+                    f"action=resetting_domain"
+                )
+                # Clear stale domain
+                ctx.session.pop("domain", None)
+                ctx.session.pop("domain_subcategory", None)
+                domain = ""  # Force fallback to unified flow
+            else:
+                # Domain validation passed, proceed with personal care flow
+                from ..llm_service import LLMService
+                llm_service = LLMService()
                 # Ensure product_intent present
                 try:
                     final_params.setdefault("product_intent", str(ctx.session.get("product_intent") or "show_me_options"))

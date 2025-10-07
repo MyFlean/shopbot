@@ -399,21 +399,25 @@ class ShoppingBotCore:
                     # Not a follow-up → build domain-aware asks (up to 4 for personal_care, 2 for f_and_b)
                     # FIX: Clear product-specific slots BEFORE creating new assessment
                     try:
+                        # ✅ Clear slots early in fastpath to prevent pollution
                         product_slots_to_clear = [
                             "dietary_requirements", "preferences", "brands",
                             "price_min", "price_max", "category_group", "category_paths", "category_path",
+                            "domain",  # CRITICAL: Clear domain to prevent wrong routing
+                            "domain_subcategory",
                             # PC-specific slots
                             "skin_types_slot", "hair_types_slot", "efficacy_terms_slot", 
                             "avoid_terms_slot", "pc_keywords_slot", "pc_must_keywords_slot"
                         ]
                         for slot_key in product_slots_to_clear:
                             ctx.session.pop(slot_key, None)
-                        # Also clear debug search params
-                        ctx.session["canonical_query"] = query
-                        ctx.session["last_query"] = query
-                        dbg = ctx.session.setdefault("debug", {})
-                        dbg["last_search_params"] = {}
                         log.info(f"PRODUCT_SLOTS_CLEARED_FASTPATH | user={ctx.user_id} | slots={product_slots_to_clear}")
+                        
+                        # Set NEW domain from current classification (overrides stale value)
+                        new_domain = str(combined.get("domain") or "").strip()
+                        if new_domain:
+                            ctx.session["domain"] = new_domain
+                            log.info(f"DOMAIN_SET_FROM_CLASSIFY | user={ctx.user_id} | domain={new_domain}")
                     except Exception:
                         pass
                     
@@ -565,10 +569,13 @@ class ShoppingBotCore:
             product_slots_to_clear = [
                 "dietary_requirements", "preferences", "brands",
                 "price_min", "price_max", "category_group", "category_paths", "category_path",
+                "domain",  # ✅ FIX: Clear domain to prevent wrong routing
+                "domain_subcategory",  # ✅ Also clear subcategory hints
                 # PC-specific slots
                 "skin_types_slot", "hair_types_slot", "efficacy_terms_slot", 
                 "avoid_terms_slot", "pc_keywords_slot", "pc_must_keywords_slot"
             ]
+
             for slot_key in product_slots_to_clear:
                 ctx.session.pop(slot_key, None)
             log.info(f"PRODUCT_SLOTS_CLEARED | user={ctx.user_id} | slots={product_slots_to_clear}")

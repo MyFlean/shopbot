@@ -383,7 +383,7 @@ class ShoppingBotCore:
                     # Follow-up detection from combined tool
                     is_follow_up = bool(combined.get("is_follow_up", False))
                     if is_follow_up:
-                        # No asks; ensure ES fetch downstream
+                        # Follow-up within same product - don't clear slots, continue
                         ctx.session["assessment"] = {
                             "original_query": query,
                             "intent": map_leaf_to_query_intent(l3).value,
@@ -397,6 +397,26 @@ class ShoppingBotCore:
                         return await self._continue_assessment(query, ctx)
 
                     # Not a follow-up → build domain-aware asks (up to 4 for personal_care, 2 for f_and_b)
+                    # FIX: Clear product-specific slots BEFORE creating new assessment
+                    try:
+                        product_slots_to_clear = [
+                            "dietary_requirements", "preferences", "brands",
+                            "price_min", "price_max", "category_group", "category_paths", "category_path",
+                            # PC-specific slots
+                            "skin_types_slot", "hair_types_slot", "efficacy_terms_slot", 
+                            "avoid_terms_slot", "pc_keywords_slot", "pc_must_keywords_slot"
+                        ]
+                        for slot_key in product_slots_to_clear:
+                            ctx.session.pop(slot_key, None)
+                        # Also clear debug search params
+                        ctx.session["canonical_query"] = query
+                        ctx.session["last_query"] = query
+                        dbg = ctx.session.setdefault("debug", {})
+                        dbg["last_search_params"] = {}
+                        log.info(f"PRODUCT_SLOTS_CLEARED_FASTPATH | user={ctx.user_id} | slots={product_slots_to_clear}")
+                    except Exception:
+                        pass
+                    
                     ask = combined.get("ask") or {}
                     domain_for_ask = str(combined.get("domain") or ctx.session.get("domain") or "").strip()
                     max_asks = 4 if domain_for_ask == "personal_care" else 2
@@ -537,6 +557,21 @@ class ShoppingBotCore:
             ctx.session["last_query"] = query
             dbg = ctx.session.setdefault("debug", {})
             dbg["last_search_params"] = {}
+        except Exception:
+            pass
+        
+        # FIX: Clear product-specific slots to prevent pollution across product switches
+        try:
+            product_slots_to_clear = [
+                "dietary_requirements", "preferences", "brands",
+                "price_min", "price_max", "category_group", "category_paths", "category_path",
+                # PC-specific slots
+                "skin_types_slot", "hair_types_slot", "efficacy_terms_slot", 
+                "avoid_terms_slot", "pc_keywords_slot", "pc_must_keywords_slot"
+            ]
+            for slot_key in product_slots_to_clear:
+                ctx.session.pop(slot_key, None)
+            log.info(f"PRODUCT_SLOTS_CLEARED | user={ctx.user_id} | slots={product_slots_to_clear}")
         except Exception:
             pass
 

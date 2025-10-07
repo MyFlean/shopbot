@@ -316,9 +316,12 @@ def configure_logging(level: LogLevel = LogLevel.STANDARD,
     if not format_string:
         format_string = '%(asctime)s | %(message)s'
     
-    # Configure root logger
+    # Configure root logger (support hard silence when ONLY_LLM2_OUTPUTS=true)
+    import os
+    only_llm2 = os.getenv("ONLY_LLM2_OUTPUTS", "false").lower() in {"1", "true", "yes", "on"}
+    root_level = logging.CRITICAL if only_llm2 else (logging.DEBUG if level == LogLevel.DEBUG else logging.INFO)
     logging.basicConfig(
-        level=logging.DEBUG if level == LogLevel.DEBUG else logging.INFO,
+        level=root_level,
         format=format_string,
         datefmt='%H:%M:%S',
         handlers=[logging.StreamHandler(sys.stdout)]
@@ -336,4 +339,5 @@ def configure_logging(level: LogLevel = LogLevel.STANDARD,
     for smart_logger in _loggers.values():
         smart_logger.set_level(level)
     
-    print(f"🔧 Smart logging configured at {level.name} level")
+    if not (os.getenv("ONLY_LLM2_OUTPUTS", "false").lower() in {"1", "true", "yes", "on"}):
+        print(f"🔧 Smart logging configured at {level.name} level")

@@ -46,8 +46,8 @@ def map_fe_response_type(bot_resp_type: ResponseType, content: Dict[str, Any] | 
     if bot_resp_type == ResponseType.FINAL_ANSWER:
         c = content or {}
         # Check for support response type from LLM
-        if c.get("response_type") == "support":
-            return "support"
+        if str(c.get("response_type")).strip().lower() in {"support", "support_related", "support_routing"} or bool(c.get("is_support_query")):
+            return "support_related"
         # If we have products or summary_message, it's a proper final_answer
         if c.get("products") or c.get("summary_message"):
             return "final_answer"
@@ -176,20 +176,20 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
                     }
             except Exception:
                 pass
+            try:
+                # Remove nested response_type to avoid duplication with top-level
+                c.pop("response_type", None)
+            except Exception:
+                pass
             return c
         
-        # Support response: return message with products array empty
-        if c.get("response_type") == "support":
-            return {
-                "summary_message": c.get("message", "Hello! Please contact support at 6388977169."),
-                "products": []
-            }
-        
-        # Fallback for backward compatibility when only a message is present
-        return {
-            "summary_message": c.get("message", ""),
-            "products": []
-        }
+        # Keep content unchanged for non-structured final answers (including support cases),
+        # but drop nested response_type to avoid duplication with the top-level.
+        try:
+            c.pop("response_type", None)
+        except Exception:
+            pass
+        return c
 
     # Image-IDs response: keep ux_response with product_ids and summary_message
     if bot_resp_type == ResponseType.IMAGE_IDS:

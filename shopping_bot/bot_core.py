@@ -373,8 +373,10 @@ class ShoppingBotCore:
                     if not is_prod:
                         simple = combined.get("simple_response") or {}
                         msg = simple.get("message") or "I can help you with shopping queries. What are you looking for?"
+                        # Preserve full response dict including response_type and is_support_query for support detection
+                        content = simple if simple else {"message": msg}
                         self.ctx_mgr.save_context(ctx)
-                        return BotResponse(ResponseType.FINAL_ANSWER, {"message": msg})
+                        return BotResponse(ResponseType.FINAL_ANSWER, content)
 
                     # Product-related → set product_intent (optional, default to show_me_options)
                     p_intent = str(combined.get("product_intent") or "show_me_options")

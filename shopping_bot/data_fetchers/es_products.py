@@ -200,34 +200,45 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     category_path = p.get("category_path") or p.get("cat_path")
     category_paths = p.get("category_paths") if isinstance(p.get("category_paths"), list) else []
     normalized_paths: List[str] = []
-    def _normalize_rel_path(path_str: str) -> str:
+    
+    def _normalize_path(path_str: str) -> str:
+        """Normalize path: if already full format, use as-is; else extract relative."""
         parts = [x for x in str(path_str).split("/") if x]
+        # If already full format (f_and_b/food/... or f_and_b/beverages/...), return as-is
+        if len(parts) >= 3 and parts[0] == "f_and_b" and parts[1] in ("food", "beverages"):
+            return path_str.strip()
+        # If personal_care format
+        if len(parts) >= 2 and parts[0] == "personal_care":
+            return path_str.strip()
+        # Legacy format: strip f_and_b and food to get relative
         core_parts = parts[:]
         if core_parts and core_parts[0] in ("f_and_b", "personal_care"):
             core_parts = core_parts[1:]
         if core_parts and core_parts[0] == "food":
             core_parts = core_parts[1:]
         return "/".join(core_parts)
+    
     if isinstance(category_path, str) and category_path.strip():
-        rel = _normalize_rel_path(category_path.strip())
-        if rel:
-            normalized_paths.append(rel)
+        normalized = _normalize_path(category_path.strip())
+        if normalized:
+            normalized_paths.append(normalized)
     for cp in category_paths[:3]:
         try:
             s = str(cp).strip()
             if s:
-                rel = _normalize_rel_path(s)
-                if rel:
-                    normalized_paths.append(rel)
+                normalized = _normalize_path(s)
+                if normalized:
+                    normalized_paths.append(normalized)
         except Exception:
             pass
+    
     if normalized_paths:
         # Deduplicate
         uniq: List[str] = []
-        for rel in normalized_paths:
-            if rel not in uniq:
-                uniq.append(rel)
-        group = (category_group or "").strip()
+        for path in normalized_paths:
+            if path not in uniq:
+                uniq.append(path)
+        
         should_cat: List[Dict[str, Any]] = []
         prefer_keyword = bool(p.get("_has_category_paths_keyword"))
         if prefer_keyword:
@@ -240,39 +251,43 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 print("DEBUG: CAT_PATH_FILTER | using wildcard on category_paths (no .keyword)")
             except Exception:
                 pass
-        for rel in uniq[:3]:
-            if group == "personal_care":
-                full = f"personal_care/{rel}"
-                if prefer_keyword:
-                    should_cat.append({"term": {"category_paths.keyword": full}})
-                else:
-                    should_cat.extend([
-                        {"term": {"category_paths": full}},
-                        {"wildcard": {"category_paths": {"value": f"*{full}*"}}},
-                    ])
-            elif group == "f_and_b":
-                full = f"f_and_b/food/{rel}"
-                if prefer_keyword:
-                    should_cat.append({"term": {"category_paths.keyword": full}})
-                else:
-                    should_cat.extend([
-                        {"term": {"category_paths": full}},
-                        {"wildcard": {"category_paths": {"value": f"*{full}*"}}},
-                    ])
+        
+        for path in uniq[:3]:
+            # Check if already full format
+            if path.startswith("f_and_b/") or path.startswith("personal_care/"):
+                full = path
             else:
-                # Unknown group, try both
-                fb = f"f_and_b/food/{rel}"
-                pc = f"personal_care/{rel}"
-                if prefer_keyword:
-                    should_cat.extend([
-                        {"term": {"category_paths.keyword": fb}},
-                        {"term": {"category_paths.keyword": pc}},
-                    ])
+                # Legacy relative path - need to construct full
+                group = (category_group or "").strip()
+                if group == "personal_care":
+                    full = f"personal_care/{path}"
+                elif group == "f_and_b":
+                    full = f"f_and_b/food/{path}"
                 else:
-                    should_cat.extend([
-                        {"wildcard": {"category_paths": {"value": f"*{fb}*"}}},
-                        {"wildcard": {"category_paths": {"value": f"*{pc}*"}}},
-                    ])
+                    # Unknown group, try both
+                    fb = f"f_and_b/food/{path}"
+                    pc = f"personal_care/{path}"
+                    if prefer_keyword:
+                        should_cat.extend([
+                            {"term": {"category_paths.keyword": fb}},
+                            {"term": {"category_paths.keyword": pc}},
+                        ])
+                    else:
+                        should_cat.extend([
+                            {"wildcard": {"category_paths": {"value": f"*{fb}*"}}},
+                            {"wildcard": {"category_paths": {"value": f"*{pc}*"}}},
+                        ])
+                    continue
+            
+            # Add filter for full path
+            if prefer_keyword:
+                should_cat.append({"term": {"category_paths.keyword": full}})
+            else:
+                should_cat.extend([
+                    {"term": {"category_paths": full}},
+                    {"wildcard": {"category_paths": {"value": f"*{full}*"}}},
+                ])
+        
         if should_cat:
             filters.append({
                 "bool": {"should": should_cat, "minimum_should_match": 1}
@@ -626,6 +641,97 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
 
     return body
 
+def _parse_product_type(anchor: str) -> Dict[str, Any]:
+    """Parse anchor_product_noun to extract product category and type for strict matching.
+    
+    Returns dict with:
+        - category_terms: list of category identifiers (hair, face, skin, body, etc)
+        - type_terms: list of product type identifiers (oil, wash, serum, cream, etc)
+        - exclude_terms: list of terms to exclude in must_not
+    """
+    if not anchor:
+        return {"category_terms": [], "type_terms": [], "exclude_terms": []}
+    
+    anchor_lower = anchor.lower().strip()
+    
+    # Product category detection (hair/face/skin/body/lips/eyes/nails)
+    category_map = {
+        "hair": ["hair", "scalp"],
+        "face": ["face", "facial"],
+        "skin": ["skin"],
+        "body": ["body"],
+        "lips": ["lip", "lips"],
+        "eyes": ["eye", "eyes"],
+        "nails": ["nail", "nails"],
+    }
+    
+    # Product type detection (oil/wash/serum/cream/lotion/etc)
+    type_map = {
+        "oil": ["oil"],
+        "wash": ["wash", "cleanser", "cleansing"],
+        "serum": ["serum"],
+        "cream": ["cream"],
+        "moisturizer": ["moisturizer", "moisturiser"],
+        "lotion": ["lotion"],
+        "gel": ["gel"],
+        "foam": ["foam"],
+        "scrub": ["scrub", "exfoliant"],
+        "mask": ["mask"],
+        "toner": ["toner"],
+        "sunscreen": ["sunscreen", "spf"],
+        "shampoo": ["shampoo"],
+        "conditioner": ["conditioner"],
+        "soap": ["soap"],
+        "powder": ["powder"],
+        "balm": ["balm"],
+        "mist": ["mist", "spray"],
+        "treatment": ["treatment"],
+    }
+    
+    detected_category = []
+    detected_type = []
+    
+    # Detect categories
+    for cat, keywords in category_map.items():
+        if any(kw in anchor_lower for kw in keywords):
+            detected_category.append(cat)
+    
+    # Detect types
+    for ptype, keywords in type_map.items():
+        if any(kw in anchor_lower for kw in keywords):
+            detected_type.append(ptype)
+    
+    # Build exclusion terms (exclude other major categories)
+    exclude_terms = []
+    
+    # If this is hair product, exclude face/skin/body products
+    if "hair" in detected_category:
+        exclude_terms.extend(["face wash", "facial", "makeup", "foundation", "lipstick"])
+        # Also exclude cleansing oils (they're for face, not hair)
+        if "oil" in detected_type:
+            exclude_terms.extend(["cleansing", "makeup removal", "makeup remover"])
+    
+    # If this is face product, exclude hair/body products
+    elif "face" in detected_category:
+        exclude_terms.extend(["hair", "shampoo", "conditioner", "scalp"])
+    
+    # If this is body product, exclude hair/face products
+    elif "body" in detected_category:
+        exclude_terms.extend(["hair", "face", "facial"])
+    
+    # Special cases: if "oil" is mentioned without category, be more careful
+    if "oil" in detected_type and not detected_category:
+        # Generic "oil" query - exclude cleansing/makeup oils unless explicitly mentioned
+        if "cleansing" not in anchor_lower and "makeup" not in anchor_lower:
+            exclude_terms.extend(["cleansing", "makeup removal"])
+    
+    return {
+        "category_terms": detected_category,
+        "type_terms": detected_type,
+        "exclude_terms": exclude_terms,
+    }
+
+
 def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     """Build a personal care (skin) ES query matching the working Postman shape."""
     p = params or {}
@@ -690,51 +796,81 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     # Filters: category group
     filters.append({"term": {"category_group": "personal_care"}})
 
-    # Category paths from params
-    cat_paths = []
-    primary_path = p.get("category_path")
-    if isinstance(primary_path, str) and primary_path.strip():
-        cat_paths.append(primary_path.strip())
-    for cp in (p.get("category_paths") or [])[:3]:
+    # NOTE: Personal care: ignore category_path(s) entirely per product decision
+    # We intentionally do NOT add any category_paths filter for personal_care
+    try:
+        if p.get("category_path") or p.get("category_paths"):
+            print("DEBUG: SKIN_CATEGORY_PATH_IGNORED | personal care has no enforced hierarchy")
+    except Exception:
+        pass
+    
+    # NEW: Strict product type matching using anchor_product_noun
+    # Parse anchor to extract category (hair/face/body) and type (oil/wash/serum)
+    anchor_noun = str(p.get("anchor_product_noun") or "").strip()
+    parsed = _parse_product_type(anchor_noun) if anchor_noun else {}
+    
+    if anchor_noun and parsed:
+        category_terms = parsed.get("category_terms", [])
+        type_terms = parsed.get("type_terms", [])
+        exclude_terms = parsed.get("exclude_terms", [])
+        
         try:
-            s = str(cp).strip()
-            if s and s not in cat_paths:
-                cat_paths.append(s)
+            print(f"DEBUG: PRODUCT_TYPE_PARSE | anchor='{anchor_noun}' | category={category_terms} | type={type_terms} | exclude={exclude_terms}")
         except Exception:
             pass
-    if cat_paths:
-        # Prefer exact terms on keyword array; also add a short-form path if possible
-        terms_list: List[str] = []
-        for full in cat_paths[:4]:
-            try:
-                s = str(full).strip()
-                if not s:
-                    continue
-                if s not in terms_list:
-                    terms_list.append(s)
-                parts = [x for x in s.split('/') if x]
-                # Build personal_care/<l2>/<leaf> short form when applicable
-                if len(parts) >= 3 and parts[0] == 'personal_care':
-                    l2 = parts[1]
-                    leaf = parts[-1]
-                    short = f"personal_care/{l2}/{leaf}"
-                    if short not in terms_list:
-                        terms_list.append(short)
-            except Exception:
-                pass
-        if terms_list:
-            filters.append({"terms": {"category_paths": terms_list}})
-    else:
-        # Fallback: wildcard on leaf + prefix on parent
-        cat = str(p.get('subcategory') or '').strip()
-        if cat:
-            cat_should: List[Dict[str, Any]] = []
-            try:
-                cat_should.append({"prefix": {"category_paths": "personal_care/hair"}})
-                cat_should.append({"wildcard": {"category_paths": f"*{cat}*"}})
-                filters.append({"bool": {"should": cat_should, "minimum_should_match": 1}})
-            except Exception:
-                pass
+        
+        # Build MUST clause: product must match category (hair/face/body/etc)
+        if category_terms:
+            category_should = []
+            for cat_term in category_terms[:2]:  # Max 2 categories
+                # Search across multiple fields for category match
+                category_should.extend([
+                    {"match_phrase": {"name": {"query": cat_term, "boost": 3.0}}},
+                    {"match_phrase": {"use": {"query": cat_term, "boost": 2.0}}},
+                    {"match": {"description": {"query": cat_term, "boost": 1.0}}},
+                ])
+            
+            if category_should:
+                musts.append({
+                    "bool": {
+                        "should": category_should,
+                        "minimum_should_match": 1
+                    }
+                })
+        
+        # Build MUST clause: product must match type (oil/wash/serum/etc)
+        if type_terms:
+            type_should = []
+            for type_term in type_terms[:2]:  # Max 2 types
+                # Search across multiple fields for type match
+                type_should.extend([
+                    {"match_phrase": {"name": {"query": type_term, "boost": 3.0}}},
+                    {"match": {"use": {"query": type_term, "boost": 2.0}}},
+                    {"match": {"description": {"query": type_term, "boost": 1.0}}},
+                ])
+                
+                # Also check package claims if available
+                if type_term in ["oil", "serum", "cream", "lotion", "gel"]:
+                    type_should.append({
+                        "match": {"package_claims.marketing_keywords": {"query": type_term}}
+                    })
+            
+            if type_should:
+                musts.append({
+                    "bool": {
+                        "should": type_should,
+                        "minimum_should_match": 1
+                    }
+                })
+        
+        # Build MUST_NOT clauses: exclude wrong product categories
+        if exclude_terms:
+            for exc_term in exclude_terms[:5]:  # Max 5 exclusions
+                # Exclude from name and use fields
+                must_not.extend([
+                    {"match_phrase": {"name": exc_term}},
+                    {"match_phrase": {"use": exc_term}},
+                ])
 
     # Price filter
     if price_min is not None or price_max is not None:
@@ -803,12 +939,16 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
 
     # Must/Should: main query
     if q_text:
+        # When we have strict product type matching (category + type musts), reduce fuzziness
+        # to avoid over-matching. Otherwise keep fuzziness for generic queries.
+        has_strict_matching = anchor_noun and (parsed.get("category_terms") or parsed.get("type_terms"))
+        
         text_clause = {
             "multi_match": {
                 "query": q_text,
                 "type": "best_fields",
-                "fields": ["name^4", "description^2", "use", "combined_text"],
-                "fuzziness": "AUTO",
+                "fields": ["name^6"],
+                "fuzziness": "0" if has_strict_matching else "AUTO",  # No fuzziness when strict matching
             }
         }
         # For image-origin queries, treat text as a soft signal to avoid over-filtering
@@ -1505,6 +1645,16 @@ async def build_search_params(ctx) -> Dict[str, Any]:
                 # Domain validation passed, proceed with personal care flow
                 from ..llm_service import LLMService
                 llm_service = LLMService()
+                # Build unified params for personal care
+                try:
+                    unified_pc = await llm_service.generate_unified_es_params(ctx)
+                except Exception:
+                    unified_pc = {}
+                final_params: Dict[str, Any] = dict(unified_pc or {})
+                # Force personal care group and ignore any category paths
+                final_params["category_group"] = "personal_care"
+                final_params.pop("category_path", None)
+                final_params.pop("category_paths", None)
                 # Ensure product_intent present
                 try:
                     final_params.setdefault("product_intent", str(ctx.session.get("product_intent") or "show_me_options"))
@@ -1631,134 +1781,244 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
                 print(f"DEBUG: Average flean percentile {avg_flean}% is low, considering fallback...")
                 results['meta']['quality_warning'] = f'average_flean_percentile_{avg_flean:.1f}'
     
-    # Zero-result fallback strategy: RELAX CATEGORY FIRST, then price, then siblings
+    # Zero-result fallback strategy (tree, ordered):
+    # F&B: 1) price_any → 2) drop_hard_soft_keep_category → 3) sibling_l2_full →
+    #      4) sibling_l2_price_any → 5) sibling_l2_drop_hard_soft → 6A) drop L4→L3 → 6B) drop category filters
+    # Personal care: 1) price_any → 2) relax_reviews → 3) drop_hard_soft → 4) expand_size
     try:
         total = int(((results.get('meta') or {}).get('total_hits')) or 0)
     except Exception:
         total = 0
     if total == 0:
-        print("DEBUG: ZERO_RESULT | attempting fallback strategies")
-        # 0th fallback: drop price filters (treat price as 'any')
-        try:
-            p_price = dict(params)
-            dropped_price = False
-            if p_price.pop('price_min', None) is not None:
-                dropped_price = True
-            if p_price.pop('price_max', None) is not None:
-                dropped_price = True
-            if dropped_price:
-                print("DEBUG: PRICE_ANY_FALLBACK | dropping price_min/price_max")
-                alt_price = await loop.run_in_executor(None, lambda: fetcher.search(p_price))
-                alt_price_total = int(((alt_price.get('meta') or {}).get('total_hits')) or 0)
-                if alt_price_total > 0:
-                    alt_price['meta']['fallback_applied'] = 'price_any'
-                    return alt_price
-        except Exception:
-            pass
-        # Strategy A: category sibling probe within same l2 (prefer first)
-        try:
-            cat_paths = params.get('category_paths') if isinstance(params.get('category_paths'), list) else []
-            primary = params.get('category_path') or (cat_paths[0] if cat_paths else '')
-            rel = ''
+        group = str(params.get('category_group') or '').strip()
+        # Personal care fallback branch (no category hierarchy)
+        if group == 'personal_care':
+            print("DEBUG: ZERO_RESULT | applying PC fallback sequence")
+
+            def _drop_price_pc(d: Dict[str, Any]) -> Dict[str, Any]:
+                x = dict(d)
+                x.pop('price_min', None)
+                x.pop('price_max', None)
+                return x
+
+            def _relax_reviews_pc(d: Dict[str, Any]) -> Dict[str, Any]:
+                x = dict(d)
+                try:
+                    if isinstance(x.get('min_review_count'), int) and x['min_review_count'] > 0:
+                        x['min_review_count'] = 0
+                    else:
+                        x.pop('min_review_count', None)
+                except Exception:
+                    x.pop('min_review_count', None)
+                return x
+
+            def _drop_hard_soft_pc(d: Dict[str, Any]) -> Dict[str, Any]:
+                x = dict(d)
+                for k in [
+                    'brands', 'enforce_brand', 'dietary_terms', 'dietary_labels', 'must_keywords',
+                    'avoid_terms', 'avoid_ingredients', 'efficacy_terms', 'skin_types', 'hair_types',
+                    'min_flean_percentile', 'min_review_count'
+                ]:
+                    x.pop(k, None)
+                return x
+
+            # PC Step 1: Drop price
+            try:
+                p_pc1 = _drop_price_pc(params)
+                if p_pc1 is not params:
+                    print("DEBUG: PC_FALLBACK[1] PRICE_ANY")
+                    alt_pc1 = await loop.run_in_executor(None, lambda: fetcher.search(p_pc1))
+                    alt_pc1_total = int(((alt_pc1.get('meta') or {}).get('total_hits')) or 0)
+                    if alt_pc1_total > 0:
+                        alt_pc1['meta']['fallback_applied'] = 'pc_price_any'
+                        return alt_pc1
+            except Exception:
+                pass
+
+            # PC Step 2: Relax reviews
+            try:
+                p_pc2 = _relax_reviews_pc(params)
+                print("DEBUG: PC_FALLBACK[2] RELAX_REVIEWS")
+                alt_pc2 = await loop.run_in_executor(None, lambda: fetcher.search(p_pc2))
+                alt_pc2_total = int(((alt_pc2.get('meta') or {}).get('total_hits')) or 0)
+                if alt_pc2_total > 0:
+                    alt_pc2['meta']['fallback_applied'] = 'pc_relax_reviews'
+                    return alt_pc2
+            except Exception:
+                pass
+
+            # PC Step 3: Drop hard/soft constraints
+            try:
+                p_pc3 = _drop_hard_soft_pc(params)
+                print("DEBUG: PC_FALLBACK[3] DROP_HARD_SOFT")
+                alt_pc3 = await loop.run_in_executor(None, lambda: fetcher.search(p_pc3))
+                alt_pc3_total = int(((alt_pc3.get('meta') or {}).get('total_hits')) or 0)
+                if alt_pc3_total > 0:
+                    alt_pc3['meta']['fallback_applied'] = 'pc_drop_hard_soft'
+                    return alt_pc3
+            except Exception:
+                pass
+
+            # PC Step 4: Expand size to 30
+            try:
+                p_pc4 = dict(params)
+                p_pc4['size'] = max(20, int(p_pc4.get('size', 20) or 20), 30)
+                print("DEBUG: PC_FALLBACK[4] EXPAND_SIZE_30")
+                alt_pc4 = await loop.run_in_executor(None, lambda: fetcher.search(p_pc4))
+                alt_pc4_total = int(((alt_pc4.get('meta') or {}).get('total_hits')) or 0)
+                if alt_pc4_total > 0:
+                    alt_pc4['meta']['fallback_applied'] = 'pc_expand_size_30'
+                    return alt_pc4
+            except Exception:
+                pass
+
+            # If all PC fallbacks fail, return original results
+            return results
+
+        # F&B fallback branch
+        print("DEBUG: ZERO_RESULT | applying 6-step fallback tree")
+
+        def _drop_price(d: Dict[str, Any]) -> Dict[str, Any]:
+            x = dict(d)
+            x.pop('price_min', None)
+            x.pop('price_max', None)
+            return x
+
+        def _drop_hard_soft(d: Dict[str, Any]) -> Dict[str, Any]:
+            x = dict(d)
+            # Common hard/soft constraints
+            for k in [
+                'brands', 'enforce_brand', 'min_flean_percentile', 'min_review_count', 'must_keywords',
+                'dietary_terms', 'dietary_labels', 'avoid_terms', 'avoid_ingredients',
+                'efficacy_terms', 'skin_types', 'hair_types', 'skin_concerns', 'prioritize_concerns',
+            ]:
+                x.pop(k, None)
+            return x
+
+        def _sibling_l2_path(d: Dict[str, Any]) -> Optional[str]:
+            cat_paths = d.get('category_paths') if isinstance(d.get('category_paths'), list) else []
+            primary = d.get('category_path') or (cat_paths[0] if cat_paths else '')
             if isinstance(primary, str) and primary.strip():
-                parts = [x for x in primary.split('/') if x]
+                parts = [p for p in primary.split('/') if p]
                 if len(parts) >= 4 and parts[0] == 'f_and_b' and parts[1] == 'food':
-                    l2 = parts[2]
-                    sibling_candidates = [f"f_and_b/food/{l2}"]
-                elif len(parts) >= 2 and parts[0] == 'personal_care':
-                    l2 = parts[1]
-                    sibling_candidates = [f"personal_care/{l2}"]
-                else:
-                    sibling_candidates = []
-                if sibling_candidates:
-                    p3 = dict(params)
-                    p3.pop('category_paths', None)
-                    p3['category_path'] = sibling_candidates[0]
-                    print(f"DEBUG: SIBLING_PROBE | path={p3['category_path']}")
-                    alt2 = await loop.run_in_executor(None, lambda: fetcher.search(p3))
-                    alt2_total = int(((alt2.get('meta') or {}).get('total_hits')) or 0)
-                    if alt2_total > 0:
-                        alt2['meta']['fallback_applied'] = 'sibling_probe_l2_first'
-                        return alt2
-        except Exception:
-            pass
-        # Strategy A: drop category_paths/category_path first
+                    return f"f_and_b/food/{parts[2]}"
+                if len(parts) >= 2 and parts[0] == 'personal_care':
+                    return f"personal_care/{parts[1]}"
+            return None
+
+        # Step 1: Drop price only
         try:
-            p0 = dict(params)
-            dropped = False
-            if p0.pop('category_paths', None) is not None:
-                dropped = True
-            if p0.pop('category_path', None) is not None:
-                dropped = True
-            if dropped:
-                print("DEBUG: DROP_CATEGORY_FILTERS")
-                alt0 = await loop.run_in_executor(None, lambda: fetcher.search(p0))
-                alt0_total = int(((alt0.get('meta') or {}).get('total_hits')) or 0)
-                if alt0_total > 0:
-                    alt0['meta']['fallback_applied'] = 'drop_category_filters'
-                    return alt0
+            p1 = _drop_price(params)
+            if p1 is not params:
+                print("DEBUG: FALLBACK[1] PRICE_ANY")
+                alt1 = await loop.run_in_executor(None, lambda: fetcher.search(p1))
+                alt1_total = int(((alt1.get('meta') or {}).get('total_hits')) or 0)
+                if alt1_total > 0:
+                    alt1['meta']['fallback_applied'] = 'price_any'
+                    return alt1
         except Exception:
             pass
 
-        # Strategy B: relax price window slightly if price_max present
-        relaxed_ran = False
+        # Step 2: Drop hard and soft filters, keep category
         try:
-            p2 = dict(params)
-            if isinstance(p2.get('price_max'), (int, float)):
-                p2['price_max'] = float(p2['price_max']) * 1.25
-                relaxed_ran = True
-                print(f"DEBUG: RELAX_PRICE | new_price_max={p2['price_max']}")
-                alt = await loop.run_in_executor(None, lambda: fetcher.search(p2))
-                alt_total = int(((alt.get('meta') or {}).get('total_hits')) or 0)
-                if alt_total > 0:
-                    alt['meta']['fallback_applied'] = 'relax_price_max_25pct'
-                    return alt
+            p2 = _drop_hard_soft(params)
+            print("DEBUG: FALLBACK[2] DROP_HARD_SOFT_KEEP_CATEGORY")
+            alt2 = await loop.run_in_executor(None, lambda: fetcher.search(p2))
+            alt2_total = int(((alt2.get('meta') or {}).get('total_hits')) or 0)
+            if alt2_total > 0:
+                alt2['meta']['fallback_applied'] = 'drop_hard_soft_keep_category'
+                return alt2
         except Exception:
             pass
 
-        # Strategy C: category sibling probe within same l2
-        try:
-            cat_paths = params.get('category_paths') if isinstance(params.get('category_paths'), list) else []
-            primary = params.get('category_path') or (cat_paths[0] if cat_paths else '')
-            rel = ''
-            if isinstance(primary, str) and primary.strip():
-                # extract relative path l2/l3
-                parts = [x for x in primary.split('/') if x]
-                # expect f_and_b/food/l2/l3 or personal_care/l2/l3
-                if len(parts) >= 4 and parts[0] == 'f_and_b' and parts[1] == 'food':
-                    l2 = parts[2]
-                    # For sibling probe: replace l3 with None to broaden
-                    sibling_candidates = [f"f_and_b/food/{l2}"]
-                elif len(parts) >= 2 and parts[0] == 'personal_care':
-                    l2 = parts[1]
-                    sibling_candidates = [f"personal_care/{l2}"]
-                else:
-                    sibling_candidates = []
-                if sibling_candidates:
-                    p3 = dict(params)
-                    p3.pop('category_paths', None)
-                    p3['category_path'] = sibling_candidates[0]
-                    print(f"DEBUG: SIBLING_PROBE | path={p3['category_path']}")
-                    alt2 = await loop.run_in_executor(None, lambda: fetcher.search(p3))
-                    alt2_total = int(((alt2.get('meta') or {}).get('total_hits')) or 0)
-                    if alt2_total > 0:
-                        alt2['meta']['fallback_applied'] = 'sibling_probe_l2'
-                        return alt2
-        except Exception:
-            pass
+        # Prepare sibling L2 path (if available)
+        sibling_l2 = _sibling_l2_path(params)
 
-        # Strategy D: drop dietary terms if present but too restrictive
-        try:
-            if (params.get('dietary_terms') or params.get('dietary_labels')) and not relaxed_ran:
-                p4 = dict(params)
-                p4.pop('dietary_terms', None)
-                p4.pop('dietary_labels', None)
-                print("DEBUG: DROP_DIETARY_FALLBACK")
-                alt3 = await loop.run_in_executor(None, lambda: fetcher.search(p4))
+        # Step 3: Sibling probe with full filters
+        if sibling_l2:
+            try:
+                p3 = dict(params)
+                p3.pop('category_paths', None)
+                p3['category_path'] = sibling_l2
+                print(f"DEBUG: FALLBACK[3] SIBLING_L2_FULL | path={p3['category_path']}")
+                alt3 = await loop.run_in_executor(None, lambda: fetcher.search(p3))
                 alt3_total = int(((alt3.get('meta') or {}).get('total_hits')) or 0)
                 if alt3_total > 0:
-                    alt3['meta']['fallback_applied'] = 'drop_dietary'
+                    alt3['meta']['fallback_applied'] = 'sibling_l2_full'
                     return alt3
+            except Exception:
+                pass
+
+        # Step 4: Sibling probe with dropped price
+        if sibling_l2:
+            try:
+                p4 = _drop_price(params)
+                p4.pop('category_paths', None)
+                p4['category_path'] = sibling_l2
+                print(f"DEBUG: FALLBACK[4] SIBLING_L2_PRICE_ANY | path={p4['category_path']}")
+                alt4 = await loop.run_in_executor(None, lambda: fetcher.search(p4))
+                alt4_total = int(((alt4.get('meta') or {}).get('total_hits')) or 0)
+                if alt4_total > 0:
+                    alt4['meta']['fallback_applied'] = 'sibling_l2_price_any'
+                    return alt4
+            except Exception:
+                pass
+
+        # Step 5: Sibling probe with dropped hard/soft
+        if sibling_l2:
+            try:
+                p5 = _drop_hard_soft(params)
+                p5.pop('category_paths', None)
+                p5['category_path'] = sibling_l2
+                print(f"DEBUG: FALLBACK[5] SIBLING_L2_DROP_HARD_SOFT | path={p5['category_path']}")
+                alt5 = await loop.run_in_executor(None, lambda: fetcher.search(p5))
+                alt5_total = int(((alt5.get('meta') or {}).get('total_hits')) or 0)
+                if alt5_total > 0:
+                    alt5['meta']['fallback_applied'] = 'sibling_l2_drop_hard_soft'
+                    return alt5
+            except Exception:
+                pass
+
+        # Step 6a: Narrow category from L4 → L3 (drop leaf only) and retry
+        try:
+            p6a = dict(params)
+            cat_paths = p6a.get('category_paths') if isinstance(p6a.get('category_paths'), list) else []
+            primary = p6a.get('category_path') or (cat_paths[0] if cat_paths else '')
+            truncated = None
+            if isinstance(primary, str) and primary.strip():
+                parts = [p for p in primary.split('/') if p]
+                # Expect: f_and_b/food/L3/L4 or personal_care/L2/L3
+                if len(parts) >= 4 and parts[0] == 'f_and_b' and parts[1] == 'food':
+                    truncated = f"f_and_b/food/{parts[2]}"  # keep L3, drop L4
+                elif len(parts) >= 3 and parts[0] == 'personal_care':
+                    truncated = f"personal_care/{parts[1]}"  # keep L2, drop leaf
+            if truncated:
+                p6a.pop('category_paths', None)
+                p6a['category_path'] = truncated
+                print(f"DEBUG: FALLBACK[6A] DROP_CATEGORY_L4_TO_L3 | path={p6a['category_path']}")
+                alt6a = await loop.run_in_executor(None, lambda: fetcher.search(p6a))
+                alt6a_total = int(((alt6a.get('meta') or {}).get('total_hits')) or 0)
+                if alt6a_total > 0:
+                    alt6a['meta']['fallback_applied'] = 'drop_category_l4_to_l3'
+                    return alt6a
+        except Exception:
+            pass
+
+        # Step 6b: Drop category paths entirely (remove L3), keep category_group
+        try:
+            p6b = dict(params)
+            dropped = False
+            if p6b.pop('category_paths', None) is not None:
+                dropped = True
+            if p6b.pop('category_path', None) is not None:
+                dropped = True
+            if dropped:
+                print("DEBUG: FALLBACK[6B] DROP_CATEGORY_L3 (remove category_path(s))")
+                alt6b = await loop.run_in_executor(None, lambda: fetcher.search(p6b))
+                alt6b_total = int(((alt6b.get('meta') or {}).get('total_hits')) or 0)
+                if alt6b_total > 0:
+                    alt6b['meta']['fallback_applied'] = 'drop_category_l3'
+                    return alt6b
         except Exception:
             pass
 

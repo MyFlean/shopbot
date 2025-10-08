@@ -690,6 +690,111 @@ PRODUCT_RESPONSE_TOOL = {
     }
 }
 
+# Taxonomy-backed categorization examples (2025 best practices)
+TAXONOMY_CATEGORIZATION_EXAMPLES = """
+<taxonomy_examples>
+<example name="exact_l3_single">
+Query: "banana chips"
+Reasoning: Specific flavor variant → exact L3 match in light_bites
+Paths: ["f_and_b/food/light_bites/chips_and_crisps"]
+</example>
+
+<example name="generic_ranked_alternatives">
+Query: "ice cream"
+Reasoning: Generic query → rank by popularity (tubs most common, then alternatives)
+Paths: [
+  "f_and_b/food/frozen_treats/ice_cream_tubs",
+  "f_and_b/food/frozen_treats/ice_cream_cups",
+  "f_and_b/food/frozen_treats/kulfi"
+]
+</example>
+
+<example name="l2_fallback_ambiguous">
+Query: "frozen snacks"
+Reasoning: Ambiguous L3 → use L2-only path
+Paths: ["f_and_b/food/frozen_foods"]
+</example>
+
+<example name="beverages_branch">
+Query: "cold coffee"
+Reasoning: Beverage domain, iced variant
+Paths: ["f_and_b/beverages/tea_coffee_and_more/iced_coffee_and_tea"]
+</example>
+
+<example name="beverages_generic">
+Query: "soft drinks"
+Reasoning: Beverage, carbonated category
+Paths: ["f_and_b/beverages/sodas_juices_and_more/soft_drinks"]
+</example>
+
+<example name="cross_l2_breakfast">
+Query: "healthy breakfast"
+Reasoning: Multiple L2 possibilities → rank cereals first, then dairy
+Paths: [
+  "f_and_b/food/breakfast_essentials/muesli_and_oats",
+  "f_and_b/food/dairy_and_bakery/yogurt_and_shrikhand"
+]
+</example>
+
+<example name="sweet_category">
+Query: "chocolate"
+Reasoning: Sweet treats, regular vs premium unclear → include both
+Paths: [
+  "f_and_b/food/sweet_treats/chocolates",
+  "f_and_b/food/sweet_treats/premium_chocolates"
+]
+</example>
+
+<example name="noodles_pasta">
+Query: "noodles"
+Reasoning: Distinct L2 for noodles
+Paths: ["f_and_b/food/noodles_and_vermicelli/vermicelli_and_noodles"]
+</example>
+
+<example name="biscuits_variant">
+Query: "digestive biscuits"
+Reasoning: Specific biscuit type
+Paths: ["f_and_b/food/biscuits_and_crackers/digestive_biscuits"]
+</example>
+
+<example name="dairy_cheese">
+Query: "cheese"
+Reasoning: Dairy category
+Paths: ["f_and_b/food/dairy_and_bakery/cheese"]
+</example>
+
+<example name="spreads">
+Query: "peanut butter"
+Reasoning: Spreads category
+Paths: ["f_and_b/food/spreads_and_condiments/peanut_butter"]
+</example>
+
+<example name="packaged_meals">
+Query: "ready to eat meals"
+Reasoning: Convenience foods
+Paths: ["f_and_b/food/packaged_meals/ready_to_eat_meals"]
+</example>
+
+<example name="frozen_veg">
+Query: "frozen vegetables"
+Reasoning: Frozen foods, veg variant
+Paths: ["f_and_b/food/frozen_foods/frozen_vegetables_and_pulp"]
+</example>
+
+<example name="tea_variants">
+Query: "green tea"
+Reasoning: Tea category, herbal variant
+Paths: ["f_and_b/beverages/tea_coffee_and_more/green_and_herbal_tea"]
+</example>
+
+<example name="juice">
+Query: "fruit juice"
+Reasoning: Beverages, juice subcategory
+Paths: ["f_and_b/beverages/sodas_juices_and_more/fruit_juices"]
+</example>
+</taxonomy_examples>
+"""
+
 # Unified ES params generation tool - ONE authoritative call (2025 best practices)
 UNIFIED_ES_PARAMS_TOOL = {
     "name": "generate_unified_es_params",
@@ -714,8 +819,13 @@ UNIFIED_ES_PARAMS_TOOL = {
             "category_paths": {
                 "type": "array",
                 "items": {"type": "string"},
+                "minItems": 1,
                 "maxItems": 3,
-                "description": "Full paths like 'f_and_b/food/light_bites/chips_and_crisps'"
+                "description": (
+                    "Ranked category paths from provided taxonomy (MOST relevant first). "
+                    "Format: 'f_and_b/{food|beverages}/{l2}/{l3}' or 'f_and_b/{food|beverages}/{l2}'. "
+                    "MUST exist in taxonomy. Return 1-3 paths ordered by relevance/likelihood."
+                )
             },
             
             # Filters (extracted, not in anchor)
@@ -1503,7 +1613,7 @@ class LLMService:
             tools=[PLAN_ES_SEARCH_TOOL],
             tool_choice={"type": "tool", "name": "plan_es_search"},
             temperature=0,
-            max_tokens=600,
+            max_tokens=2000,
         )
         tool_use = pick_tool(resp, "plan_es_search")
         return tool_use.input if tool_use else {}
@@ -1564,8 +1674,8 @@ class LLMService:
             messages=[{"role": "user", "content": prompt + "\n" + json.dumps(payload, ensure_ascii=False)}],
             tools=[FINAL_ANSWER_UNIFIED_TOOL],
             tool_choice={"type": "tool", "name": "generate_final_answer_unified"},
-            temperature=0.7,
-            max_tokens=900,
+            temperature=0,
+            max_tokens=2000,
         )
         tool_use = pick_tool(resp, "generate_final_answer_unified")
         result = _strip_keys(tool_use.input or {}) if tool_use else {}
@@ -1696,8 +1806,8 @@ Now classify the user's current message. Return ONLY the tool call."""
                 messages=[{"role": "user", "content": prompt}],
                 tools=[COMBINED_CLASSIFY_ASSESS_TOOL],
                 tool_choice={"type": "tool", "name": "classify_and_assess"},
-                temperature=0.2,
-                max_tokens=800,
+                temperature=0,
+                max_tokens=2000,
             )
             tool_use = pick_tool(resp, "classify_and_assess")
             if not tool_use:
@@ -1777,8 +1887,8 @@ Now classify the user's current message. Return ONLY the tool call."""
             messages=[{"role": "user", "content": prompt}],
             tools=[INTENT_CLASSIFICATION_TOOL],
             tool_choice={"type": "tool", "name": "classify_intent"},
-            temperature=0.2,
-            max_tokens=150,
+            temperature=0,
+            max_tokens=2000,
         )
         
         tool_use = pick_tool(resp, "classify_intent")
@@ -1818,8 +1928,8 @@ Now classify the user's current message. Return ONLY the tool call."""
                 messages=[{"role": "user", "content": prompt}],
                 tools=[PRODUCT_INTENT_TOOL],
                 tool_choice={"type": "tool", "name": "classify_product_intent"},
-                temperature=0.1,
-                max_tokens=200,
+                temperature=0,
+                max_tokens=2000,
             )
             
             tool_use = pick_tool(resp, "classify_product_intent")
@@ -2019,8 +2129,8 @@ Now classify the user's current message. Return ONLY the tool call."""
                 messages=[{"role": "user", "content": unified_prompt + "\n" + json.dumps(unified_context, ensure_ascii=False)}],
                 tools=[FINAL_ANSWER_UNIFIED_TOOL],
                 tool_choice={"type": "tool", "name": "generate_final_answer_unified"},
-                temperature=0.7,
-                max_tokens=900,
+                temperature=0,
+                max_tokens=2000,
             )
 
             tool_use = pick_tool(resp, "generate_final_answer_unified")
@@ -2206,8 +2316,8 @@ Now classify the user's current message. Return ONLY the tool call."""
                 messages=[{"role": "user", "content": prompt}],
                 tools=[SIMPLE_RESPONSE_TOOL],
                 tool_choice={"type": "tool", "name": "generate_simple_response"},
-                temperature=0.4,
-                max_tokens=400,
+                temperature=0,
+                max_tokens=2000,
             )
             
             tool_use = pick_tool(resp, "generate_simple_response")
@@ -2274,7 +2384,7 @@ Now classify the user's current message. Return ONLY the tool call."""
                 model=Cfg.LLM_MODEL,
                 messages=[payload],
                 temperature=0,
-                max_tokens=400,
+                max_tokens=2000,
             )
 
             parts = []
@@ -2344,8 +2454,8 @@ Now classify the user's current message. Return ONLY the tool call."""
                 messages=[{"role": "user", "content": prompt}],
                 tools=[FOLLOW_UP_TOOL],
                 tool_choice={"type": "tool", "name": "classify_follow_up"},
-                temperature=0.0,
-                max_tokens=400,
+                temperature=0,
+                max_tokens=2000,
             )
             tool_use = pick_tool(resp, "classify_follow_up")
             if not tool_use:
@@ -2405,8 +2515,8 @@ Now classify the user's current message. Return ONLY the tool call."""
                 messages=[{"role": "user", "content": prompt}],
                 tools=[DELTA_ASSESS_TOOL],
                 tool_choice={"type": "tool", "name": "assess_delta_requirements"},
-                temperature=0.1,
-                max_tokens=300,
+                temperature=0,
+                max_tokens=2000,
             )
             tool_use = pick_tool(resp, "assess_delta_requirements")
             items_raw = tool_use.input.get("fetch_functions", []) if tool_use else []
@@ -2470,8 +2580,8 @@ Now classify the user's current message. Return ONLY the tool call."""
             messages=[{"role": "user", "content": prompt}],
             tools=[assessment_tool],
             tool_choice={"type": "tool", "name": "assess_requirements"},
-            temperature=0.1,
-            max_tokens=500,
+            temperature=0,
+            max_tokens=2000,
         )
 
         tool_use = pick_tool(resp, "assess_requirements")
@@ -2629,8 +2739,8 @@ Now classify the user's current message. Return ONLY the tool call."""
                 messages=[{"role": "user", "content": prompt}],
                 tools=[questions_tool],
                 tool_choice={"type": "tool", "name": "generate_questions"},
-                temperature=0.2,
-                max_tokens=800,
+                temperature=0,
+                max_tokens=2000,
             )
 
             tool_use = pick_tool(resp, "generate_questions")
@@ -2730,7 +2840,7 @@ Now classify the user's current message. Return ONLY the tool call."""
                 tools=[SLOT_SELECTION_TOOL],
                 tool_choice={"type": "tool", "name": "select_slots_to_ask"},
                 temperature=0,
-                max_tokens=200,
+                max_tokens=2000,
             )
             tool_use = pick_tool(resp, "select_slots_to_ask")
             if not tool_use:
@@ -2847,6 +2957,9 @@ Now classify the user's current message. Return ONLY the tool call."""
                     "bot": turn.get("bot_reply", "")[:100]
                 })
 
+            # Load F&B taxonomy for categorization
+            fnb_taxonomy = self._get_fnb_taxonomy_hierarchical()
+            
             if is_follow_up:
                 prompt = f"""<task_definition>
 Extract ALL Elasticsearch parameters in ONE call, maintaining product focus across turns.
@@ -2866,12 +2979,16 @@ Extract ALL Elasticsearch parameters in ONE call, maintaining product focus acro
 <user_slots>{json.dumps(slot_answers, ensure_ascii=False, indent=2)}</user_slots>
 </inputs>
 
+<fnb_taxonomy>
+{json.dumps(fnb_taxonomy, ensure_ascii=False, indent=2)}
+</fnb_taxonomy>
+
 <reasoning_framework>
 Think through these steps:
 1. PRODUCT ANCHOR: What product noun appeared in last turns?
 2. MESSAGE TYPE: MODIFIER_ONLY vs CATEGORY_SWITCH?
 3. BUILD QUERY: Combine constraint + anchor for modifiers
-4. EXTRACT CATEGORY: Map to category_group and paths
+4. EXTRACT CATEGORY: Map to category_group and paths using taxonomy
 5. EXTRACT FILTERS: brands, dietary_terms, price, keywords
 6. SET ANCHOR: Core product being searched
 </reasoning_framework>
@@ -2894,6 +3011,14 @@ category_group MUST be: f_and_b | personal_care | health_nutrition | home_kitche
 NEVER use subcategory names like "chips" or "snacks"
 </rule>
 
+<rule id="category_paths_taxonomy" priority="CRITICAL">
+category_paths MUST come from provided fnb_taxonomy only.
+- Return 1-3 paths ranked by relevance (MOST likely first)
+- Format: "f_and_b/{{food|beverages}}/{{l2}}/{{l3}}" or "f_and_b/{{food|beverages}}/{{l2}}"
+- For ambiguous queries, include multiple plausible L3s
+- Never hallucinate paths not in taxonomy
+</rule>
+
 <rule id="dietary_normalization" priority="HIGH">
 Normalize to UPPERCASE:
 - "no palm oil" → ["PALM OIL FREE"]
@@ -2902,7 +3027,8 @@ Normalize to UPPERCASE:
 </rule>
 </rules>
 
-<examples>
+{TAXONOMY_CATEGORIZATION_EXAMPLES}
+
 <example name="follow_up_attribute">
 Scenario: User: "shampoo" → Bot: shows shampoos → User: "dry scalp"
 Output:
@@ -2921,7 +3047,7 @@ Output:
 {{
   "q": "banana chips",
   "category_group": "f_and_b",
-  "category_paths": ["light_bites/chips_and_crisps"],
+  "category_paths": ["f_and_b/food/light_bites/chips_and_crisps"],
   "size": 20,
   "anchor_product_noun": "banana chips"
 }}
@@ -2933,6 +3059,7 @@ Output:
 {{
   "q": "gluten free noodles",
   "category_group": "f_and_b",
+  "category_paths": ["f_and_b/food/noodles_and_vermicelli/vermicelli_and_noodles"],
   "dietary_terms": ["GLUTEN FREE"],
   "price_max": 100,
   "size": 20,
@@ -2946,16 +3073,16 @@ Output:
 {{
   "q": "chips",
   "category_group": "f_and_b",
+  "category_paths": ["f_and_b/food/light_bites/chips_and_crisps"],
   "size": 25,
   "anchor_product_noun": "chips",
   "brands": []
 }}
 </example>
-</examples>
 
 <output>
 Return tool call to generate_unified_es_params with complete JSON.
-Validation: q has product noun (2-6 words), no prices/brands, category_group is valid, dietary_terms UPPERCASE
+Validation: q has product noun (2-6 words), no prices/brands, category_group is valid, category_paths from taxonomy, dietary_terms UPPERCASE
 </output>"""
             else:
                 prompt = f"""<task_definition>
@@ -2976,12 +3103,16 @@ Extract ALL Elasticsearch parameters in ONE call, maintaining product focus acro
 <user_slots>{json.dumps(slot_answers, ensure_ascii=False, indent=2)}</user_slots>
 </inputs>
 
+<fnb_taxonomy>
+{json.dumps(fnb_taxonomy, ensure_ascii=False, indent=2)}
+</fnb_taxonomy>
+
 <reasoning_framework>
 Think through these steps:
 1. PRODUCT ANCHOR: What product noun appeared in last turns?
 2. MESSAGE TYPE: MODIFIER_ONLY vs CATEGORY_SWITCH?
 3. BUILD QUERY: Combine constraint + anchor for modifiers
-4. EXTRACT CATEGORY: Map to category_group and paths
+4. EXTRACT CATEGORY: Map to category_group and paths using taxonomy
 5. EXTRACT FILTERS: brands, dietary_terms, price, keywords
 6. SET ANCHOR: Core product being searched
 </reasoning_framework>
@@ -3004,6 +3135,14 @@ category_group MUST be: f_and_b | personal_care | health_nutrition | home_kitche
 NEVER use subcategory names like "chips" or "snacks"
 </rule>
 
+<rule id="category_paths_taxonomy" priority="CRITICAL">
+category_paths MUST come from provided fnb_taxonomy only.
+- Return 1-3 paths ranked by relevance (MOST likely first)
+- Format: "f_and_b/{{food|beverages}}/{{l2}}/{{l3}}" or "f_and_b/{{food|beverages}}/{{l2}}"
+- For ambiguous queries, include multiple plausible L3s
+- Never hallucinate paths not in taxonomy
+</rule>
+
 <rule id="dietary_normalization" priority="HIGH">
 Normalize to UPPERCASE:
 - "no palm oil" → ["PALM OIL FREE"]
@@ -3012,7 +3151,8 @@ Normalize to UPPERCASE:
 </rule>
 </rules>
 
-<examples>
+{TAXONOMY_CATEGORIZATION_EXAMPLES}
+
 <example name="follow_up_attribute">
 Scenario: User: "shampoo" → Bot: shows shampoos → User: "dry scalp"
 Output:
@@ -3031,7 +3171,7 @@ Output:
 {{
   "q": "banana chips",
   "category_group": "f_and_b",
-  "category_paths": ["light_bites/chips_and_crisps"],
+  "category_paths": ["f_and_b/food/light_bites/chips_and_crisps"],
   "size": 20,
   "anchor_product_noun": "banana chips"
 }}
@@ -3043,6 +3183,7 @@ Output:
 {{
   "q": "gluten free noodles",
   "category_group": "f_and_b",
+  "category_paths": ["f_and_b/food/noodles_and_vermicelli/vermicelli_and_noodles"],
   "dietary_terms": ["GLUTEN FREE"],
   "price_max": 100,
   "size": 20,
@@ -3056,16 +3197,16 @@ Output:
 {{
   "q": "chips",
   "category_group": "f_and_b",
+  "category_paths": ["f_and_b/food/light_bites/chips_and_crisps"],
   "size": 25,
   "anchor_product_noun": "chips",
   "brands": []
 }}
 </example>
-</examples>
 
 <output>
 Return tool call to generate_unified_es_params with complete JSON.
-Validation: q has product noun (2-6 words), no prices/brands, category_group is valid, dietary_terms UPPERCASE
+Validation: q has product noun (2-6 words), no prices/brands, category_group is valid, category_paths from taxonomy, dietary_terms UPPERCASE
 </output>"""
 
             # CORE log: LLM2 input
@@ -3080,7 +3221,7 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
                 tools=[UNIFIED_ES_PARAMS_TOOL],
                 tool_choice={"type": "tool", "name": "generate_unified_es_params"},
                 temperature=0,
-                max_tokens=900,
+                max_tokens=2000,
             )
             tool_use = pick_tool(resp, "generate_unified_es_params")
             if not tool_use:
@@ -3216,6 +3357,7 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             "light_bites/chips_and_crisps": "chips",
             "light_bites/popcorn": "popcorn",
             "light_bites/dry_fruit_and_nut_snacks": "dry fruits",
+            "light_bites/energy_bars": "protein bar",
             "biscuits_and_crackers/cookies": "cookies",
             "biscuits_and_crackers/cream_filled_biscuits": "biscuits",
             "biscuits_and_crackers/glucose_and_marie_biscuits": "biscuits",
@@ -3230,13 +3372,12 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             "dairy_and_bakery/bread_and_buns": "bread",
             "dairy_and_bakery/butter": "butter",
             "dairy_and_bakery/cheese": "cheese",
-            "refreshing_beverages/fruit_juices": "juice",
-            "refreshing_beverages/soft_drinks": "soft drinks",
-            "refreshing_beverages/flavored_milk_drinks": "flavored milk",
+            "sodas_juices_and_more/fruit_juices": "juice",
+            "sodas_juices_and_more/soft_drinks": "soft drinks",
+            "sodas_juices_and_more/flavored_milk_drinks": "flavored milk",
             "noodles_and_vermicelli/vermicelli_and_noodles": "noodles",
             "spreads_and_condiments/ketchup_and_sauces": "sauce",
             "spreads_and_condiments/peanut_butter": "peanut butter",
-            "spreads_and_condiments/jams_and_jellies": "jam",
         }
         GENERIC_ANCHORS = {
             "snacks", "treats", "items", "products", "something", "options",
@@ -3266,13 +3407,25 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
                 "bot_summary": turn.get("bot_reply", "")[:80]
             })
 
-        # Build optimized prompt
+        # Build optimized prompt WITH taxonomy injection and strict rules
+        fnb_taxonomy = self._get_fnb_taxonomy_hierarchical()
         prompt = self._build_optimized_prompt(
             current_text=current_text,
             history=history_turns,
             is_follow_up=is_follow_up,
             product_intent=str(session.get("product_intent") or ""),
             slots=slot_answers,
+        ) + (
+            "\n<fnb_taxonomy>\n" +
+            json.dumps(fnb_taxonomy, ensure_ascii=False, indent=2) +
+            "\n</fnb_taxonomy>\n\n" +
+            TAXONOMY_CATEGORIZATION_EXAMPLES +
+            "\n<taxonomy_rule priority=\"CRITICAL\">\n"
+            "Use ONLY the categories provided in <fnb_taxonomy> for f_and_b.\n"
+            "- Return 1-3 category_paths ordered by relevance.\n"
+            "- Format: 'f_and_b/{food|beverages}/{l2}/{l3}' (or L2-only when L3 unknown).\n"
+            "- NEVER output health_nutrition or any category not present in taxonomy.\n"
+            "</taxonomy_rule>\n"
         )
 
         # Call LLM with forced tool use
@@ -3282,7 +3435,7 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             tools=[UNIFIED_ES_PARAMS_TOOL],
             tool_choice={"type": "tool", "name": "generate_unified_es_params"},
             temperature=0,
-            max_tokens=700,
+            max_tokens=2000,
         )
         tool_use = pick_tool(resp, "generate_unified_es_params")
         if not tool_use:
@@ -3312,12 +3465,29 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
         anchor_lower = anchor.lower()
         if anchor_lower in GENERIC_ANCHORS:
             # Strategy 1: Derive 2-3 nouns from category_paths for broader search surface
+            # Enforce taxonomy: strip full prefix to L2/L3 and reject unknowns
+            fnb_tax = self._get_fnb_taxonomy_hierarchical()
             cat_paths = params.get("category_paths") or []
             refined_nouns = []
             if isinstance(cat_paths, list) and cat_paths:
                 for cp in cat_paths[:3]:  # Take up to 3 paths
                     # Strip full prefix if present
-                    rel_path = str(cp).replace("f_and_b/food/", "").replace("personal_care/", "")
+                    cp_str = str(cp)
+                    rel_path = cp_str.replace("f_and_b/food/", "").replace("f_and_b/beverages/", "").replace("personal_care/", "")
+                    # Validate against taxonomy (L2 or L2/L3)
+                    valid = False
+                    parts = [p for p in rel_path.split("/") if p]
+                    if len(parts) == 1:
+                        l2 = parts[0]
+                        if l2 in (fnb_tax.get("food", {}) | fnb_tax.get("beverages", {})):
+                            valid = True
+                    elif len(parts) == 2:
+                        l2, l3 = parts
+                        valid = (
+                            l3 in (fnb_tax.get("food", {}).get(l2, []) + fnb_tax.get("beverages", {}).get(l2, []))
+                        )
+                    if not valid:
+                        continue
                     if rel_path in CATEGORY_PATH_TO_NOUNS:
                         noun = CATEGORY_PATH_TO_NOUNS[rel_path]
                         if noun not in refined_nouns:  # Avoid duplicates
@@ -3635,7 +3805,7 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             "{\n"
             "  \"anchor_product_noun\": \"noodles\",\n"
             "  \"category_group\": \"f_and_b\",\n"
-            "  \"category_paths\": [\"f_and_b/food/noodles_pasta/noodles\"],\n"
+            "  \"category_paths\": [\"f_and_b/food/noodles_and_vermicelli/vermicelli_and_noodles\"],\n"
             "  \"dietary_terms\": [\"GLUTEN FREE\"],\n"
             "  \"keywords\": [\"instant\"],\n"
             "  \"must_keywords\": [],\n"
@@ -3654,7 +3824,7 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             "{\n"
             "  \"anchor_product_noun\": \"pasta\",\n"
             "  \"category_group\": \"f_and_b\",\n"
-            "  \"category_paths\": [\"f_and_b/food/noodles_pasta/pasta\"],\n"
+            "  \"category_paths\": [\"f_and_b/food/packaged_meals/pasta_and_soups\"],\n"
             "  \"size\": 20,\n"
             "  \"reasoning\": \"New product: 'pasta' replaces previous 'chips' anchor\"\n"
             "}\n"
@@ -4113,7 +4283,7 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             tools=[PERSONAL_CARE_ES_PARAMS_TOOL_2025],
             tool_choice={"type": "tool", "name": "generate_personal_care_es_params"},
             temperature=0,
-            max_tokens=800,
+            max_tokens=2000,
         )
         
         tool_use = pick_tool(resp, "generate_personal_care_es_params")
@@ -4588,7 +4758,7 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             tools=[FOOD_EXTRACT_TOOL],
             tool_choice={"type": "tool", "name": "extract_search_parameters"},
             temperature=0,
-            max_tokens=900,
+            max_tokens=2000,
         )
         tool_use = pick_tool(resp, "extract_search_parameters")
         if not tool_use:
@@ -4760,6 +4930,146 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
         except Exception:
             return {}
 
+    def _get_fnb_taxonomy_hierarchical(self) -> Dict[str, Any]:
+        """Load hierarchical F&B taxonomy and flatten for LLM prompt efficiency."""
+        import os, json
+        
+        # Try to load user-provided hierarchical taxonomy
+        hierarchical = {}
+        try:
+            here = os.path.dirname(os.path.abspath(__file__))
+            path = os.path.join(here, "taxonomies", "fnb_hierarchy.json")
+            with open(path, "r", encoding="utf-8") as f:
+                hierarchical = json.load(f)
+        except Exception:
+            # Fallback: use embedded taxonomy from user requirements
+            hierarchical = {
+                "f_and_b": {
+                    "food": {
+                        "frozen_treats": {
+                            "ice_cream_cakes_and_sandwiches": {},
+                            "ice_cream_sticks": {},
+                            "light_ice_cream": {},
+                            "ice_cream_tubs": {},
+                            "ice_cream_cups": {},
+                            "ice_cream_cones": {},
+                            "frozen_pop_cubes": {},
+                            "kulfi": {}
+                        },
+                        "light_bites": {
+                            "energy_bars": {},
+                            "nachos": {},
+                            "chips_and_crisps": {},
+                            "savory_namkeen": {},
+                            "dry_fruit_and_nut_snacks": {},
+                            "popcorn": {}
+                        },
+                        "breakfast_essentials": {
+                            "muesli_and_oats": {},
+                            "dates_and_seeds": {},
+                            "breakfast_cereals": {}
+                        },
+                        "packaged_meals": {
+                            "papads_and_pickles_and_chutneys": {},
+                            "baby_food": {},
+                            "pasta_and_soups": {},
+                            "baking_mixes_and_ingredients": {},
+                            "ready_to_cook_meals": {},
+                            "ready_to_eat_meals": {}
+                        },
+                        "dairy_and_bakery": {
+                            "batter_and_mix": {},
+                            "butter": {},
+                            "paneer_and_cream": {},
+                            "cheese": {},
+                            "vegan_beverages": {},
+                            "yogurt_and_shrikhand": {},
+                            "curd_and_probiotic_drinks": {},
+                            "bread_and_buns": {},
+                            "eggs": {},
+                            "gourmet_specialties": {}
+                        },
+                        "sweet_treats": {
+                            "pastries_and_cakes": {},
+                            "candies_gums_and_mints": {},
+                            "chocolates": {},
+                            "premium_chocolates": {},
+                            "indian_mithai": {},
+                            "dessert_mixes": {}
+                        },
+                        "noodles_and_vermicelli": {
+                            "vermicelli_and_noodles": {}
+                        },
+                        "biscuits_and_crackers": {
+                            "glucose_and_marie_biscuits": {},
+                            "cream_filled_biscuits": {},
+                            "rusks_and_khari": {},
+                            "digestive_biscuits": {},
+                            "wafer_biscuits": {},
+                            "cookies": {},
+                            "crackers": {}
+                        },
+                        "frozen_foods": {
+                            "non_veg_frozen_snacks": {},
+                            "frozen_raw_meats": {},
+                            "frozen_vegetables_and_pulp": {},
+                            "frozen_vegetarian_snacks": {},
+                            "frozen_sausages_salami_and_ham": {},
+                            "momos_and_similar": {},
+                            "frozen_roti_and_paratha": {}
+                        },
+                        "spreads_and_condiments": {
+                            "ketchup_and_sauces": {},
+                            "honey_and_spreads": {},
+                            "peanut_butter": {}
+                        }
+                    },
+                    "beverages": {
+                        "sodas_juices_and_more": {
+                            "soda_and_mixers": {},
+                            "flavored_milk_drinks": {},
+                            "instant_beverage_mixes": {},
+                            "fruit_juices": {},
+                            "energy_and_non_alcoholic_drinks": {},
+                            "soft_drinks": {},
+                            "iced_coffee_and_tea": {},
+                            "bottled_water": {},
+                            "enhanced_hydration": {}
+                        },
+                        "tea_coffee_and_more": {
+                            "iced_coffee_and_tea": {},
+                            "green_and_herbal_tea": {},
+                            "tea": {},
+                            "beverage_mix": {},
+                            "coffee": {}
+                        },
+                        "dairy_and_bakery": {
+                            "milk": {}
+                        }
+                    }
+                }
+            }
+        
+        # Flatten to {food: {l2: [l3s]}, beverages: {l2: [l3s]}} for token efficiency
+        return self._flatten_fnb_taxonomy(hierarchical)
+    
+    def _flatten_fnb_taxonomy(self, hierarchical: Dict[str, Any]) -> Dict[str, Dict[str, List[str]]]:
+        """Convert nested taxonomy to 2-level structure for prompt."""
+        flattened = {}
+        try:
+            fnb = hierarchical.get("f_and_b", {})
+            for domain in ["food", "beverages"]:
+                if domain in fnb:
+                    flattened[domain] = {}
+                    for l2_key, l3_dict in fnb[domain].items():
+                        if isinstance(l3_dict, dict):
+                            flattened[domain][l2_key] = list(l3_dict.keys())
+                        else:
+                            flattened[domain][l2_key] = []
+        except Exception as exc:
+            log.warning(f"FNB_TAXONOMY_FLATTEN_ERROR | {exc}")
+        return flattened
+
     def _get_personal_care_taxonomy(self) -> Dict[str, Any]:
         """Load Personal Care taxonomy JSON if present."""
         import os, json
@@ -4901,7 +5211,7 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
                 tools=tool_set,
                 tool_choice={"type": "tool", "name": tool_name},
                 temperature=0,
-                max_tokens=800,
+                max_tokens=2000,
             )
             tool_use = pick_tool(resp, tool_name)
             params = _strip_keys(tool_use.input or {}) if tool_use else {}

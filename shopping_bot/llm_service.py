@@ -97,6 +97,29 @@ FINAL_ANSWER_UNIFIED_TOOL = {
     }
 }
 
+# Memory-based final answer tool (2025 policy compliant)
+MEMORY_FINAL_ANSWER_TOOL = {
+    "name": "generate_memory_answer_with_ux",
+    "description": "Generate a final answer using ONLY conversation memory and attach UX quick replies.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "response_type": {"type": "string", "enum": ["final_answer"]},
+            "summary_message": {"type": "string"},
+            "ux": {
+                "type": "object",
+                "properties": {
+                    "ux_surface": {"type": "string", "enum": ["SPM", "MPM"]},
+                    "dpl_runtime_text": {"type": "string"},
+                    "quick_replies": {"type": "array", "items": {"type": "string"}, "minItems": 3, "maxItems": 4}
+                },
+                "required": ["ux_surface", "quick_replies"]
+            }
+        },
+        "required": ["response_type", "summary_message", "ux"]
+    }
+}
+
 # Personal Care ES params tool - 2025 unified schema
 PERSONAL_CARE_ES_PARAMS_TOOL_2025 = {
     "name": "generate_personal_care_es_params",
@@ -2210,10 +2233,26 @@ Answer the user's question using ONLY the conversation memory and products liste
 5. Keep response conversational and helpful (2-4 sentences max)
 6. Do NOT make up information - only use what's in the memory
 
-**Response format:**
-- Write naturally as if continuing the conversation
-- Mention 1-3 specific products when relevant
-- Be helpful but concise
+ <ux_policy_2025>
+ You MUST also propose 3-4 meaningful quick replies that help the user refine their request, adhering to 2025 UX policy.
+ - quick replies should be short (1-3 words when possible)
+ - include 1 price filter if applicable (e.g., "Under ₹50")
+ - include 1 dietary/attribute filter if applicable (e.g., "GLUTEN FREE")
+ - include 1 product-intent progression (e.g., "Compare 1 vs 2") when relevant
+ - avoid duplicates with existing context; must be actionable
+ Choose ux_surface="MPM" unless clearly single-product (SPM scenario).
+ </ux_policy_2025>
+
+ <output_format>
+ Return ONLY a tool call to generate_memory_answer_with_ux with fields:
+ - response_type: "final_answer"
+ - summary_message: string (the concise answer)
+ - ux: {
+     ux_surface: "SPM" | "MPM",
+     dpl_runtime_text: optional string,
+     quick_replies: [3-4 strings]
+   }
+ </output_format>
 </task>
 
 Generate your answer now:"""
@@ -2225,40 +2264,45 @@ Generate your answer now:"""
             resp = await self.anthropic.messages.create(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,  # Slightly creative for natural language
-                max_tokens=600,
+                tools=[MEMORY_FINAL_ANSWER_TOOL],
+                tool_choice={"type": "tool", "name": "generate_memory_answer_with_ux"},
+                temperature=0.7,
+                max_tokens=700,
             )
             
-            answer_text = resp.content[0].text.strip()
-            
-            log.info(f"MEMORY_ANSWER_SUCCESS | user={ctx.user_id} | answer_len={len(answer_text)}")
-            
-            # ═══════════════════════════════════════════════════════════
-            # Step 5: Detect if LLM says context is insufficient
-            # ═══════════════════════════════════════════════════════════
-            insufficient_signals = [
-                "don't have", "not sure", "can't find", 
-                "unclear which", "could you clarify"
-            ]
-            
-            if any(signal in answer_text.lower() for signal in insufficient_signals):
-                log.warning(f"MEMORY_INSUFFICIENT | user={ctx.user_id} | llm_detected_gap")
+            tool_use = pick_tool(resp, "generate_memory_answer_with_ux")
+            if not tool_use:
+                # Fallback to simple text if tool not used (defensive)
+                answer_text = resp.content[0].text.strip() if resp.content else ""
                 return {
-                    "response_type": "clarification_needed",
+                    "response_type": "final_answer",
                     "message": answer_text,
-                    "needs_es_fallback": False  # LLM already asked for clarification
+                    "summary_message": answer_text,
+                    "products": formatted_products[:4],
+                    "data_source": "memory_only"
                 }
+
+            args = tool_use.input or {}
+            summary_message = str(args.get("summary_message") or "").strip()
+            ux = args.get("ux") if isinstance(args.get("ux"), dict) else {}
+            quick_replies = ux.get("quick_replies") if isinstance(ux.get("quick_replies"), list) else []
             
-            # ═══════════════════════════════════════════════════════════
-            # Step 6: Return successful memory-based answer
-            # ═══════════════════════════════════════════════════════════
-            return {
+            # Build output with UX for FE
+            out: Dict[str, Any] = {
                 "response_type": "final_answer",
-                "message": answer_text,
-                "summary_message": answer_text,
+                "message": summary_message or "",
+                "summary_message": summary_message or "",
                 "products": formatted_products[:4],  # Attach top 4 for FE display
-                "data_source": "memory_only"  # Track that this came from memory
+                "data_source": "memory_only",
+                "ux_response": {
+                    "ux_surface": ux.get("ux_surface") or ("SPM" if len(formatted_products) == 1 else "MPM"),
+                    "quick_replies": [str(q).strip() for q in quick_replies if str(q).strip()] or [],
+                    # dpl_runtime_text included only if present
+                    **({"dpl_runtime_text": ux.get("dpl_runtime_text")} if ux.get("dpl_runtime_text") else {})
+                }
             }
+            log.info(f"MEMORY_ANSWER_SUCCESS | user={ctx.user_id} | summary_len={len(summary_message)} | qrs={len(out['ux_response']['quick_replies'])}")
+            return out
             
         except Exception as exc:
             log.error(f"MEMORY_ANSWER_FAILED | user={ctx.user_id} | error={exc}")

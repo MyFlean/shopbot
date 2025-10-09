@@ -99,24 +99,16 @@ FINAL_ANSWER_UNIFIED_TOOL = {
 
 # Memory-based final answer tool (2025 policy compliant)
 MEMORY_FINAL_ANSWER_TOOL = {
-    "name": "generate_memory_answer_with_ux",
-    "description": "Generate a final answer using ONLY conversation memory and attach UX quick replies.",
+    "name": "generate_memory_answer_minimal",
+    "description": "Generate a concise final answer using ONLY conversation memory and propose 3-4 quick replies.",
     "input_schema": {
         "type": "object",
         "properties": {
             "response_type": {"type": "string", "enum": ["final_answer"]},
             "summary_message": {"type": "string"},
-            "ux": {
-                "type": "object",
-                "properties": {
-                    "ux_surface": {"type": "string", "enum": ["SPM", "MPM"]},
-                    "dpl_runtime_text": {"type": "string"},
-                    "quick_replies": {"type": "array", "items": {"type": "string"}, "minItems": 3, "maxItems": 4}
-                },
-                "required": ["ux_surface", "quick_replies"]
-            }
+            "quick_replies": {"type": "array", "items": {"type": "string"}, "minItems": 3, "maxItems": 4}
         },
-        "required": ["response_type", "summary_message", "ux"]
+        "required": ["response_type", "summary_message", "quick_replies"]
     }
 }
 
@@ -2233,25 +2225,20 @@ Answer the user's question using ONLY the conversation memory and products liste
 5. Keep response conversational and helpful (2-4 sentences max)
 6. Do NOT make up information - only use what's in the memory
 
- <ux_policy_2025>
- You MUST also propose 3-4 meaningful quick replies that help the user refine their request, adhering to 2025 UX policy.
- - quick replies should be short (1-3 words when possible)
- - include 1 price filter if applicable (e.g., "Under ₹50")
- - include 1 dietary/attribute filter if applicable (e.g., "GLUTEN FREE")
- - include 1 product-intent progression (e.g., "Compare 1 vs 2") when relevant
- - avoid duplicates with existing context; must be actionable
- Choose ux_surface="MPM" unless clearly single-product (SPM scenario).
- </ux_policy_2025>
+ <quick_replies_policy>
+ Also propose 3-4 meaningful quick replies that help the user refine their request.
+ - Short (1-3 words preferred)
+ - Consider price (e.g., "Under ₹50") if relevant
+ - Consider attributes (e.g., "GLUTEN FREE") if relevant
+ - Consider intent follow-ups (e.g., "Compare 1 vs 2") if relevant
+ - Must be actionable and not duplicates of the current context
+ </quick_replies_policy>
 
  <output_format>
- Return ONLY a tool call to generate_memory_answer_with_ux with fields:
+ Return ONLY a tool call to generate_memory_answer_minimal with fields:
  - response_type: "final_answer"
- - summary_message: string (the concise answer)
- - ux: {
-     ux_surface: "SPM" | "MPM",
-     dpl_runtime_text: optional string,
-     quick_replies: [3-4 strings]
-   }
+ - summary_message: string (concise answer)
+ - quick_replies: [3-4 strings]
  </output_format>
 </task>
 
@@ -2265,12 +2252,12 @@ Generate your answer now:"""
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[MEMORY_FINAL_ANSWER_TOOL],
-                tool_choice={"type": "tool", "name": "generate_memory_answer_with_ux"},
+                tool_choice={"type": "tool", "name": "generate_memory_answer_minimal"},
                 temperature=0.7,
                 max_tokens=700,
             )
             
-            tool_use = pick_tool(resp, "generate_memory_answer_with_ux")
+            tool_use = pick_tool(resp, "generate_memory_answer_minimal")
             if not tool_use:
                 # Fallback to simple text if tool not used (defensive)
                 answer_text = resp.content[0].text.strip() if resp.content else ""
@@ -2284,8 +2271,7 @@ Generate your answer now:"""
 
             args = tool_use.input or {}
             summary_message = str(args.get("summary_message") or "").strip()
-            ux = args.get("ux") if isinstance(args.get("ux"), dict) else {}
-            quick_replies = ux.get("quick_replies") if isinstance(ux.get("quick_replies"), list) else []
+            quick_replies = args.get("quick_replies") if isinstance(args.get("quick_replies"), list) else []
             
             # Build output with UX for FE
             out: Dict[str, Any] = {
@@ -2295,10 +2281,7 @@ Generate your answer now:"""
                 "products": formatted_products[:4],  # Attach top 4 for FE display
                 "data_source": "memory_only",
                 "ux_response": {
-                    "ux_surface": ux.get("ux_surface") or ("SPM" if len(formatted_products) == 1 else "MPM"),
-                    "quick_replies": [str(q).strip() for q in quick_replies if str(q).strip()] or [],
-                    # dpl_runtime_text included only if present
-                    **({"dpl_runtime_text": ux.get("dpl_runtime_text")} if ux.get("dpl_runtime_text") else {})
+                    "quick_replies": [str(q).strip() for q in quick_replies if str(q).strip()] or []
                 }
             }
             log.info(f"MEMORY_ANSWER_SUCCESS | user={ctx.user_id} | summary_len={len(summary_message)} | qrs={len(out['ux_response']['quick_replies'])}")

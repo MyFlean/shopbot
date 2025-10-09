@@ -149,6 +149,45 @@ class ShoppingBotCore:
             except Exception:
                 pass
 
+        # ═══════════════════════════════════════════════════════════
+        # NEW: Detect memory-only follow-ups (reference to previous products)
+        # ═══════════════════════════════════════════════════════════
+        # Heuristic: If query references previous products and has NO new constraints,
+        # answer from memory instead of refetching via ES.
+        memory_indicators = [
+            "above", "those", "these", "that", "previous", "earlier",
+            "you showed", "you recommended", "you suggested", "from the list",
+            "first", "second", "third", "last one", "compare them"
+        ]
+        
+        has_memory_reference = any(indicator in query.lower() for indicator in memory_indicators)
+        has_new_constraints = bool(fu.patch.slots)  # New slot values = new search constraints
+        
+        if has_memory_reference and not has_new_constraints:
+            log.info(f"FOLLOWUP_MEMORY_ONLY | user={ctx.user_id} | query='{query[:60]}'")
+            
+            # Try memory-only answer
+            answer = await self.llm_service.generate_memory_based_answer(query, ctx)
+            
+            if not answer.get("needs_es_fallback"):
+                # Successfully answered from memory
+                snapshot_and_trim(
+                    ctx,
+                    base_query=query,
+                    final_answer={
+                        "response_type": answer.get("response_type", "final_answer"),
+                        "message_preview": answer.get("message", "")[:300],
+                        "has_products": bool(answer.get("products")),
+                        "data_source": "memory_only"
+                    }
+                )
+                self.ctx_mgr.save_context(ctx)
+                self.smart_log.response_generated(ctx.user_id, "final_answer", False)
+                return BotResponse(ResponseType.FINAL_ANSWER, answer)
+            else:
+                log.warning(f"FOLLOWUP_MEMORY_EMPTY | user={ctx.user_id} | falling_back_to_delta_fetch")
+                # Continue to delta-fetch below
+
         # Delta-fetch-and-reply
         fetch_list = await self.llm_service.assess_delta_requirements(query, ctx, fu.patch)
         if fetch_list:
@@ -219,6 +258,7 @@ class ShoppingBotCore:
                     "flow_triggered": False,
                     "ux_intent": product_intent_result.intent,
                     "message_full": ux_enhanced_answer.get("summary_message") or ux_enhanced_answer.get("message") or "",
+                    "data_source": "es_fetch"  # NEW: Track that this came from ES delta fetch
                 }
                 
                 snapshot_and_trim(ctx, base_query=query, final_answer=final_answer_summary)
@@ -271,6 +311,7 @@ class ShoppingBotCore:
                         "flow_triggered": False,
                         "ux_intent": fallback_intent,
                         "message_full": ux.get("summary_message") or ux.get("message") or "",
+                        "data_source": "es_fetch"  # NEW: Track that this came from ES delta fetch
                     },
                 )
                 self.ctx_mgr.save_context(ctx)
@@ -301,6 +342,7 @@ class ShoppingBotCore:
             "has_products": bool(answer_dict.get("products")),
             "flow_triggered": False,
             "message_full": answer_dict.get("summary_message") or answer_dict.get("message") or "",
+            "data_source": "es_fetch" if fetched else "none"  # NEW: Track data source
         }
 
         snapshot_and_trim(ctx, base_query=query, final_answer=final_answer_summary)
@@ -369,15 +411,63 @@ class ShoppingBotCore:
                             ctx.session["domain_subcategory"] = combined.get("domain_subcategory").strip()
                     except Exception:
                         pass
-                    # If general → simple response and exit early
-                    if not is_prod:
+                    # ═══════════════════════════════════════════════════════════
+                    # NEW: Handle data_strategy routing (LLM1 enhancement)
+                    # ═══════════════════════════════════════════════════════════
+                    data_strategy = combined.get("data_strategy", "none")
+                    log.info(f"DATA_STRATEGY | user={ctx.user_id} | strategy={data_strategy} | route={combined.get('route')}")
+                    
+                    # CASE 1: data_strategy = "none" (casual/support/OOC)
+                    if data_strategy == "none" or not is_prod:
                         simple = combined.get("simple_response") or {}
                         msg = simple.get("message") or "I can help you with shopping queries. What are you looking for?"
                         # Preserve full response dict including response_type and is_support_query for support detection
                         content = simple if simple else {"message": msg}
+                        
+                        # Snapshot casual interaction
+                        snapshot_and_trim(
+                            ctx,
+                            base_query=query,
+                            final_answer={
+                                "response_type": simple.get("response_type", "final_answer"),
+                                "message_preview": msg[:300],
+                                "has_products": False,
+                                "data_source": "none"
+                            }
+                        )
                         self.ctx_mgr.save_context(ctx)
                         return BotResponse(ResponseType.FINAL_ANSWER, content)
-
+                    
+                    # CASE 2: data_strategy = "memory_only" (reference to previous products)
+                    if data_strategy == "memory_only":
+                        log.info(f"MEMORY_ONLY_PATH | user={ctx.user_id} | query='{query[:60]}'")
+                        
+                        # Call specialized memory-based answer generator
+                        answer = await self.llm_service.generate_memory_based_answer(query, ctx)
+                        
+                        # Check if fallback to ES is needed
+                        if answer.get("needs_es_fallback"):
+                            log.warning(f"MEMORY_FALLBACK_TO_ES | user={ctx.user_id} | reason=empty_memory")
+                            # Continue to ES fetch path below
+                            data_strategy = "es_fetch"
+                        else:
+                            # Successfully answered from memory
+                            snapshot_and_trim(
+                                ctx,
+                                base_query=query,
+                                final_answer={
+                                    "response_type": answer.get("response_type", "final_answer"),
+                                    "message_preview": answer.get("message", "")[:300],
+                                    "has_products": bool(answer.get("products")),
+                                    "data_source": "memory_only"
+                                }
+                            )
+                            self.ctx_mgr.save_context(ctx)
+                            return BotResponse(ResponseType.FINAL_ANSWER, answer)
+                    
+                    # CASE 3: data_strategy = "es_fetch" (need new product search)
+                    # This is the existing product pipeline - continues below
+                    
                     # Product-related → set product_intent (optional, default to show_me_options)
                     p_intent = str(combined.get("product_intent") or "show_me_options")
                     ctx.session["product_intent"] = p_intent
@@ -403,11 +493,16 @@ class ShoppingBotCore:
                     try:
                         # ✅ Clear slots early in fastpath to prevent pollution
                         product_slots_to_clear = [
-                            "dietary_requirements", "preferences", "brands",
+                            # Generic user slot answers
+                            "preferences", "budget", "dietary_requirements", "use_case", "product_category", "quantity",
+                            # Price filters & taxonomy hints
                             "price_min", "price_max", "category_group", "category_paths", "category_path",
+                            # Domain hints
                             "domain",  # CRITICAL: Clear domain to prevent wrong routing
                             "domain_subcategory",
-                            # PC-specific slots
+                            # Personal care specific derived/session keys
+                            "pc_concern", "pc_compatibility", "ingredient_avoid",
+                            # Legacy/aux PC hints used by planners
                             "skin_types_slot", "hair_types_slot", "efficacy_terms_slot", 
                             "avoid_terms_slot", "pc_keywords_slot", "pc_must_keywords_slot"
                         ]
@@ -569,11 +664,16 @@ class ShoppingBotCore:
         # FIX: Clear product-specific slots to prevent pollution across product switches
         try:
             product_slots_to_clear = [
-                "dietary_requirements", "preferences", "brands",
+                # Generic user slot answers
+                "preferences", "budget", "dietary_requirements", "use_case", "product_category", "quantity",
+                # Price filters & taxonomy hints
                 "price_min", "price_max", "category_group", "category_paths", "category_path",
+                # Domain hints
                 "domain",  # ✅ FIX: Clear domain to prevent wrong routing
                 "domain_subcategory",  # ✅ Also clear subcategory hints
-                # PC-specific slots
+                # Personal care specific derived/session keys
+                "pc_concern", "pc_compatibility", "ingredient_avoid",
+                # Legacy/aux PC hints used by planners
                 "skin_types_slot", "hair_types_slot", "efficacy_terms_slot", 
                 "avoid_terms_slot", "pc_keywords_slot", "pc_must_keywords_slot"
             ]
@@ -840,7 +940,8 @@ class ShoppingBotCore:
                 "has_sections": False,
                 "has_products": bool(ux_enhanced_answer.get("products")),
                 "flow_triggered": False,
-                "ux_intent": product_intent
+                "ux_intent": product_intent,
+                "data_source": "es_fetch"  # NEW: Track that this came from ES
             }
             
             snapshot_and_trim(ctx, base_query=original_q, final_answer=final_answer_summary)
@@ -896,6 +997,7 @@ class ShoppingBotCore:
                         "flow_triggered": False,
                         "ux_intent": fallback_intent,
                         "message_full": ux_enhanced_answer.get("summary_message") or ux_enhanced_answer.get("message") or "",
+                        "data_source": "es_fetch"  # NEW: Track that this came from ES
                     },
                 )
                 ctx.session.pop("assessment", None)
@@ -928,6 +1030,7 @@ class ShoppingBotCore:
             "has_products": bool(answer_dict.get("products")),
             "flow_triggered": False,
             "message_full": answer_dict.get("summary_message") or answer_dict.get("message") or "",
+            "data_source": "es_fetch" if backend_fetchers else "none"  # NEW: Track data source
         }
 
         snapshot_and_trim(ctx, base_query=original_q, final_answer=final_answer_summary)

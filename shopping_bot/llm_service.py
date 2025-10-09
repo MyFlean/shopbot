@@ -389,6 +389,18 @@ COMBINED_CLASSIFY_ASSESS_TOOL = {
                 "enum": ["product", "support", "general"],
                 "description": "Primary routing decision"
             },
+            
+            # === DATA STRATEGY (NEW: determines data sourcing approach) ===
+            "data_strategy": {
+                "type": "string",
+                "enum": ["none", "es_fetch", "memory_only"],
+                "description": (
+                    "Data sourcing strategy:\n"
+                    "- none: No data needed (casual greetings, OOC products, support)\n"
+                    "- es_fetch: Need NEW product search via Elasticsearch (user wants recommendations)\n"
+                    "- memory_only: Answer from conversation history (user references 'those products', 'above', 'you showed')"
+                )
+            },
 
             # === FOLLOW-UP DETECTION ===
             "is_follow_up": {
@@ -1773,6 +1785,39 @@ Current user message: "{query.strip()}"
 7. Order ask_slots by priority (most important first)
 8. For support queries, be warm and provide the phone number clearly
 9. For general queries, be friendly and redirect to product search
+</critical_instructions>
+
+<data_strategy_rules>
+**CRITICAL: Choose the correct data_strategy based on query intent**
+
+**data_strategy = "none"**
+- User asks casual questions: greetings, bot identity, how are you
+- User requests out-of-category products (electronics, clothing, etc.)
+- Support queries: help, contact, complaints
+- Examples: "Hello", "What is Flean?", "I need a laptop", "How do I contact support?"
+
+**data_strategy = "es_fetch"**
+- User wants NEW product recommendations/search
+- User asks "I want X", "show me Y", "need Z products"
+- First-time product query in conversation
+- Examples: "I want chips", "show me shampoos", "need organic snacks"
+
+**data_strategy = "memory_only"**
+- User REFERENCES previous recommendations explicitly
+- User asks about "those products", "the ones above", "you showed", "you recommended"
+- User wants details/comparison of already-shown products
+- Examples: 
+  * "tell me more about those products"
+  * "what were the options you showed?"
+  * "compare the first two from your list"
+  * "explain the second product"
+  * "which one is better from what you recommended?"
+
+**Detection heuristics:**
+- If query contains: "those", "these", "above", "you showed", "you recommended", "previous", "earlier" → likely "memory_only"
+- If query is a fresh product request with no references → "es_fetch"
+- If query is casual/OOC/support → "none"
+</data_strategy_rules>
 
 <special_routing_rules>
 **BOT IDENTITY QUERIES:**
@@ -2055,6 +2100,173 @@ Now classify the user's current message. Return ONLY the tool call."""
             return result
         else:
             return await self._generate_simple_response(query, ctx, fetched, intent_l3, query_intent)
+
+    # ---------------- MEMORY-BASED ANSWER GENERATION (NEW) ----------------
+    async def generate_memory_based_answer(
+        self,
+        query: str,
+        ctx: UserContext
+    ) -> Dict[str, Any]:
+        """
+        Generate answer using ONLY conversation memory (no ES fetch).
+        
+        This is used when the user references previous recommendations:
+        - "tell me more about those products"
+        - "compare the first two from your list"
+        - "which one is better from what you showed?"
+        
+        The function:
+        1. Loads XML-formatted conversation history
+        2. Loads last_recommendation product snapshot
+        3. Uses an LLM to answer based purely on memory
+        4. Returns response with product references
+        
+        Args:
+            query: User's current query
+            ctx: User context with conversation_history and last_recommendation
+            
+        Returns:
+            Dict with response_type, message, and products
+        """
+        log.info(f"MEMORY_ANSWER_START | user={ctx.user_id} | query='{query[:60]}'")
+        
+        # ═══════════════════════════════════════════════════════════
+        # Step 1: Extract conversation memory with XML formatting
+        # ═══════════════════════════════════════════════════════════
+        from .bot_helpers import format_memory_for_llm
+        
+        conv_history = ctx.session.get("conversation_history", [])
+        last_rec = ctx.session.get("last_recommendation", {})
+        products = last_rec.get("products", [])
+        
+        # Validate that memory exists
+        if not products:
+            log.warning(f"MEMORY_EMPTY | user={ctx.user_id} | no last_recommendation")
+            return {
+                "response_type": "clarification_needed",
+                "message": "I don't have recent product recommendations to reference. Could you specify what you're looking for?",
+                "needs_es_fallback": True  # Signal that ES fetch might be needed
+            }
+        
+        # Format conversation history with XML tags for clarity
+        xml_memory = format_memory_for_llm(conv_history, max_turns=3)
+        
+        # ═══════════════════════════════════════════════════════════
+        # Step 2: Format products for LLM (clean, structured)
+        # ═══════════════════════════════════════════════════════════
+        formatted_products = []
+        for idx, p in enumerate(products[:8], 1):  # Limit to 8 products
+            try:
+                formatted_products.append({
+                    "position": idx,
+                    "name": p.get("title", "Unknown"),
+                    "brand": p.get("brand", ""),
+                    "price": p.get("price"),
+                    "rating": p.get("rating"),
+                    "image_url": p.get("image_url", "")
+                })
+            except Exception:
+                continue
+        
+        # ═══════════════════════════════════════════════════════════
+        # Step 3: Build LLM prompt with XML-structured context
+        # ═══════════════════════════════════════════════════════════
+        prompt = f"""You are Flean, a shopping assistant. The user is asking a follow-up question about products you previously recommended.
+
+{xml_memory}
+
+<products_recommended>
+Last recommendation from: {last_rec.get("as_of", "recent")}
+Products (ordered list):
+{json.dumps(formatted_products, ensure_ascii=False, indent=2)}
+</products_recommended>
+
+<user_current_question>
+"{query}"
+</user_current_question>
+
+<task>
+Answer the user's question using ONLY the conversation memory and products listed above.
+
+**Guidelines:**
+1. Be SPECIFIC - reference products by name, brand, and position
+   - ✓ "The first product is Lays Classic Salted chips..."
+   - ✗ "There are some good options..."
+
+2. Use actual data from the product list:
+   - Prices, ratings, brands are all available
+   - If comparing, cite the actual attributes
+
+3. Handle positional references correctly:
+   - "first" = position 1
+   - "second" = position 2
+   - "those" = all products shown
+   - "above" = all products shown
+
+4. If the context is insufficient (e.g., user asks about products not in memory):
+   - Politely ask for clarification
+   - Example: "I showed you chips earlier. Could you clarify which specific detail you'd like to know?"
+
+5. Keep response conversational and helpful (2-4 sentences max)
+6. Do NOT make up information - only use what's in the memory
+
+**Response format:**
+- Write naturally as if continuing the conversation
+- Mention 1-3 specific products when relevant
+- Be helpful but concise
+</task>
+
+Generate your answer now:"""
+
+        # ═══════════════════════════════════════════════════════════
+        # Step 4: Call LLM with memory context
+        # ═══════════════════════════════════════════════════════════
+        try:
+            resp = await self.anthropic.messages.create(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,  # Slightly creative for natural language
+                max_tokens=600,
+            )
+            
+            answer_text = resp.content[0].text.strip()
+            
+            log.info(f"MEMORY_ANSWER_SUCCESS | user={ctx.user_id} | answer_len={len(answer_text)}")
+            
+            # ═══════════════════════════════════════════════════════════
+            # Step 5: Detect if LLM says context is insufficient
+            # ═══════════════════════════════════════════════════════════
+            insufficient_signals = [
+                "don't have", "not sure", "can't find", 
+                "unclear which", "could you clarify"
+            ]
+            
+            if any(signal in answer_text.lower() for signal in insufficient_signals):
+                log.warning(f"MEMORY_INSUFFICIENT | user={ctx.user_id} | llm_detected_gap")
+                return {
+                    "response_type": "clarification_needed",
+                    "message": answer_text,
+                    "needs_es_fallback": False  # LLM already asked for clarification
+                }
+            
+            # ═══════════════════════════════════════════════════════════
+            # Step 6: Return successful memory-based answer
+            # ═══════════════════════════════════════════════════════════
+            return {
+                "response_type": "final_answer",
+                "message": answer_text,
+                "summary_message": answer_text,
+                "products": formatted_products[:4],  # Attach top 4 for FE display
+                "data_source": "memory_only"  # Track that this came from memory
+            }
+            
+        except Exception as exc:
+            log.error(f"MEMORY_ANSWER_FAILED | user={ctx.user_id} | error={exc}")
+            return {
+                "response_type": "error",
+                "message": "I'm having trouble accessing our conversation history. Could you rephrase your question?",
+                "needs_es_fallback": True
+            }
 
     def _fallback_response(self) -> Dict[str, Any]:
         """Fallback used when LLM1 classification fails; aligns with existing response types."""

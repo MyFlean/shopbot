@@ -298,9 +298,13 @@ class EnhancedShoppingBotCore:
         # FIX: Clear product-specific slots to prevent pollution across product switches
         try:
             product_slots_to_clear = [
-                "dietary_requirements", "preferences", "brands",
+                # Generic user slot answers
+                "preferences", "budget", "dietary_requirements", "use_case", "product_category", "quantity",
+                # Price filters & taxonomy hints
                 "price_min", "price_max", "category_group", "category_paths", "category_path",
-                # PC-specific slots
+                # Personal care specific session keys
+                "pc_concern", "pc_compatibility", "ingredient_avoid",
+                # Legacy/aux PC hints used by planners
                 "skin_types_slot", "hair_types_slot", "efficacy_terms_slot", 
                 "avoid_terms_slot", "pc_keywords_slot", "pc_must_keywords_slot"
             ]

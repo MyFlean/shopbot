@@ -132,17 +132,14 @@ def already_have_data(func_str: str, ctx: UserContext) -> bool:
                 or "delivery_address" in ctx.permanent
             )
 
-        # For DIETARY_REQUIREMENTS: count only if answered in THIS assessment, ignore stale session values
-        if slot == UserSlot.DIETARY_REQUIREMENTS:
-            try:
-                a = ctx.session.get("assessment", {}) or {}
-                fulfilled = a.get("fulfilled", []) or []
-                return UserSlot.DIETARY_REQUIREMENTS.value in fulfilled
-            except Exception:
-                return False
-
-        # Default: session presence is sufficient
-        return session_key in ctx.session
+        # For ALL user slots (except delivery address), count only if answered in THIS assessment
+        # This avoids stale carryover from previous product sessions auto-fulfilling asks.
+        try:
+            a = ctx.session.get("assessment", {}) or {}
+            user_provided = a.get("user_provided_slots", []) or []
+            return slot.value in user_provided
+        except Exception:
+            return False
     except ValueError:
         pass
 
@@ -257,7 +254,109 @@ def compute_still_missing(
 
 
 # ────────────────────────────────────────────────────────────
-# Memory snapshotter  ⭐ UPDATED ⭐
+# Memory Classification Helpers
+# ────────────────────────────────────────────────────────────
+def _classify_content_type(final_answer: Dict[str, Any], internal_actions: Dict[str, Any]) -> str:
+    """
+    Classify the content type of a conversation turn for XML-tagged memory.
+    
+    Returns:
+        - "PRODUCT": Product recommendations, search results, comparisons
+        - "SUPPORT": Customer support, technical help
+        - "CASUAL": Greetings, bot identity, out-of-category, general chat
+    """
+    # Check response type
+    response_type = final_answer.get("response_type", "")
+    
+    # Support indicators
+    if response_type == "is_support_query":
+        return "SUPPORT"
+    
+    # Product indicators
+    has_products = final_answer.get("has_products", False)
+    intent = internal_actions.get("intent_classified", "")
+    
+    product_intents = {
+        "Product_Discovery", "Recommendation", 
+        "Specific_Product_Search", "Product_Comparison",
+        "Price_Inquiry", "Availability_Delivery_Inquiry"
+    }
+    
+    if has_products or intent in product_intents:
+        return "PRODUCT"
+    
+    # Everything else is casual
+    return "CASUAL"
+
+
+def format_memory_for_llm(conversation_history: List[Dict[str, Any]], max_turns: int = 5) -> str:
+    """
+    Format conversation history with XML tags for LLM consumption.
+    
+    This creates a structured, easily parseable representation that allows
+    LLMs to quickly distinguish between product-related and casual content.
+    
+    Args:
+        conversation_history: List of conversation turn dicts
+        max_turns: Maximum number of recent turns to include
+        
+    Returns:
+        XML-formatted string with tagged conversation history
+    """
+    recent_turns = conversation_history[-max_turns:] if conversation_history else []
+    
+    xml_parts = ["<conversation_memory>"]
+    
+    for idx, turn in enumerate(recent_turns, 1):
+        content_type = turn.get("content_type", "CASUAL")
+        user_query = turn.get("user_query", "")
+        bot_reply = turn.get("final_answer", {}).get("message_preview", "")
+        timestamp = turn.get("timestamp", "")
+        
+        # Start turn with type attribute
+        xml_parts.append(f'  <turn number="{idx}" type="{content_type}" timestamp="{timestamp}">')
+        xml_parts.append(f'    <user_query>{_escape_xml(user_query)}</user_query>')
+        
+        # Add product-specific metadata if present
+        if content_type == "PRODUCT":
+            product_meta = turn.get("product_metadata", {})
+            product_intent = product_meta.get("product_intent", "")
+            data_source = turn.get("data_source", "")
+            has_products = product_meta.get("has_products", False)
+            
+            xml_parts.append(f'    <bot_response type="product">')
+            xml_parts.append(f'      <product_intent>{product_intent}</product_intent>')
+            xml_parts.append(f'      <data_source>{data_source}</data_source>')
+            xml_parts.append(f'      <has_products>{str(has_products).lower()}</has_products>')
+            xml_parts.append(f'      <message>{_escape_xml(bot_reply)}</message>')
+            xml_parts.append(f'    </bot_response>')
+        else:
+            # Casual or support response
+            xml_parts.append(f'    <bot_response type="{content_type.lower()}">')
+            xml_parts.append(f'      <message>{_escape_xml(bot_reply)}</message>')
+            xml_parts.append(f'    </bot_response>')
+        
+        xml_parts.append('  </turn>')
+    
+    xml_parts.append("</conversation_memory>")
+    
+    return "\n".join(xml_parts)
+
+
+def _escape_xml(text: str) -> str:
+    """Escape XML special characters."""
+    if not text:
+        return ""
+    return (str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&apos;"))
+
+
+# ────────────────────────────────────────────────────────────
+# Memory snapshotter  ⭐ ENHANCED WITH XML TAGS ⭐
 # ────────────────────────────────────────────────────────────
 def snapshot_and_trim(
     ctx: UserContext,
@@ -268,6 +367,12 @@ def snapshot_and_trim(
 ) -> None:
     """
     Record a full turn into both new `conversation_history` and legacy `history`.
+    
+    ENHANCED: Now includes content_type classification for XML-tagged memory access.
+    This enables LLMs to distinguish between:
+    - CASUAL: Generic chat (greetings, bot identity questions)
+    - PRODUCT: Product recommendations/search results
+    - SUPPORT: Customer support queries
     """
     try:
         if internal_actions is None:
@@ -302,13 +407,33 @@ def snapshot_and_trim(
             "flow_triggered": False,
         }
 
-        # ---- new structured history
+        # ═══════════════════════════════════════════════════════════
+        # ENHANCED: Classify content type for XML-tagged memory
+        # ═══════════════════════════════════════════════════════════
+        content_type = _classify_content_type(final_answer, internal_actions)
+        data_source = final_answer.get("data_source", "unknown")  # es_fetch, memory_only, none
+        
+        # Extract product metadata if present
+        product_metadata = None
+        if content_type == "PRODUCT":
+            product_metadata = {
+                "product_intent": ctx.session.get("product_intent"),
+                "has_products": final_answer.get("has_products", False),
+                "data_source": data_source,
+                "domain": ctx.session.get("domain"),
+            }
+
+        # ---- new structured history with XML-friendly metadata
         conv_unit = {
             "user_query": base_query,
             "internal_actions": internal_actions,
             "final_answer": final_answer,
             "timestamp": iso_now(),
             "session_id": ctx.session_id,
+            # NEW: Content classification for LLM memory parsing
+            "content_type": content_type,  # CASUAL | PRODUCT | SUPPORT
+            "data_source": data_source,     # es_fetch | memory_only | none
+            "product_metadata": product_metadata,  # Only if content_type == PRODUCT
         }
         ctx.session.setdefault("conversation_history", []).append(conv_unit)
         try:

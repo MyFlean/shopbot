@@ -260,7 +260,9 @@ def build_envelope(
                             "quick_replies": []
                         }
                 # Also ensure ux_response.product_ids is populated when ux exists but ids missing/empty
-                if has_ux:
+                # SKIP for memory-only responses to honor minimal memory UX policy
+                data_source = str(normalized.get("data_source") or "").strip().lower()
+                if has_ux and data_source != "memory_only":
                     try:
                         ux = normalized.get("ux_response") or {}
                         ux_ids = ux.get("product_ids") if isinstance(ux.get("product_ids"), list) else []

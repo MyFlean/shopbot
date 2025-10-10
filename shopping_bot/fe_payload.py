@@ -200,8 +200,9 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
         }
         return out
 
-    # Simple messages (casual/processing/error)
-    return {"message": c.get("message", "")}
+    # Simple messages (casual/processing/error): prefer summary_message
+    text = c.get("summary_message") or c.get("message") or ""
+    return {"summary_message": text}
 
 
 def build_envelope(

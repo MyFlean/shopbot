@@ -111,4 +111,18 @@ def get_config() -> BaseConfig:
             # Silent fallback – never break startup due to local override
             pass
 
+    # 🎯 DEBUG: Log critical config values at startup (once per process)
+    import logging
+    log = logging.getLogger(__name__)
+    if not hasattr(get_config, '_logged_startup'):
+        log.info(f"⚙️ CONFIG_STARTUP | env={env} | config_class={config_class.__name__}")
+        log.info(f"🤖 LLM_CONFIG | model={cfg.LLM_MODEL} | temp={cfg.LLM_TEMPERATURE} | max_tokens={cfg.LLM_MAX_TOKENS}")
+        log.info(f"⚙️ FEATURE_FLAGS | USE_COMBINED_CLASSIFY_ASSESS={cfg.USE_COMBINED_CLASSIFY_ASSESS} | USE_CONVERSATION_AWARE_CLASSIFIER={cfg.USE_CONVERSATION_AWARE_CLASSIFIER}")
+        log.info(f"⚙️ FEATURE_FLAGS | USE_TWO_CALL_ES_PIPELINE={cfg.USE_TWO_CALL_ES_PIPELINE} | ASK_ONLY_MODE={cfg.ASK_ONLY_MODE} | USE_ASSESSMENT_FOR_ASK_ONLY={cfg.USE_ASSESSMENT_FOR_ASK_ONLY}")
+        log.info(f"💾 REDIS_CONFIG | host={cfg.REDIS_HOST} | port={cfg.REDIS_PORT} | db={cfg.REDIS_DB} | ttl={cfg.REDIS_TTL_SECONDS}s")
+        log.info(f"🔍 ES_CONFIG | index={cfg.ELASTIC_INDEX} | timeout={cfg.ELASTIC_TIMEOUT_SECONDS}s | max_results={cfg.ELASTIC_MAX_RESULTS}")
+        log.info(f"📊 HISTORY_CONFIG | max_snapshots={cfg.HISTORY_MAX_SNAPSHOTS}")
+        log.info(f"🚀 ASYNC_CONFIG | enable_async={cfg.ENABLE_ASYNC}")
+        get_config._logged_startup = True
+
     return cfg

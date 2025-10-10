@@ -55,6 +55,23 @@ class ShoppingBotCore:
     async def process_query(self, query: str, ctx: UserContext) -> BotResponse:
         self.smart_log.query_start(ctx.user_id, query, bool(ctx.session))
 
+        # 🎯 DEBUG: Log conversation state and flags
+        from .config import get_config as _cfg
+        cfg = _cfg()
+        log.info(f"🎯 QUERY_ENTRY | user={ctx.user_id} | query='{query[:80]}' | session_keys={list(ctx.session.keys())}")
+        log.info(f"⚙️ FLAGS | USE_CONVERSATION_AWARE_CLASSIFIER={getattr(cfg, 'USE_CONVERSATION_AWARE_CLASSIFIER', False)} | USE_COMBINED_CLASSIFY_ASSESS={getattr(cfg, 'USE_COMBINED_CLASSIFY_ASSESS', False)}")
+        
+        # 🧠 DEBUG: Log conversation history structure
+        conv_hist = ctx.session.get("conversation_history", [])
+        log.info(f"🧠 CONV_HISTORY | turns={len(conv_hist)} | last_3_preview={[{k: str(v)[:50] for k, v in turn.items() if k in ['user_query', 'bot_reply_preview']} for turn in conv_hist[-3:]]}")
+        
+        # 🧠 DEBUG: Log last_recommendation structure
+        last_rec = ctx.session.get("last_recommendation", {})
+        if last_rec:
+            log.info(f"🧠 LAST_RECOMMENDATION | query='{last_rec.get('query', '')[:60]}' | products_count={len(last_rec.get('products', []))} | as_of={last_rec.get('as_of', 'N/A')}")
+        else:
+            log.info(f"🧠 LAST_RECOMMENDATION | EMPTY (no products in memory)")
+
         try:
             # 1) Continue existing assessment
             if "assessment" in ctx.session:
@@ -62,9 +79,9 @@ class ShoppingBotCore:
                 return await self._continue_assessment(query, ctx)
 
             # 2) Follow-up handling (flag-gated): optionally skip LLM follow-up classifier
-            from .config import get_config as _cfg
-            if getattr(_cfg(), "USE_CONVERSATION_AWARE_CLASSIFIER", False):
+            if getattr(cfg, "USE_CONVERSATION_AWARE_CLASSIFIER", False):
                 # Treat as new/continue; rely on ES param extraction for deltas
+                log.info(f"🔀 ROUTING | path=NEW_ASSESSMENT_FAST_PATH (skip follow-up classifier)")
                 self.smart_log.flow_decision(ctx.user_id, "NEW_ASSESSMENT")
                 return await self._start_new_assessment(query, ctx)
             else:
@@ -163,14 +180,19 @@ class ShoppingBotCore:
         has_memory_reference = any(indicator in query.lower() for indicator in memory_indicators)
         has_new_constraints = bool(fu.patch.slots)  # New slot values = new search constraints
         
+        log.info(f"🔍 MEMORY_DETECTION | has_reference={has_memory_reference} | has_new_constraints={has_new_constraints} | matched_indicators={[ind for ind in memory_indicators if ind in query.lower()]}")
+        
         if has_memory_reference and not has_new_constraints:
-            log.info(f"FOLLOWUP_MEMORY_ONLY | user={ctx.user_id} | query='{query[:60]}'")
+            log.info(f"✅ FOLLOWUP_MEMORY_ONLY | user={ctx.user_id} | query='{query[:60]}' | triggering memory-based answer")
             
             # Try memory-only answer
             answer = await self.llm_service.generate_memory_based_answer(query, ctx)
             
+            log.info(f"🧠 MEMORY_ANSWER_RESULT | needs_fallback={answer.get('needs_es_fallback', False)} | has_message={bool(answer.get('message'))} | has_products={bool(answer.get('products'))}")
+            
             if not answer.get("needs_es_fallback"):
                 # Successfully answered from memory
+                log.info(f"✅ MEMORY_SUCCESS | returning memory-only answer without ES fetch")
                 snapshot_and_trim(
                     ctx,
                     base_query=query,
@@ -185,8 +207,10 @@ class ShoppingBotCore:
                 self.smart_log.response_generated(ctx.user_id, "final_answer", False)
                 return BotResponse(ResponseType.FINAL_ANSWER, answer)
             else:
-                log.warning(f"FOLLOWUP_MEMORY_EMPTY | user={ctx.user_id} | falling_back_to_delta_fetch")
+                log.warning(f"⚠️ FOLLOWUP_MEMORY_EMPTY | user={ctx.user_id} | falling_back_to_delta_fetch")
                 # Continue to delta-fetch below
+        else:
+            log.info(f"🔀 SKIP_MEMORY_PATH | proceeding to delta-fetch (reference={has_memory_reference}, new_constraints={has_new_constraints})")
 
         # Delta-fetch-and-reply
         fetch_list = await self.llm_service.assess_delta_requirements(query, ctx, fu.patch)
@@ -415,10 +439,12 @@ class ShoppingBotCore:
                     # NEW: Handle data_strategy routing (LLM1 enhancement)
                     # ═══════════════════════════════════════════════════════════
                     data_strategy = combined.get("data_strategy", "none")
-                    log.info(f"DATA_STRATEGY | user={ctx.user_id} | strategy={data_strategy} | route={combined.get('route')}")
+                    log.info(f"🔀 DATA_STRATEGY | user={ctx.user_id} | strategy={data_strategy} | route={combined.get('route')} | is_prod={is_prod}")
+                    log.info(f"🧠 COMBINED_TOOL_OUTPUT | keys={list(combined.keys())} | l3={l3} | product_intent={combined.get('product_intent')}")
                     
                     # CASE 1: data_strategy = "none" (casual/support/OOC)
                     if data_strategy == "none" or not is_prod:
+                        log.info(f"🔀 ROUTE_NONE | returning simple response without data fetch")
                         simple = combined.get("simple_response") or {}
                         msg = simple.get("message") or "I can help you with shopping queries. What are you looking for?"
                         # Preserve full response dict including response_type and is_support_query for support detection
@@ -440,18 +466,21 @@ class ShoppingBotCore:
                     
                     # CASE 2: data_strategy = "memory_only" (reference to previous products)
                     if data_strategy == "memory_only":
-                        log.info(f"MEMORY_ONLY_PATH | user={ctx.user_id} | query='{query[:60]}'")
+                        log.info(f"✅ MEMORY_ONLY_PATH | user={ctx.user_id} | query='{query[:60]}' | triggering memory answer")
                         
                         # Call specialized memory-based answer generator
                         answer = await self.llm_service.generate_memory_based_answer(query, ctx)
                         
+                        log.info(f"🧠 MEMORY_ANSWER_RESULT | needs_fallback={answer.get('needs_es_fallback', False)} | has_message={bool(answer.get('message'))} | has_products={bool(answer.get('products'))}")
+                        
                         # Check if fallback to ES is needed
                         if answer.get("needs_es_fallback"):
-                            log.warning(f"MEMORY_FALLBACK_TO_ES | user={ctx.user_id} | reason=empty_memory")
+                            log.warning(f"⚠️ MEMORY_FALLBACK_TO_ES | user={ctx.user_id} | reason=empty_memory | switching to es_fetch")
                             # Continue to ES fetch path below
                             data_strategy = "es_fetch"
                         else:
                             # Successfully answered from memory
+                            log.info(f"✅ MEMORY_SUCCESS | returning memory-only answer")
                             snapshot_and_trim(
                                 ctx,
                                 base_query=query,
@@ -1062,6 +1091,7 @@ class ShoppingBotCore:
         self, query: str, ctx: UserContext, fetched: Dict[str, Any]
     ) -> None:
         try:
+            log.info(f"🧠 STORE_LAST_REC_START | user={ctx.user_id} | query='{query[:60]}' | has_search_products={'search_products' in fetched}")
             products_snapshot = []
 
             if "search_products" in fetched:
@@ -1076,6 +1106,8 @@ class ShoppingBotCore:
                     products = search_data
                 else:
                     products = []
+
+                log.info(f"🧠 STORE_LAST_REC_PRODUCTS | total_products={len(products)} | will_snapshot={min(len(products), 8)}")
 
                 for product in (products or [])[:8]:
                     try:
@@ -1098,12 +1130,15 @@ class ShoppingBotCore:
                     "as_of": datetime.now().isoformat(),
                     "products": products_snapshot,
                 }
+                log.info(f"✅ STORE_LAST_REC_SUCCESS | user={ctx.user_id} | products_stored={len(products_snapshot)} | query='{query[:60]}'")
                 self.smart_log.memory_operation(
                     ctx.user_id,
                     "last_recommendation_stored",
                     {"count": len(products_snapshot)},
                 )
+            else:
+                log.warning(f"⚠️ STORE_LAST_REC_EMPTY | user={ctx.user_id} | no products to store")
         except Exception as e:
             log.warning(
-                f"LAST_RECOMMENDATION_STORE_FAILED | user={ctx.user_id} | error={e}"
+                f"❌ LAST_RECOMMENDATION_STORE_FAILED | user={ctx.user_id} | error={e}"
             )

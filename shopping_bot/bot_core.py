@@ -1111,14 +1111,36 @@ class ShoppingBotCore:
 
                 for product in (products or [])[:8]:
                     try:
+                        # Extract nutritional data from nutri_breakdown_updated
+                        nutri_breakdown = {}
+                        try:
+                            nutri_raw = product.get("category_data", {}).get("nutritional", {}).get("nutri_breakdown_updated", {})
+                            if isinstance(nutri_raw, dict):
+                                # Store key nutrients for LLM access
+                                for nutrient_key, value in nutri_raw.items():
+                                    if value is not None:
+                                        nutri_breakdown[nutrient_key] = value
+                        except Exception:
+                            pass
+                        
                         products_snapshot.append(
                             {
-                                "title": product.get("name")
-                                or product.get("title", "Unknown Product"),
+                                "id": product.get("id", ""),
+                                "name": product.get("name") or product.get("title", "Unknown Product"),
                                 "brand": product.get("brand", ""),
                                 "price": product.get("price"),
+                                "mrp": product.get("mrp"),
                                 "image_url": product.get("image", ""),
-                                "rating": product.get("rating"),
+                                "rating": product.get("rating") or product.get("avg_rating"),
+                                "flean_percentile": product.get("flean_percentile"),
+                                "flean_score": product.get("flean_score"),
+                                "description": (product.get("description", "") or "")[:200],
+                                # Rich nutritional data for memory-based queries
+                                "nutritional_breakdown": nutri_breakdown,
+                                "nutritional_qty": product.get("category_data", {}).get("nutritional", {}).get("qty", ""),
+                                # Percentiles for bonus/penalty context
+                                "bonus_percentiles": product.get("bonus_percentiles", {}),
+                                "penalty_percentiles": product.get("penalty_percentiles", {}),
                             }
                         )
                     except Exception:

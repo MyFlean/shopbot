@@ -1878,7 +1878,8 @@ class LLMService:
             "last_intent": None,
             "last_category": None,
             "last_slots": {},
-            "recent_turns": []
+            "recent_turns": [],
+            "last_recommended_products": []
         }
         try:
             if ctx:
@@ -1899,6 +1900,21 @@ class LLMService:
                                 "user": str(turn.get("user_query", ""))[:100],
                                 "bot": str(turn.get("bot_reply", ""))[:120]
                             })
+                
+                # Include product names/brands from last_recommendation for LLM-driven memory detection
+                last_rec = ctx.session.get("last_recommendation", {}) or {}
+                if isinstance(last_rec, dict) and last_rec.get("products"):
+                    products = last_rec.get("products", [])
+                    if isinstance(products, list):
+                        for p in products[:8]:  # Top 8 products for context
+                            if isinstance(p, dict):
+                                name = p.get("name", "")
+                                brand = p.get("brand", "")
+                                if name or brand:
+                                    context_summary["last_recommended_products"].append({
+                                        "name": str(name)[:80] if name else "",
+                                        "brand": str(brand)[:40] if brand else ""
+                                    })
         except Exception as e:
             log.warning(f"Context extraction failed: {e}")
 
@@ -1960,20 +1976,19 @@ Current user message: "{query.strip()}"
 - Examples: "I want chips", "show me shampoos", "need organic snacks"
 
 **data_strategy = "memory_only"**
-- User REFERENCES previous recommendations explicitly
-- User asks about "those products", "the ones above", "you showed", "you recommended"
-- User wants details/comparison of already-shown products
+- User asks about previously recommended products (check last_recommended_products in context)
+- User wants details, breakdown, nutrition info, comparison of products already shown
+- User mentions a product name or brand that appears in the context's last_recommended_products list
 - Examples: 
   * "tell me more about those products"
   * "what were the options you showed?"
   * "compare the first two from your list"
   * "explain the second product"
   * "which one is better from what you recommended?"
+  * "nutri breakdown of [product name]" - if product name matches any in last_recommended_products
+  * "tell me about [brand]" - if brand matches any in last_recommended_products
 
-**Detection heuristics:**
-- If query contains: "those", "these", "above", "you showed", "you recommended", "previous", "earlier" → likely "memory_only"
-- If query is a fresh product request with no references → "es_fetch"
-- If query is casual/OOC/support → "none"
+**IMPORTANT**: Use your reasoning to determine if the user is asking about products from context/memory vs. requesting a fresh search. Look at last_recommended_products list and recent conversation turns to make this determination.
 </data_strategy_rules>
 
 <special_routing_rules>
@@ -2320,21 +2335,79 @@ Now classify the user's current message. Return ONLY the tool call."""
         xml_memory = format_memory_for_llm(conv_history, max_turns=3)
         
         # ═══════════════════════════════════════════════════════════
-        # Step 2: Format products for LLM (clean, structured)
+        # Step 2: Format products with rich XML structure for LLM
         # ═══════════════════════════════════════════════════════════
-        formatted_products = []
-        for idx, p in enumerate(products[:8], 1):  # Limit to 8 products
+        products_xml_lines = []
+        for idx, p in enumerate(products[:8], 1):
             try:
-                formatted_products.append({
-                    "position": idx,
-                    "name": p.get("title", "Unknown"),
-                    "brand": p.get("brand", ""),
-                    "price": p.get("price"),
-                    "rating": p.get("rating"),
-                    "image_url": p.get("image_url", "")
-                })
-            except Exception:
+                # Build nutrition XML block if available
+                nutri_xml = ""
+                nutri_breakdown = p.get("nutritional_breakdown", {})
+                if isinstance(nutri_breakdown, dict) and nutri_breakdown:
+                    nutri_lines = []
+                    for nutrient, value in nutri_breakdown.items():
+                        if value is not None:
+                            nutri_lines.append(f'    <nutrient name="{nutrient}" value="{value}" />')
+                    if nutri_lines:
+                        nutri_xml = "\n  <nutritional_breakdown>\n" + "\n".join(nutri_lines) + "\n  </nutritional_breakdown>"
+                
+                # Build percentile context if available
+                percentile_xml = ""
+                flean_pct = p.get("flean_percentile")
+                if flean_pct is not None:
+                    percentile_xml = f'\n  <flean_percentile value="{flean_pct}" note="Higher is better (top percentile in category)" />'
+                
+                bonus_pct = p.get("bonus_percentiles", {})
+                penalty_pct = p.get("penalty_percentiles", {})
+                if bonus_pct or penalty_pct:
+                    pct_lines = []
+                    for nutrient, val in bonus_pct.items():
+                        if val is not None:
+                            pct_lines.append(f'    <bonus nutrient="{nutrient}" percentile="{val}" />')
+                    for nutrient, val in penalty_pct.items():
+                        if val is not None:
+                            pct_lines.append(f'    <penalty nutrient="{nutrient}" percentile="{val}" />')
+                    if pct_lines:
+                        percentile_xml += "\n  <percentile_scores>\n" + "\n".join(pct_lines) + "\n  </percentile_scores>"
+                
+                # Assemble product XML
+                product_xml = f"""<product position="{idx}">
+  <id>{p.get("id", "")}</id>
+  <name>{p.get("name") or p.get("title", "Unknown")}</name>
+  <brand>{p.get("brand", "")}</brand>
+  <price>{p.get("price")}</price>
+  <mrp>{p.get("mrp")}</mrp>
+  <rating>{p.get("rating")}</rating>
+  <flean_score>{p.get("flean_score")}</flean_score>{percentile_xml}
+  <description>{(p.get("description", "") or "")[:200]}</description>
+  <serving_size>{p.get("nutritional_qty", "")}</serving_size>{nutri_xml}
+</product>"""
+                
+                products_xml_lines.append(product_xml)
+            except Exception as e:
+                log.warning(f"Product XML formatting error: {e}")
                 continue
+        
+        products_xml = "\n\n".join(products_xml_lines)
+        
+        # Build lightweight product list for FE attachment (top 4)
+        products_for_fe: List[Dict[str, Any]] = []
+        try:
+            for p in products[:4]:
+                if isinstance(p, dict):
+                    products_for_fe.append({
+                        "id": p.get("id", ""),
+                        "name": p.get("name") or p.get("title", "Unknown"),
+                        "brand": p.get("brand", ""),
+                        "price": p.get("price"),
+                        "mrp": p.get("mrp"),
+                        "rating": p.get("rating"),
+                        "image_url": p.get("image_url", "")
+                    })
+        except Exception:
+            products_for_fe = []
+        
+        log.info(f"🧠 XML_MEMORY_PREVIEW | length={len(products_xml)} chars | products_formatted={len(products_xml_lines)}")
         
         # ═══════════════════════════════════════════════════════════
         # Step 3: Build LLM prompt with XML-structured context
@@ -2345,8 +2418,8 @@ Now classify the user's current message. Return ONLY the tool call."""
 
 <products_recommended>
 Last recommendation from: {last_rec.get("as_of", "recent")}
-Products (ordered list):
-{json.dumps(formatted_products, ensure_ascii=False, indent=2)}
+
+{products_xml}
 </products_recommended>
 
 <user_current_question>
@@ -2354,29 +2427,36 @@ Products (ordered list):
 </user_current_question>
 
 <task>
-Answer the user's question using ONLY the conversation memory and products listed above.
+Answer the user's question using ONLY the conversation memory and product data above.
 
 **Guidelines:**
-1. Be SPECIFIC - reference products by name, brand, and position
-   - ✓ "The first product is Lays Classic Salted chips..."
+1. **Use the rich product data**: Each product includes:
+   - Basic info: name, brand, price, rating
+   - Quality scores: flean_score, flean_percentile, bonus/penalty percentiles
+   - Nutritional breakdown: Complete macro and micronutrient data (if available)
+   - Serving size for context
+
+2. **For nutritional queries** (breakdown, macros, nutrition):
+   - Extract all relevant nutrients from the <nutritional_breakdown> section
+   - Present them clearly (e.g., "Protein: 5g, Carbs: 20g, Fat: 2g, Sodium: 350mg")
+   - Mention serving_size for context
+   - Use flean_percentile to explain overall quality
+
+3. **Be SPECIFIC** - reference products by name, brand, and position:
+   - ✓ "Wingreens Farms Tomato Ketchup has 0g saturated fat, 350mg sodium per 100g..."
    - ✗ "There are some good options..."
 
-2. Use actual data from the product list:
-   - Prices, ratings, brands are all available
-   - If comparing, cite the actual attributes
+4. **Handle positional references**:
+   - "first" = position="1"
+   - "second" = position="2"
+   - "those"/"above" = all products shown
 
-3. Handle positional references correctly:
-   - "first" = position 1
-   - "second" = position 2
-   - "those" = all products shown
-   - "above" = all products shown
-
-4. If the context is insufficient (e.g., user asks about products not in memory):
+5. **If context is insufficient**:
    - Politely ask for clarification
-   - Example: "I showed you chips earlier. Could you clarify which specific detail you'd like to know?"
+   - Example: "I showed you ketchup earlier. Could you clarify which specific detail you'd like?"
 
-5. Keep response conversational and helpful (2-4 sentences max)
-6. Do NOT make up information - only use what's in the memory
+6. Keep response conversational (2-5 sentences)
+7. Do NOT make up information - only use data from the XML
 
  <quick_replies_policy>
  Also propose 3-4 meaningful quick replies that help the user refine their request.
@@ -2401,7 +2481,7 @@ Generate your answer now:"""
         # Step 4: Call LLM with memory context
         # ═══════════════════════════════════════════════════════════
         try:
-            log.info(f"🤖 MEMORY_LLM_CALL | model={Cfg.LLM_MODEL} | temp=0.7 | max_tokens=700 | products_in_context={len(formatted_products)}")
+            log.info(f"🤖 MEMORY_LLM_CALL | model={Cfg.LLM_MODEL} | temp=0.7 | max_tokens=700 | products_in_context={len(products)}")
             log.info(f"🧠 XML_MEMORY_PREVIEW | length={len(xml_memory)} chars | turns_formatted={xml_memory.count('<turn>')}")
             
             resp = await self.anthropic.messages.create(
@@ -2423,7 +2503,7 @@ Generate your answer now:"""
                     "response_type": "final_answer",
                     "message": answer_text,
                     "summary_message": answer_text,
-                    "products": formatted_products[:4],
+                    "products": products_for_fe,
                     "data_source": "memory_only"
                 }
 
@@ -2436,7 +2516,7 @@ Generate your answer now:"""
                 "response_type": "final_answer",
                 "message": summary_message or "",
                 "summary_message": summary_message or "",
-                "products": formatted_products[:4],  # Attach top 4 for FE display
+                "products": products_for_fe,  # Attach top 4 for FE display
                 "data_source": "memory_only",
                 "ux_response": {
                     "quick_replies": [str(q).strip() for q in quick_replies if str(q).strip()] or []

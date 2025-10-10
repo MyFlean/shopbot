@@ -31,7 +31,7 @@ ELASTIC_BASE = (
         "https://adb98ad92e064025a9b2893e0589a3b5.asia-south1.gcp.elastic-cloud.com:443"
     )
 )
-ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v4")
+ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v5")
 ELASTIC_API_KEY = os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")
 TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
 
@@ -178,6 +178,10 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 "stats.sweetener_penalty_percentiles.*",
                 "stats.calories_penalty_percentiles.*",
                 "stats.empty_food_penalty_percentiles.*",
+                # Nutritional data for macro-aware search
+                "category_data.nutritional.nutri_breakdown_updated.*",
+                "category_data.nutritional.qty",
+                "category_data.nutritional.raw_text",
             ]
         },
         "query": {"bool": {"filter": [], "should": [], "minimum_should_match": 0}},
@@ -493,6 +497,79 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
             except Exception:
                 pass
 
+    # 3.5) MACRO FILTERING: Nutritional constraints (if user specified)
+    try:
+        user_macro_filters = p.get("macro_filters", [])
+        
+        # Only apply macro logic if user explicitly specified constraints
+        if user_macro_filters and isinstance(user_macro_filters, list) and len(user_macro_filters) > 0:
+            from ..macro_optimizer import get_macro_optimizer
+            optimizer = get_macro_optimizer()
+            
+            # Get first category_path for profile lookup
+            category_path_for_macro = None
+            try:
+                category_paths = p.get("category_paths", [])
+                if isinstance(category_paths, list) and category_paths:
+                    category_path_for_macro = category_paths[0]
+                elif isinstance(p.get("category_path"), str):
+                    category_path_for_macro = p.get("category_path")
+            except Exception:
+                pass
+            
+            # Merge user constraints with category defaults (category defaults only apply if user has constraints)
+            merged_constraints = optimizer.merge_constraints(
+                user_constraints=user_macro_filters,
+                category_path=category_path_for_macro,
+                apply_category_defaults=True  # Apply category defaults for OTHER nutrients
+            )
+            
+            hard_filters_list = merged_constraints.get("hard_filters", [])
+            soft_boosts_list = merged_constraints.get("soft_boosts", [])
+            
+            print(f"DEBUG: MACRO_FILTERING | user_specified={len(user_macro_filters)} | hard_filters={len(hard_filters_list)} | soft_boosts={len(soft_boosts_list)}")
+            
+            # Apply hard filters as ES range queries + exists check
+            for hf in hard_filters_list:
+                nutrient = hf.get("nutrient")
+                operator = hf.get("operator")
+                value = hf.get("value")
+                
+                if not (nutrient and operator and value is not None):
+                    continue
+                
+                field_path = f"category_data.nutritional.nutri_breakdown_updated.{nutrient}"
+                
+                # Build combined filter: field must exist AND meet threshold
+                # This excludes products without nutritional data
+                range_query = {"range": {field_path: {}}}
+                
+                if operator == "gte":
+                    range_query["range"][field_path]["gte"] = value
+                elif operator == "lte":
+                    range_query["range"][field_path]["lte"] = value
+                elif operator == "gt":
+                    range_query["range"][field_path]["gt"] = value
+                elif operator == "lt":
+                    range_query["range"][field_path]["lt"] = value
+                else:
+                    continue  # Unknown operator
+                
+                # Add range filter (implicitly requires field to exist and have value)
+                filters.append(range_query)
+                
+                print(f"DEBUG: MACRO_HARD_FILTER | {nutrient} {operator} {value} (source: {hf.get('source')})")
+            
+            # Store soft_boosts for function_score integration (will be added later)
+            # These will be merged with existing scoring_functions
+            p["_macro_soft_boosts"] = soft_boosts_list
+        else:
+            print(f"DEBUG: MACRO_FILTERING | skipped (no user-specified constraints)")
+    except Exception as e:
+        print(f"ERROR: MACRO_FILTERING failed: {e}")
+        import traceback
+        traceback.print_exc()
+
     # 4) Apply dynamic function_score based on subcategory
     # Derive subcategory from params/category_path
     subcategory = None
@@ -549,6 +626,35 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
             pass
         # Get category-specific scoring functions
         scoring_functions = build_function_score_functions(subcategory, include_flean=True)
+        
+        # Merge macro-based soft boosts (if user specified constraints)
+        macro_soft_boosts = p.get("_macro_soft_boosts", [])
+        if macro_soft_boosts:
+            for sb in macro_soft_boosts:
+                nutrient = sb.get("nutrient")
+                operator = sb.get("operator")
+                value = sb.get("value")
+                weight = sb.get("weight", 1.2)
+                
+                if not (nutrient and operator and value is not None):
+                    continue
+                
+                field_path = f"category_data.nutritional.nutri_breakdown_updated.{nutrient}"
+                
+                # Build function_score boost
+                scoring_functions.append({
+                    "filter": {
+                        "range": {
+                            field_path: {
+                                operator: value
+                            }
+                        }
+                    },
+                    "weight": weight
+                })
+                
+                print(f"DEBUG: MACRO_SOFT_BOOST | {nutrient} {operator} {value} weight={weight} (source: {sb.get('source')})")
+        
         body["query"] = {
             "function_score": {
                 "query": {"bool": bq},
@@ -557,6 +663,9 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 "boost_mode": "multiply"
             }
         }
+        
+        if macro_soft_boosts:
+            print(f"DEBUG: MACRO_SCORING | Added {len(macro_soft_boosts)} macro-based scoring functions to total {len(scoring_functions)} functions")
 
     # Set minimum_should_match: 0 when q is MUST; else 1 if textual SHOULD present
     try:

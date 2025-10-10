@@ -20,9 +20,13 @@ load_dotenv()
 from shopping_bot import create_app
 from shopping_bot.utils.smart_logger import LogLevel, configure_logging
 
+# Import-time logging initialization guard
+_LOGGING_INITIALIZED = False
+
 
 def setup_smart_logging() -> LogLevel:
     """Configure the smart logging system with validation."""
+    global _LOGGING_INITIALIZED
     log_level_name = os.getenv("BOT_LOG_LEVEL", "STANDARD").upper()
     
     valid_levels = {level.name for level in LogLevel}
@@ -32,11 +36,14 @@ def setup_smart_logging() -> LogLevel:
     else:
         log_level = LogLevel[log_level_name]
 
-    configure_logging(
-        level=log_level,
-        format_string="%(asctime)s | %(message)s",
-        silence_external=True,
-    )
+    # Configure root logging only once per process
+    if not _LOGGING_INITIALIZED:
+        configure_logging(
+            level=log_level,
+            format_string="%(asctime)s | %(message)s",
+            silence_external=True,
+        )
+        _LOGGING_INITIALIZED = True
     return log_level
 
 
@@ -150,6 +157,12 @@ def main() -> None:
 
 
 # Global app instance for WSGI servers
+# Ensure logging is initialized even when loaded under Gunicorn (run:app)
+try:
+    _wsgi_log_level = setup_smart_logging()
+except Exception:
+    # Never block app creation due to logging issues
+    pass
 app = create_application()
 
 if __name__ == "__main__":

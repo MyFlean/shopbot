@@ -183,13 +183,14 @@ def normalize_content(bot_resp_type: ResponseType, content: Dict[str, Any] | Non
                 pass
             return c
         
-        # Keep content unchanged for non-structured final answers (including support cases),
-        # but drop nested response_type to avoid duplication with the top-level.
+        # Non-structured final answers (no products/ux/intent):
+        # Normalize to summary_message only and drop nested response_type.
         try:
             c.pop("response_type", None)
         except Exception:
             pass
-        return c
+        text = c.get("summary_message") or c.get("message") or ""
+        return {"summary_message": text}
 
     # Image-IDs response: keep ux_response with product_ids and summary_message
     if bot_resp_type == ResponseType.IMAGE_IDS:

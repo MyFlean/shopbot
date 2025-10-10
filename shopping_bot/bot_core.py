@@ -406,33 +406,6 @@ class ShoppingBotCore:
     # NEW: Enhanced new assessment with 4-intent support
     # ────────────────────────────────────────────────────────
     async def _start_new_assessment(self, query: str, ctx: UserContext) -> BotResponse:
-        # 🛡️ GUARD: Detect simple greetings/casual queries to prevent LLM hallucination
-        query_lower = query.lower().strip()
-        simple_greetings = {
-            "hi", "hello", "hey", "hii", "hiii", "helo", "helo", "yo", "sup",
-            "good morning", "good afternoon", "good evening", "good night",
-            "thanks", "thank you", "ok", "okay", "yes", "no", "bye", "goodbye"
-        }
-        
-        if query_lower in simple_greetings or len(query_lower) <= 2:
-            log.info(f"🛡️ GREETING_GUARD | query='{query}' | short-circuiting to simple response")
-            simple_greeting_response = {
-                "response_type": "final_answer",
-                "message": "Hi! 👋 I'm Flean, your shopping assistant. I can help you find healthy food and personal care products. What are you looking for today?"
-            }
-            snapshot_and_trim(
-                ctx,
-                base_query=query,
-                final_answer={
-                    "response_type": "final_answer",
-                    "message_preview": simple_greeting_response["message"][:300],
-                    "has_products": False,
-                    "data_source": "none"
-                }
-            )
-            self.ctx_mgr.save_context(ctx)
-            return BotResponse(ResponseType.FINAL_ANSWER, simple_greeting_response)
-        
         # Optional fast path: combined classify+assess (flag-gated)
         try:
             from .config import get_config as _get_cfg_fast

@@ -48,13 +48,13 @@ def map_fe_response_type(bot_resp_type: ResponseType, content: Dict[str, Any] | 
         # Check for support response type from LLM
         if str(c.get("response_type")).strip().lower() in {"support", "support_related", "support_routing"} or bool(c.get("is_support_query")):
             return "support_related"
-        # If we have products or summary_message, it's a proper final_answer
-        if c.get("products") or c.get("summary_message"):
+        # If we have products, it's a proper final_answer
+        if c.get("products"):
             return "final_answer"
         # Treat presence of UX payload or product_intent as final_answer (even if products array is empty)
         if isinstance(c.get("ux_response"), dict) or c.get("product_intent"):
             return "final_answer"
-        # Otherwise it's casual (plain message only)
+        # Otherwise it's casual (plain/summary_message only)
         return "casual"
     # New image ids response type
     if bot_resp_type == ResponseType.IMAGE_IDS:

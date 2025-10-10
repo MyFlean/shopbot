@@ -158,10 +158,21 @@ class RedisContextManager:
                 fetched_data=fetched,
             )
             
-            log.info(f"CONTEXT_LOADED | user={user_id} | session={session_id} | permanent_keys={list(permanent.keys())} | session_keys={list(session.keys())} | fetched_keys={list(fetched.keys())}")
+            log.info(f"💾 REDIS_LOAD | user={user_id} | session={session_id} | permanent_keys={list(permanent.keys())} | session_keys={list(session.keys())} | fetched_keys={list(fetched.keys())}")
+            log.info(f"💾 REDIS_LOAD_SIZES | p={len(permanent)} | s={len(session)} | f={len(fetched)} | conv_turns={len((session or {}).get('conversation_history', []))} | last_rec_exists={bool((session or {}).get('last_recommendation'))}")
+            
             try:
+                # Log last_recommendation detail
+                last_rec = (session or {}).get("last_recommendation", {})
+                if last_rec:
+                    log.info(f"🧠 REDIS_LAST_REC | query='{last_rec.get('query', '')[:60]}' | products={len(last_rec.get('products', []))} | as_of={last_rec.get('as_of', 'N/A')}")
+                else:
+                    log.info(f"🧠 REDIS_LAST_REC | EMPTY (no last_recommendation in session)")
+                
+                # Log conversation history detail
                 print(f"CORE:REDIS_LOAD | session={session_id} | p={len(permanent)} | s={len(session)} | f={len(fetched)} | ch={len((session or {}).get('conversation_history', []))}")
                 ch_list = (session or {}).get('conversation_history') or []
+                log.info(f"🧠 REDIS_CONV_HIST | turns={len(ch_list)}")
                 if isinstance(ch_list, list) and 0 < len(ch_list) <= 5:
                     preview = [
                         {
@@ -172,6 +183,7 @@ class RedisContextManager:
                         for idx, h in enumerate(ch_list)
                     ]
                     print(f"CORE:REDIS_CONVO_DUMP | session={session_id} | {json.dumps(preview, ensure_ascii=False)}")
+                    log.info(f"🧠 REDIS_CONV_PREVIEW | last_3={preview[-3:]}")
             except Exception:
                 pass
             return ctx
@@ -198,8 +210,17 @@ class RedisContextManager:
                 log.error(f"CONTEXT_SAVE_UNHEALTHY | user={ctx.user_id} | session={ctx.session_id}")
                 return False
 
-            log.debug(f"CONTEXT_SAVE_START | user={ctx.user_id} | session={ctx.session_id}")
+            log.info(f"💾 REDIS_SAVE_START | user={ctx.user_id} | session={ctx.session_id}")
+            log.info(f"💾 REDIS_SAVE_SIZES | p={len(ctx.permanent)} | s={len(ctx.session)} | f={len(ctx.fetched_data)} | conv_turns={len((ctx.session or {}).get('conversation_history', []))} | last_rec_exists={bool((ctx.session or {}).get('last_recommendation'))}")
+            
             try:
+                # Log last_recommendation being saved
+                last_rec = (ctx.session or {}).get("last_recommendation", {})
+                if last_rec:
+                    log.info(f"🧠 REDIS_SAVE_LAST_REC | query='{last_rec.get('query', '')[:60]}' | products={len(last_rec.get('products', []))} | as_of={last_rec.get('as_of', 'N/A')}")
+                else:
+                    log.info(f"🧠 REDIS_SAVE_LAST_REC | EMPTY (no last_recommendation to save)")
+                
                 print(f"CORE:REDIS_SAVE | session={ctx.session_id} | p={len(ctx.permanent)} | s={len(ctx.session)} | f={len(ctx.fetched_data)} | ch={len((ctx.session or {}).get('conversation_history', []))}")
                 ch_list = (ctx.session or {}).get('conversation_history') or []
                 if isinstance(ch_list, list) and 0 < len(ch_list) <= 5:
@@ -212,6 +233,7 @@ class RedisContextManager:
                         for idx, h in enumerate(ch_list)
                     ]
                     print(f"CORE:REDIS_CONVO_DUMP_SAVE | session={ctx.session_id} | {json.dumps(preview, ensure_ascii=False)}")
+                    log.info(f"🧠 REDIS_SAVE_CONV_PREVIEW | last_3={preview[-3:]}")
             except Exception:
                 pass
 

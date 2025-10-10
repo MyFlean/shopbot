@@ -2080,6 +2080,9 @@ Now classify the user's current message. Return ONLY the tool call."""
 
         # ============== STAGE 3: LLM Call ==============
         try:
+            log.info(f"🤖 CLASSIFY_AND_ASSESS_LLM | model={Cfg.LLM_MODEL} | temp=0 | max_tokens=2000 | has_context={context_summary.get('has_history', False)}")
+            log.info(f"🧠 CONTEXT_SUMMARY | recent_turns={len(context_summary.get('recent_turns', []))} | last_intent={context_summary.get('last_intent')}")
+            
             resp = await self.anthropic.messages.create(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
@@ -2088,12 +2091,17 @@ Now classify the user's current message. Return ONLY the tool call."""
                 temperature=0,
                 max_tokens=2000,
             )
+            
+            log.info(f"🤖 CLASSIFY_RESPONSE | stop_reason={resp.stop_reason} | input_tokens={resp.usage.input_tokens} | output_tokens={resp.usage.output_tokens}")
+            
             tool_use = pick_tool(resp, "classify_and_assess")
             if not tool_use:
+                log.warning(f"⚠️ NO_TOOL_USE | falling back to default response")
                 return self._fallback_response()
             data = tool_use.input or {}
+            log.info(f"🔀 CLASSIFY_RESULT | route={data.get('route')} | data_strategy={data.get('data_strategy')} | domain={data.get('domain')} | category={data.get('category')}")
         except Exception as e:
-            log.error(f"LLM classification failed: {e}")
+            log.error(f"❌ LLM classification failed: {e}")
             return self._fallback_response()
 
         # ============== STAGE 4: Validate and passthrough ASK slots ==============
@@ -2285,7 +2293,7 @@ Now classify the user's current message. Return ONLY the tool call."""
         Returns:
             Dict with response_type, message, and products
         """
-        log.info(f"MEMORY_ANSWER_START | user={ctx.user_id} | query='{query[:60]}'")
+        log.info(f"🧠 MEMORY_ANSWER_START | user={ctx.user_id} | query='{query[:60]}'")
         
         # ═══════════════════════════════════════════════════════════
         # Step 1: Extract conversation memory with XML formatting
@@ -2296,9 +2304,12 @@ Now classify the user's current message. Return ONLY the tool call."""
         last_rec = ctx.session.get("last_recommendation", {})
         products = last_rec.get("products", [])
         
+        log.info(f"🧠 MEMORY_CHECK | conv_turns={len(conv_history)} | last_rec_exists={bool(last_rec)} | products_count={len(products)}")
+        log.info(f"🧠 LAST_REC_DETAIL | query='{last_rec.get('query', 'N/A')[:60]}' | as_of={last_rec.get('as_of', 'N/A')}")
+        
         # Validate that memory exists
         if not products:
-            log.warning(f"MEMORY_EMPTY | user={ctx.user_id} | no last_recommendation")
+            log.warning(f"❌ MEMORY_EMPTY | user={ctx.user_id} | no products in last_recommendation")
             return {
                 "response_type": "clarification_needed",
                 "message": "I don't have recent product recommendations to reference. Could you specify what you're looking for?",
@@ -2390,6 +2401,9 @@ Generate your answer now:"""
         # Step 4: Call LLM with memory context
         # ═══════════════════════════════════════════════════════════
         try:
+            log.info(f"🤖 MEMORY_LLM_CALL | model={Cfg.LLM_MODEL} | temp=0.7 | max_tokens=700 | products_in_context={len(formatted_products)}")
+            log.info(f"🧠 XML_MEMORY_PREVIEW | length={len(xml_memory)} chars | turns_formatted={xml_memory.count('<turn>')}")
+            
             resp = await self.anthropic.messages.create(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
@@ -2398,6 +2412,8 @@ Generate your answer now:"""
                 temperature=0.7,
                 max_tokens=700,
             )
+            
+            log.info(f"🤖 MEMORY_LLM_RESPONSE | stop_reason={resp.stop_reason} | input_tokens={resp.usage.input_tokens} | output_tokens={resp.usage.output_tokens}")
             
             tool_use = pick_tool(resp, "generate_memory_answer_minimal")
             if not tool_use:

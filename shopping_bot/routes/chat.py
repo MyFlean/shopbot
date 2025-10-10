@@ -71,6 +71,22 @@ def _to_json_safe(obj: Any) -> Any:
 # ─────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────
+def _log_final_payload(tag: str, payload: Any, *, user_id: str = "unknown") -> None:
+    """Log the final payload returned by /chat with a clear emoji tag.
+
+    Always emits a single-line compact JSON to keep logs readable.
+    """
+    try:
+        compact = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        try:
+            compact = json.dumps(_to_json_safe(payload), ensure_ascii=False, separators=(",", ":"))
+        except Exception:
+            compact = str(payload)
+    try:
+        log.info(f"📤 FINAL_PAYLOAD | tag={tag} | user={user_id} | size_bytes={len(compact)} | payload={compact}")
+    except Exception:
+        pass
 def _extract_feedback(message: str) -> tuple[str | None, str]:
     """Return (prefix, feedback_text) if message starts with feedback prefix else (None, '').
 
@@ -272,6 +288,7 @@ async def chat() -> Response:
                     "feedback": True,
                     "prefix": prefix
                 })
+                _log_final_payload("feedback_ack", envelope, user_id=user_id)
                 return jsonify(envelope), 200
         except Exception as e:
             log.warning(
@@ -355,6 +372,7 @@ async def chat() -> Response:
                         timestamp=None,
                         functions_executed=["image_selected_no_doc"],
                     )
+                    _log_final_payload("image_selection_fallback", envelope, user_id=user_id)
                     smart_log.response_generated(user_id, envelope.get("response_type"), False, _elapsed_since(request_start_time))
                     return jsonify(envelope), 200
 
@@ -418,6 +436,7 @@ async def chat() -> Response:
                     functions_executed=["image_selected_confirmed"],
                 )
                 log.info("IMAGE_SELECTION_GENERATED | surface=SPM")
+                _log_final_payload("image_selection_confirmed", envelope, user_id=user_id)
                 smart_log.response_generated(user_id, envelope.get("response_type"), False, _elapsed_since(request_start_time))
                 return jsonify(envelope), 200
 
@@ -453,6 +472,7 @@ async def chat() -> Response:
                     timestamp=None,
                     functions_executed=["vision_image_match"],
                 )
+                _log_final_payload("vision_flow", envelope, user_id=user_id)
                 smart_log.response_generated(user_id, envelope.get("response_type"), False, _elapsed_since(request_start_time))
                 return jsonify(envelope), 200
 
@@ -551,6 +571,7 @@ async def chat() -> Response:
                 f"SIMPLIFIED_CHAT_SUCCESS | user={user_id} | response_type={envelope.get('response_type')} | "
                 f"elapsed_time={elapsed_time:.3f}s{ux_info}"
             )
+            _log_final_payload("chat_success", envelope, user_id=user_id)
             
             return jsonify(envelope), 200
 

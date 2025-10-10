@@ -64,7 +64,7 @@
         },
         {
           "name": "ELASTIC_INDEX",
-          "value": "flean-v4"
+          "value": "flean-v5"
         },
         {
           "name": "ELASTIC_TIMEOUT_SECONDS",

@@ -1,0 +1,785 @@
+{
+  "_metadata": {
+    "version": "1.0",
+    "description": "Category-wise nutritional macro profiles for intelligent product ranking",
+    "last_updated": "2025-01-10",
+    "notes": "Each category defines hard_filters (mandatory user-specified), soft_optimize (ranking signals), and thresholds"
+  },
+  
+  "light_bites": {
+    "chips_and_crisps": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.3, "ideal_min": 5.0},
+          {"field": "fiber g", "weight": 1.2, "ideal_min": 3.0}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.8, "ideal_max": 300},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 3.0},
+          {"field": "trans fat g", "weight": 0.7, "ideal_max": 0.2}
+        ]
+      },
+      "display_priority": ["sodium mg", "saturated fat g", "protein g", "fiber g"],
+      "health_context": "Snack foods typically high in sodium and fat; prioritize lower sodium and higher protein variants"
+    },
+    
+    "popcorn": {
+      "optimize": {
+        "maximize": [
+          {"field": "fiber g", "weight": 1.4, "ideal_min": 4.0}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.85, "ideal_max": 250},
+          {"field": "saturated fat g", "weight": 0.8, "ideal_max": 2.0},
+          {"field": "total sugar g", "weight": 0.9, "ideal_max": 3.0}
+        ]
+      },
+      "display_priority": ["fiber g", "sodium mg", "saturated fat g"],
+      "health_context": "Whole grain snack; optimize for fiber, minimize butter/oil content"
+    },
+    
+    "nachos": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.2, "ideal_min": 6.0}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.8, "ideal_max": 350},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 4.0}
+        ]
+      },
+      "display_priority": ["sodium mg", "saturated fat g", "protein g"],
+      "health_context": "Corn-based snack, similar to chips but potentially higher protein"
+    },
+    
+    "savory_namkeen": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.2, "ideal_min": 5.0}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.75, "ideal_max": 400},
+          {"field": "saturated fat g", "weight": 0.8, "ideal_max": 5.0},
+          {"field": "trans fat g", "weight": 0.7, "ideal_max": 0.2}
+        ]
+      },
+      "display_priority": ["sodium mg", "saturated fat g", "protein g"],
+      "health_context": "Traditional Indian snacks often fried; prioritize lower oil and sodium"
+    },
+    
+    "energy_bars": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.5, "ideal_min": 15.0},
+          {"field": "fiber g", "weight": 1.3, "ideal_min": 3.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.8, "ideal_max": 8.0},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 3.0}
+        ]
+      },
+      "display_priority": ["protein g", "added sugar g", "fiber g", "energy kcal"],
+      "health_context": "Functional food for energy and satiety; high protein and fiber, controlled sugar"
+    },
+    
+    "dry_fruit_and_nut_snacks": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.3, "ideal_min": 10.0},
+          {"field": "fiber g", "weight": 1.2, "ideal_min": 5.0},
+          {"field": "unsaturated fat g", "weight": 1.1, "ideal_min": 8.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.85, "ideal_max": 5.0},
+          {"field": "sodium mg", "weight": 0.9, "ideal_max": 100}
+        ]
+      },
+      "display_priority": ["protein g", "fiber g", "added sugar g", "sodium mg"],
+      "health_context": "Nutrient-dense snacks with healthy fats; avoid added sugar and salt"
+    }
+  },
+  
+  "breakfast_essentials": {
+    "muesli_and_oats": {
+      "optimize": {
+        "maximize": [
+          {"field": "fiber g", "weight": 1.5, "ideal_min": 8.0},
+          {"field": "protein g", "weight": 1.3, "ideal_min": 10.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.75, "ideal_max": 6.0},
+          {"field": "sodium mg", "weight": 0.9, "ideal_max": 150}
+        ]
+      },
+      "display_priority": ["fiber g", "protein g", "added sugar g", "iron mg"],
+      "health_context": "Whole grain breakfast; maximize fiber and protein, minimize added sugar"
+    },
+    
+    "breakfast_cereals": {
+      "optimize": {
+        "maximize": [
+          {"field": "fiber g", "weight": 1.4, "ideal_min": 5.0},
+          {"field": "protein g", "weight": 1.2, "ideal_min": 8.0},
+          {"field": "iron mg", "weight": 1.1, "ideal_min": 3.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.7, "ideal_max": 8.0},
+          {"field": "sodium mg", "weight": 0.85, "ideal_max": 200}
+        ]
+      },
+      "display_priority": ["added sugar g", "fiber g", "protein g", "iron mg"],
+      "health_context": "Common breakfast choice; watch for hidden sugars, prefer high fiber and fortified options"
+    },
+    
+    "dates_and_seeds": {
+      "optimize": {
+        "maximize": [
+          {"field": "fiber g", "weight": 1.3, "ideal_min": 6.0},
+          {"field": "iron mg", "weight": 1.2, "ideal_min": 2.0},
+          {"field": "calcium mg", "weight": 1.1, "ideal_min": 50}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.9, "ideal_max": 0.0}
+        ]
+      },
+      "display_priority": ["fiber g", "iron mg", "calcium mg", "natural sugar g"],
+      "health_context": "Natural nutrient sources; natural sugars acceptable, avoid added sugars"
+    }
+  },
+  
+  "dairy_and_bakery": {
+    "yogurt_and_shrikhand": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.5, "ideal_min": 8.0},
+          {"field": "calcium mg", "weight": 1.4, "ideal_min": 200}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.7, "ideal_max": 10.0},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 3.0}
+        ]
+      },
+      "display_priority": ["protein g", "calcium mg", "added sugar g", "saturated fat g"],
+      "health_context": "Probiotic dairy; high protein and calcium, watch added sugar especially in flavored variants"
+    },
+    
+    "milk": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.4, "ideal_min": 8.0},
+          {"field": "calcium mg", "weight": 1.5, "ideal_min": 300},
+          {"field": "vitamin d mcg", "weight": 1.2, "ideal_min": 2.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.8, "ideal_max": 0.0},
+          {"field": "saturated fat g", "weight": 0.9, "ideal_max": 5.0}
+        ]
+      },
+      "display_priority": ["protein g", "calcium mg", "vitamin d mcg", "saturated fat g"],
+      "health_context": "Essential dairy; prioritize fortified options with vitamin D, lower fat variants preferred"
+    },
+    
+    "cheese": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.4, "ideal_min": 15.0},
+          {"field": "calcium mg", "weight": 1.3, "ideal_min": 400}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.8, "ideal_max": 500},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 10.0}
+        ]
+      },
+      "display_priority": ["protein g", "calcium mg", "saturated fat g", "sodium mg"],
+      "health_context": "High protein and calcium but also high in saturated fat and sodium; portion control important"
+    },
+    
+    "bread_and_buns": {
+      "optimize": {
+        "maximize": [
+          {"field": "fiber g", "weight": 1.4, "ideal_min": 3.0},
+          {"field": "protein g", "weight": 1.2, "ideal_min": 8.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.85, "ideal_max": 3.0},
+          {"field": "sodium mg", "weight": 0.8, "ideal_max": 300},
+          {"field": "saturated fat g", "weight": 0.9, "ideal_max": 2.0}
+        ]
+      },
+      "display_priority": ["fiber g", "protein g", "sodium mg", "added sugar g"],
+      "health_context": "Daily staple; prefer whole grain with high fiber, watch sodium and hidden sugars"
+    },
+    
+    "butter": {
+      "optimize": {
+        "maximize": [],
+        "minimize": [
+          {"field": "trans fat g", "weight": 0.7, "ideal_max": 0.1},
+          {"field": "sodium mg", "weight": 0.85, "ideal_max": 400}
+        ]
+      },
+      "display_priority": ["saturated fat g", "trans fat g", "sodium mg"],
+      "health_context": "Pure fat source; focus on minimizing trans fats and sodium in salted variants"
+    }
+  },
+  
+  "frozen_treats": {
+    "ice_cream_tubs": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.2, "ideal_min": 3.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.8, "ideal_max": 15.0},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 8.0},
+          {"field": "energy kcal", "weight": 0.9, "ideal_max": 200}
+        ]
+      },
+      "display_priority": ["energy kcal", "added sugar g", "saturated fat g", "protein g"],
+      "health_context": "Indulgent dessert; prefer lower calorie and sugar options, some protein is bonus"
+    },
+    
+    "ice_cream_cups": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.2, "ideal_min": 3.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.8, "ideal_max": 12.0},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 6.0},
+          {"field": "energy kcal", "weight": 0.9, "ideal_max": 150}
+        ]
+      },
+      "display_priority": ["energy kcal", "added sugar g", "saturated fat g"],
+      "health_context": "Portion-controlled dessert; single serving helps with calorie control"
+    },
+    
+    "kulfi": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.2, "ideal_min": 3.0},
+          {"field": "calcium mg", "weight": 1.1, "ideal_min": 100}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.8, "ideal_max": 12.0},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 7.0}
+        ]
+      },
+      "display_priority": ["added sugar g", "saturated fat g", "protein g", "calcium mg"],
+      "health_context": "Traditional frozen dessert; milk-based provides some protein and calcium"
+    }
+  },
+  
+  "refreshing_beverages": {
+    "energy_and_non_alcoholic_drinks": {
+      "optimize": {
+        "maximize": [
+          {"field": "caffeine mg", "weight": 1.0, "ideal_min": 80, "ideal_max": 150}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.7, "ideal_max": 15.0},
+          {"field": "energy kcal", "weight": 0.85, "ideal_max": 100}
+        ]
+      },
+      "display_priority": ["caffeine mg", "added sugar g", "energy kcal", "taurine mg"],
+      "health_context": "Functional beverages; caffeine range matters, avoid excessive sugar"
+    },
+    
+    "soft_drinks": {
+      "optimize": {
+        "maximize": [],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.7, "ideal_max": 20.0},
+          {"field": "energy kcal", "weight": 0.8, "ideal_max": 100},
+          {"field": "sodium mg", "weight": 0.9, "ideal_max": 50}
+        ]
+      },
+      "display_priority": ["added sugar g", "energy kcal", "sodium mg"],
+      "health_context": "Carbonated beverages; major source of added sugar, prefer zero-sugar variants"
+    },
+    
+    "fruit_juices": {
+      "optimize": {
+        "maximize": [
+          {"field": "vitamin c mg", "weight": 1.3, "ideal_min": 30}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.75, "ideal_max": 5.0},
+          {"field": "energy kcal", "weight": 0.85, "ideal_max": 120}
+        ]
+      },
+      "display_priority": ["added sugar g", "vitamin c mg", "energy kcal"],
+      "health_context": "Natural sugars acceptable, but watch added sugars; prefer 100% juice with vitamins"
+    },
+    
+    "iced_coffee_and_tea": {
+      "optimize": {
+        "maximize": [
+          {"field": "caffeine mg", "weight": 1.0, "ideal_min": 50, "ideal_max": 200}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.75, "ideal_max": 10.0},
+          {"field": "energy kcal", "weight": 0.85, "ideal_max": 100}
+        ]
+      },
+      "display_priority": ["added sugar g", "caffeine mg", "energy kcal"],
+      "health_context": "Cold brew and tea; watch added sugars in flavored variants"
+    },
+    
+    "flavored_milk_drinks": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.3, "ideal_min": 8.0},
+          {"field": "calcium mg", "weight": 1.2, "ideal_min": 250}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.75, "ideal_max": 15.0}
+        ]
+      },
+      "display_priority": ["protein g", "calcium mg", "added sugar g"],
+      "health_context": "Dairy-based beverages; good protein and calcium but watch sugar in chocolate/flavored milk"
+    }
+  },
+  
+  "brew_and_brew_alternatives": {
+    "coffee": {
+      "optimize": {
+        "maximize": [
+          {"field": "caffeine mg", "weight": 1.0, "ideal_min": 80, "ideal_max": 200}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.8, "ideal_max": 0.0}
+        ]
+      },
+      "display_priority": ["caffeine mg", "added sugar g"],
+      "health_context": "Pure coffee should have no added sugar; caffeine content varies by roast and brew"
+    },
+    
+    "tea": {
+      "optimize": {
+        "maximize": [
+          {"field": "caffeine mg", "weight": 0.9, "ideal_min": 30, "ideal_max": 80}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.8, "ideal_max": 0.0}
+        ]
+      },
+      "display_priority": ["caffeine mg", "added sugar g"],
+      "health_context": "Traditional tea; lower caffeine than coffee, watch pre-mixed sweetened variants"
+    },
+    
+    "green_and_herbal_tea": {
+      "optimize": {
+        "maximize": [
+          {"field": "caffeine mg", "weight": 0.8, "ideal_min": 20, "ideal_max": 50}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.85, "ideal_max": 0.0}
+        ]
+      },
+      "display_priority": ["caffeine mg", "added sugar g"],
+      "health_context": "Health-focused tea; minimal caffeine, rich in antioxidants, avoid added sugars"
+    }
+  },
+  
+  "sweet_treats": {
+    "chocolates": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.1, "ideal_min": 3.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.8, "ideal_max": 20.0},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 10.0},
+          {"field": "energy kcal", "weight": 0.9, "ideal_max": 250}
+        ]
+      },
+      "display_priority": ["added sugar g", "saturated fat g", "energy kcal", "protein g"],
+      "health_context": "Indulgent treat; dark chocolate preferred with higher cocoa, less sugar"
+    },
+    
+    "premium_chocolates": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.1, "ideal_min": 4.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.8, "ideal_max": 18.0},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 12.0}
+        ]
+      },
+      "display_priority": ["added sugar g", "saturated fat g", "energy kcal"],
+      "health_context": "High-quality chocolate; often higher cocoa content means less sugar"
+    },
+    
+    "candies_gums_and_mints": {
+      "optimize": {
+        "maximize": [],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.7, "ideal_max": 10.0},
+          {"field": "energy kcal", "weight": 0.85, "ideal_max": 50}
+        ]
+      },
+      "display_priority": ["added sugar g", "energy kcal"],
+      "health_context": "Pure sugar confections; prefer sugar-free variants for frequent consumption"
+    },
+    
+    "indian_mithai": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.1, "ideal_min": 3.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.8, "ideal_max": 25.0},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 8.0}
+        ]
+      },
+      "display_priority": ["added sugar g", "saturated fat g", "energy kcal", "protein g"],
+      "health_context": "Traditional sweets; milk-based varieties offer some protein"
+    }
+  },
+  
+  "biscuits_and_crackers": {
+    "digestive_biscuits": {
+      "optimize": {
+        "maximize": [
+          {"field": "fiber g", "weight": 1.3, "ideal_min": 3.0},
+          {"field": "protein g", "weight": 1.1, "ideal_min": 6.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.8, "ideal_max": 8.0},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 5.0},
+          {"field": "trans fat g", "weight": 0.7, "ideal_max": 0.2}
+        ]
+      },
+      "display_priority": ["fiber g", "added sugar g", "saturated fat g", "trans fat g"],
+      "health_context": "Whole grain biscuits; higher fiber is key differentiator, watch fats and sugars"
+    },
+    
+    "cookies": {
+      "optimize": {
+        "maximize": [
+          {"field": "fiber g", "weight": 1.2, "ideal_min": 2.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.75, "ideal_max": 12.0},
+          {"field": "saturated fat g", "weight": 0.8, "ideal_max": 6.0},
+          {"field": "trans fat g", "weight": 0.7, "ideal_max": 0.2}
+        ]
+      },
+      "display_priority": ["added sugar g", "saturated fat g", "trans fat g", "fiber g"],
+      "health_context": "Sweet biscuits; typically high sugar and fat, prefer varieties with some fiber"
+    },
+    
+    "crackers": {
+      "optimize": {
+        "maximize": [
+          {"field": "fiber g", "weight": 1.3, "ideal_min": 3.0},
+          {"field": "protein g", "weight": 1.1, "ideal_min": 5.0}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.8, "ideal_max": 250},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 3.0},
+          {"field": "added sugar g", "weight": 0.9, "ideal_max": 2.0}
+        ]
+      },
+      "display_priority": ["sodium mg", "fiber g", "saturated fat g"],
+      "health_context": "Savory snack; watch sodium especially, whole grain varieties preferred"
+    },
+    
+    "cream_filled_biscuits": {
+      "optimize": {
+        "maximize": [],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.7, "ideal_max": 15.0},
+          {"field": "saturated fat g", "weight": 0.75, "ideal_max": 8.0},
+          {"field": "trans fat g", "weight": 0.7, "ideal_max": 0.3}
+        ]
+      },
+      "display_priority": ["added sugar g", "saturated fat g", "trans fat g", "energy kcal"],
+      "health_context": "Indulgent biscuits; high in sugar and fat, occasional treat only"
+    }
+  },
+  
+  "spreads_and_condiments": {
+    "peanut_butter": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.5, "ideal_min": 20.0},
+          {"field": "fiber g", "weight": 1.2, "ideal_min": 5.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.75, "ideal_max": 5.0},
+          {"field": "sodium mg", "weight": 0.85, "ideal_max": 200},
+          {"field": "saturated fat g", "weight": 0.9, "ideal_max": 8.0}
+        ]
+      },
+      "display_priority": ["protein g", "added sugar g", "sodium mg", "fiber g"],
+      "health_context": "Nutrient-dense spread; natural peanut butter preferred with minimal added sugar and salt"
+    },
+    
+    "honey_and_spreads": {
+      "optimize": {
+        "maximize": [],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.8, "ideal_max": 10.0}
+        ]
+      },
+      "display_priority": ["added sugar g", "natural sugar g"],
+      "health_context": "Sweet spreads; pure honey is natural sugar, watch for adulteration and added sugars"
+    },
+    
+    "jams_and_jellies": {
+      "optimize": {
+        "maximize": [
+          {"field": "fiber g", "weight": 1.1, "ideal_min": 1.0}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.75, "ideal_max": 15.0}
+        ]
+      },
+      "display_priority": ["added sugar g", "fiber g"],
+      "health_context": "Fruit preserves; prefer low-sugar or no-added-sugar variants with real fruit content"
+    },
+    
+    "ketchup_and_sauces": {
+      "optimize": {
+        "maximize": [],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.75, "ideal_max": 8.0},
+          {"field": "sodium mg", "weight": 0.8, "ideal_max": 400}
+        ]
+      },
+      "display_priority": ["sodium mg", "added sugar g"],
+      "health_context": "Condiments; watch for hidden sugars and high sodium content"
+    }
+  },
+  
+  "frozen_foods": {
+    "frozen_vegetarian_snacks": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.2, "ideal_min": 5.0},
+          {"field": "fiber g", "weight": 1.1, "ideal_min": 3.0}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.8, "ideal_max": 400},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 5.0},
+          {"field": "trans fat g", "weight": 0.75, "ideal_max": 0.2}
+        ]
+      },
+      "display_priority": ["sodium mg", "saturated fat g", "protein g", "fiber g"],
+      "health_context": "Convenience foods; often high sodium and fat from frying, baked variants preferred"
+    },
+    
+    "non_veg_frozen_snacks": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.4, "ideal_min": 10.0}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.8, "ideal_max": 450},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 6.0},
+          {"field": "cholesterol mg", "weight": 0.9, "ideal_max": 60}
+        ]
+      },
+      "display_priority": ["protein g", "sodium mg", "saturated fat g", "cholesterol mg"],
+      "health_context": "Protein-rich but watch sodium and cholesterol; grilled/baked better than fried"
+    },
+    
+    "frozen_vegetables_and_pulp": {
+      "optimize": {
+        "maximize": [
+          {"field": "fiber g", "weight": 1.3, "ideal_min": 3.0},
+          {"field": "vitamin c mg", "weight": 1.1, "ideal_min": 10}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.9, "ideal_max": 100},
+          {"field": "added sugar g", "weight": 0.85, "ideal_max": 2.0}
+        ]
+      },
+      "display_priority": ["fiber g", "sodium mg", "vitamin c mg"],
+      "health_context": "Minimally processed vegetables; prefer no added salt or preservatives"
+    },
+    
+    "momos_and_similar": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.3, "ideal_min": 8.0}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.8, "ideal_max": 350},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 4.0}
+        ]
+      },
+      "display_priority": ["protein g", "sodium mg", "saturated fat g"],
+      "health_context": "Dumpling-style foods; steamed variants healthier than fried"
+    }
+  },
+  
+  "dry_fruits_nuts_and_seeds": {
+    "almonds": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.4, "ideal_min": 18.0},
+          {"field": "fiber g", "weight": 1.3, "ideal_min": 10.0},
+          {"field": "vitamin e mg", "weight": 1.2, "ideal_min": 20},
+          {"field": "calcium mg", "weight": 1.1, "ideal_min": 200}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.8, "ideal_max": 10},
+          {"field": "added sugar g", "weight": 0.85, "ideal_max": 0.0}
+        ]
+      },
+      "display_priority": ["protein g", "fiber g", "vitamin e mg", "sodium mg"],
+      "health_context": "Superfood nut; rich in healthy fats, protein, and vitamin E; prefer raw/unsalted"
+    },
+    
+    "cashews": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.3, "ideal_min": 15.0},
+          {"field": "iron mg", "weight": 1.2, "ideal_min": 5.0},
+          {"field": "magnesium mg", "weight": 1.2, "ideal_min": 250}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.8, "ideal_max": 15},
+          {"field": "added sugar g", "weight": 0.85, "ideal_max": 0.0}
+        ]
+      },
+      "display_priority": ["protein g", "iron mg", "magnesium mg", "sodium mg"],
+      "health_context": "Creamy nut; good iron and magnesium source; watch salted/roasted variants"
+    },
+    
+    "walnuts": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.3, "ideal_min": 14.0},
+          {"field": "fiber g", "weight": 1.2, "ideal_min": 6.0},
+          {"field": "omega 3 ala mg", "weight": 1.4, "ideal_min": 2000}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.85, "ideal_max": 10}
+        ]
+      },
+      "display_priority": ["omega 3 ala mg", "protein g", "fiber g", "sodium mg"],
+      "health_context": "Brain food; excellent omega-3 source; prefer raw for maximum benefits"
+    },
+    
+    "seeds": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.3, "ideal_min": 15.0},
+          {"field": "fiber g", "weight": 1.3, "ideal_min": 8.0},
+          {"field": "iron mg", "weight": 1.2, "ideal_min": 5.0},
+          {"field": "calcium mg", "weight": 1.1, "ideal_min": 150}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.85, "ideal_max": 15},
+          {"field": "added sugar g", "weight": 0.9, "ideal_max": 0.0}
+        ]
+      },
+      "display_priority": ["protein g", "fiber g", "iron mg", "calcium mg"],
+      "health_context": "Nutrient powerhouses; chia, flax, pumpkin seeds are excellent additions"
+    },
+    
+    "dates": {
+      "optimize": {
+        "maximize": [
+          {"field": "fiber g", "weight": 1.4, "ideal_min": 6.0},
+          {"field": "iron mg", "weight": 1.3, "ideal_min": 1.5},
+          {"field": "potassium mg", "weight": 1.2, "ideal_min": 600}
+        ],
+        "minimize": [
+          {"field": "added sugar g", "weight": 0.8, "ideal_max": 0.0}
+        ]
+      },
+      "display_priority": ["fiber g", "iron mg", "potassium mg", "natural sugar g"],
+      "health_context": "Natural sweetener; high in natural sugars but also fiber and minerals"
+    }
+  },
+  
+  "noodles_and_vermicelli": {
+    "vermicelli_and_noodles": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.2, "ideal_min": 8.0},
+          {"field": "fiber g", "weight": 1.3, "ideal_min": 3.0}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.75, "ideal_max": 600},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 4.0},
+          {"field": "trans fat g", "weight": 0.7, "ideal_max": 0.2}
+        ]
+      },
+      "display_priority": ["sodium mg", "protein g", "fiber g", "saturated fat g"],
+      "health_context": "Instant noodles high sodium concern; prefer whole grain or healthier variants"
+    }
+  },
+  
+  "packaged_meals": {
+    "ready_to_eat_meals": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.3, "ideal_min": 12.0},
+          {"field": "fiber g", "weight": 1.2, "ideal_min": 5.0}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.75, "ideal_max": 700},
+          {"field": "saturated fat g", "weight": 0.8, "ideal_max": 6.0},
+          {"field": "added sugar g", "weight": 0.85, "ideal_max": 5.0}
+        ]
+      },
+      "display_priority": ["sodium mg", "protein g", "fiber g", "saturated fat g"],
+      "health_context": "Convenience meals; typically high sodium, look for balanced macros"
+    },
+    
+    "ready_to_cook_meals": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.2, "ideal_min": 10.0},
+          {"field": "fiber g", "weight": 1.1, "ideal_min": 4.0}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.8, "ideal_max": 600},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 5.0}
+        ]
+      },
+      "display_priority": ["sodium mg", "protein g", "fiber g"],
+      "health_context": "Semi-processed meals; better control over final sodium if cooking at home"
+    },
+    
+    "pasta_and_soups": {
+      "optimize": {
+        "maximize": [
+          {"field": "protein g", "weight": 1.2, "ideal_min": 8.0},
+          {"field": "fiber g", "weight": 1.3, "ideal_min": 4.0}
+        ],
+        "minimize": [
+          {"field": "sodium mg", "weight": 0.75, "ideal_max": 500},
+          {"field": "saturated fat g", "weight": 0.85, "ideal_max": 3.0}
+        ]
+      },
+      "display_priority": ["sodium mg", "fiber g", "protein g"],
+      "health_context": "Whole grain pasta preferred; watch sodium in instant soups"
+    }
+  },
+  
+  "_default": {
+    "optimize": {
+      "maximize": [
+        {"field": "protein g", "weight": 1.1, "ideal_min": 5.0},
+        {"field": "fiber g", "weight": 1.1, "ideal_min": 3.0}
+      ],
+      "minimize": [
+        {"field": "sodium mg", "weight": 0.85, "ideal_max": 400},
+        {"field": "saturated fat g", "weight": 0.85, "ideal_max": 5.0},
+        {"field": "trans fat g", "weight": 0.8, "ideal_max": 0.2},
+        {"field": "added sugar g", "weight": 0.85, "ideal_max": 10.0}
+      ]
+    },
+    "display_priority": ["sodium mg", "added sugar g", "saturated fat g", "protein g"],
+    "health_context": "General nutritional optimization for uncategorized products"
+  }
+}
+

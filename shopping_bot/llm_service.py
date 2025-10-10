@@ -822,6 +822,102 @@ Paths: ["f_and_b/beverages/sodas_juices_and_more/fruit_juices"]
 </taxonomy_examples>
 """
 
+# Macro extraction examples for nutritional constraints
+MACRO_EXTRACTION_EXAMPLES = """
+<macro_extraction_examples>
+<rule priority="CRITICAL">
+Extract macro_filters ONLY when user explicitly mentions specific nutritional values/thresholds.
+If user just says "chips" or "healthy snacks" → macro_filters: []
+If user says "chips with less than 200mg sodium" → macro_filters: [{nutrient_name: "sodium mg", operator: "lt", value: 200}]
+</rule>
+
+<example>
+User: "Show me protein bars with more than 20g protein"
+macro_filters: [{"nutrient_name": "protein g", "operator": "gt", "value": 20, "priority": "hard"}]
+reasoning: User explicitly mentioned ">20g protein"
+</example>
+
+<example>
+User: "I want chips with less than 200mg sodium"
+macro_filters: [{"nutrient_name": "sodium mg", "operator": "lt", "value": 200, "priority": "hard"}]
+reasoning: User explicitly mentioned "<200mg sodium"
+</example>
+
+<example>
+User: "High protein, low sugar snacks - at least 15g protein and under 5g sugar"
+macro_filters: [
+  {"nutrient_name": "protein g", "operator": "gte", "value": 15, "priority": "hard"},
+  {"nutrient_name": "total sugar g", "operator": "lt", "value": 5, "priority": "hard"}
+]
+reasoning: User mentioned specific thresholds for both protein and sugar
+</example>
+
+<example>
+User: "Energy drinks with 80-150mg caffeine"
+macro_filters: [
+  {"nutrient_name": "caffeine mg", "operator": "gte", "value": 80, "priority": "hard"},
+  {"nutrient_name": "caffeine mg", "operator": "lte", "value": 150, "priority": "hard"}
+]
+reasoning: User specified caffeine range
+</example>
+
+<example>
+User: "Low calorie ice cream under 150 calories per serving"
+macro_filters: [{"nutrient_name": "energy kcal", "operator": "lt", "value": 150, "priority": "hard"}]
+reasoning: User mentioned calorie threshold
+</example>
+
+<example>
+User: "Show me chips"
+macro_filters: []
+reasoning: NO specific macro values mentioned, return empty array
+</example>
+
+<example>
+User: "I want healthy snacks"
+macro_filters: []
+reasoning: "healthy" is subjective, no specific thresholds given
+</example>
+
+<example>
+User: "Low sodium options"
+macro_filters: []
+reasoning: "low sodium" without specific threshold - too vague
+</example>
+
+<example>
+User: "High protein breakfast"
+macro_filters: []
+reasoning: "high protein" without specific value - too vague
+</example>
+
+<nutrient_name_standardization>
+Common user phrases → standardized field names:
+- "protein" → "protein g"
+- "sodium" / "salt" → "sodium mg"
+- "sugar" / "sugars" → "total sugar g"
+- "added sugar" / "added sugars" → "added sugar g"
+- "calories" → "energy kcal"
+- "fiber" / "fibre" → "fiber g"
+- "saturated fat" / "sat fat" → "saturated fat g"
+- "trans fat" → "trans fat g"
+- "calcium" → "calcium mg"
+- "iron" → "iron mg"
+- "vitamin d" → "vitamin d mcg"
+- "caffeine" → "caffeine mg"
+- "cholesterol" → "cholesterol mg"
+</nutrient_name_standardization>
+
+<unit_conversion>
+User input → standard units:
+- "grams" / "g" → g
+- "milligrams" / "mg" → mg
+- "micrograms" / "mcg" / "μg" → mcg
+- "calories" / "kcal" → kcal
+</unit_conversion>
+</macro_extraction_examples>
+"""
+
 # Unified ES params generation tool - ONE authoritative call (2025 best practices)
 UNIFIED_ES_PARAMS_TOOL = {
     "name": "generate_unified_es_params",
@@ -901,6 +997,52 @@ UNIFIED_ES_PARAMS_TOOL = {
                 "description": "Hard requirements (e.g., flavor variants like 'orange', 'peri peri')"
             },
             
+            # Nutritional constraints
+            "macro_filters": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "nutrient_name": {
+                            "type": "string",
+                            "description": (
+                                "Standardized nutrient field name from nutri_breakdown_updated. "
+                                "Common nutrients: 'protein g', 'sodium mg', 'saturated fat g', 'caffeine mg', "
+                                "'added sugar g', 'total sugar g', 'fiber g', 'calcium mg', 'iron mg', "
+                                "'vitamin d mcg', 'energy kcal', 'trans fat g', 'cholesterol mg'"
+                            )
+                        },
+                        "operator": {
+                            "type": "string",
+                            "enum": ["gte", "lte", "gt", "lt"],
+                            "description": "Comparison operator: gte (>=), lte (<=), gt (>), lt (<)"
+                        },
+                        "value": {
+                            "type": "number",
+                            "description": "Numeric threshold value in the nutrient's standard unit"
+                        },
+                        "priority": {
+                            "type": "string",
+                            "enum": ["hard", "soft"],
+                            "default": "hard",
+                            "description": "hard=must match (ES filter), soft=should prefer (ES boost)"
+                        }
+                    },
+                    "required": ["nutrient_name", "operator", "value"]
+                },
+                "maxItems": 5,
+                "description": (
+                    "Nutritional macro constraints ONLY when user explicitly mentions them. "
+                    "Examples:\n"
+                    "- 'protein bars with >20g protein' → [{nutrient_name: 'protein g', operator: 'gt', value: 20}]\n"
+                    "- 'low sodium chips <200mg' → [{nutrient_name: 'sodium mg', operator: 'lt', value: 200}]\n"
+                    "- 'high protein low sugar (>15g protein, <5g sugar)' → "
+                    "[{nutrient_name: 'protein g', operator: 'gt', value: 15}, "
+                    "{nutrient_name: 'total sugar g', operator: 'lt', value: 5}]\n"
+                    "IMPORTANT: Return EMPTY array [] if user does NOT mention specific macro values/thresholds"
+                )
+            },
+            
             # Metadata
             "size": {
                 "type": "integer",
@@ -915,7 +1057,7 @@ UNIFIED_ES_PARAMS_TOOL = {
             }
         },
         "required": ["anchor_product_noun", "category_group","category_paths","dietary_terms","price_min","price_max","brands",
-        "keywords","must_keywords","size"]
+        "keywords","must_keywords","macro_filters","size"]
     }
 }
 
@@ -3736,6 +3878,7 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             json.dumps(fnb_taxonomy, ensure_ascii=False, indent=2) +
             "\n</fnb_taxonomy>\n\n" +
             TAXONOMY_CATEGORIZATION_EXAMPLES +
+            "\n" + MACRO_EXTRACTION_EXAMPLES +
             "\n<taxonomy_rule priority=\"CRITICAL\">\n"
             "Use ONLY the categories provided in <fnb_taxonomy> for f_and_b.\n"
             "- Return 1-3 category_paths ordered by relevance.\n"

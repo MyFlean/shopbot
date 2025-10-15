@@ -25,15 +25,12 @@ from . import register_fetcher
 from ..scoring_config import build_function_score_functions
 
 # ES Configuration
-print(os.getenv("ES_URL"))
-print(os.getenv("ES_API_KEY"))
 ELASTIC_BASE = (
     os.getenv("ES_URL")
     or os.getenv("ELASTIC_BASE",
         "https://adb98ad92e064025a9b2893e0589a3b5.asia-south1.gcp.elastic-cloud.com:443"
     )
 )
-print(ELASTIC_BASE)
 ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v5")
 ELASTIC_API_KEY = os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")
 TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))

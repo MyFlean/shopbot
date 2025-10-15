@@ -118,11 +118,11 @@
         },
         {
           "name": "ES_API_KEY",
-          "valueFrom": "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/es-api-key-8hp1VU"
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/es-api-key"
         },
         {
           "name": "ES_URL",
-          "valueFrom": "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/es-url-hiGVqD"
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/es-url"
         },
         {
           "name": "SECRET_KEY",

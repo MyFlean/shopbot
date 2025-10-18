@@ -1,17 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#667eea" />
+    <meta name="description" content="Flean - Your AI-powered shopping assistant" />
+    
+    <title>Flean - AI Shopping Assistant</title>
+    
+    <!-- Preload critical resources -->
+    <link rel="preload" href="/static/css/chat.css" as="style" />
+    <link rel="preload" href="/static/js/chat.js" as="script" />
+    
+    <link rel="stylesheet" href="/static/css/chat.css" />
+    
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛍️</text></svg>" />
+</head>
+<body>
+    <div class="chat-container" role="main">
+        <header class="chat-header">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <h1>Flean 🛍️</h1>
+                <div class="status-indicator" title="Online">
+                    <span class="status-dot"></span>
+                </div>
+            </div>
+            <button id="menuBtn" aria-label="Menu" aria-haspopup="true">
+                ☰
+            </button>
+        </header>
 
-{% extends "base.html" %}
-{% block content %}
-<div class="chat-container" role="main">
-    <header class="chat-header">
-        <h1>Flean 🛍️</h1>
-        <button id="menuBtn" aria-label="Menu">☰</button>
-    </header>
+        <div id="messageContainer" class="message-container" aria-live="polite" aria-atomic="false">
+            <!-- Messages will be dynamically inserted here -->
+        </div>
 
-    <div id="messageContainer" class="message-container" aria-live="polite"></div>
-
-    <div class="input-container">
-        <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off" aria-label="Message input" />
-        <button id="sendBtn" aria-label="Send message"><span>↑</span></button>
+        <div class="input-container">
+            <input 
+                type="text" 
+                id="messageInput" 
+                placeholder="Ask me anything about products..." 
+                autocomplete="off" 
+                aria-label="Message input"
+                maxlength="500"
+            />
+            <button id="sendBtn" aria-label="Send message">
+                <span>↑</span>
+            </button>
+        </div>
     </div>
-</div>
-{% endblock %}
+
+    <!-- Additional styles for status indicator -->
+    <style>
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            background: rgba(16, 185, 129, 0.1);
+            padding: 4px 10px;
+            border-radius: 12px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #10b981;
+            animation: pulse 2s ease-in-out infinite;
+            box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.6;
+                transform: scale(0.95);
+            }
+        }
+
+        /* Loading state */
+        .chat-container.loading {
+            pointer-events: none;
+        }
+
+        .chat-container.loading::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.02);
+            backdrop-filter: blur(2px);
+            z-index: 10;
+        }
+
+        /* Menu dropdown (future enhancement) */
+        .menu-dropdown {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 8px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-xl);
+            padding: 8px;
+            min-width: 200px;
+            opacity: 0;
+            transform: translateY(-10px);
+            pointer-events: none;
+            transition: all 0.2s ease;
+        }
+
+        .menu-dropdown.active {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: all;
+        }
+
+        .menu-item {
+            padding: 10px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.15s ease;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .menu-item:hover {
+            background: rgba(102, 126, 234, 0.1);
+        }
+
+        /* Skeleton loading for messages */
+        .skeleton-message {
+            background: linear-gradient(
+                90deg,
+                rgba(255, 255, 255, 0.1) 25%,
+                rgba(255, 255, 255, 0.2) 50%,
+                rgba(255, 255, 255, 0.1) 75%
+            );
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            border-radius: var(--radius-lg);
+            height: 60px;
+            margin: 8px 0;
+        }
+
+        /* Quick action chips */
+        .quick-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            padding: 8px 0;
+            animation: slideIn 0.4s ease;
+        }
+
+        .quick-chip {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        .quick-chip:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            color: white;
+            border-color: transparent;
+        }
+
+        /* Smooth page transitions */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+
+        body {
+            animation: fadeIn 0.3s ease;
+        }
+
+        /* Better focus styles */
+        button:focus-visible,
+        input:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px;
+        }
+
+        /* Print styles */
+        @media print {
+            .chat-header,
+            .input-container {
+                display: none;
+            }
+            
+            .message-container {
+                height: auto;
+                overflow: visible;
+            }
+            
+            body {
+                background: white;
+            }
+        }
+    </style>
+
+    <script src="/static/js/chat.js"></script>
+    
+    <!-- Add service worker for PWA capabilities (optional future enhancement) -->
+    <script>
+        // Feature detection and progressive enhancement
+        if ('serviceWorker' in navigator) {
+            // Register service worker when needed
+            // navigator.serviceWorker.register('/sw.js');
+        }
+
+        // Add install prompt for PWA
+        let deferredPrompt;
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            // Show install button when needed
+        });
+
+        // Performance monitoring
+        window.addEventListener('load', () => {
+            if (window.performance && window.performance.timing) {
+                const perfData = window.performance.timing;
+                const pageLoadTime = perfData.loadEventEnd - perfData.navigationStart;
+                console.log('Page load time:', pageLoadTime + 'ms');
+            }
+        });
+    </script>
+</body>
+</html>

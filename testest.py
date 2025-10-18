@@ -9,11 +9,28 @@ import json
 import requests
 from typing import Dict, Any, List
 
-# Configuration - update these with your values
-ELASTIC_BASE = "https://adb98ad92e064025a9b2893e0589a3b5.asia-south1.gcp.elastic-cloud.com:443"
-ELASTIC_INDEX = "flean-v5"
-ELASTIC_API_KEY = "QkFZT2VwZ0JWejF3T1VGQkJIYU46Y0Z1emhYRXU5bDV0U0hQOGRYYXExdw"  # Your API key
-TIMEOUT = 10
+# Configuration - read from environment; normalize leading '@' and whitespace
+def _normalize_es_base(raw_url: str, index: str) -> str:
+    s = str(raw_url or "").strip()
+    s = s.lstrip("@").strip().strip("'\"")
+    if not s:
+        return ""
+    if "/_search" in s:
+        s = s.split("/_search", 1)[0]
+    idx = str(index or "").strip().strip("'\"")
+    if idx and s.endswith(f"/{idx}"):
+        s = s[: -(len(idx) + 1)]
+    while s.endswith('/'):
+        s = s[:-1]
+    if not (s.startswith("http://") or s.startswith("https://")):
+        s = f"https://{s}"
+    return s
+
+RAW_ES_URL = os.getenv("ES_URL") or os.getenv("ELASTIC_BASE", "")
+ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v5")
+ELASTIC_BASE = _normalize_es_base(RAW_ES_URL, ELASTIC_INDEX)
+ELASTIC_API_KEY = (os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")).strip().strip("'\"")
+TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
 
 class ESIndexTester:
     def __init__(self, base_url: str, index: str, api_key: str):
@@ -347,10 +364,13 @@ def main():
     print("Elasticsearch Index Tester")
     print("=" * 50)
     
-    # Check if API key is set
-    api_key = ELASTIC_API_KEY or os.getenv("ELASTIC_API_KEY", "")
+    # Validate config
+    api_key = ELASTIC_API_KEY
+    if not ELASTIC_BASE:
+        print("❌ No ES_URL or ELASTIC_BASE found in environment.")
+        return
     if not api_key:
-        print("❌ No API key found. Please set ELASTIC_API_KEY in the script or environment.")
+        print("❌ No API key found. Please set ES_API_KEY or ELASTIC_API_KEY in env.")
         return
     
     tester = ESIndexTester(ELASTIC_BASE, ELASTIC_INDEX, api_key)

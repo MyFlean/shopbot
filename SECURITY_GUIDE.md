@@ -1,5 +1,6 @@
 # Security Guide - Files NOT to Commit to GitHub
 
+
 ## 🚨 **CRITICAL: Never Commit These Files to GitHub**
 
 ### **Environment Files**

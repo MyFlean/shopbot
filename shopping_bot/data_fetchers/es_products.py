@@ -24,15 +24,33 @@ from ..enums import BackendFunction
 from . import register_fetcher
 from ..scoring_config import build_function_score_functions
 
-# ES Configuration
-ELASTIC_BASE = (
-    os.getenv("ES_URL")
-    or os.getenv("ELASTIC_BASE",
-        "https://adb98ad92e064025a9b2893e0589a3b5.asia-south1.gcp.elastic-cloud.com:443"
-    )
-)
+# ES Configuration (env-only; robust normalization)
+def _normalize_es_base(raw_url: Optional[str], index: Optional[str]) -> str:
+    s = str(raw_url or "").strip()
+    # Remove leading '@' and surrounding quotes
+    s = s.lstrip("@").strip().strip("'\"")
+    if not s:
+        return ""
+    # Remove any trailing '/_search'
+    if "/_search" in s:
+        s = s.split("/_search", 1)[0]
+    # Remove trailing '/{index}' if present
+    if index:
+        idx = str(index).strip().strip("'\"")
+        if idx and s.endswith(f"/{idx}"):
+            s = s[: -(len(idx) + 1)]
+    # Trim trailing slashes
+    while s.endswith('/'):
+        s = s[:-1]
+    # Ensure scheme
+    if not (s.startswith("http://") or s.startswith("https://")):
+        s = f"https://{s}"
+    return s
+
 ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v5")
-ELASTIC_API_KEY = os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")
+_RAW_ES_URL = os.getenv("ES_URL") or os.getenv("ELASTIC_BASE", "")
+ELASTIC_BASE = _normalize_es_base(_RAW_ES_URL, ELASTIC_INDEX)
+ELASTIC_API_KEY = (os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")).strip().strip("'\"")
 TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
 
 # Text cleaning
@@ -1330,11 +1348,13 @@ class ElasticsearchProductsFetcher:
     """Elasticsearch fetcher with enhanced query capabilities."""
     
     def __init__(self, base_url: str = None, index: str = None, api_key: str = None):
-        self.base_url = base_url or ELASTIC_BASE
+        self.base_url = (base_url or ELASTIC_BASE)
         self.index = index or ELASTIC_INDEX
-        self.api_key = api_key or ELASTIC_API_KEY
+        self.api_key = (api_key or ELASTIC_API_KEY)
         self._has_category_paths_keyword: Optional[bool] = None
         
+        if not self.base_url:
+            raise RuntimeError("ES_URL or ELASTIC_BASE is required for Elasticsearch access")
         if not self.api_key:
             raise RuntimeError("ELASTIC_API_KEY (or ES_API_KEY) is required for Elasticsearch access")
             

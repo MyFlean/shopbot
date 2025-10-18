@@ -11,8 +11,7 @@ from shopping_bot.models import UserContext
 from shopping_bot.bot_core import ShoppingBotCore
 from shopping_bot.enums import ResponseType
 from shopping_bot.fe_payload import build_envelope
-from shopping_bot.llm_service import LLMService
-from shopping_bot.ux_response_generator import generate_ux_response_for_intent
+# Do not import LLMService here to avoid requiring API key during app init/tests
 
 
 class ChatService:
@@ -23,7 +22,6 @@ class ChatService:
     def __init__(self, ctx_mgr: Optional[RedisContextManager] = None, bot_core: Optional[ShoppingBotCore] = None) -> None:
         self.ctx_mgr = ctx_mgr or RedisContextManager()
         self.bot_core = bot_core or ShoppingBotCore(self.ctx_mgr)
-        self.llm_service = LLMService()
 
     def create_session(self, user_id: Optional[str] = None) -> Dict[str, Any]:
         """Create a new session. If user_id not provided, mirror it for session_id."""

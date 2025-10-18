@@ -1,0 +1,17 @@
+
+{% extends "base.html" %}
+{% block content %}
+<div class="chat-container" role="main">
+    <header class="chat-header">
+        <h1>Flean 🛍️</h1>
+        <button id="menuBtn" aria-label="Menu">☰</button>
+    </header>
+
+    <div id="messageContainer" class="message-container" aria-live="polite"></div>
+
+    <div class="input-container">
+        <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off" aria-label="Message input" />
+        <button id="sendBtn" aria-label="Send message"><span>↑</span></button>
+    </div>
+</div>
+{% endblock %}

@@ -3543,7 +3543,7 @@ Think through these steps:
 2. MESSAGE TYPE: MODIFIER_ONLY vs CATEGORY_SWITCH?
 3. BUILD QUERY: Combine constraint + anchor for modifiers
 4. EXTRACT CATEGORY: Map to category_group and paths using taxonomy
-5. EXTRACT FILTERS: brands, dietary_terms, price, keywords
+5. EXTRACT FILTERS: brands, dietary_terms, price, keywords, must_keywords
 6. SET ANCHOR: Core product being searched
 </reasoning_framework>
 
@@ -3571,6 +3571,23 @@ category_paths MUST come from provided fnb_taxonomy only.
 - Format: "f_and_b/{{food|beverages}}/{{l2}}/{{l3}}" or "f_and_b/{{food|beverages}}/{{l2}}"
 - For ambiguous queries, include multiple plausible L3s
 - Never hallucinate paths not in taxonomy
+- CATEGORY TIGHTENING: When anchor_product_noun is a SPECIFIC product (e.g., 'roasted chana', 'peanuts'), emit category_paths that semantically align. Avoid broad L3 like 'dry_fruit_and_nut_snacks' when anchor is chana/peanuts.
+</rule>
+
+<rule id="anchor_preservation_must_keywords" priority="CRITICAL">
+When anchor_product_noun contains a specific product noun (e.g., 'chana', 'peanuts', 'makhana'), include that noun in must_keywords to prevent drift.
+- Example: anchor='roasted chana' → must_keywords: ['chana'] (prevents cashew/almond drift)
+- Exception: If anchor is generic ('snacks', 'nuts'), do NOT add to must_keywords.
+</rule>
+
+<rule id="brand_extraction_strict" priority="HIGH">
+When user mentions brand (e.g., 'Lays', 'Let's Try'), populate brands field. Normalize quotes. 'X brand' or 'of Y brand' → extract Y.
+- Example: 'roasted chana of Let's Try brand' → brands: ['Let's Try'], anchor: 'roasted chana'
+</rule>
+
+<rule id="pack_size_keywords" priority="MEDIUM">
+When user mentions pack size ('small pack', 'mini pack', 'large pack'), include in keywords as soft boost.
+- Example: 'small pack' → keywords: ['small pack'] or ['small']
 </rule>
 
 <rule id="dietary_normalization" priority="HIGH">
@@ -3652,9 +3669,24 @@ Output:
 Note: Excluded path "f_and_b/food/light_bites/energy_bars" and avoided using "protein bar" in q
 </example>
 
+<example name="roasted_chana_specific_brand">
+Scenario: Prior: "roasted chana of Let's Try brand" → User: "small pack"
+Output:
+{
+  "q": "roasted chana",
+  "brands": ["Let's Try"],
+  "must_keywords": ["chana"],
+  "keywords": ["small pack", "roasted"],
+  "category_paths": ["f_and_b/food/light_bites/savory_namkeen"],
+  "dietary_terms": ["LOW SODIUM"],
+  "size": 20
+}
+Note: must_keywords=['chana'] prevents drift; narrow category avoids nut L3s
+</example>
+
 <output>
 Return tool call to generate_unified_es_params with complete JSON.
-Validation: q has product noun (2-6 words), no prices/brands, category_group is valid, category_paths from taxonomy, dietary_terms UPPERCASE
+Validation: q has product noun, no prices/brands in q, category_group valid, category_paths from taxonomy, dietary_terms UPPERCASE, must_keywords preserves anchor when specific
 </output>"""
             else:
                 prompt = f"""<task_definition>
@@ -3685,7 +3717,7 @@ Think through these steps:
 2. MESSAGE TYPE: MODIFIER_ONLY vs CATEGORY_SWITCH?
 3. BUILD QUERY: Combine constraint + anchor for modifiers
 4. EXTRACT CATEGORY: Map to category_group and paths using taxonomy
-5. EXTRACT FILTERS: brands, dietary_terms, price, keywords
+5. EXTRACT FILTERS: brands, dietary_terms, price, keywords, must_keywords
 6. SET ANCHOR: Core product being searched
 </reasoning_framework>
 
@@ -3713,6 +3745,23 @@ category_paths MUST come from provided fnb_taxonomy only.
 - Format: "f_and_b/{{food|beverages}}/{{l2}}/{{l3}}" or "f_and_b/{{food|beverages}}/{{l2}}"
 - For ambiguous queries, include multiple plausible L3s
 - Never hallucinate paths not in taxonomy
+- CATEGORY TIGHTENING: When anchor_product_noun is a SPECIFIC product (e.g., 'roasted chana', 'peanuts'), emit category_paths that semantically align. Avoid broad L3 like 'dry_fruit_and_nut_snacks' when anchor is chana/peanuts.
+</rule>
+
+<rule id="anchor_preservation_must_keywords" priority="CRITICAL">
+When anchor_product_noun contains a specific product noun (e.g., 'chana', 'peanuts', 'makhana'), include that noun in must_keywords to prevent drift.
+- Example: anchor='roasted chana' → must_keywords: ['chana'] (prevents cashew/almond drift)
+- Exception: If anchor is generic ('snacks', 'nuts'), do NOT add to must_keywords.
+</rule>
+
+<rule id="brand_extraction_strict" priority="HIGH">
+When user mentions brand (e.g., 'Lays', 'Let's Try'), populate brands field. Normalize quotes. 'X brand' or 'of Y brand' → extract Y.
+- Example: 'roasted chana of Let's Try brand' → brands: ['Let's Try'], anchor: 'roasted chana'
+</rule>
+
+<rule id="pack_size_keywords" priority="MEDIUM">
+When user mentions pack size ('small pack', 'mini pack', 'large pack'), include in keywords as soft boost.
+- Example: 'small pack' → keywords: ['small pack'] or ['small']
 </rule>
 
 <rule id="dietary_normalization" priority="HIGH">
@@ -3794,9 +3843,24 @@ Output:
 Note: Excluded path "f_and_b/food/light_bites/energy_bars" and avoided using "protein bar" in q
 </example>
 
+<example name="roasted_chana_specific_brand">
+Scenario: Prior: "roasted chana of Let's Try brand" → User: "small pack"
+Output:
+{
+  "q": "roasted chana",
+  "brands": ["Let's Try"],
+  "must_keywords": ["chana"],
+  "keywords": ["small pack", "roasted"],
+  "category_paths": ["f_and_b/food/light_bites/savory_namkeen"],
+  "dietary_terms": ["LOW SODIUM"],
+  "size": 20
+}
+Note: must_keywords=['chana'] prevents drift; narrow category avoids nut L3s
+</example>
+
 <output>
 Return tool call to generate_unified_es_params with complete JSON.
-Validation: q has product noun (2-6 words), no prices/brands, category_group is valid, category_paths from taxonomy, dietary_terms UPPERCASE
+Validation: q has product noun, no prices/brands in q, category_group valid, category_paths from taxonomy, dietary_terms UPPERCASE, must_keywords preserves anchor when specific
 </output>"""
 
             # CORE log: LLM2 input
@@ -4225,12 +4289,29 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             "Examples:\n"
             "- \"gluten free chips under 100\" → anchor:\"chips\" + dietary:[\"GLUTEN FREE\"] + price_max:100\n"
             "- \"Lays banana chips\" → anchor:\"banana chips\" + brands:[\"Lays\"]\n"
-            "- \"baked chips\" → anchor:\"baked chips\" (baked is product-specific)\n"
+            "- \"baked chips\" → anchor:\"baked chips\" (baked is product-specific)\n\n"
+            "BRAND EXTRACTION STRICTNESS (CRITICAL):\n"
+            "- When user explicitly mentions a brand name (e.g., 'Lays', 'Amul', 'Let's Try'), populate brands field.\n"
+            "- Normalize typographic quotes: 'Let's Try' and 'Let's Try' are the same brand.\n"
+            "- Preserve brand across follow-ups UNLESS user says 'options'/'alternatives' without re-mentioning the brand.\n"
+            "- When user says 'X brand' or 'of Y brand', extract Y as the brand.\n"
+            "- Example: 'roasted chana of Let's Try brand' → brands: ['Let\\'s Try'], anchor: 'roasted chana'\n"
+            "- Example: 'Let's Try roasted chana' → brands: ['Let\\'s Try'], anchor: 'roasted chana'\n"
             "</rule>\n\n"
             "<rule priority=\"3\">\n"
-            "CATEGORY MAPPING\n"
+            "CATEGORY MAPPING & TIGHTENING\n"
             "- f_and_b: food, snacks, beverages, condiments\n"
-            "- personal_care: skincare, haircare, oral care, body care\n"
+            "- personal_care: skincare, haircare, oral care, body care\n\n"
+            "CATEGORY TIGHTENING (CRITICAL - Prevents Sibling Drift):\n"
+            "When anchor_product_noun is a SPECIFIC product (not generic), emit category_paths that semantically align with that noun.\n"
+            "- If anchor='roasted chana', AVOID broad L3 like 'dry_fruit_and_nut_snacks' that includes cashews/almonds/makhana.\n"
+            "- If taxonomy lacks a dedicated L3 for the specific noun, prefer the narrowest L2 or emit multiple specific L3s (e.g., legume-based snacks).\n"
+            "- If anchor='peanuts', prefer paths with 'peanuts' or related legume L3s; exclude almond/cashew L3s.\n"
+            "- If anchor='makhana', prefer paths with 'makhana'; exclude cashew/almond L3s.\n"
+            "- If anchor is GENERIC ('snacks', 'nuts', 'items'), then broad L3 is acceptable.\n\n"
+            "Examples:\n"
+            "✓ anchor='roasted chana' → category_paths: ['f_and_b/food/light_bites/savory_namkeen'] (if taxonomy lacks chana L3)\n"
+            "✗ anchor='roasted chana' → category_paths: ['f_and_b/food/light_bites/dry_fruit_and_nut_snacks'] (too broad, includes nuts)\n"
 
             "</rule>\n\n"
             "<rule priority=\"4\">\n"
@@ -4300,6 +4381,10 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             "  • Flavor modifiers: banana, tomato, mango, orange, peri peri, masala\n"
             "  • Critical variants: dark/milk/white (chocolate), hakka/schezwan (noodles)\n"
             "  • Specific types: whole wheat, basmati, jasmine\n"
+            "  • ANCHOR PRESERVATION (CRITICAL): When anchor_product_noun contains a specific product noun (e.g., 'chana', 'peanuts', 'makhana', 'pasta', 'ketchup'), include that noun in must_keywords to prevent drift to sibling products.\n"
+            "    Example: anchor='roasted chana' → must_keywords: ['chana'] (prevents drift to cashews/almonds)\n"
+            "    Example: anchor='peri peri chips' → must_keywords: ['peri peri'] (flavor is already required)\n"
+            "    Exception: If anchor is generic ('snacks', 'nuts', 'items'), do NOT add to must_keywords.\n"
             "- MAX: 3 tokens\n"
             "- EXTRACTION: From current query OR anchor_product_noun\n\n"
             "keywords (Soft Reranking - ES SHOULD clauses):\n"
@@ -4310,6 +4395,8 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             "  • Quality signals: premium, artisanal, fresh, natural\n"
             "  • Preparation methods: baked, roasted, fried, grilled\n"
             "  • Health attributes: light, wholesome, multigrain, cold-pressed\n"
+            "  • PACK SIZE MODIFIERS: When user mentions pack size (e.g., 'small pack', 'mini pack', 'large pack', 'family pack'), include in keywords to boost size-appropriate SKUs.\n"
+            "    Example: 'small pack' → keywords: ['small pack'] or ['small']\n"
             "- MAX: 4 tokens\n"
             "- EXTRACTION: From query OR infer common attributes for category\n\n"
             "Category-Specific Extraction Guide:\n"
@@ -4467,6 +4554,26 @@ Validation: q has product noun (2-6 words), no prices/brands, category_group is 
             "}\n"
             "</output>\n"
             "<note>Post-processing will expand q to 'namkeen, cookies' for better coverage</note>\n"
+            "</example>\n\n"
+            "<example type=\"roasted_chana_brand_pack\">\n"
+            "<input>\n"
+            "current: \"small pack\"\n"
+            "history: [{recency:\"MOST_RECENT\", user:\"I want roasted chana of Let's Try brand\", bot_summary:\"Asking for budget...\"}]\n"
+            "</input>\n"
+            "<output>\n"
+            "{\n"
+            "  \"anchor_product_noun\": \"roasted chana\",\n"
+            "  \"category_group\": \"f_and_b\",\n"
+            "  \"category_paths\": [\"f_and_b/food/light_bites/savory_namkeen\"],\n"
+            "  \"brands\": [\"Let's Try\"],\n"
+            "  \"must_keywords\": [\"chana\"],\n"
+            "  \"keywords\": [\"small pack\", \"roasted\"],\n"
+            "  \"dietary_terms\": [\"LOW SODIUM\"],\n"
+            "  \"size\": 20,\n"
+            "  \"reasoning\": \"Follow-up: 'small pack' modifier; preserved anchor 'roasted chana' with must_keywords=['chana'] to prevent cashew/almond drift; extracted brand 'Let's Try'; added pack size to keywords; avoided broad 'dry_fruit_and_nut_snacks' L3\"\n"
+            "}\n"
+            "</output>\n"
+            "<note>CRITICAL: must_keywords=['chana'] prevents ES from returning 'roasted cashews' or 'roasted almonds'; narrow category_paths avoids nut drift</note>\n"
             "</example>\n\n"
             "<example type=\"carry_over_concrete\">\n"
             "<input>\n"

@@ -16,6 +16,7 @@ import os
 from datetime import datetime
 
 from flask import Flask
+from flask_cors import CORS
 
 from .bot_core import ShoppingBotCore
 from .config import get_config
@@ -38,6 +39,14 @@ def create_app() -> Flask:
     
     app = Flask(__name__)
     app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key')
+    
+    # Enable CORS for frontend dev origins on /rs/* routes
+    allowed_origins = (os.getenv("CORS_ALLOW_ORIGINS") or "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    CORS(
+        app,
+        resources={r"/rs/*": {"origins": [o.strip() for o in allowed_origins]}},
+        supports_credentials=False,
+    )
     
     # ────────────────────────────────────────────────────────
     # STEP 1: Initialize Redis
@@ -105,6 +114,18 @@ def create_app() -> Flask:
         except Exception as e:
             log.error(f"REGISTER_ROUTES_ERROR | onboarding/meta flow routes failed: {e}")
         
+        # Conditionally register streaming routes (SSE)
+        try:
+            from .routes.chat_stream import bp as chat_stream_bp
+            from .config import get_config as _get_cfg
+            if getattr(_get_cfg(), "ENABLE_STREAMING", False):
+                app.register_blueprint(chat_stream_bp, url_prefix='/rs')
+                log.info("REGISTER_ROUTES_SUCCESS | streaming routes registered (ENABLE_STREAMING=true)")
+            else:
+                log.info("REGISTER_ROUTES | streaming disabled (ENABLE_STREAMING=false)")
+        except Exception as e:
+            log.error(f"REGISTER_ROUTES_ERROR | streaming routes failed: {e}")
+
         log.info("REGISTER_ROUTES_SUCCESS | simplified routes registered")
         
     except Exception as e:

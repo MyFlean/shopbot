@@ -3579,6 +3579,11 @@ Normalize to UPPERCASE:
 - "gluten free" → ["GLUTEN FREE"]
 - "vegan" → ["VEGAN"]
 </rule>
+<rule id="negative_category_avoidance" priority="CRITICAL">
+From <current_message> and <conversation_history>, infer disallowed product/category nouns (e.g., "don't give me X", "avoid X", "no X", "not X").
+Do NOT output any category_paths whose L2/L3 correspond to these nouns.
+Do NOT include these nouns in q. Prefer sibling categories or broader parents instead.
+</rule>
 </rules>
 
 {TAXONOMY_CATEGORIZATION_EXAMPLES}
@@ -3632,6 +3637,19 @@ Output:
   "anchor_product_noun": "chips",
   "brands": []
 }}
+</example>
+
+<example name="avoid_category">
+Scenario: Prior turn was high-protein snacks → User: "don't give me protein bars"
+Output:
+{
+  "q": "high protein snacks",
+  "category_group": "f_and_b",
+  "category_paths": ["f_and_b/food/light_bites/chips_and_crisps", "f_and_b/food/light_bites/popcorn"],
+  "dietary_terms": ["HIGH PROTEIN"],
+  "size": 20
+}
+Note: Excluded path "f_and_b/food/light_bites/energy_bars" and avoided using "protein bar" in q
 </example>
 
 <output>
@@ -3703,6 +3721,11 @@ Normalize to UPPERCASE:
 - "gluten free" → ["GLUTEN FREE"]
 - "vegan" → ["VEGAN"]
 </rule>
+<rule id="negative_category_avoidance" priority="CRITICAL">
+From <current_message> and <conversation_history>, infer disallowed product/category nouns (e.g., "don't give me X", "avoid X", "no X", "not X").
+Do NOT output any category_paths whose L2/L3 correspond to these nouns.
+Do NOT include these nouns in q. Prefer sibling categories or broader parents instead.
+</rule>
 </rules>
 
 {TAXONOMY_CATEGORIZATION_EXAMPLES}
@@ -3756,6 +3779,19 @@ Output:
   "anchor_product_noun": "chips",
   "brands": []
 }}
+</example>
+
+<example name="avoid_category">
+Scenario: Prior turn was high-protein snacks → User: "don't give me protein bars"
+Output:
+{
+  "q": "high protein snacks",
+  "category_group": "f_and_b",
+  "category_paths": ["f_and_b/food/light_bites/chips_and_crisps", "f_and_b/food/light_bites/popcorn"],
+  "dietary_terms": ["HIGH PROTEIN"],
+  "size": 20
+}
+Note: Excluded path "f_and_b/food/light_bites/energy_bars" and avoided using "protein bar" in q
 </example>
 
 <output>

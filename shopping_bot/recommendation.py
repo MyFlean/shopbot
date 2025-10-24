@@ -1541,6 +1541,9 @@ Return ONLY the tool call to emit_es_params.
             "8) dietary_labels: emit UPPERCASE terms (e.g., PALM OIL FREE, GLUTEN FREE, VEGAN) if present.\n"
             "9) health_claims: short phrases as mentioned.\n"
             "10) keywords: 1-5 single words (lowercase) useful for re-ranking (exclude stop-words).\n"
+            "11) NEGATIVE CATEGORY AVOIDANCE (CRITICAL): From the current query and conversation context, infer disallowed product/category nouns (e.g., 'don't give me X', 'avoid X', 'no X', 'not X').\n"
+            "    - Do NOT output any cat_path whose L2/L3 corresponds to these nouns.\n"
+            "    - Do NOT use these nouns in constructed category signals. Prefer sibling L3s or their parent L2.\n"
             "Return ONLY the tool call to extract_category_signals."
         )
 

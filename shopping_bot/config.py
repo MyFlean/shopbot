@@ -43,6 +43,8 @@ class BaseConfig:
 
     # Background Processing (simplified)
     ENABLE_ASYNC: bool = os.getenv("ENABLE_ASYNC", "false").lower() in {"1", "true", "yes", "on"}
+    # Streaming (SSE/WebSocket) feature gate
+    ENABLE_STREAMING: bool = os.getenv("ENABLE_STREAMING", "false").lower() in {"1", "true", "yes", "on"}
     
     # Elasticsearch (if used)
     # Prefer ES_URL; fallback to legacy ELASTIC_BASE; normalize leading '@' and whitespace
@@ -120,6 +122,7 @@ def get_config() -> BaseConfig:
         log.info(f"🤖 LLM_CONFIG | model={cfg.LLM_MODEL} | temp={cfg.LLM_TEMPERATURE} | max_tokens={cfg.LLM_MAX_TOKENS}")
         log.info(f"⚙️ FEATURE_FLAGS | USE_COMBINED_CLASSIFY_ASSESS={cfg.USE_COMBINED_CLASSIFY_ASSESS} | USE_CONVERSATION_AWARE_CLASSIFIER={cfg.USE_CONVERSATION_AWARE_CLASSIFIER}")
         log.info(f"⚙️ FEATURE_FLAGS | USE_TWO_CALL_ES_PIPELINE={cfg.USE_TWO_CALL_ES_PIPELINE} | ASK_ONLY_MODE={cfg.ASK_ONLY_MODE} | USE_ASSESSMENT_FOR_ASK_ONLY={cfg.USE_ASSESSMENT_FOR_ASK_ONLY}")
+        log.info(f"📡 STREAMING_CONFIG | enable_streaming={getattr(cfg, 'ENABLE_STREAMING', False)}")
         log.info(f"💾 REDIS_CONFIG | host={cfg.REDIS_HOST} | port={cfg.REDIS_PORT} | db={cfg.REDIS_DB} | ttl={cfg.REDIS_TTL_SECONDS}s")
         log.info(f"🔍 ES_CONFIG | index={cfg.ELASTIC_INDEX} | timeout={cfg.ELASTIC_TIMEOUT_SECONDS}s | max_results={cfg.ELASTIC_MAX_RESULTS}")
         log.info(f"📊 HISTORY_CONFIG | max_snapshots={cfg.HISTORY_MAX_SNAPSHOTS}")

@@ -14,7 +14,6 @@ from ..config import get_config
 from ..fe_payload import build_envelope
 from ..utils.helpers import safe_get
 from ..llm_service import LLMService  # type: ignore
-from ..streaming.anthropic_stream import AnthropicStreamer
 from ..enums import ResponseType
 
 log = logging.getLogger(__name__)
@@ -80,8 +79,28 @@ def chat_stream() -> Response:
             yield _sse_event("status", {"stage": "classification"})
 
             # Quick classification FIRST to detect simple vs product queries
+            # Using STREAMING version to emit incremental ASK messages and simple responses
             llm_service = LLMService()
-            classification = asyncio.run(llm_service.classify_and_assess(message, ctx))
+            
+            # Streaming classification with delta emission
+            classification_deltas = []
+            async def stream_wrapper():
+                """Wrapper to collect deltas from streaming classification"""
+                async def collect_callback(event_dict):
+                    event_name = event_dict.get("event", "delta")
+                    event_data = event_dict.get("data", {})
+                    log.info(f"SSE_EMIT | event={event_name} | session={session_id} | data_keys={list(event_data.keys())}")
+                    classification_deltas.append(_sse_event(event_name, event_data))
+                
+                result = await llm_service.classify_and_assess_stream(message, ctx, emit_callback=collect_callback)
+                return result
+            
+            classification = asyncio.run(stream_wrapper())
+            
+            # Yield all collected deltas
+            for delta in classification_deltas:
+                yield delta
+            
             route = classification.get("route", "general")
             data_strategy = classification.get("data_strategy", "none")
             
@@ -91,35 +110,13 @@ def chat_stream() -> Response:
             ctx.session["intent_l3"] = classification.get("layer3", "general")
             ctx.session["is_product_related"] = classification.get("is_product_related", False)
             
-            # If it's a simple reply (no product data needed), STREAM the LLM response directly
+            # If it's a simple reply (no product data needed), the response was already streamed during classification
             if data_strategy == "none" and route == "general":
-                log.info(f"SSE_STREAM_PATH | simple_reply | session={session_id}")
+                log.info(f"SSE_STREAM_PATH | simple_reply_streamed_during_classification | session={session_id}")
                 
-                # Get the pre-generated simple response from classification
+                # Get the pre-generated simple response from classification (for final envelope)
                 simple_resp = classification.get("simple_response", {})
-                pre_generated = simple_resp.get("message", "")
-                
-                # Stream the LLM response token by token
-                streamer = AnthropicStreamer()
-                log.info(f"SSE_EMIT | event=status | stage=llm_streaming | session={session_id}")
-                yield _sse_event("status", {"stage": "llm_streaming"})
-                
-                accumulated_text = ""
-                try:
-                    # Stream a fresh LLM call
-                    prompt = f"You are Flean, a friendly shopping assistant for food and personal care. Respond naturally and warmly to: '{message}'"
-                    for ev in streamer.stream_text(prompt, temperature=0.7):
-                        if isinstance(ev, dict) and ev.get("type") == "text_delta":
-                            delta = ev.get("text", "")
-                            if delta:
-                                accumulated_text += delta
-                                log.info(f"SSE_EMIT | event=final_answer.delta | size={len(delta)} | text='{delta[:20]}' | session={session_id}")
-                                yield _sse_event("final_answer.delta", {"path": "content.summary_message", "delta": delta})
-                except Exception as stream_err:
-                    log.error(f"STREAM_ERROR | {stream_err}")
-                    # Fallback to pre-generated response
-                    if not accumulated_text:
-                        accumulated_text = pre_generated
+                accumulated_text = simple_resp.get("message", "I'm here to help!")
                 
                 # Update context with conversation history
                 ctx.session.setdefault("conversation_history", []).append({
@@ -135,12 +132,12 @@ def chat_stream() -> Response:
                     wa_id=wa_id,
                     session_id=session_id,
                     bot_resp_type=ResponseType.FINAL_ANSWER,
-                    content={"summary_message": accumulated_text or pre_generated},
+                    content={"summary_message": accumulated_text},
                     ctx=ctx,
                     elapsed_time_seconds=elapsed,
                     mode_async_enabled=False,
                     timestamp=datetime.utcnow().isoformat() + "Z",
-                    functions_executed=["classify_and_assess", "stream_simple_reply"],
+                    functions_executed=["classify_and_assess_stream"],
                 )
                 
                 log.info(f"SSE_EMIT | event=final_answer.complete | session={session_id}")

@@ -795,7 +795,6 @@ Query: "peanut butter"
 Reasoning: Spreads category
 Paths: ["f_and_b/food/spreads_and_condiments/peanut_butter"]
 </example>
-
 <example name="packaged_meals">
 Query: "ready to eat meals"
 Reasoning: Convenience foods
@@ -1537,8 +1536,6 @@ def _safe_get(d: Dict[str, Any], key: str, default: Any = None) -> Any:
             if isinstance(k, str) and k.strip() == key:
                 return d[k]
     return default
-
-
 # ─────────────────────────────────────────────────────────────
 # LLM Service
 # ─────────────────────────────────────────────────────────────
@@ -2163,6 +2160,290 @@ Now classify the user's current message. Return ONLY the tool call."""
 
         return data
 
+    async def classify_and_assess_stream(
+        self, 
+        query: str, 
+        ctx: Optional[UserContext] = None,
+        emit_callback: Optional[Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Streaming version of classify_and_assess using Anthropic's native tool streaming.
+        
+        Leverages input_json_delta events to:
+        1. Accumulate complete tool payload (for routing logic)
+        2. Extract user-facing strings incrementally (for SSE display)
+        
+        Args:
+            query: User input text
+            ctx: User context with session/history
+            emit_callback: Async callable for SSE emission
+                          Signature: async def callback(event_dict) -> None
+                          Event format: {"event": str, "data": dict}
+        
+        Returns:
+            Complete classification dict (identical structure to non-streaming version)
+        """
+        from .streaming.tool_stream_accumulator import ToolStreamAccumulator
+        
+        # Build prompt (identical to non-streaming version)
+        context_summary = {
+            "has_history": False,
+            "last_intent": None,
+            "last_category": None,
+            "last_slots": {},
+            "recent_turns": [],
+            "last_recommended_products": []
+        }
+        try:
+            if ctx:
+                history = ctx.session.get("history", [])
+                if history:
+                    last = history[-1]
+                    context_summary.update({
+                        "has_history": True,
+                        "last_intent": last.get("intent"),
+                        "last_category": last.get("category"),
+                        "last_slots": {k: v for k, v in (last.get("slots") or {}).items() if v}
+                    })
+                convo = ctx.session.get("conversation_history", []) or []
+                if isinstance(convo, list) and convo:
+                    for turn in convo[-6:]:
+                        if isinstance(turn, dict):
+                            context_summary["recent_turns"].append({
+                                "user": str(turn.get("user_query", ""))[:100],
+                                "bot": str(turn.get("bot_reply", ""))[:120]
+                            })
+                
+                last_rec = ctx.session.get("last_recommendation", {}) or {}
+                if isinstance(last_rec, dict) and last_rec.get("products"):
+                    products = last_rec.get("products", [])
+                    if isinstance(products, list):
+                        for p in products[:8]:
+                            if isinstance(p, dict):
+                                name = p.get("name", "")
+                                brand = p.get("brand", "")
+                                if name or brand:
+                                    context_summary["last_recommended_products"].append({
+                                        "name": str(name)[:80] if name else "",
+                                        "brand": str(brand)[:40] if brand else ""
+                                    })
+        except Exception as e:
+            log.warning(f"Context extraction failed: {e}")
+
+        personal_care_taxonomy = self._get_personal_care_taxonomy()
+        prompt = f"""You are a classification engine for a WhatsApp shopping bot selling food/beverages and personal care products.
+
+Your job: Analyze the user's message and classify it in ONE tool call using chain-of-thought reasoning.
+
+<bot_identity>
+Name: Flean
+Purpose: Shopping assistant specializing EXCLUSIVELY in food, beverages, and personal care products
+Scope: Only handles product searches and recommendations within these two categories
+Personality: Helpful, friendly, polite, and honest about limitations
+</bot_identity>
+
+<context>
+Previous conversation:
+{json.dumps(context_summary, ensure_ascii=False, indent=2)}
+
+Current user message: "{query.strip()}"
+</context>
+
+<personal_care_taxonomy>
+{json.dumps(personal_care_taxonomy, ensure_ascii=False)}
+</personal_care_taxonomy>
+
+<critical_instructions>
+1. Always start with "reasoning" field explaining your classification
+2. Be decisive - avoid hedging in classifications
+3. For follow-up detection, heavily weight the most recent turn (last 1-2 exchanges)
+4. Write ASK messages in natural, conversational tone (not robotic)
+5. Question count (MANDATORY):
+   - If domain == personal_care: return EXACTLY 4 ask_slots (no more, no less)
+   - Else (food & beverages/other): return EXACTLY 2 ask_slots (no more, no less)
+6. Options (MANDATORY for each ask_slot):
+   - Provide EXACTLY 3 options per question
+   - Each option must be 2-5 words, discrete, and actionable
+   - Avoid generic placeholders like "Option 1" or "Other"
+   - Include a flexible option when relevant (e.g., "No preference", "Not sure yet", "Flexible")
+7. Order ask_slots by priority (most important first)
+8. For support queries, be warm and provide the phone number clearly
+9. For general queries, be friendly and redirect to product search
+</critical_instructions>
+Now classify the user's current message. Return ONLY the tool call."""
+
+        # Initialize accumulator
+        accumulator = ToolStreamAccumulator()
+        
+        log.info(f"🌊 STREAM_CLASSIFY_START | model={Cfg.LLM_MODEL} | query='{query[:60]}...'")
+        
+        try:
+            # Emit start event
+            if emit_callback:
+                await emit_callback({"event": "classification_start", "data": {}})
+            
+            # Stream the tool call
+            event_count = 0
+            async with self.anthropic.messages.stream(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[COMBINED_CLASSIFY_ASSESS_TOOL],
+                tool_choice={"type": "tool", "name": "classify_and_assess"},
+                temperature=0,
+                max_tokens=2000,
+                extra_headers={"anthropic-beta": "fine-grained-tool-streaming-2025-05-14"},
+            ) as stream:
+                async for event in stream:
+                    event_count += 1
+                    try:
+                        et = getattr(event, 'type', None)
+                        if et is None and isinstance(event, dict):
+                            et = event.get('type', 'unknown')
+
+                        # Extract block and delta details (robust across SDK variants)
+                        content_block = getattr(event, 'content_block', None)
+                        if content_block is None and isinstance(event, dict):
+                            content_block = event.get('content_block')
+                        block_type = None
+                        tool_name = None
+                        tool_id = None
+                        if content_block is not None:
+                            block_type = getattr(content_block, 'type', None)
+                            if block_type is None and isinstance(content_block, dict):
+                                block_type = content_block.get('type')
+                            tool_name = getattr(content_block, 'name', None)
+                            if tool_name is None and isinstance(content_block, dict):
+                                tool_name = content_block.get('name')
+                            tool_id = getattr(content_block, 'id', None)
+                            if tool_id is None and isinstance(content_block, dict):
+                                tool_id = content_block.get('id')
+
+                        delta = getattr(event, 'delta', None)
+                        if delta is None and isinstance(event, dict):
+                            delta = event.get('delta')
+                        partial_json = None
+                        if delta is not None:
+                            partial_json = getattr(delta, 'partial_json', None)
+                            if partial_json is None and isinstance(delta, dict):
+                                partial_json = delta.get('partial_json')
+
+                        preview = ""
+                        pj_len = 0
+                        if partial_json:
+                            pj_len = len(partial_json)
+                            try:
+                                preview = str(partial_json)[:200]
+                            except Exception:
+                                preview = "<unprintable>"
+
+                        log.info(
+                            f"📨 STREAM_EVENT #{event_count} | type={et} | block={block_type} | tool={tool_name} | id={tool_id} | partial_json_len={pj_len} | preview='{preview}'"
+                        )
+                    except Exception:
+                        pass
+                    # Accumulate tool payload
+                    extracted = accumulator.process_event(event)
+                    
+                    # Emit user-facing deltas
+                    if extracted and emit_callback:
+                        event_type = extracted.get("type")
+                        try:
+                            if event_type in ("ask_message", "simple_response", "simple_response_delta"):
+                                txt = extracted.get("text") or ""
+                                log.info(f"STREAM_EXTRACT | type={event_type} | size={len(txt)} | preview='{txt[:120]}'")
+                            elif event_type == "ask_options":
+                                opts = extracted.get("options") or []
+                                log.info(f"STREAM_EXTRACT | type=ask_options | count={len(opts)} | slot={extracted.get('slot_name')}")
+                            elif event_type == "tool_complete":
+                                log.info("STREAM_EXTRACT | type=tool_complete | tool payload received")
+                        except Exception:
+                            pass
+                        if event_type == "ask_message":
+                            await emit_callback({
+                                "event": "ask_message_delta",
+                                "data": {"text": extracted.get("text"), "slot_name": extracted.get("slot_name")}
+                            })
+                        elif event_type == "ask_options":
+                            await emit_callback({
+                                "event": "ask_options_delta",
+                                "data": {"slot_name": extracted.get("slot_name"), "options": extracted.get("options")}
+                            })
+                        elif event_type == "simple_response_delta":
+                            # Emit incremental delta as it arrives from Anthropic
+                            await emit_callback({
+                                "event": "final_answer.delta",
+                                "data": {"delta": extracted.get("text"), "path": "content.summary_message"}
+                            })
+                        elif event_type == "tool_complete":
+                            pending = extracted.get("pending_options") or {}
+                            if isinstance(pending, dict) and pending:
+                                for _slot_name, _opts in pending.items():
+                                    try:
+                                        await emit_callback({
+                                            "event": "ask_options_delta",
+                                            "data": {"slot_name": _slot_name, "options": _opts}
+                                        })
+                                    except Exception:
+                                        pass
+                            await emit_callback({
+                                "event": "classification_complete",
+                                "data": {}
+                            })
+            
+            log.info(f"📊 STREAM_COMPLETE | events_processed={event_count}")
+            # Get complete payload
+            data = accumulator.get_complete_input()
+            
+            if not data:
+                log.warning(f"⚠️ NO_TOOL_DATA | events_seen={event_count} | buffer_size={len(accumulator.input_buffer)} | falling back to default response")
+                return self._fallback_response()
+                
+            log.info(f"🔀 STREAM_CLASSIFY_RESULT | route={data.get('route')} | data_strategy={data.get('data_strategy')} | domain={data.get('domain')}")
+            
+        except Exception as e:
+            log.error(f"❌ Streaming classification failed: {e}")
+            return self._fallback_response()
+
+        # === Validation and enrichment (identical to non-streaming) ===
+        route = data.get("route")
+        if route == "product":
+            ask_slots = list(data.get("ask_slots", []) or [])
+            domain = str(data.get("domain", "")).lower()
+
+            expected_count = 4 if domain == "personal_care" else 2
+            if len(ask_slots) != expected_count:
+                log.warning(
+                    "ASK slot count mismatch for domain=%s; expected=%s got=%s",
+                    domain,
+                    expected_count,
+                    len(ask_slots),
+                )
+            if len(ask_slots) > expected_count:
+                ask_slots = ask_slots[:expected_count]
+
+            enriched_asks: Dict[str, Dict[str, Any]] = {}
+            for slot in ask_slots:
+                slot_name = slot.get("slot_name")
+                message = slot.get("message")
+                options = slot.get("options") or []
+                if not isinstance(options, list):
+                    options = [str(options)]
+                if len(options) > 3:
+                    options = options[:3]
+
+                enriched_asks[slot_name] = {"message": message, "options": options}
+
+            data["ask"] = enriched_asks
+            data.pop("ask_slots", None)
+
+            data["is_product_related"] = True
+            data["layer3"] = str(data.get("category", ""))
+        else:
+            data["is_product_related"] = False
+            data["layer3"] = "general"
+
+        return data
+
     # ---------------- UPDATED: INTENT CLASSIFICATION ----------------
     async def classify_intent(self, query: str, ctx: Optional[UserContext] = None) -> IntentResult:
         """Updated intent classification with product-related detection."""
@@ -2474,7 +2755,6 @@ Answer the user's question using ONLY the conversation memory and product data a
  - quick_replies: [3-4 strings]
  </output_format>
 </task>
-
 Generate your answer now:"""
 
         # ═══════════════════════════════════════════════════════════
@@ -3683,7 +3963,6 @@ Output:
 }
 Note: must_keywords=['chana'] prevents drift; narrow category avoids nut L3s
 </example>
-
 <output>
 Return tool call to generate_unified_es_params with complete JSON.
 Validation: q has product noun, no prices/brands in q, category_group valid, category_paths from taxonomy, dietary_terms UPPERCASE, must_keywords preserves anchor when specific
@@ -3692,7 +3971,7 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
                 prompt = f"""<task_definition>
 Extract ALL Elasticsearch parameters in ONE call, maintaining product focus across turns.
 </task_definition>
-
+ 
 <conversation_type>{"FOLLOW_UP" if is_follow_up else "NEW_QUERY"}</conversation_type>
 
 <inputs>
@@ -3724,14 +4003,14 @@ Think through these steps:
 <rules>
 <rule id="anchor_persistence" priority="CRITICAL">
 Keep same product noun for follow-ups unless explicitly changed.
-- "shampoo" → "dry scalp" → q: "dry scalp shampoo" ✓
-- "chips" → "banana" → q: "banana chips" ✓
+-- "shampoo" → "dry scalp" → q: "dry scalp shampoo" ✓
+-- "chips" → "banana" → q: "banana chips" ✓
 </rule>
 
 <rule id="field_separation" priority="CRITICAL">
 NEVER put budget/dietary/brand in q field.
-- ❌ q: "gluten free chips under 100"
-- ✓ q: "gluten free chips", price_max: 100
+-- ❌ q: "gluten free chips under 100"
+-- ✓ q: "gluten free chips", price_max: 100
 </rule>
 
 <rule id="category_group" priority="CRITICAL">
@@ -3741,34 +4020,34 @@ NEVER use subcategory names like "chips" or "snacks"
 
 <rule id="category_paths_taxonomy" priority="CRITICAL">
 category_paths MUST come from provided fnb_taxonomy only.
-- Return 1-3 paths ranked by relevance (MOST likely first)
-- Format: "f_and_b/{{food|beverages}}/{{l2}}/{{l3}}" or "f_and_b/{{food|beverages}}/{{l2}}"
-- For ambiguous queries, include multiple plausible L3s
-- Never hallucinate paths not in taxonomy
-- CATEGORY TIGHTENING: When anchor_product_noun is a SPECIFIC product (e.g., 'roasted chana', 'peanuts'), emit category_paths that semantically align. Avoid broad L3 like 'dry_fruit_and_nut_snacks' when anchor is chana/peanuts.
+-- Return 1-3 paths ranked by relevance (MOST likely first)
+-- Format: "f_and_b/{{food|beverages}}/{{l2}}/{{l3}}" or "f_and_b/{{food|beverages}}/{{l2}}"
+-- For ambiguous queries, include multiple plausible L3s
+-- Never hallucinate paths not in taxonomy
+-- CATEGORY TIGHTENING: When anchor_product_noun is a SPECIFIC product (e.g., 'roasted chana', 'peanuts'), emit category_paths that semantically align. Avoid broad L3 like 'dry_fruit_and_nut_snacks' when anchor is chana/peanuts.
 </rule>
 
 <rule id="anchor_preservation_must_keywords" priority="CRITICAL">
 When anchor_product_noun contains a specific product noun (e.g., 'chana', 'peanuts', 'makhana'), include that noun in must_keywords to prevent drift.
-- Example: anchor='roasted chana' → must_keywords: ['chana'] (prevents cashew/almond drift)
-- Exception: If anchor is generic ('snacks', 'nuts'), do NOT add to must_keywords.
+-- Example: anchor='roasted chana' → must_keywords: ['chana'] (prevents cashew/almond drift)
+-- Exception: If anchor is generic ('snacks', 'nuts'), do NOT add to must_keywords.
 </rule>
 
 <rule id="brand_extraction_strict" priority="HIGH">
 When user mentions brand (e.g., 'Lays', 'Let's Try'), populate brands field. Normalize quotes. 'X brand' or 'of Y brand' → extract Y.
-- Example: 'roasted chana of Let's Try brand' → brands: ['Let's Try'], anchor: 'roasted chana'
+-- Example: 'roasted chana of Let's Try brand' → brands: ['Let's Try'], anchor: 'roasted chana'
 </rule>
 
 <rule id="pack_size_keywords" priority="MEDIUM">
 When user mentions pack size ('small pack', 'mini pack', 'large pack'), include in keywords as soft boost.
-- Example: 'small pack' → keywords: ['small pack'] or ['small']
+-- Example: 'small pack' → keywords: ['small pack'] or ['small']
 </rule>
 
 <rule id="dietary_normalization" priority="HIGH">
 Normalize to UPPERCASE:
-- "no palm oil" → ["PALM OIL FREE"]
-- "gluten free" → ["GLUTEN FREE"]
-- "vegan" → ["VEGAN"]
+-- "no palm oil" → ["PALM OIL FREE"]
+-- "gluten free" → ["GLUTEN FREE"]
+-- "vegan" → ["VEGAN"]
 </rule>
 <rule id="negative_category_avoidance" priority="CRITICAL">
 From <current_message> and <conversation_history>, infer disallowed product/category nouns (e.g., "don't give me X", "avoid X", "no X", "not X").
@@ -4552,7 +4831,6 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
             "  \"size\": 20,\n"
             "  \"reasoning\": \"Context 'with chai' mapped to multiple paths; using 2-3 concrete nouns for broader search surface\"\n"
             "}\n"
-            "</output>\n"
             "<note>Post-processing will expand q to 'namkeen, cookies' for better coverage</note>\n"
             "</example>\n\n"
             "<example type=\"roasted_chana_brand_pack\">\n"
@@ -4572,7 +4850,6 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
             "  \"size\": 20,\n"
             "  \"reasoning\": \"Follow-up: 'small pack' modifier; preserved anchor 'roasted chana' with must_keywords=['chana'] to prevent cashew/almond drift; extracted brand 'Let's Try'; added pack size to keywords; avoided broad 'dry_fruit_and_nut_snacks' L3\"\n"
             "}\n"
-            "</output>\n"
             "<note>CRITICAL: must_keywords=['chana'] prevents ES from returning 'roasted cashews' or 'roasted almonds'; narrow category_paths avoids nut drift</note>\n"
             "</example>\n\n"
             "<example type=\"carry_over_concrete\">\n"
@@ -4943,7 +5220,6 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
     # ============================================================================
     # PERSONAL CARE 2025 METHODS (Parallel to Food Path)
     # ============================================================================
-
     async def _generate_personal_care_es_params_2025(self, ctx: UserContext, current_text: str) -> Dict[str, Any]:
         """2025 best-practices for Personal Care: schema-first, optimized prompt, forced tool, minimal post-process."""
         session = ctx.session or {}
@@ -5627,7 +5903,6 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
             return getattr(engine, "_fnb_taxonomy", {})
         except Exception:
             return {}
-
     def _get_fnb_taxonomy_hierarchical(self) -> Dict[str, Any]:
         """Load hierarchical F&B taxonomy and flatten for LLM prompt efficiency."""
         import os, json

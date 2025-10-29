@@ -126,6 +126,14 @@ def create_app() -> Flask:
         except Exception as e:
             log.error(f"REGISTER_ROUTES_ERROR | streaming routes failed: {e}")
 
+        # Register simple in-app chat UI page
+        try:
+            from .routes.chat_ui import bp as chat_ui_bp
+            app.register_blueprint(chat_ui_bp)
+            log.info("REGISTER_ROUTES_SUCCESS | chat UI route registered (/chat/ui)")
+        except Exception as e:
+            log.error(f"REGISTER_ROUTES_ERROR | chat UI failed: {e}")
+
         log.info("REGISTER_ROUTES_SUCCESS | simplified routes registered")
         
     except Exception as e:

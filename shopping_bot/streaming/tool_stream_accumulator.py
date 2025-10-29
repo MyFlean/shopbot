@@ -267,11 +267,12 @@ class ToolStreamAccumulator:
             # Pattern 2: Simple response messages - STREAMING DELTAS
             # Extract incrementally as the message grows character-by-character
             # This provides true real-time streaming as Anthropic generates text
-            simple_pattern = r'"simple_response"[^}]*?"message"\s*:\s*"([^"]*)"'
-            simple_matches = re.findall(simple_pattern, self.input_buffer)
+            # Match even WITHOUT closing quote to catch text as it arrives
+            simple_pattern = r'"simple_response"[^}]*?"message"\s*:\s*"([^"]*)'
+            simple_match = re.search(simple_pattern, self.input_buffer)
             
-            if simple_matches:
-                current_simple = simple_matches[-1]  # Take most recent
+            if simple_match:
+                current_simple = simple_match.group(1)  # Text so far (may be incomplete)
                 current_len = len(current_simple)
                 
                 # Check if the message has grown since last emission

@@ -7,6 +7,8 @@ import time
 import uuid
 from datetime import datetime
 from typing import AsyncGenerator, Dict, Any
+import threading
+import queue
 
 from flask import Blueprint, Response, current_app, request, stream_with_context
 
@@ -81,25 +83,55 @@ def chat_stream() -> Response:
             # Quick classification FIRST to detect simple vs product queries
             # Using STREAMING version to emit incremental ASK messages and simple responses
             llm_service = LLMService()
-            
-            # Streaming classification with delta emission
-            classification_deltas = []
-            async def stream_wrapper():
-                """Wrapper to collect deltas from streaming classification"""
-                async def collect_callback(event_dict):
-                    event_name = event_dict.get("event", "delta")
-                    event_data = event_dict.get("data", {})
-                    log.info(f"SSE_EMIT | event={event_name} | session={session_id} | data_keys={list(event_data.keys())}")
-                    classification_deltas.append(_sse_event(event_name, event_data))
-                
-                result = await llm_service.classify_and_assess_stream(message, ctx, emit_callback=collect_callback)
-                return result
-            
-            classification = asyncio.run(stream_wrapper())
-            
-            # Yield all collected deltas
-            for delta in classification_deltas:
-                yield delta
+
+            event_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
+
+            def start_streaming() -> None:
+                async def stream_wrapper():
+                    async def collect_callback(event_dict):
+                        event_name = event_dict.get("event", "delta")
+                        event_data = event_dict.get("data", {})
+                        log.info(f"SSE_EMIT | event={event_name} | session={session_id} | data_keys={list(event_data.keys())}")
+                        event_queue.put_nowait(("stream", {"event": event_name, "data": event_data}))
+
+                    result = await llm_service.classify_and_assess_stream(message, ctx, emit_callback=collect_callback)
+                    event_queue.put_nowait(("classification", result))
+
+                try:
+                    asyncio.run(stream_wrapper())
+                except Exception as exc:  # pragma: no cover - defensive
+                    event_queue.put_nowait(("error", exc))
+                finally:
+                    event_queue.put_nowait(("done", None))
+
+            threading.Thread(target=start_streaming, daemon=True).start()
+
+            accumulated_text = ""
+            classification: Dict[str, Any] = {}
+            streaming_failed = False
+
+            while True:
+                kind, payload = event_queue.get()
+                if kind == "stream":
+                    event_name = payload.get("event")
+                    event_data = payload.get("data", {})
+                    if event_name == "final_answer.delta":
+                        delta_text = event_data.get("delta") or ""
+                        accumulated_text += delta_text
+                    yield _sse_event(event_name, event_data)
+                elif kind == "classification":
+                    classification = payload or {}
+                elif kind == "error":
+                    streaming_failed = True
+                    err_msg = str(payload)
+                    log.error(f"SSE_STREAM_ERROR | {err_msg}")
+                    yield _sse_event("error", {"message": err_msg})
+                elif kind == "done":
+                    break
+
+            if streaming_failed:
+                yield _sse_event("end", {"ok": False})
+                return
             
             route = classification.get("route", "general")
             data_strategy = classification.get("data_strategy", "none")
@@ -113,36 +145,36 @@ def chat_stream() -> Response:
             # If it's a simple reply (no product data needed), the response was already streamed during classification
             if data_strategy == "none" and route == "general":
                 log.info(f"SSE_STREAM_PATH | simple_reply_streamed_during_classification | session={session_id}")
-                
+
                 # Get the pre-generated simple response from classification (for final envelope)
                 simple_resp = classification.get("simple_response", {})
-                accumulated_text = simple_resp.get("message", "I'm here to help!")
-                
+                summary_text = accumulated_text or simple_resp.get("message", "I'm here to help!")
+
                 # Update context with conversation history
                 ctx.session.setdefault("conversation_history", []).append({
                     "i": len(ctx.session.get("conversation_history", [])) + 1,
                     "user": message,
-                    "bot": accumulated_text[:100]
+                    "bot": summary_text[:100]
                 })
                 ctx_mgr.save_context(ctx)
-                
+
                 # Build final envelope
                 elapsed = time.time() - start_ts
                 envelope = build_envelope(
                     wa_id=wa_id,
                     session_id=session_id,
                     bot_resp_type=ResponseType.FINAL_ANSWER,
-                    content={"summary_message": accumulated_text},
+                    content={"summary_message": summary_text},
                     ctx=ctx,
                     elapsed_time_seconds=elapsed,
                     mode_async_enabled=False,
                     timestamp=datetime.utcnow().isoformat() + "Z",
                     functions_executed=["classify_and_assess_stream"],
                 )
-                
+
                 log.info(f"SSE_EMIT | event=final_answer.complete | session={session_id}")
                 yield _sse_event("final_answer.complete", envelope)
-                
+
                 log.info(f"SSE_EMIT | event=end | ok=True | session={session_id}")
                 yield _sse_event("end", {"ok": True})
                 return

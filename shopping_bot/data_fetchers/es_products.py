@@ -47,6 +47,24 @@ def _normalize_es_base(raw_url: Optional[str], index: Optional[str]) -> str:
         s = f"https://{s}"
     return s
 
+# 🎯 ELASTICSEARCH ENVIRONMENT VARIABLES 🎯
+ES_URL_ENV = os.getenv("ES_URL")
+ELASTIC_BASE_ENV = os.getenv("ELASTIC_BASE")
+ELASTIC_INDEX_ENV = os.getenv("ELASTIC_INDEX")
+ES_API_KEY_ENV = os.getenv("ES_API_KEY")
+ELASTIC_API_KEY_ENV = os.getenv("ELASTIC_API_KEY")
+ELASTIC_TIMEOUT_ENV = os.getenv("ELASTIC_TIMEOUT_SECONDS")
+
+print("="*80)
+print("🔍🔍🔍 ELASTICSEARCH ENV VARIABLES FETCHED 🔍🔍🔍")
+print(f"🌐 ES_URL: {ES_URL_ENV}")
+print(f"🌐 ELASTIC_BASE: {ELASTIC_BASE_ENV}")
+print(f"📇 ELASTIC_INDEX: {ELASTIC_INDEX_ENV}")
+print(f"🔑 ES_API_KEY: {'***SET***' if ES_API_KEY_ENV else 'NOT SET'}")
+print(f"🔑 ELASTIC_API_KEY: {'***SET***' if ELASTIC_API_KEY_ENV else 'NOT SET'}")
+print(f"⏱️  ELASTIC_TIMEOUT_SECONDS: {ELASTIC_TIMEOUT_ENV}")
+print("="*80)
+
 ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "products-v2")
 _RAW_ES_URL = os.getenv("ES_URL") or os.getenv("ELASTIC_BASE", "")
 ELASTIC_BASE = _normalize_es_base(_RAW_ES_URL, ELASTIC_INDEX)
@@ -54,7 +72,14 @@ ELASTIC_API_KEY = (os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")).
 TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
 
 # Debug ES config on module load
-print(f"DEBUG: ES_MODULE_INIT | RAW_ES_URL={_RAW_ES_URL} | ELASTIC_BASE={ELASTIC_BASE} | ELASTIC_INDEX={ELASTIC_INDEX}")
+print("="*80)
+print("✅✅✅ ELASTICSEARCH CONFIGURATION FINALIZED ✅✅✅")
+print(f"📍 RAW_ES_URL: {_RAW_ES_URL}")
+print(f"📍 ELASTIC_BASE (normalized): {ELASTIC_BASE}")
+print(f"📍 ELASTIC_INDEX: {ELASTIC_INDEX}")
+print(f"🔑 API_KEY: {'***SET***' if ELASTIC_API_KEY else 'NOT SET'}")
+print(f"⏱️  TIMEOUT: {TIMEOUT}s")
+print("="*80)
 
 # Text cleaning
 TAG_RE = re.compile(r"<[^>]+>")
@@ -1368,8 +1393,15 @@ class ElasticsearchProductsFetcher:
             "Authorization": f"ApiKey {self.api_key}"
         } if self.api_key else {}
         
-        # Debug output
-        print(f"DEBUG: ES_CONFIG | base_url={self.base_url} | index={self.index} | endpoint={self.endpoint}")
+        # Debug output with emojis
+        print("="*80)
+        print("🚀🚀🚀 ELASTICSEARCH FETCHER INITIALIZED 🚀🚀🚀")
+        print(f"🌐 BASE_URL: {self.base_url}")
+        print(f"📇 INDEX: {self.index}")
+        print(f"🔗 SEARCH_ENDPOINT: {self.endpoint}")
+        print(f"🔗 MGET_ENDPOINT: {self.mget_endpoint}")
+        print(f"🔑 API_KEY: {'***SET***' if self.api_key else 'NOT SET'}")
+        print("="*80)
     
     def _ensure_mapping_hints(self) -> None:
         """Lazy-load index mapping to detect availability of 'category_paths.keyword'."""

@@ -76,6 +76,86 @@ def chat_stream() -> Response:
             except Exception:
                 pass
 
+            # ============================================================
+            # CHECK: Are we in the middle of an ASK phase?
+            # ============================================================
+            assessment = ctx.session.get("assessment", {})
+            if assessment.get("phase") == "asking" and assessment.get("currently_asking"):
+                # User is answering a question in the ASK flow
+                log.info(f"ASK_ANSWER_DETECTED | user={user_id} | answering={assessment['currently_asking']}")
+                
+                from ..bot_helpers import store_user_answer
+                
+                # Store the user's answer
+                currently_asking = assessment.get("currently_asking")
+                store_user_answer(message, assessment, ctx)
+                log.info(f"ASK_ANSWER_STORED | slot={currently_asking} | answer='{message[:50]}'")
+                
+                # Check what's still missing
+                fulfilled = set(assessment.get("fulfilled", []))
+                priority_order = assessment.get("priority_order", [])
+                still_missing = [slot for slot in priority_order if slot not in fulfilled]
+                
+                log.info(f"ASK_STATUS | fulfilled={list(fulfilled)} | still_missing={still_missing}")
+                
+                if still_missing:
+                    # More questions to ask - signal frontend to show next question
+                    next_slot = still_missing[0]
+                    assessment["currently_asking"] = next_slot
+                    assessment["last_completed_slot"] = currently_asking
+                    ctx_mgr.save_context(ctx)
+                    
+                    log.info(f"ASK_NEXT | showing={next_slot} | remaining={len(still_missing)}")
+                    log.info(f"SSE_EMIT | event=ask_next | session={session_id}")
+                    yield _sse_event("ask_next", {
+                        "slot_name": next_slot,
+                        "completed_slot": currently_asking,
+                        "remaining_count": len(still_missing)
+                    })
+                    log.info(f"SSE_EMIT | event=end | ok=True | session={session_id}")
+                    yield _sse_event("end", {"ok": True})
+                    return
+                else:
+                    # All questions answered - proceed to ES fetch
+                    log.info(f"ASK_COMPLETE | all_slots_filled | proceeding_to_search")
+                    assessment["phase"] = "complete"
+                    assessment["currently_asking"] = None
+                    ctx_mgr.save_context(ctx)
+                    
+                    # Signal frontend: ASK phase done
+                    log.info(f"SSE_EMIT | event=ask_complete | session={session_id}")
+                    yield _sse_event("ask_complete", {"message": "Got it! Searching for products..."})
+                    log.info(f"SSE_EMIT | event=status | stage=product_search | session={session_id}")
+                    yield _sse_event("status", {"stage": "product_search"})
+                    
+                    # Now run product search with all collected information
+                    log.info(f"RUNNING_PRODUCT_SEARCH | with_collected_slots")
+                    bot_resp = asyncio.run(bot_core.process_query(message, ctx))
+                    
+                    # Build and send final response
+                    elapsed = time.time() - start_ts
+                    envelope = build_envelope(
+                        wa_id=wa_id,
+                        session_id=session_id,
+                        bot_resp_type=bot_resp.response_type,
+                        content=bot_resp.content or {},
+                        ctx=ctx,
+                        elapsed_time_seconds=elapsed,
+                        mode_async_enabled=getattr(get_config(), "ENABLE_ASYNC", False),
+                        timestamp=getattr(bot_resp, "timestamp", None),
+                        functions_executed=getattr(bot_resp, "functions_executed", []),
+                    )
+                    log.info(f"SSE_EMIT | event=final_answer.complete | session={session_id}")
+                    yield _sse_event("final_answer.complete", envelope)
+                    
+                    log.info(f"SSE_EMIT | event=end | ok=True | session={session_id}")
+                    yield _sse_event("end", {"ok": True})
+                    return
+
+            # ============================================================
+            # NORMAL FLOW: Initial query or non-ASK continuation
+            # ============================================================
+            
             # Emit early status
             log.info(f"SSE_EMIT | event=status | stage=classification | session={session_id}")
             yield _sse_event("status", {"stage": "classification"})
@@ -141,6 +221,47 @@ def chat_stream() -> Response:
             # Save classification to context
             ctx.session["intent_l3"] = classification.get("layer3", "general")
             ctx.session["is_product_related"] = classification.get("is_product_related", False)
+            
+            # ============================================================
+            # INITIALIZE ASSESSMENT STATE for product queries with ASK slots
+            # ============================================================
+            if route == "product" and classification.get("ask"):
+                ask_dict = classification.get("ask", {})
+                if ask_dict:
+                    slot_names = list(ask_dict.keys())
+                    log.info(f"ASK_INIT | initializing_assessment | slots={slot_names}")
+                    
+                    # Initialize assessment state (mirrors non-streaming path in bot_core.py)
+                    assessment_state = {
+                        "phase": "asking",
+                        "original_query": message,
+                        "missing_data": slot_names,
+                        "priority_order": slot_names,
+                        "currently_asking": slot_names[0] if slot_names else None,
+                        "fulfilled": [],
+                        "user_provided_slots": [],
+                    }
+                    ctx.session["assessment"] = assessment_state
+                    ctx.session["contextual_questions"] = ask_dict
+                    ctx.session["domain"] = classification.get("domain", "")
+                    ctx.session["category"] = classification.get("category", "")
+                    ctx.session["product_intent"] = classification.get("product_intent", "show_me_options")
+                    ctx_mgr.save_context(ctx)
+                    
+                    log.info(f"ASK_STATE_SAVED | currently_asking={slot_names[0]} | total_slots={len(slot_names)}")
+                    
+                    # Emit a special event signaling ASK phase is active
+                    # Frontend should now wait for user to answer questions
+                    log.info(f"SSE_EMIT | event=ask_phase_start | session={session_id}")
+                    yield _sse_event("ask_phase_start", {
+                        "total_questions": len(slot_names),
+                        "first_question": slot_names[0]
+                    })
+                    
+                    # End stream here - wait for user to answer
+                    log.info(f"SSE_EMIT | event=end | ok=True | waiting_for_answer | session={session_id}")
+                    yield _sse_event("end", {"ok": True, "awaiting_user_input": True})
+                    return
             
             # If it's a simple reply (no product data needed), the response was already streamed during classification
             if data_strategy == "none" and route == "general":

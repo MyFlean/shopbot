@@ -335,12 +335,12 @@ def _build_html_page() -> str:
       </header>
       
       <div class="config-section">
-        <div class="row">
-          <div class="label">User ID</div>
+      <div class="row">
+        <div class="label">User ID</div>
           <input id="userId" type="text" placeholder="Enter user ID" value="demo_user" />
-        </div>
-        <div class="row">
-          <div class="label">Session ID</div>
+      </div>
+      <div class="row">
+        <div class="label">Session ID</div>
           <input id="sessionId" type="text" placeholder="Auto-generated" />
           <button class="clear-btn" onclick="$('sessionId').value = ''; generateSession();">New Session</button>
         </div>
@@ -349,7 +349,7 @@ def _build_html_page() -> str:
       <div class="config-section">
         <div class="input-row">
           <input id="message" type="text" placeholder="Type your message... (e.g., 'I want chips for a party')" />
-          <button id="sendBtn">Send</button>
+        <button id="sendBtn">Send</button>
           <button id="stopBtn" class="secondary" disabled>Stop</button>
         </div>
         <div id="status" class="status">Ready to chat</div>
@@ -382,6 +382,11 @@ def _build_html_page() -> str:
       const slotToNode = new Map();
       let debugEventCount = 0;
       let debugChunkCount = 0;
+      const askBuffer = new Map(); // slot_name -> entry {slotName, message, options, order, rendered, completed}
+      let askQueue = [];
+      let askPlan = [];
+      let activeAskEntry = null;
+      let awaitingAskResponse = false;
 
       function debugLog(msg, data) {
         const timestamp = new Date().toISOString().split('T')[1];
@@ -407,6 +412,112 @@ def _build_html_page() -> str:
           rafScheduled = false;
           flushNow();
         });
+      }
+
+      function resetAskState() {
+        askBuffer.clear();
+        askQueue = [];
+        askPlan = [];
+        activeAskEntry = null;
+        awaitingAskResponse = false;
+      }
+
+      function ensureAskEntry(slotName) {
+        if (!slotName) return null;
+        const existing = askBuffer.get(slotName);
+        if (existing) return existing;
+        const entry = {
+          slotName,
+          message: '',
+          options: [],
+          order: Number.MAX_SAFE_INTEGER,
+          rendered: false,
+          completed: false,
+        };
+        askBuffer.set(slotName, entry);
+        return entry;
+      }
+
+      function applyAskPlan(planSlots) {
+        if (!Array.isArray(planSlots)) return;
+        askPlan = planSlots;
+        planSlots.forEach((item, idx) => {
+          if (!item) return;
+          const slot = item.slot_name || item.slotName;
+          if (!slot) return;
+          const entry = ensureAskEntry(slot);
+          entry.order = typeof item.order === 'number' ? item.order : idx;
+          if (item.message && !entry.message) entry.message = item.message;
+          if (Array.isArray(item.options) && item.options.length && entry.options.length === 0) {
+            entry.options = item.options.slice(0, 3).map(opt => typeof opt === 'string' ? opt : String(opt));
+          }
+        });
+        rebuildAskQueue();
+      }
+
+      function rebuildAskQueue() {
+        askQueue = Array.from(askBuffer.values())
+          .filter(entry => !entry.completed)
+          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        scheduleNextAsk();
+      }
+
+      function scheduleNextAsk() {
+        debugLog('🔍 SCHEDULE_NEXT_CHECK', `awaitingAskResponse=${awaitingAskResponse}, activeAskEntry=${activeAskEntry ? activeAskEntry.slotName : 'null'}, queueSize=${askQueue.length}`);
+        if (awaitingAskResponse) {
+          debugLog('⏸️ SCHEDULE_BLOCKED', 'Still awaiting response');
+          return;
+        }
+        if (activeAskEntry && !activeAskEntry.completed) {
+          debugLog('⏸️ SCHEDULE_BLOCKED', `Active entry not completed: ${activeAskEntry.slotName}`);
+          return;
+        }
+        const next = askQueue.find(entry => !entry.rendered && entry.message && entry.options.length);
+        if (!next) {
+          debugLog('❌ NO_NEXT_FOUND', `Queue entries: ${askQueue.map(e => `${e.slotName}(rendered=${e.rendered}, hasMsg=${!!e.message}, opts=${e.options.length})`).join(', ')}`);
+          return;
+        }
+        debugLog('✅ SHOWING_NEXT', `Slot: ${next.slotName}, Message: ${next.message.substring(0, 30)}...`);
+        showAskEntry(next);
+      }
+
+      function showAskEntry(entry) {
+        const opts = entry.options.map(opt => (typeof opt === 'string' ? opt : String(opt)));
+        const node = renderAsk(entry.slotName, entry.message, opts);
+        slotToNode.set(entry.slotName, node);
+        entry.rendered = true;
+        activeAskEntry = entry;
+        awaitingAskResponse = true;
+      }
+
+      function updateAskMessageDom(slotName, message) {
+        const node = slotToNode.get(slotName);
+        if (!node) return;
+        const title = node.querySelector('div');
+        if (title) title.textContent = message;
+      }
+
+      function updateAskOptionsDom(slotName, options) {
+        const node = slotToNode.get(slotName);
+        if (!node) return;
+        const normalized = (options || []).map(opt => (typeof opt === 'string' ? opt : String(opt)));
+        const existing = node.querySelector('.chips');
+        if (existing) existing.remove();
+        if (!normalized.length) return;
+        const row = document.createElement('div');
+        row.className = 'chips';
+        for (const opt of normalized) {
+          const chip = document.createElement('button');
+          chip.className = 'chip';
+          chip.textContent = opt;
+          chip.addEventListener('click', () => {
+            messageInput.value = opt;
+            startStream(opt);
+          });
+          row.appendChild(chip);
+        }
+        node.appendChild(row);
+        chat.scrollTop = chat.scrollHeight;
       }
 
       // Auto-generate session on load
@@ -542,7 +653,7 @@ def _build_html_page() -> str:
         
         controller = new AbortController();
         const { user_id, session_id } = nowSession();
-        
+
         // Reset debug counters
         debugEventCount = 0;
         debugChunkCount = 0;
@@ -550,11 +661,23 @@ def _build_html_page() -> str:
         
         // Clear current final bubble for new conversation
         currentFinalBubble = null;
-        slotToNode.clear();
+        // DON'T clear slotToNode here - we need it for ask_next events
+        // slotToNode.clear();
 
         // Add user message
         appendBubble(message, 'user');
         messageInput.value = '';
+
+        // Track answer if we're in ASK phase - but DON'T reset state yet
+        // The backend will send ask_next event which will handle state transitions
+        if (activeAskEntry && awaitingAskResponse) {
+          activeAskEntry.answer = message;
+          // Mark as completed but keep in buffer - ask_next will handle cleanup
+          activeAskEntry.completed = true;
+          awaitingAskResponse = false;
+          // Don't reset state here - wait for ask_next or ask_complete event
+          debugLog('📝 ANSWER_TRACKED', `Answer "${message}" stored for ${activeAskEntry.slotName}, waiting for ask_next event`);
+        }
         
         // Show loading state
         showTypingIndicator();
@@ -643,40 +766,99 @@ def _build_html_page() -> str:
               return;
             }
             
+            if (event === 'classification_start') {
+              resetAskState();
+              slotToNode.clear();
+              return;
+            }
+
             if (event === 'ask_message_delta') {
               const d = JSON.parse(data);
               const slot = d.slot_name || 'generic';
-              const node = renderAsk(slot, d.text, []);
-              slotToNode.set(slot, node);
+              const entry = ensureAskEntry(slot);
+              if (d.text) {
+                entry.message = d.text;
+                if (entry.rendered) updateAskMessageDom(slot, entry.message);
+              }
+              if (typeof entry.order !== 'number' || Number.isNaN(entry.order)) {
+                const planItem = askPlan.find(item => (item.slot_name || item.slotName) === slot);
+                if (planItem && typeof planItem.order === 'number') entry.order = planItem.order;
+              }
+              rebuildAskQueue();
               return;
             }
             
             if (event === 'ask_options_delta') {
               const d = JSON.parse(data);
               const slot = d.slot_name;
-              const node = slotToNode.get(slot);
-              
-              if (node) {
-                const old = node.querySelector('.chips');
-                if (old) old.remove();
+              const entry = ensureAskEntry(slot);
+              const opts = Array.isArray(d.options) ? d.options.slice(0, 3) : [];
+              entry.options = opts.map(opt => (typeof opt === 'string' ? opt : String(opt)));
+              if (entry.rendered) updateAskOptionsDom(slot, entry.options);
+              rebuildAskQueue();
+              return;
+            }
+
+            if (event === 'ask_plan') {
+              try {
+                const d = JSON.parse(data || '{}');
+                applyAskPlan(d.slots || []);
+              } catch (err) {
+                debugLog('ask_plan_parse_error', err);
+              }
+              return;
+            }
+            
+            if (event === 'ask_phase_start') {
+              const d = JSON.parse(data);
+              debugLog('🎯 ASK_PHASE_START', `Total questions: ${d.total_questions}, First: ${d.first_question}`);
+              setStatus(`Asking ${d.total_questions} questions...`, 'active');
+              return;
+            }
+            
+            if (event === 'ask_next') {
+              try {
+                const d = JSON.parse(data);
+                debugLog('➡️ ASK_NEXT', `Completed: ${d.completed_slot}, Next: ${d.slot_name}, Remaining: ${d.remaining_count}`);
                 
-                const row = document.createElement('div');
-                row.className = 'chips';
-                
-                for (const opt of d.options || []) {
-                  const chip = document.createElement('button');
-                  chip.className = 'chip';
-                  chip.textContent = opt;
-                  chip.addEventListener('click', () => {
-                    messageInput.value = opt;
-                    startStream(opt);
-                  });
-                  row.appendChild(chip);
+                // Mark completed question as done
+                if (d.completed_slot) {
+                  const completedEntry = askBuffer.get(d.completed_slot);
+                  if (completedEntry) {
+                    completedEntry.completed = true;
+                    debugLog('✅ MARK_COMPLETE', `Slot ${d.completed_slot} marked as completed`);
+                    // Remove from DOM
+                    const node = slotToNode.get(d.completed_slot);
+                    if (node) {
+                      node.remove();
+                      slotToNode.delete(d.completed_slot);
+                    }
+                  }
                 }
                 
-                node.appendChild(row);
-                chat.scrollTop = chat.scrollHeight;
+                // Reset active state BEFORE rebuilding queue
+                activeAskEntry = null;
+                awaitingAskResponse = false;
+                
+                // Rebuild queue to include next question
+                debugLog('🔄 REBUILD_QUEUE', `Buffer size: ${askBuffer.size}`);
+                rebuildAskQueue();
+                
+                setStatus(`Question ${d.remaining_count} remaining...`, 'active');
+                debugLog('✅ ASK_NEXT_COMPLETE', `Queue size: ${askQueue.length}, Active: ${activeAskEntry ? activeAskEntry.slotName : 'none'}`);
+              } catch (err) {
+                console.error('ask_next handler error:', err);
+                debugLog('❌ ASK_NEXT_ERROR', err.message);
               }
+              return;
+            }
+            
+            if (event === 'ask_complete') {
+              const d = JSON.parse(data);
+              debugLog('✅ ASK_COMPLETE', 'All questions answered, proceeding to search');
+              setStatus('Searching products...', 'active');
+              resetAskState();
+              // Backend will now stream product results, so just wait
               return;
             }
             

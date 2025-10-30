@@ -2375,6 +2375,33 @@ Now classify the user's current message. Return ONLY the tool call."""
                                 "data": {"delta": extracted.get("text"), "path": "content.summary_message"}
                             })
                         elif event_type == "tool_complete":
+                            full_input = extracted.get("input") or {}
+
+                            # Emit ordered ask plan so FE can stage questions sequentially
+                            try:
+                                ask_slots = full_input.get("ask_slots") if isinstance(full_input, dict) else None
+                                if isinstance(ask_slots, list) and ask_slots:
+                                    plan_slots = []
+                                    for idx, slot in enumerate(ask_slots):
+                                        if not isinstance(slot, dict):
+                                            continue
+                                        slot_name = slot.get("slot_name")
+                                        if not slot_name:
+                                            continue
+                                        plan_slots.append({
+                                            "slot_name": slot_name,
+                                            "order": idx,
+                                            "message": slot.get("message"),
+                                            "options": (slot.get("options") or [])[:3],
+                                        })
+                                    if plan_slots:
+                                        await emit_callback({
+                                            "event": "ask_plan",
+                                            "data": {"slots": plan_slots}
+                                        })
+                            except Exception:
+                                log.warning("ASK_PLAN_EMIT_FAILED", exc_info=True)
+
                             pending = extracted.get("pending_options") or {}
                             if isinstance(pending, dict) and pending:
                                 for _slot_name, _opts in pending.items():

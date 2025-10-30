@@ -171,15 +171,18 @@ class ToolStreamAccumulator:
                                     continue
                     except Exception:
                         pass
-                    return {
+                    payload = {
                         "type": "tool_complete",
                         "tool_name": self.tool_name,
                         "input": self.complete_input,
                         "pending_options": pending_options
                     }
+                    self.input_buffer = ""
+                    return payload
         except json.JSONDecodeError as e:
             log.error(f"TOOL_JSON_PARSE_ERROR | error={e} | buffer_preview={self.input_buffer[:200]}")
             self.complete_input = {}
+            self.input_buffer = ""
         except Exception as e:
             log.error(f"Block stop error: {e}")
         finally:

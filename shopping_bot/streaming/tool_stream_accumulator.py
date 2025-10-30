@@ -50,6 +50,11 @@ class ToolStreamAccumulator:
         self._slot_seen_options: Dict[str, List[str]] = {}
         # Track simple_response streaming position
         self._simple_response_emitted_len: int = 0
+        # Track summary_message_part streaming positions (for final answer streaming)
+        self._summary_part_emitted_len: Dict[int, int] = {1: 0, 2: 0, 3: 0}
+        # Track product ids and hero product streaming state
+        self._product_ids_emitted: List[str] = []
+        self._hero_product_emitted: Optional[str] = None
         
     def process_event(self, event) -> Optional[Dict[str, Any]]:
         """
@@ -291,6 +296,75 @@ class ToolStreamAccumulator:
                         "total_length": current_len
                     }
             
+            # Pattern 3: Summary message parts (for final answer streaming)
+            # Extract summary_message_part_1, part_2, part_3 as they stream
+            for part_num in [1, 2, 3]:
+                part_pattern = rf'"summary_message_part_{part_num}"\s*:\s*"([^"]*)'
+                part_match = re.search(part_pattern, self.input_buffer)
+                
+                if part_match:
+                    current_part = part_match.group(1)  # Text so far (may be incomplete)
+                    current_len = len(current_part)
+                    emitted_len = self._summary_part_emitted_len.get(part_num, 0)
+                    
+                    # Check if the part has grown since last emission
+                    if current_len > emitted_len and current_len >= 3:
+                        # Emit only the NEW characters (delta)
+                        delta_text = current_part[emitted_len:]
+                        self._summary_part_emitted_len[part_num] = current_len
+                        self._last_buffer_scan_pos = len(self.input_buffer)
+                        log.info(f"EXTRACTED_SUMMARY_PART_{part_num} | delta_len={len(delta_text)} | total_len={current_len} | preview='{delta_text[:60]}...'")
+                        return {
+                            "type": "summary_part_delta",
+                            "part_number": part_num,
+                            "text": delta_text,
+                            "total_length": current_len
+                        }
+
+            # Pattern 4: Product IDs array streaming
+            product_pattern = r'"product_ids"\s*:\s*\[([^\]]*)'
+            product_match = re.search(product_pattern, self.input_buffer)
+            if product_match:
+                raw_ids = product_match.group(1)
+                ids = re.findall(r'"([^\"]+)"', raw_ids)
+                if ids and ids != self._product_ids_emitted:
+                    self._product_ids_emitted = ids[:]
+                    self._last_buffer_scan_pos = len(self.input_buffer)
+                    log.info(f"EXTRACTED_PRODUCT_IDS | count={len(ids)} | preview={ids[:4]}")
+                    return {
+                        "type": "product_ids",
+                        "product_ids": ids
+                    }
+
+            # Pattern 5: Hero product id
+            hero_pattern = r'"hero_product_id"\s*:\s*"([^"]*)"'
+            hero_match = re.search(hero_pattern, self.input_buffer)
+            if hero_match:
+                hero_id = hero_match.group(1)
+                if hero_id and hero_id != self._hero_product_emitted:
+                    self._hero_product_emitted = hero_id
+                    self._last_buffer_scan_pos = len(self.input_buffer)
+                    log.info(f"EXTRACTED_HERO_PRODUCT | id={hero_id}")
+                    return {
+                        "type": "hero_product",
+                        "hero_product_id": hero_id
+                    }
+
+            # Pattern 6: Quick replies array
+            qr_pattern = r'"quick_replies"\s*:\s*\[([^\]]*)'
+            qr_match = re.search(qr_pattern, self.input_buffer)
+            if qr_match:
+                raw_qr = qr_match.group(1)
+                quick_replies = re.findall(r'"([^\"]+)"', raw_qr)
+                if quick_replies:
+                    # We emit every time the array grows; frontend will handle dedupe
+                    self._last_buffer_scan_pos = len(self.input_buffer)
+                    log.info(f"EXTRACTED_QUICK_REPLIES | count={len(quick_replies)} | preview={quick_replies[:4]}")
+                    return {
+                        "type": "quick_replies",
+                        "quick_replies": quick_replies
+                    }
+            
             # Update scan position even if nothing found
             self._last_buffer_scan_pos = len(self.input_buffer)
             
@@ -307,6 +381,13 @@ class ToolStreamAccumulator:
         """Check if tool payload has been fully parsed"""
         return self.complete_input is not None
     
+    def get_complete_payload(self) -> Dict[str, Any]:
+        """
+        Return the fully accumulated and parsed tool input.
+        Alias for get_complete_input for consistent API.
+        """
+        return self.get_complete_input()
+    
     def reset(self):
         """Reset accumulator for next tool call"""
         self.tool_name = None
@@ -318,4 +399,7 @@ class ToolStreamAccumulator:
         self._slot_emit_state.clear()
         self._slot_seen_options.clear()
         self._simple_response_emitted_len = 0
+        self._summary_part_emitted_len = {1: 0, 2: 0, 3: 0}
+        self._product_ids_emitted = []
+        self._hero_product_emitted = None
 

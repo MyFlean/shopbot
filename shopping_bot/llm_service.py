@@ -2565,24 +2565,49 @@ Now classify the user's current message. Return ONLY the tool call."""
         fetched: Dict[str, Any],
         intent_l3: str,
         query_intent: QueryIntent,
-        product_intent: Optional[str] = None
+        product_intent: Optional[str] = None,
+        emit_callback: Optional[Any] = None
     ) -> Dict[str, Any]:
-        """Enhanced unified response generation."""
+        """
+        Enhanced unified response generation.
+        
+        Args:
+            emit_callback: Optional callback for streaming final answer to frontend
+        """
         product_intents = {
             "Product_Discovery", "Recommendation", 
             "Specific_Product_Search", "Product_Comparison"
         }
         
         has_products = self._has_product_results(fetched)
+        is_product_related = bool(getattr(ctx, "session", {}).get("is_product_related"))
+        is_product_query = has_products and (
+            product_intent
+            or is_product_related
+            or intent_l3 in product_intents
+        )
         
         # Log which path we're taking
         try:
-            print(f"CORE:LLM1_PATH_DECISION | intent_l3={intent_l3} | has_products={has_products} | product_intents={intent_l3 in product_intents}")
+            print(
+                "CORE:LLM1_PATH_DECISION | "
+                f"intent_l3={intent_l3} | has_products={has_products} | "
+                f"product_intents={intent_l3 in product_intents} | "
+                f"product_intent_set={bool(product_intent)} | "
+                f"is_product_related={is_product_related}"
+            )
         except Exception:
             pass
         
-        if intent_l3 in product_intents and has_products:
-            result = await self._generate_product_response(query, ctx, fetched, intent_l3, product_intent)
+        if is_product_query:
+            # Use streaming version if callback provided
+            if emit_callback:
+                result = await self._generate_product_response_stream(
+                    query, ctx, fetched, intent_l3, product_intent, emit_callback
+                )
+            else:
+                result = await self._generate_product_response(query, ctx, fetched, intent_l3, product_intent)
+            
             if product_intent:
                 result["product_intent"] = product_intent
             return result
@@ -3133,6 +3158,293 @@ Generate your answer now:"""
             
         except Exception as exc:
             log.error(f"Product response generation failed: {exc}")
+            return self._create_fallback_product_response(products_data, query)
+
+    async def _generate_product_response_stream(
+        self,
+        query: str,
+        ctx: UserContext,
+        fetched: Dict[str, Any],
+        intent_l3: str,
+        product_intent: Optional[str] = None,
+        emit_callback: Optional[Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Streaming version of _generate_product_response.
+        Streams summary text parts to frontend via emit_callback as they arrive.
+        """
+        from .streaming.tool_stream_accumulator import ToolStreamAccumulator
+        
+        products_data = []
+        if 'search_products' in fetched:
+            search_data = fetched['search_products']
+            if isinstance(search_data, dict):
+                data = search_data.get('data', search_data)
+                # For SPM (is_this_good) we only need one product end-to-end
+                if product_intent and product_intent == "is_this_good":
+                    products_data = data.get('products', [])[:1]
+                else:
+                    products_data = data.get('products', [])[:10]
+        
+        if not products_data:
+            result = {
+                "response_type": "final_answer",
+                "summary_message": "I couldn't find any products matching your search. Please try different keywords.",
+                "products": []
+            }
+            if emit_callback:
+                await emit_callback({
+                    "event": "final_answer.delta",
+                    "data": {"delta": result["summary_message"], "complete": True}
+                })
+            return result
+        
+        # Build compact briefs directly from search hits
+        def _first_25_words(text: str) -> str:
+            if not text:
+                return ""
+            words = str(text).split()
+            return " ".join(words[:25])
+        
+        top_k = 1 if (product_intent and product_intent == "is_this_good") else 3
+        top_products_brief: List[Dict[str, Any]] = []
+        for p in products_data[:top_k]:
+            try:
+                brief = {
+                    "id": p.get("id"),
+                    "name": p.get("name"),
+                    "brand": p.get("brand"),
+                    "price": p.get("price"),
+                    "review_stats": p.get("review_stats", {}),
+                    "skin_compatibility": p.get("skin_compatibility", {}),
+                    "efficacy": p.get("efficacy", {}),
+                    "side_effects": p.get("side_effects", {}),
+                    "claims": {
+                        "health_claims": ((p.get("package_claims", {}) or {}).get("health_claims") or []),
+                        "dietary_labels": ((p.get("package_claims", {}) or {}).get("dietary_labels") or []),
+                    },
+                    "review_snippet": _first_25_words(p.get("review_text", "")),
+                }
+                top_products_brief.append(brief)
+            except Exception:
+                continue
+
+        # Narrow LLM input
+        spm_mode = bool(product_intent and product_intent == "is_this_good")
+        products_for_llm = products_data[:5] if spm_mode else products_data[:10]
+
+        # Include last 10 conversation turns as 5 user/bot pairs
+        _conversation_pairs = []
+        try:
+            _convo = ctx.session.get("conversation_history", []) or []
+            if isinstance(_convo, list) and _convo:
+                for _h in _convo[-10:]:
+                    if isinstance(_h, dict):
+                        _conversation_pairs.append({
+                            "user_query": str(_h.get("user_query", ""))[:160],
+                            "bot_reply": str(_h.get("bot_reply", ""))[:240],
+                        })
+        except Exception:
+            _conversation_pairs = []
+
+        unified_context = {
+            "user_query": query,
+            "intent_l3": intent_l3,
+            "product_intent": product_intent or ctx.session.get("product_intent") or "show_me_options",
+            "session": {k: ctx.session.get(k) for k in ["budget", "dietary_requirements"] if k in ctx.session},
+            "conversation_history": _conversation_pairs,
+            "products": products_for_llm,
+            "enriched_top": top_products_brief,
+        }
+        
+        unified_prompt = (
+            "You are Flean's WhatsApp copywriter. Write one concise message that proves we understood the user, explains why the picks fit, and ends with exactly three short follow-ups. Tone: friendly, plain English.\n\n"
+            "ABSOLUTE PRIVACY RULE (MANDATORY): NEVER include actual product IDs, SKUs, or internal identifiers in ANY text. If referring to an ID per instructions, include exactly the literal token '{product_id}' and DO NOT replace it with a real value.\n\n"
+            "FORMAT TAGS (MANDATORY): Use only <bold>...</bold> for emphasis and <newline> to indicate line breaks. DO NOT use any other HTML/Markdown tags or entities. The output will be post-processed for WhatsApp formatting.\n\n"
+            "You are producing BOTH the product answer and the UX block in a SINGLE tool call.\n"
+            "Inputs:\n- user_query\n- intent_l3\n- product_intent (one of is_this_good, which_is_better, show_me_alternate, show_me_options)\n- session snapshot (budget, dietary)\n- last 5 user/bot pairs (10 turns)\n- products (top 5-10)\n- enriched_top (top 1 for SPM; top 3 for MPM)\n\n"
+            "Output JSON (tool generate_final_answer_unified):\n"
+            "{response_type:'final_answer', summary_message (constructed from 3 parts), summary_message_part_1, summary_message_part_2, summary_message_part_3, product_ids?, hero_product_id?, ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}\n\n"
+            "3-PART SUMMARY (MANDATORY for both food & skin):\n"
+            "- summary_message_part_1: Mirror the brief (1–2 lines). Place 1 emoji to signal alignment (e.g., ✅ or 🔍). NEVER include actual product IDs.\n"
+            "- summary_message_part_2: Hero pick (2–3 lines): state one crisp reason it fits (protein/fiber/less oil/spice/budget). After the product name/brand, insert '{product_id}' as literal text (DO NOT substitute the real ID). If citing a percentile, use plain language with parentheses, e.g., 'higher in protein than most chips (top 10%).'. Append star rating as ⭐ repeated N times based on review_stats.average (rounded to nearest integer, clamp 1–5). If rating missing, omit stars. NEVER include actual product IDs.\n"
+            "- summary_message_part_3: Other picks (1–2 lines): group with one shared reason (e.g., 'also lower oil & budget-friendly'). Place 1 emoji here (e.g., 💡). Append star ratings for each product mentioned using ⭐ repeated N times from review_stats.average (rounded 1–5); if missing, omit stars. NEVER include actual product IDs.\n\n"
+            "Rules (MANDATORY):\n"
+            "- For is_this_good (SPM): choose 1 best item → ux_surface='SPM'; product_ids=[that_id]; dpl_runtime_text should read like a concise expert verdict.\n"
+            "- For others (MPM): choose a hero (healthiest/cleanest using enriched_top), set hero_product_id and order product_ids with hero first; ux_surface='MPM'.\n"
+            "- Quick replies: short and actionable pivots (budget ranges like 'Under ₹100', dietary like 'GLUTEN FREE', or quality pivots).\n"
+            "- Evidence: use flean score/percentiles, nutrition grams, and penalties correctly (penalties high = bad).\n"
+            "- REDACTION RULE: NEVER reveal product IDs/SKUs/internal identifiers anywhere in the output. If the model generates one, replace it with '{product_id}'.\n"
+            "Return ONLY the tool call.\n"
+        )
+
+        # Initialize accumulator for streaming
+        accumulator = ToolStreamAccumulator()
+        accumulated_text = ""
+        
+        log.info(f"🌊 STREAM_FINAL_ANSWER_START | model={Cfg.LLM_MODEL} | query='{query[:60]}...' | intent={product_intent}")
+        
+        try:
+            # Emit start event
+            if emit_callback:
+                await emit_callback({"event": "final_answer.start", "data": {}})
+            
+            event_count = 0
+            async with self.anthropic.messages.stream(
+                model=Cfg.LLM_MODEL,
+                messages=[{"role": "user", "content": unified_prompt + "\n" + json.dumps(unified_context, ensure_ascii=False)}],
+                tools=[FINAL_ANSWER_UNIFIED_TOOL],
+                tool_choice={"type": "tool", "name": "generate_final_answer_unified"},
+                temperature=0,
+                max_tokens=2000,
+                extra_headers={"anthropic-beta": "fine-grained-tool-streaming-2025-05-14"},
+            ) as stream:
+                async for event in stream:
+                    event_count += 1
+                    try:
+                        et = getattr(event, 'type', None)
+                        log.info(f"📨 STREAM_EVENT #{event_count} | type={et}")
+                    except Exception:
+                        pass
+                    
+                    # Accumulate tool payload
+                    extracted = accumulator.process_event(event)
+                    
+                    # Stream text deltas to frontend
+                    if extracted and emit_callback:
+                        event_type = extracted.get("type")
+                        if event_type == "summary_part_delta":
+                            part_num = extracted.get("part_number")
+                            delta_text = extracted.get("text", "")
+                            accumulated_text += delta_text
+                            
+                            log.info(f"STREAM_EXTRACT | type=summary_part_{part_num} | size={len(delta_text)} | preview='{delta_text[:80]}'")
+                            
+                            await emit_callback({
+                                "event": "final_answer.delta",
+                                "data": {
+                                    "delta": delta_text,
+                                    "part": part_num,
+                                    "complete": False
+                                }
+                            })
+                        elif event_type == "product_ids":
+                            ids = extracted.get("product_ids", [])
+                            if ids:
+                                log.info(f"STREAM_EXTRACT | type=product_ids | count={len(ids)} | preview={ids[:4]}")
+                                await emit_callback({
+                                    "event": "final_answer.product_ids.delta",
+                                    "data": {
+                                        "product_ids": ids
+                                    }
+                                })
+                        elif event_type == "hero_product":
+                            hero_id = extracted.get("hero_product_id")
+                            if hero_id:
+                                log.info(f"STREAM_EXTRACT | type=hero_product | id={hero_id}")
+                                await emit_callback({
+                                    "event": "final_answer.hero_product.delta",
+                                    "data": {
+                                        "hero_product_id": hero_id
+                                    }
+                                })
+                        elif event_type == "quick_replies":
+                            qrs = extracted.get("quick_replies", [])
+                            if qrs:
+                                log.info(f"STREAM_EXTRACT | type=quick_replies | count={len(qrs)} | preview={qrs[:4]}")
+                                await emit_callback({
+                                    "event": "final_answer.quick_replies.delta",
+                                    "data": {
+                                        "quick_replies": qrs
+                                    }
+                                })
+            
+            log.info(f"📊 STREAM_FINAL_ANSWER_COMPLETE | events_processed={event_count}")
+            
+            # Get complete result from accumulator
+            result = accumulator.get_complete_payload()
+            if not result:
+                log.warning("STREAM_FINAL_ANSWER_NO_RESULT | using fallback")
+                return self._create_fallback_product_response(products_data, query)
+            
+            # Assemble 3-part summary into summary_message if parts present
+            try:
+                _p1 = (result.get("summary_message_part_1") or "").strip()
+                _p2 = (result.get("summary_message_part_2") or "").strip()
+                _p3 = (result.get("summary_message_part_3") or "").strip()
+                if any([_p1, _p2, _p3]):
+                    _joined = "\n".join([s for s in [_p1, _p2, _p3] if s])
+                    # Sanitize accidental IDs
+                    try:
+                        import re as _re
+                        _joined = _re.sub(r"\{\s*id\s*[:=]\s*[^}]+\}", "{product_id}", _joined, flags=_re.IGNORECASE)
+                        _joined = _re.sub(r"\b(id|sku)\s*[:#-]?\s*[A-Za-z0-9_-]{3,}\b", "{product_id}", _joined, flags=_re.IGNORECASE)
+                        _joined = _re.sub(r"#[0-9]{4,}", "{product_id}", _joined)
+                    except Exception:
+                        pass
+                    result["summary_message"] = _joined
+            except Exception:
+                pass
+
+            # Enforce exactly one product for SPM in final result
+            if spm_mode:
+                one = []
+                if isinstance(result.get("products"), list) and result["products"]:
+                    one = [result["products"][0]]
+                
+                # Brand-aware selection among top-K using session brand hints
+                chosen_index = 0
+                try:
+                    brand_hints = []
+                    try:
+                        dbg = (ctx.session.get('debug', {}) or {})
+                        last_params = dbg.get('last_search_params', {}) or {}
+                        bval = last_params.get('brands')
+                        if isinstance(bval, list):
+                            brand_hints = [str(x).strip().lower() for x in bval if str(x).strip()]
+                        elif isinstance(bval, str) and bval.strip():
+                            brand_hints = [bval.strip().lower()]
+                    except Exception:
+                        brand_hints = []
+                    if brand_hints and isinstance(products_data, list):
+                        for idx, cand in enumerate(products_data[:5]):
+                            try:
+                                cbrand = str(cand.get('brand') or '').strip().lower()
+                                if cbrand and any(h in cbrand for h in brand_hints):
+                                    chosen_index = idx
+                                    break
+                            except Exception:
+                                continue
+                except Exception:
+                    chosen_index = 0
+
+                if not one and products_data:
+                    p = products_data[chosen_index]
+                    one = [{
+                        "id": str(p.get("id") or "").strip(),
+                        "text": p.get("name", "Product"),
+                        "description": f"Solid choice at ₹{p.get('price','N/A')}",
+                        "price": f"₹{p.get('price','N/A')}",
+                        "special_features": ""
+                    }]
+                result["products"] = one
+
+            # Emit complete event
+            if emit_callback:
+                await emit_callback({
+                    "event": "final_answer.complete",
+                    "data": {"summary_message": result.get("summary_message", "")}
+                })
+            
+            return result
+            
+        except Exception as exc:
+            log.error(f"Streaming product response generation failed: {exc}")
+            if emit_callback:
+                await emit_callback({
+                    "event": "error",
+                    "data": {"message": str(exc)}
+                })
             return self._create_fallback_product_response(products_data, query)
 
     def _create_fallback_product_response(self, products_data: List[Dict], query: str) -> Dict[str, Any]:

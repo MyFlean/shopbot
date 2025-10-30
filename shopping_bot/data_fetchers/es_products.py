@@ -53,6 +53,9 @@ ELASTIC_BASE = _normalize_es_base(_RAW_ES_URL, ELASTIC_INDEX)
 ELASTIC_API_KEY = (os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")).strip().strip("'\"")
 TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
 
+# Debug ES config on module load
+print(f"DEBUG: ES_MODULE_INIT | RAW_ES_URL={_RAW_ES_URL} | ELASTIC_BASE={ELASTIC_BASE} | ELASTIC_INDEX={ELASTIC_INDEX}")
+
 # Text cleaning
 TAG_RE = re.compile(r"<[^>]+>")
 WS_RE = re.compile(r"\s+")
@@ -1364,6 +1367,9 @@ class ElasticsearchProductsFetcher:
             "Content-Type": "application/json",
             "Authorization": f"ApiKey {self.api_key}"
         } if self.api_key else {}
+        
+        # Debug output
+        print(f"DEBUG: ES_CONFIG | base_url={self.base_url} | index={self.index} | endpoint={self.endpoint}")
     
     def _ensure_mapping_hints(self) -> None:
         """Lazy-load index mapping to detect availability of 'category_paths.keyword'."""

@@ -66,6 +66,9 @@ def chat_stream() -> Response:
                 yield _sse_event("end", {"ok": False})
                 return
 
+            # Initialize LLM service for streaming
+            llm_service = LLMService()
+
             ctx = ctx_mgr.get_context(user_id, session_id)
 
             # Persist WA id if provided (best-effort)
@@ -129,22 +132,173 @@ def chat_stream() -> Response:
                     yield _sse_event("status", {"stage": "product_search"})
                     
                     # Now run product search with all collected information
-                    log.info(f"RUNNING_PRODUCT_SEARCH | with_collected_slots")
-                    bot_resp = asyncio.run(bot_core.process_query(message, ctx))
+                    # CRITICAL: Set ctx.current_user_text to the original query (not the last answer)
+                    # so that ES parameter extraction uses the right query context
+                    original_query = assessment.get("original_query", message)
+                    try:
+                        setattr(ctx, "current_user_text", original_query)
+                        setattr(ctx, "message_text", original_query)
+                        ctx.session["current_user_text"] = original_query
+                        ctx.session["last_user_message"] = original_query
+                        ctx.session.setdefault("debug", {})["current_user_text"] = original_query
+                        log.info(f"ASK_COMPLETE_SET_ORIGINAL_QUERY | original_query='{original_query[:80]}'")
+                    except Exception as ctx_exc:
+                        log.warning(f"ASK_COMPLETE_SET_QUERY_FAILED | error={ctx_exc}")
                     
-                    # Build and send final response
+                    log.info(f"RUNNING_PRODUCT_SEARCH | with_collected_slots | streaming=True")
+                    
+                    # ============================================================
+                    # STREAMING FINAL ANSWER: Run ES fetch + stream LLM3 response
+                    # ============================================================
+                    
+                    # Set up streaming callback for final answer
+                    final_answer_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
+                    
+                    def start_product_search() -> None:
+                        async def search_and_stream():
+                            try:
+                                # Define streaming callback for LLM3
+                                async def final_answer_callback(event_dict):
+                                    event_name = event_dict.get("event", "delta")
+                                    event_data = event_dict.get("data", {})
+                                    log.info(f"FINAL_ANSWER_SSE | event={event_name} | session={session_id}")
+                                    final_answer_queue.put_nowait(("stream", {"event": event_name, "data": event_data}))
+                                
+                                # Run ES fetchers using registered handler
+                                from ..data_fetchers import get_fetcher
+                                from ..enums import BackendFunction
+
+                                fetched = {}
+                                try:
+                                    log.info(f"ES_FETCH_START | user={user_id}")
+                                    search_handler = get_fetcher(BackendFunction.SEARCH_PRODUCTS)
+                                    search_result = await search_handler(ctx)
+                                    fetched[BackendFunction.SEARCH_PRODUCTS.value] = search_result
+                                    try:
+                                        prod_count = len((search_result or {}).get('products', []) or [])
+                                    except Exception:
+                                        prod_count = 0
+                                    log.info(f"ES_FETCH_COMPLETE | products={prod_count}")
+                                except Exception as fetch_exc:
+                                    log.error(f"ES_FETCH_FAILED | error={fetch_exc}")
+                                    fetched[BackendFunction.SEARCH_PRODUCTS.value] = {"error": str(fetch_exc)}
+                                
+                                # Generate streaming response via LLM3
+                                intent_l3 = ctx.session.get("intent_l3", "")
+                                product_intent = ctx.session.get("product_intent", "show_me_options")
+                                from ..enums import QueryIntent
+                                query_intent = QueryIntent.RECOMMENDATION  # Default
+                                
+                                log.info(f"LLM3_STREAM_START | intent={product_intent} | session={session_id}")
+                                answer_dict = await llm_service.generate_response(
+                                    original_query,
+                                    ctx,
+                                    fetched,
+                                    intent_l3=intent_l3,
+                                    query_intent=query_intent,
+                                    product_intent=product_intent,
+                                    emit_callback=final_answer_callback
+                                )
+                                
+                                # Pass both answer and fetched data back to main thread
+                                final_answer_queue.put_nowait(("answer", {"answer_dict": answer_dict, "fetched": fetched}))
+                                
+                            except Exception as exc:
+                                log.error(f"PRODUCT_SEARCH_STREAM_ERROR | error={exc}")
+                                final_answer_queue.put_nowait(("error", exc))
+                            finally:
+                                final_answer_queue.put_nowait(("done", None))
+                        
+                        try:
+                            asyncio.run(search_and_stream())
+                        except Exception as exc:
+                            final_answer_queue.put_nowait(("error", exc))
+                            final_answer_queue.put_nowait(("done", None))
+                    
+                    threading.Thread(target=start_product_search, daemon=True).start()
+                    
+                    # Stream events to frontend
+                    answer_dict = None
+                    fetched = {}
+                    search_failed = False
+                    
+                    while True:
+                        kind, payload = final_answer_queue.get()
+                        if kind == "stream":
+                            event_name = payload.get("event")
+                            event_data = payload.get("data", {})
+                            yield _sse_event(event_name, event_data)
+                        elif kind == "answer":
+                            # Payload now contains both answer_dict and fetched
+                            answer_dict = payload.get("answer_dict")
+                            fetched = payload.get("fetched", {})
+                        elif kind == "error":
+                            search_failed = True
+                            err_msg = str(payload)
+                            log.error(f"PRODUCT_SEARCH_ERROR | {err_msg}")
+                            yield _sse_event("error", {"message": err_msg})
+                        elif kind == "done":
+                            break
+                    
+                    if search_failed or not answer_dict:
+                        yield _sse_event("end", {"ok": False})
+                        return
+                    
+                    # ============================================================
+                    # CRITICAL: Save conversation context (mirrors bot_core logic)
+                    # Without this, follow-up queries fail because LLM1 has no memory
+                    # ============================================================
+                    try:
+                        from ..bot_helpers import snapshot_and_trim
+                        from ..enums import BackendFunction
+                        
+                        # Reconstruct fetched dict for _store_last_recommendation
+                        # (it was built inside the async thread, need to pass it)
+                        # We need to get it from the thread - let's add it to the queue
+                        # For now, we'll extract product IDs from answer_dict and build minimal snapshot
+                        
+                        # Store last_recommendation (product memory for follow-ups)
+                        bot_core._store_last_recommendation(original_query, ctx, fetched)
+                        
+                        # Save conversation history turn
+                        final_answer_summary = {
+                            "response_type": answer_dict.get("response_type", "final_answer"),
+                            "message_preview": (answer_dict.get("summary_message") or "")[:300],
+                            "has_products": True,
+                            "ux_intent": ctx.session.get("product_intent"),
+                            "message_full": answer_dict.get("summary_message", ""),
+                            "data_source": "es_fetch"
+                        }
+                        snapshot_and_trim(ctx, base_query=original_query, final_answer=final_answer_summary)
+                        
+                        # Clean up assessment state
+                        ctx.session.pop("assessment", None)
+                        ctx.session.pop("contextual_questions", None)
+                        
+                        # Persist everything to Redis
+                        ctx_mgr.save_context(ctx)
+                        
+                        log.info(f"STREAMING_CONTEXT_SAVED | query='{original_query[:60]}' | has_last_rec=True")
+                    except Exception as save_exc:
+                        log.error(f"STREAMING_CONTEXT_SAVE_FAILED | error={save_exc}")
+                    
+                    # Build final envelope
                     elapsed = time.time() - start_ts
+                    from ..enums import ResponseType
+                    resp_type = ResponseType(answer_dict.get("response_type", "final_answer"))
+                    
                     envelope = build_envelope(
                         wa_id=wa_id,
                         session_id=session_id,
-                        bot_resp_type=bot_resp.response_type,
-                        content=bot_resp.content or {},
+                        bot_resp_type=resp_type,
+                        content=answer_dict,
                         ctx=ctx,
                         elapsed_time_seconds=elapsed,
-                        mode_async_enabled=getattr(get_config(), "ENABLE_ASYNC", False),
-                        timestamp=getattr(bot_resp, "timestamp", None),
-                        functions_executed=getattr(bot_resp, "functions_executed", []),
+                        mode_async_enabled=False,
+                        timestamp=datetime.utcnow().isoformat() + "Z",
+                        functions_executed=["search_products", "_generate_product_response_stream"],
                     )
+                    
                     log.info(f"SSE_EMIT | event=final_answer.complete | session={session_id}")
                     yield _sse_event("final_answer.complete", envelope)
                     

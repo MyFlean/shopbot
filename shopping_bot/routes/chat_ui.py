@@ -387,6 +387,13 @@ def _build_html_page() -> str:
       let askPlan = [];
       let activeAskEntry = null;
       let awaitingAskResponse = false;
+      // Streaming products state
+      let productsNode = null;
+      let productIds = [];
+      let heroProductId = null;
+      // Streaming quick replies state
+      let quickReplies = [];
+      let quickRepliesNode = null;
 
       function debugLog(msg, data) {
         const timestamp = new Date().toISOString().split('T')[1];
@@ -595,6 +602,82 @@ def _build_html_page() -> str:
         chat.appendChild(wrap);
         chat.scrollTop = chat.scrollHeight;
         return wrap;
+      }
+
+      function ensureProductsNode() {
+        if (productsNode && document.body.contains(productsNode)) return productsNode;
+        clearEmptyState();
+        const wrap = document.createElement('div');
+        wrap.className = 'msg bot';
+        const title = document.createElement('div');
+        title.style.fontWeight = '600';
+        title.style.marginBottom = '6px';
+        title.textContent = 'Products';
+        wrap.appendChild(title);
+        const list = document.createElement('div');
+        list.id = '_products_list';
+        wrap.appendChild(list);
+        chat.appendChild(wrap);
+        chat.scrollTop = chat.scrollHeight;
+        productsNode = wrap;
+        return productsNode;
+      }
+
+      function renderProducts() {
+        if (!Array.isArray(productIds) || productIds.length === 0) return;
+        const node = ensureProductsNode();
+        const list = node.querySelector('#_products_list');
+        if (!list) return;
+        list.innerHTML = '';
+        const ul = document.createElement('ul');
+        ul.style.paddingLeft = '18px';
+        for (const id of productIds) {
+          const li = document.createElement('li');
+          const isHero = heroProductId && id === heroProductId;
+          li.textContent = isHero ? `${id} (hero)` : id;
+          ul.appendChild(li);
+        }
+        list.appendChild(ul);
+        chat.scrollTop = chat.scrollHeight;
+      }
+
+      function ensureQuickRepliesNode() {
+        if (quickRepliesNode && document.body.contains(quickRepliesNode)) return quickRepliesNode;
+        clearEmptyState();
+        const wrap = document.createElement('div');
+        wrap.className = 'msg bot';
+        const title = document.createElement('div');
+        title.style.fontWeight = '600';
+        title.style.margin = '6px 0';
+        title.textContent = 'Follow-ups';
+        wrap.appendChild(title);
+        const row = document.createElement('div');
+        row.className = 'chips';
+        row.id = '_qr_row';
+        wrap.appendChild(row);
+        chat.appendChild(wrap);
+        chat.scrollTop = chat.scrollHeight;
+        quickRepliesNode = wrap;
+        return quickRepliesNode;
+      }
+
+      function renderQuickReplies() {
+        if (!Array.isArray(quickReplies) || quickReplies.length === 0) return;
+        const node = ensureQuickRepliesNode();
+        const row = node.querySelector('#_qr_row');
+        if (!row) return;
+        row.innerHTML = '';
+        for (const q of quickReplies) {
+          const chip = document.createElement('button');
+          chip.className = 'chip';
+          chip.textContent = String(q);
+          chip.addEventListener('click', () => {
+            messageInput.value = String(q);
+            startStream(String(q));
+          });
+          row.appendChild(chip);
+        }
+        chat.scrollTop = chat.scrollHeight;
       }
 
       function nowSession() {
@@ -873,11 +956,51 @@ def _build_html_page() -> str:
               flushNow();
               return;
             }
+
+            if (event === 'final_answer.hero_product.delta') {
+              const d = JSON.parse(data || '{}');
+              if (d.hero_product_id) {
+                heroProductId = d.hero_product_id;
+                renderProducts();
+              }
+              return;
+            }
+
+            if (event === 'final_answer.product_ids.delta') {
+              const d = JSON.parse(data || '{}');
+              if (Array.isArray(d.product_ids)) {
+                productIds = d.product_ids.slice();
+                renderProducts();
+              }
+              return;
+            }
+
+            if (event === 'final_answer.quick_replies.delta') {
+              const d = JSON.parse(data || '{}');
+              if (Array.isArray(d.quick_replies)) {
+                quickReplies = d.quick_replies.slice(0, 4).map(x => String(x));
+                renderQuickReplies();
+              }
+              return;
+            }
             
             if (event === 'final_answer.complete') {
               debugLog('✅ COMPLETE', 'Final answer complete');
               // Ensure buffered text is rendered, do not duplicate with summary_message
               flushNow();
+              // Parse envelope to pick UX quick replies if present
+              try {
+                const env = JSON.parse(data || '{}');
+                const content = env.content || {};
+                const ux = content.ux || {};
+                const qrs = ux.quick_replies || content.quick_replies || [];
+                if (Array.isArray(qrs) && qrs.length) {
+                  quickReplies = qrs.slice(0, 4).map(x => String(x));
+                  renderQuickReplies();
+                }
+              } catch (e) {
+                debugLog('final_answer.complete parse error', e);
+              }
               return;
             }
             

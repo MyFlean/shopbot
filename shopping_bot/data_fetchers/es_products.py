@@ -47,7 +47,7 @@ def _normalize_es_base(raw_url: Optional[str], index: Optional[str]) -> str:
         s = f"https://{s}"
     return s
 
-ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v5")
+ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "products-v2")
 _RAW_ES_URL = os.getenv("ES_URL") or os.getenv("ELASTIC_BASE", "")
 ELASTIC_BASE = _normalize_es_base(_RAW_ES_URL, ELASTIC_INDEX)
 ELASTIC_API_KEY = (os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")).strip().strip("'\"")

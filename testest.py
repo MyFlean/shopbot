@@ -27,7 +27,7 @@ def _normalize_es_base(raw_url: str, index: str) -> str:
     return s
 
 RAW_ES_URL = os.getenv("ES_URL") or os.getenv("ELASTIC_BASE", "")
-ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v5")
+ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "products-v2")
 ELASTIC_BASE = _normalize_es_base(RAW_ES_URL, ELASTIC_INDEX)
 ELASTIC_API_KEY = (os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")).strip().strip("'\"")
 TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))

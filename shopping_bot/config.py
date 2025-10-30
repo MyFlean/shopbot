@@ -50,7 +50,7 @@ class BaseConfig:
     # Prefer ES_URL; fallback to legacy ELASTIC_BASE; normalize leading '@' and whitespace
     _RAW_ES = os.getenv("ES_URL") or os.getenv("ELASTIC_BASE", "")
     ELASTIC_BASE: str = (_RAW_ES.strip().lstrip("@").strip())
-    ELASTIC_INDEX: str = os.getenv("ELASTIC_INDEX", "flean-v5")
+    ELASTIC_INDEX: str = os.getenv("ELASTIC_INDEX", "products-v2")
     ELASTIC_API_KEY: str = os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")
     ELASTIC_TIMEOUT_SECONDS: int = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
     ELASTIC_MAX_RESULTS: int = int(os.getenv("ELASTIC_MAX_RESULTS", "50"))

@@ -122,7 +122,7 @@
         },
         {
           "name": "ES_URL",
-          "valueFrom": "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/es-url"
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/es-url-hos6Pk"
         },
         {
           "name": "SECRET_KEY",

@@ -468,17 +468,17 @@ COMBINED_CLASSIFY_ASSESS_TOOL = {
                                 "ASK_PC_COMPATIBILITY",
                                 "ASK_INGREDIENT_AVOID"
                             ],
-                            "description": "Slot type: BUDGET (prices), DIETARY (gluten-free/vegan), PREFERENCES (flavor/brand), USE_CASE (daily/party), QUANTITY (servings/people), PC_CONCERN (acne/dandruff), PC_COMPATIBILITY (skin/hair type), INGREDIENT_AVOID (sulfate/paraben-free)"
+                            "description": "Slot type: BUDGET (ONLY numeric price ranges like 'Under ₹50'), DIETARY (health requirements), PREFERENCES (ONLY non-price attributes like flavor/texture), USE_CASE (situational context), QUANTITY (amounts/servings), PC_CONCERN (skin/hair issues), PC_COMPATIBILITY (skin/hair type), INGREDIENT_AVOID (ingredients to exclude)"
                         },
                         "message": {
                             "type": "string",
-                            "description": "Natural language question to ask user (conversational tone)"
+                            "description": "Natural language question to ask user (conversational tone, 10-15 words max)"
                         },
                         "options": {
                             "type": "array",
                             "items": {"type": "string"},
                             "maxItems": 3,
-                            "description": "Up to 3 discrete, actionable options (2-5 words each)"
+                            "description": "EXACTLY 3 discrete, mutually exclusive options (2-5 words each). CRITICAL: Use concrete terms (price ranges, specific flavors, specific features). NEVER use vague multi-dimensional terms like 'Quality', 'Value for Money', 'Smart Choice', 'Best Deal', 'Premium quality'. Each option must be UNIQUE across ALL questions in this array - no semantic duplicates allowed."
                         },
                         "needs_options": {
                             "type": "boolean",
@@ -489,7 +489,7 @@ COMBINED_CLASSIFY_ASSESS_TOOL = {
                 },
                 "minItems": 2,
                 "maxItems": 4,
-                "description": "Ordered list of questions to ask (2-4 based on domain)"
+                "description": "Ordered list of NON-REDUNDANT questions (2-4 based on domain). MANDATORY: Validate NO semantic overlap between questions. Each question must target a DISTINCT dimension (price, flavor, quantity, etc.). NO option should appear in multiple questions."
             },
 
             # === BACKEND ACTIONS ===
@@ -2024,17 +2024,82 @@ For Personal Care products:
 - ASK_PC_COMPATIBILITY: Hair type (curly, oily) or skin type (oily, dry, sensitive)
 - ASK_INGREDIENT_AVOID: For sensitive users (fragrance-free, sulfate-free, etc.)
 
+**CRITICAL: Redundancy Prevention Rules (2025 Best Practice)**
+
+Before finalizing your ask_slots, validate that:
+
+1. **No semantic overlap between questions:**
+   - BUDGET and PREFERENCES must focus on DIFFERENT aspects
+   - Budget = price ranges (e.g., "Under ₹50", "₹50-150", "Over ₹150")
+   - Preferences = product attributes EXCLUDING price (e.g., flavor, brand popularity, texture)
+   - ❌ BAD: Budget question with "Value for Money" option + Preferences question with "Quality" option (these overlap)
+   - ✅ GOOD: Budget question with price ranges + Preferences question with flavor/brand options
+
+2. **No option reuse across questions:**
+   - Each option value should appear in EXACTLY ONE question
+   - ❌ BAD: Q1 has "Value for Money" + Q2 has "Value for Money" (duplicate)
+   - ❌ BAD: Q1 has "Budget Friendly" + Q2 has "Budget-conscious" (semantic duplicate)
+   - ✅ GOOD: Each option is unique and appears only once across ALL questions
+
+3. **Questions must target distinct decision dimensions:**
+   - Each question should gather NON-OVERLAPPING information
+   - Budget → Price tolerance (numeric/concrete)
+   - Dietary → Health/ingredient requirements (boolean/categorical)
+   - Use Case → Context of consumption (situational)
+   - Preferences → Sensory/brand attributes (qualitative)
+   - ❌ BAD: "What matters most?" [Quality, Brand, Value] + "Budget range?" [Budget Friendly, Smart Value, Premium]
+     (Why bad: "Value", "Budget Friendly", "Smart Value" all relate to price; "Quality" overlaps with "Premium")
+   - ✅ GOOD: "Budget range?" [Under ₹50, ₹50-150, Over ₹150] + "Flavor preference?" [Sweet, Savory, Tangy]
+
+4. **Options within each question must be mutually exclusive:**
+   - User should be able to pick ONE option that clearly represents their need
+   - Options should cover different points on a spectrum, not overlapping concepts
+   - ❌ BAD: [High Quality, Premium, Best Value] (Premium implies high quality; Best Value is ambiguous)
+   - ✅ GOOD: [Mild, Medium, Spicy] (clear spectrum with no overlap)
+
+5. **Avoid value-laden terms that span multiple dimensions:**
+   - Terms like "Quality", "Value", "Smart", "Premium" are multi-dimensional and create confusion
+   - Be SPECIFIC and CONCRETE in options
+   - ❌ AVOID: Quality, Value for Money, Smart Choice, Best Deal (vague, multi-dimensional)
+   - ✅ USE: Specific price ranges, specific flavors, specific features, specific quantities
+
+**Self-Validation Checklist (run before returning ask_slots):**
+□ Each question targets a DISTINCT aspect (price, flavor, quantity, concern, etc.)
+□ NO option appears in more than one question
+□ Budget question uses ONLY price ranges (₹ amounts), never vague terms
+□ Preference question uses ONLY product attributes (flavor, texture, brand popularity), never price-related terms
+□ All options within a question are mutually exclusive and non-overlapping
+□ No semantic duplicates across questions (e.g., "Budget Friendly" and "Value for Money" are duplicates)
+
 **Examples:**
-- Query: "chips for party tonight" → ASK_USER_BUDGET, ASK_QUANTITY, ASK_DIETARY_REQUIREMENTS, ASK_USER_PREFERENCES
-- Query: "shampoo for my hair" → ASK_USER_BUDGET, ASK_PC_CONCERN, ASK_PC_COMPATIBILITY, ASK_INGREDIENT_AVOID  
-- Query: "healthy breakfast cereal" → ASK_USER_BUDGET, ASK_DIETARY_REQUIREMENTS, ASK_USE_CASE
-- Query: "face cream" → ASK_USER_BUDGET, ASK_PC_CONCERN, ASK_PC_COMPATIBILITY, ASK_INGREDIENT_AVOID
+
+✅ GOOD Example 1 - Food & Beverage:
+- Query: "chips for party tonight"
+- ask_slots:
+  1. ASK_USER_BUDGET: "What's your budget per pack?" → ["Under ₹50", "₹50-150", "Over ₹150"]
+  2. ASK_QUANTITY: "How many guests?" → ["10-20 people", "20-30 people", "30+ people"]
+
+✅ GOOD Example 2 - Personal Care:
+- Query: "shampoo for my hair"
+- ask_slots:
+  1. ASK_USER_BUDGET: "What's your budget?" → ["Under ₹99", "₹99-299", "Over ₹299"]
+  2. ASK_PC_CONCERN: "Main hair concern?" → ["Dandruff", "Hair fall", "Frizz"]
+  3. ASK_PC_COMPATIBILITY: "Your hair type?" → ["Oily scalp", "Dry scalp", "Normal"]
+  4. ASK_INGREDIENT_AVOID: "Any ingredients to avoid?" → ["Sulfate-free", "Paraben-free", "No preference"]
+
+❌ BAD Example (NEVER DO THIS):
+- Query: "chips"
+- ask_slots:
+  1. ASK_USER_PREFERENCES: "What matters most?" → ["Quality", "Brand", "Value for Money"]
+  2. ASK_USER_BUDGET: "Budget range?" → ["Budget Friendly", "Smart Value", "Premium"]
+- Why bad: "Value for Money", "Budget Friendly", and "Smart Value" all relate to price; "Quality" and "Premium" overlap; creates user confusion
 
 **Message writing tips:**
 - Reference the user's query naturally (e.g., "Great! For your party tonight, how many guests...")
 - Keep questions short and conversational (10-15 words max)
 - Use friendly, helpful tone (not interrogative)
 - Make options feel guided, not restrictive
+- Use concrete, specific terms in options (avoid abstract terms like "quality", "value", "smart")
 </ask_slot_guidance>
 
 <classification_examples>
@@ -2087,6 +2152,20 @@ Classification:
 - ask_slots: [ASK_USER_BUDGET, ASK_PC_CONCERN, ASK_PC_COMPATIBILITY, ASK_INGREDIENT_AVOID with 3 options each]
 - fetch_functions: ["search_products"]
 </classification_examples>
+
+<final_validation_before_response>
+**MANDATORY PRE-FLIGHT CHECK (run this mentally before returning your tool call):**
+
+If you're generating ask_slots, verify:
+1. ✓ Budget question uses ONLY price ranges with ₹ symbol (e.g., "Under ₹50", "₹50-150", "Over ₹150")
+2. ✓ Preferences question uses ONLY non-price attributes (e.g., "Spicy", "Mild", "Tangy" OR "Popular brands", "Niche brands", "No preference")
+3. ✓ NO option text appears in more than one question (check for exact or semantic duplicates)
+4. ✓ NO value-laden abstract terms like "Quality", "Value for Money", "Smart Choice", "Best Deal", "Premium quality"
+5. ✓ Each question targets a DIFFERENT aspect of the user's needs (price, flavor, quantity, concern, compatibility, etc.)
+6. ✓ All options within each question are mutually exclusive and clearly distinct
+
+If any check fails, revise your ask_slots before responding.
+</final_validation_before_response>
 
 Now classify the user's current message. Return ONLY the tool call."""
 

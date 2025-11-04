@@ -47,14 +47,39 @@ def _normalize_es_base(raw_url: Optional[str], index: Optional[str]) -> str:
         s = f"https://{s}"
     return s
 
-ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v5")
+# 🎯 ELASTICSEARCH ENVIRONMENT VARIABLES 🎯
+ES_URL_ENV = os.getenv("ES_URL")
+ELASTIC_BASE_ENV = os.getenv("ELASTIC_BASE")
+ELASTIC_INDEX_ENV = os.getenv("ELASTIC_INDEX")
+ES_API_KEY_ENV = os.getenv("ES_API_KEY")
+ELASTIC_API_KEY_ENV = os.getenv("ELASTIC_API_KEY")
+ELASTIC_TIMEOUT_ENV = os.getenv("ELASTIC_TIMEOUT_SECONDS")
+
+print("="*80)
+print("🔍🔍🔍 ELASTICSEARCH ENV VARIABLES FETCHED 🔍🔍🔍")
+print(f"🌐 ES_URL: {ES_URL_ENV}")
+print(f"🌐 ELASTIC_BASE: {ELASTIC_BASE_ENV}")
+print(f"📇 ELASTIC_INDEX: {ELASTIC_INDEX_ENV}")
+print(f"🔑 ES_API_KEY: {'***SET***' if ES_API_KEY_ENV else 'NOT SET'}")
+print(f"🔑 ELASTIC_API_KEY: {'***SET***' if ELASTIC_API_KEY_ENV else 'NOT SET'}")
+print(f"⏱️  ELASTIC_TIMEOUT_SECONDS: {ELASTIC_TIMEOUT_ENV}")
+print("="*80)
+
+ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "products-v2")
 _RAW_ES_URL = os.getenv("ES_URL") or os.getenv("ELASTIC_BASE", "")
 ELASTIC_BASE = _normalize_es_base(_RAW_ES_URL, ELASTIC_INDEX)
 ELASTIC_API_KEY = (os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")).strip().strip("'\"")
 TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
 
 # Debug ES config on module load
-print(f"DEBUG: ES_MODULE_INIT | RAW_ES_URL={_RAW_ES_URL} | ELASTIC_BASE={ELASTIC_BASE} | ELASTIC_INDEX={ELASTIC_INDEX}")
+print("="*80)
+print("✅✅✅ ELASTICSEARCH CONFIGURATION FINALIZED ✅✅✅")
+print(f"📍 RAW_ES_URL: {_RAW_ES_URL}")
+print(f"📍 ELASTIC_BASE (normalized): {ELASTIC_BASE}")
+print(f"📍 ELASTIC_INDEX: {ELASTIC_INDEX}")
+print(f"🔑 API_KEY: {'***SET***' if ELASTIC_API_KEY else 'NOT SET'}")
+print(f"⏱️  TIMEOUT: {TIMEOUT}s")
+print("="*80)
 
 # Text cleaning
 TAG_RE = re.compile(r"<[^>]+>")
@@ -1368,8 +1393,15 @@ class ElasticsearchProductsFetcher:
             "Authorization": f"ApiKey {self.api_key}"
         } if self.api_key else {}
         
-        # Debug output
-        print(f"DEBUG: ES_CONFIG | base_url={self.base_url} | index={self.index} | endpoint={self.endpoint}")
+        # Debug output with emojis
+        print("="*80)
+        print("🚀🚀🚀 ELASTICSEARCH FETCHER INITIALIZED 🚀🚀🚀")
+        print(f"🌐 BASE_URL: {self.base_url}")
+        print(f"📇 INDEX: {self.index}")
+        print(f"🔗 SEARCH_ENDPOINT: {self.endpoint}")
+        print(f"🔗 MGET_ENDPOINT: {self.mget_endpoint}")
+        print(f"🔑 API_KEY: {'***SET***' if self.api_key else 'NOT SET'}")
+        print("="*80)
     
     def _ensure_mapping_hints(self) -> None:
         """Lazy-load index mapping to detect availability of 'category_paths.keyword'."""
@@ -1377,6 +1409,7 @@ class ElasticsearchProductsFetcher:
             return
         try:
             mapping_endpoint = f"{self.base_url}/{self.index}/_mapping"
+            print(f"DEBUG: ES_MAPPING_REQUEST | endpoint={mapping_endpoint} | method=GET | timeout={TIMEOUT}s")
             resp = requests.get(mapping_endpoint, headers=self.headers, timeout=TIMEOUT)
             resp.raise_for_status()
             data = resp.json() or {}
@@ -1438,6 +1471,9 @@ class ElasticsearchProductsFetcher:
             except Exception:
                 pass
             
+            # Debug: Print endpoint before making request
+            print(f"DEBUG: ES_REQUEST | endpoint={self.endpoint} | method=POST | timeout={TIMEOUT}s")
+            
             response = requests.post(
                 self.endpoint,
                 headers=self.headers,
@@ -1449,7 +1485,14 @@ class ElasticsearchProductsFetcher:
             raw_data = response.json()
             result = _transform_results(raw_data)
             
-            print(f"DEBUG: ES query found {result['meta']['total_hits']} products")
+            print("="*80)
+            print("✅✅✅ ELASTICSEARCH REQUEST SUCCESSFUL ✅✅✅")
+            print(f"🔗 ENDPOINT: {self.endpoint}")
+            print(f"📇 INDEX: {self.index}")
+            print(f"📊 TOTAL_HITS: {result['meta']['total_hits']}")
+            print(f"📦 RETURNED: {result['meta']['returned']}")
+            print(f"⏱️  TOOK: {result['meta']['took_ms']}ms")
+            print("="*80)
             
             # No brand-specific fallback; brand handling is disabled (see note above)
             
@@ -1458,13 +1501,29 @@ class ElasticsearchProductsFetcher:
             return result
             
         except requests.exceptions.Timeout:
-            print(f"DEBUG: ES timeout")
+            print("="*80)
+            print("⏱️⏱️⏱️  ELASTICSEARCH REQUEST TIMEOUT ⏱️⏱️⏱️")
+            print(f"🔗 ENDPOINT: {self.endpoint}")
+            print(f"⏱️  TIMEOUT: {TIMEOUT}s")
+            print("="*80)
             return {"meta": {"total_hits": 0, "returned": 0, "took_ms": 0, "query_successful": False, "error": "timeout"}, "products": []}
         except requests.exceptions.RequestException as e:
-            print(f"DEBUG: ES request failed: {e}")
+            print("="*80)
+            print("❌❌❌ ELASTICSEARCH REQUEST FAILED ❌❌❌")
+            print(f"🔗 ENDPOINT: {self.endpoint}")
+            print(f"📇 INDEX: {self.index}")
+            print(f"🌐 BASE_URL: {self.base_url}")
+            print(f"⚠️  ERROR: {e}")
+            print("="*80)
             return {"meta": {"total_hits": 0, "returned": 0, "took_ms": 0, "query_successful": False, "error": str(e)}, "products": []}
         except Exception as e:
-            print(f"DEBUG: Unexpected ES error: {e}")
+            print("="*80)
+            print("⚠️⚠️⚠️  UNEXPECTED ELASTICSEARCH ERROR ⚠️⚠️⚠️")
+            print(f"🔗 ENDPOINT: {self.endpoint}")
+            print(f"📇 INDEX: {self.index}")
+            print(f"🌐 BASE_URL: {self.base_url}")
+            print(f"💥 ERROR: {e}")
+            print("="*80)
             return {"meta": {"total_hits": 0, "returned": 0, "took_ms": 0, "query_successful": False, "error": str(e)}, "products": []}
 
     def mget_products(self, ids: List[str]) -> List[Dict[str, Any]]:
@@ -1480,6 +1539,7 @@ class ElasticsearchProductsFetcher:
             body = {
                 "ids": [str(x).strip() for x in ids if str(x).strip()]
             }
+            print(f"DEBUG: ES_MGET_REQUEST | endpoint={self.mget_endpoint} | method=POST | timeout={TIMEOUT}s")
             response = requests.post(
                 self.mget_endpoint,
                 headers=self.headers,
@@ -1545,6 +1605,7 @@ class ElasticsearchProductsFetcher:
                     }
                 }
             }
+            print(f"DEBUG: ES_BRAND_SUGGEST_REQUEST | endpoint={self.endpoint} | method=POST | timeout={TIMEOUT}s")
             response = requests.post(
                 self.endpoint,
                 headers=self.headers,
@@ -1587,6 +1648,7 @@ class ElasticsearchProductsFetcher:
             }
             search_endpoint = f"{self.base_url}/{self.index}/_search"
             print(f"DEBUG: ES ids-search request | endpoint={search_endpoint} | id_count={len(ordered_ids)}")
+            print(f"DEBUG: ES_SEARCH_REQUEST | endpoint={search_endpoint} | method=POST | timeout={TIMEOUT}s")
             response = requests.post(
                 search_endpoint,
                 headers=self.headers,

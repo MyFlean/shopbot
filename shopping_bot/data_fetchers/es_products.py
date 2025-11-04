@@ -1485,7 +1485,14 @@ class ElasticsearchProductsFetcher:
             raw_data = response.json()
             result = _transform_results(raw_data)
             
-            print(f"DEBUG: ES query found {result['meta']['total_hits']} products")
+            print("="*80)
+            print("✅✅✅ ELASTICSEARCH REQUEST SUCCESSFUL ✅✅✅")
+            print(f"🔗 ENDPOINT: {self.endpoint}")
+            print(f"📇 INDEX: {self.index}")
+            print(f"📊 TOTAL_HITS: {result['meta']['total_hits']}")
+            print(f"📦 RETURNED: {result['meta']['returned']}")
+            print(f"⏱️  TOOK: {result['meta']['took_ms']}ms")
+            print("="*80)
             
             # No brand-specific fallback; brand handling is disabled (see note above)
             
@@ -1494,13 +1501,29 @@ class ElasticsearchProductsFetcher:
             return result
             
         except requests.exceptions.Timeout:
-            print(f"DEBUG: ES timeout")
+            print("="*80)
+            print("⏱️⏱️⏱️  ELASTICSEARCH REQUEST TIMEOUT ⏱️⏱️⏱️")
+            print(f"🔗 ENDPOINT: {self.endpoint}")
+            print(f"⏱️  TIMEOUT: {TIMEOUT}s")
+            print("="*80)
             return {"meta": {"total_hits": 0, "returned": 0, "took_ms": 0, "query_successful": False, "error": "timeout"}, "products": []}
         except requests.exceptions.RequestException as e:
-            print(f"DEBUG: ES request failed: {e}")
+            print("="*80)
+            print("❌❌❌ ELASTICSEARCH REQUEST FAILED ❌❌❌")
+            print(f"🔗 ENDPOINT: {self.endpoint}")
+            print(f"📇 INDEX: {self.index}")
+            print(f"🌐 BASE_URL: {self.base_url}")
+            print(f"⚠️  ERROR: {e}")
+            print("="*80)
             return {"meta": {"total_hits": 0, "returned": 0, "took_ms": 0, "query_successful": False, "error": str(e)}, "products": []}
         except Exception as e:
-            print(f"DEBUG: Unexpected ES error: {e}")
+            print("="*80)
+            print("⚠️⚠️⚠️  UNEXPECTED ELASTICSEARCH ERROR ⚠️⚠️⚠️")
+            print(f"🔗 ENDPOINT: {self.endpoint}")
+            print(f"📇 INDEX: {self.index}")
+            print(f"🌐 BASE_URL: {self.base_url}")
+            print(f"💥 ERROR: {e}")
+            print("="*80)
             return {"meta": {"total_hits": 0, "returned": 0, "took_ms": 0, "query_successful": False, "error": str(e)}, "products": []}
 
     def mget_products(self, ids: List[str]) -> List[Dict[str, Any]]:

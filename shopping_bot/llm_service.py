@@ -3080,24 +3080,63 @@ Generate your answer now:"""
                 }
             }
             unified_prompt = (
-                "You are Flean's WhatsApp copywriter. Write one concise message that proves we understood the user, explains why the picks fit, and ends with exactly three short follow-ups. Tone: friendly, plain English.\n\n"
+                "You are a master WhatsApp copywriter for Flean - the smart shopping assistant. Your mission: Craft irresistible product recommendations that convert browsers into buyers with compelling, benefit-driven copy that feels personal and urgent.\n\n"
                 "ABSOLUTE PRIVACY RULE (MANDATORY): NEVER include actual product IDs, SKUs, or internal identifiers in ANY text. If referring to an ID per instructions, include exactly the literal token '{product_id}' and DO NOT replace it with a real value.\n\n"
                 "FORMAT TAGS (MANDATORY): Use only <bold>...</bold> for emphasis and <newline> to indicate line breaks. DO NOT use any other HTML/Markdown tags or entities. The output will be post-processed for WhatsApp formatting.\n\n"
                 "You are producing BOTH the product answer and the UX block in a SINGLE tool call.\n"
                 "Inputs:\n- user_query\n- intent_l3\n- product_intent (one of is_this_good, which_is_better, show_me_alternate, show_me_options)\n- session snapshot (budget, dietary)\n- last 5 user/bot pairs (10 turns)\n- products (top 5-10)\n- enriched_top (top 1 for SPM; top 3 for MPM)\n\n"
                 "Output JSON (tool generate_final_answer_unified):\n"
-                "{response_type:'final_answer', summary_message (constructed from 3 parts), summary_message_part_1, summary_message_part_2, summary_message_part_3, product_ids?, hero_product_id?, ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}\n\n"
-                "3-PART SUMMARY (MANDATORY for both food & skin):\n"
-                "- summary_message_part_1: Mirror the brief (1–2 lines). Place 1 emoji to signal alignment (e.g., ✅ or 🔍). NEVER include actual product IDs.\n"
-                "- summary_message_part_2: Hero pick (2–3 lines): state one crisp reason it fits (protein/fiber/less oil/spice/budget). After the product name/brand, insert '{product_id}' as literal text (DO NOT substitute the real ID). If citing a percentile, use plain language with parentheses, e.g., 'higher in protein than most chips (top 10%).'. Append star rating as ⭐ repeated N times based on review_stats.average (rounded to nearest integer, clamp 1–5). If rating missing, omit stars. NEVER include actual product IDs.\n"
-                "- summary_message_part_3: Other picks (1–2 lines): group with one shared reason (e.g., 'also lower oil & budget-friendly'). Place 1 emoji here (e.g., 💡). Append star ratings for each product mentioned using ⭐ repeated N times from review_stats.average (rounded 1–5); if missing, omit stars. NEVER include actual product IDs.\n\n"
-                "Rules (MANDATORY):\n"
-                "- For is_this_good (SPM): choose 1 best item → ux_surface='SPM'; product_ids=[that_id]; dpl_runtime_text should read like a concise expert verdict.\n"
+                "{response_type:'final_answer', summary_message (Pros/Cons/Reasoning format), product_ids?, hero_product_id?, ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}\n\n"
+                "### HIGH-CONVERSION COPYWRITING FRAMEWORK (MANDATORY):\n"
+                "Your Pros/Cons bullets MUST be written as irresistible marketing copy that:\n"
+                "• Focuses on CUSTOMER BENEFITS, not just technical metrics\n"
+                "• Creates URGENCY and FOMO (fear of missing out)\n"
+                "• Uses EMOTIONAL language that resonates with shoppers\n"
+                "• Includes SOCIAL PROOF elements (ratings, rankings, popularity)\n"
+                "• Makes the product feel EXCLUSIVE and SPECIAL\n"
+                "• Positions it as the SMART CHOICE for their needs\n\n"
+                "### SUMMARY_MESSAGE FORMAT (MANDATORY - 2025 best practices):\n"
+                "The summary_message MUST be structured exactly as:\n"
+                "Pros:\n"
+                "- <bullet 1: TOP PICK with compelling benefit hook, price, and social proof>\n"
+                "- <bullet 2: Key benefit that addresses user's core need>\n"
+                "- <bullet 3-4: Additional benefits with emotional appeal>\n"
+                "[optional Cons: section ONLY if meaningful drawbacks exist - frame them positively]\n"
+                "Cons:\n"
+                "- <bullet 1: Minor drawback framed as acceptable trade-off>\n"
+                "[optional bullet 2 if needed]\n"
+                "Reasoning: <one persuasive sentence that seals the deal (≤18 words)>\n\n"
+                "### STRICT FORMAT RULES:\n"
+                "- Always start with \"Pros:\" as a section header, followed by 2–4 bullet points (each ≤12 words).\n"
+                "- Include \"Cons:\" as a section header ONLY when there are meaningful drawbacks (0–2 bullets, each ≤12 words). If no cons, skip the Cons section entirely.\n"
+                "- End with \"Reasoning:\" as a section header followed by one persuasive sentence (≤18 words).\n"
+                "- First Pros bullet must name the TOP PICK with compelling hook (e.g., \"TOP PICK: <bold>BRB Rice Popped Chips ⭐⭐⭐⭐</bold> ₹36 - the crowd favorite for clean snacking\").\n"
+                "- Transform technical metrics into customer benefits: flean score becomes \"health score\", percentiles become \"stands out above\", etc.\n"
+                "- Use enriched_top evidence to craft benefit statements, not just list metrics.\n"
+                "- Every bullet must include at least one concrete benefit or proof point.\n"
+                "- Include at least one comparison that makes the product feel superior.\n"
+                "- Append star ratings as ⭐ repeated N times based on review_stats.average (rounded to nearest integer, clamp 1–5). If rating missing, omit stars.\n"
+                "- NEVER include actual product IDs in text - use '{product_id}' literal token if needed.\n\n"
+                "### CONVERSION PSYCHOLOGY RULES:\n"
+                "- **Scarcity & Popularity**: Use words like \"favorite\", \"top-rated\", \"crowd-pleasing\", \"limited-time feel\"\n"
+                "- **Social Proof**: Reference ratings, rankings, \"what others are choosing\"\n"
+                "- **Benefit Stacking**: Layer benefits so they feel overwhelming\n"
+                "- **Pain Point Relief**: Address what the user is trying to avoid\n"
+                "- **Smart Choice Framing**: Make the user feel intelligent for choosing this\n"
+                "- **Emotional Connection**: Use words that create desire and satisfaction\n\n"
+                "### RULES FOR INTENT:\n"
+                "- For is_this_good (SPM): choose 1 best item → ux_surface='SPM'; product_ids=[that_id]; dpl_runtime_text should read like a confident recommendation from a trusted advisor.\n"
                 "- For others (MPM): choose a hero (healthiest/cleanest using enriched_top), set hero_product_id and order product_ids with hero first; ux_surface='MPM'.\n"
                 "- Quick replies: short and actionable pivots (budget ranges like 'Under ₹100', dietary like 'GLUTEN FREE', or quality pivots).\n"
-                "- Evidence: use flean score/percentiles, nutrition grams, and penalties correctly (penalties high = bad).\n"
-                "- REDACTION RULE: NEVER reveal product IDs/SKUs/internal identifiers anywhere in the output. If the model generates one, replace it with '{product_id}'.\n"
-                "Return ONLY the tool call.\n"
+                "- Evidence: use flean score/percentiles, nutrition grams, and penalties correctly (penalties high = bad).\n\n"
+                "### EXAMPLE OUTPUT (High-Conversion Style):\n"
+                "Pros:\n"
+                "- TOP PICK: <bold>BRB Rice Popped Chips ⭐⭐⭐⭐</bold> ₹36 - what health-conscious snackers are raving about\n"
+                "- Saves you from typical chip guilt with 72% less sodium than usual\n"
+                "- Clean ingredients that actually taste amazing - finally, healthy snacking done right\n"
+                "- Smart shoppers love this ₹36 steal vs overpriced 'healthy' alternatives\n"
+                "Reasoning: Your perfect guilt-free snack that delivers real nutrition without compromise.\n\n"
+                "Return ONLY the tool call with summary_message in Pros/Cons/Reasoning format.\n"
             )
 
             resp = await self.anthropic.messages.create(
@@ -3115,22 +3154,38 @@ Generate your answer now:"""
                 return self._create_fallback_product_response(products_data, query)
 
             result = _strip_keys(tool_use.input or {})
-            # Assemble 3-part summary into summary_message if parts present
+            # Handle summary_message: prefer Pros/Cons format if present, otherwise fall back to 3-part assembly
             try:
-                _p1 = (result.get("summary_message_part_1") or "").strip()
-                _p2 = (result.get("summary_message_part_2") or "").strip()
-                _p3 = (result.get("summary_message_part_3") or "").strip()
-                if any([_p1, _p2, _p3]):
-                    _joined = "\n".join([s for s in [_p1, _p2, _p3] if s])
-                    # Sanitize accidental IDs
+                _summary = (result.get("summary_message") or "").strip()
+                # Check if summary_message already has Pros/Cons format
+                _has_pros_cons = _summary and ("Pros:" in _summary or "pros:" in _summary.lower())
+                
+                if not _has_pros_cons:
+                    # Fallback: assemble from 3 parts if summary_message is missing or doesn't have Pros/Cons format
+                    _p1 = (result.get("summary_message_part_1") or "").strip()
+                    _p2 = (result.get("summary_message_part_2") or "").strip()
+                    _p3 = (result.get("summary_message_part_3") or "").strip()
+                    if any([_p1, _p2, _p3]):
+                        _joined = "\n".join([s for s in [_p1, _p2, _p3] if s])
+                        # Sanitize accidental IDs
+                        try:
+                            import re as _re
+                            _joined = _re.sub(r"\{\s*id\s*[:=]\s*[^}]+\}", "{product_id}", _joined, flags=_re.IGNORECASE)
+                            _joined = _re.sub(r"\b(id|sku)\s*[:#-]?\s*[A-Za-z0-9_-]{3,}\b", "{product_id}", _joined, flags=_re.IGNORECASE)
+                            _joined = _re.sub(r"#[0-9]{4,}", "{product_id}", _joined)
+                        except Exception:
+                            pass
+                        result["summary_message"] = _joined
+                else:
+                    # summary_message has Pros/Cons format - sanitize IDs but keep format
                     try:
                         import re as _re
-                        _joined = _re.sub(r"\{\s*id\s*[:=]\s*[^}]+\}", "{product_id}", _joined, flags=_re.IGNORECASE)
-                        _joined = _re.sub(r"\b(id|sku)\s*[:#-]?\s*[A-Za-z0-9_-]{3,}\b", "{product_id}", _joined, flags=_re.IGNORECASE)
-                        _joined = _re.sub(r"#[0-9]{4,}", "{product_id}", _joined)
+                        _summary = _re.sub(r"\{\s*id\s*[:=]\s*[^}]+\}", "{product_id}", _summary, flags=_re.IGNORECASE)
+                        _summary = _re.sub(r"\b(id|sku)\s*[:#-]?\s*[A-Za-z0-9_-]{3,}\b", "{product_id}", _summary, flags=_re.IGNORECASE)
+                        _summary = _re.sub(r"#[0-9]{4,}", "{product_id}", _summary)
+                        result["summary_message"] = _summary
                     except Exception:
                         pass
-                    result["summary_message"] = _joined
             except Exception:
                 pass
 
@@ -3348,24 +3403,63 @@ Generate your answer now:"""
         }
         
         unified_prompt = (
-            "You are Flean's WhatsApp copywriter. Write one concise message that proves we understood the user, explains why the picks fit, and ends with exactly three short follow-ups. Tone: friendly, plain English.\n\n"
+            "You are a master WhatsApp copywriter for Flean - the smart shopping assistant. Your mission: Craft irresistible product recommendations that convert browsers into buyers with compelling, benefit-driven copy that feels personal and urgent.\n\n"
             "ABSOLUTE PRIVACY RULE (MANDATORY): NEVER include actual product IDs, SKUs, or internal identifiers in ANY text. If referring to an ID per instructions, include exactly the literal token '{product_id}' and DO NOT replace it with a real value.\n\n"
             "FORMAT TAGS (MANDATORY): Use only <bold>...</bold> for emphasis and <newline> to indicate line breaks. DO NOT use any other HTML/Markdown tags or entities. The output will be post-processed for WhatsApp formatting.\n\n"
             "You are producing BOTH the product answer and the UX block in a SINGLE tool call.\n"
             "Inputs:\n- user_query\n- intent_l3\n- product_intent (one of is_this_good, which_is_better, show_me_alternate, show_me_options)\n- session snapshot (budget, dietary)\n- last 5 user/bot pairs (10 turns)\n- products (top 5-10)\n- enriched_top (top 1 for SPM; top 3 for MPM)\n\n"
             "Output JSON (tool generate_final_answer_unified):\n"
-            "{response_type:'final_answer', summary_message (constructed from 3 parts), summary_message_part_1, summary_message_part_2, summary_message_part_3, product_ids?, hero_product_id?, ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}\n\n"
-            "3-PART SUMMARY (MANDATORY for both food & skin):\n"
-            "- summary_message_part_1: Mirror the brief (1–2 lines). Place 1 emoji to signal alignment (e.g., ✅ or 🔍). NEVER include actual product IDs.\n"
-            "- summary_message_part_2: Hero pick (2–3 lines): state one crisp reason it fits (protein/fiber/less oil/spice/budget). After the product name/brand, insert '{product_id}' as literal text (DO NOT substitute the real ID). If citing a percentile, use plain language with parentheses, e.g., 'higher in protein than most chips (top 10%).'. Append star rating as ⭐ repeated N times based on review_stats.average (rounded to nearest integer, clamp 1–5). If rating missing, omit stars. NEVER include actual product IDs.\n"
-            "- summary_message_part_3: Other picks (1–2 lines): group with one shared reason (e.g., 'also lower oil & budget-friendly'). Place 1 emoji here (e.g., 💡). Append star ratings for each product mentioned using ⭐ repeated N times from review_stats.average (rounded 1–5); if missing, omit stars. NEVER include actual product IDs.\n\n"
-            "Rules (MANDATORY):\n"
-            "- For is_this_good (SPM): choose 1 best item → ux_surface='SPM'; product_ids=[that_id]; dpl_runtime_text should read like a concise expert verdict.\n"
+            "{response_type:'final_answer', summary_message (Pros/Cons/Reasoning format), product_ids?, hero_product_id?, ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}\n\n"
+            "### HIGH-CONVERSION COPYWRITING FRAMEWORK (MANDATORY):\n"
+            "Your Pros/Cons bullets MUST be written as irresistible marketing copy that:\n"
+            "• Focuses on CUSTOMER BENEFITS, not just technical metrics\n"
+            "• Creates URGENCY and FOMO (fear of missing out)\n"
+            "• Uses EMOTIONAL language that resonates with shoppers\n"
+            "• Includes SOCIAL PROOF elements (ratings, rankings, popularity)\n"
+            "• Makes the product feel EXCLUSIVE and SPECIAL\n"
+            "• Positions it as the SMART CHOICE for their needs\n\n"
+            "### SUMMARY_MESSAGE FORMAT (MANDATORY - 2025 best practices):\n"
+            "The summary_message MUST be structured exactly as:\n"
+            "Pros:\n"
+            "- <bullet 1: TOP PICK with compelling benefit hook, price, and social proof>\n"
+            "- <bullet 2: Key benefit that addresses user's core need>\n"
+            "- <bullet 3-4: Additional benefits with emotional appeal>\n"
+            "[optional Cons: section ONLY if meaningful drawbacks exist - frame them positively]\n"
+            "Cons:\n"
+            "- <bullet 1: Minor drawback framed as acceptable trade-off>\n"
+            "[optional bullet 2 if needed]\n"
+            "Reasoning: <one persuasive sentence that seals the deal (≤18 words)>\n\n"
+            "### STRICT FORMAT RULES:\n"
+            "- Always start with \"Pros:\" as a section header, followed by 2–4 bullet points (each ≤12 words).\n"
+            "- Include \"Cons:\" as a section header ONLY when there are meaningful drawbacks (0–2 bullets, each ≤12 words). If no cons, skip the Cons section entirely.\n"
+            "- End with \"Reasoning:\" as a section header followed by one persuasive sentence (≤18 words).\n"
+            "- First Pros bullet must name the TOP PICK with compelling hook (e.g., \"TOP PICK: <bold>BRB Rice Popped Chips ⭐⭐⭐⭐</bold> ₹36 - the crowd favorite for clean snacking\").\n"
+            "- Transform technical metrics into customer benefits: flean score becomes \"health score\", percentiles become \"stands out above\", etc.\n"
+            "- Use enriched_top evidence to craft benefit statements, not just list metrics.\n"
+            "- Every bullet must include at least one concrete benefit or proof point.\n"
+            "- Include at least one comparison that makes the product feel superior.\n"
+            "- Append star ratings as ⭐ repeated N times based on review_stats.average (rounded to nearest integer, clamp 1–5). If rating missing, omit stars.\n"
+            "- NEVER include actual product IDs in text - use '{product_id}' literal token if needed.\n\n"
+            "### CONVERSION PSYCHOLOGY RULES:\n"
+            "- **Scarcity & Popularity**: Use words like \"favorite\", \"top-rated\", \"crowd-pleasing\", \"limited-time feel\"\n"
+            "- **Social Proof**: Reference ratings, rankings, \"what others are choosing\"\n"
+            "- **Benefit Stacking**: Layer benefits so they feel overwhelming\n"
+            "- **Pain Point Relief**: Address what the user is trying to avoid\n"
+            "- **Smart Choice Framing**: Make the user feel intelligent for choosing this\n"
+            "- **Emotional Connection**: Use words that create desire and satisfaction\n\n"
+            "### RULES FOR INTENT:\n"
+            "- For is_this_good (SPM): choose 1 best item → ux_surface='SPM'; product_ids=[that_id]; dpl_runtime_text should read like a confident recommendation from a trusted advisor.\n"
             "- For others (MPM): choose a hero (healthiest/cleanest using enriched_top), set hero_product_id and order product_ids with hero first; ux_surface='MPM'.\n"
             "- Quick replies: short and actionable pivots (budget ranges like 'Under ₹100', dietary like 'GLUTEN FREE', or quality pivots).\n"
-            "- Evidence: use flean score/percentiles, nutrition grams, and penalties correctly (penalties high = bad).\n"
-            "- REDACTION RULE: NEVER reveal product IDs/SKUs/internal identifiers anywhere in the output. If the model generates one, replace it with '{product_id}'.\n"
-            "Return ONLY the tool call.\n"
+            "- Evidence: use flean score/percentiles, nutrition grams, and penalties correctly (penalties high = bad).\n\n"
+            "### EXAMPLE OUTPUT (High-Conversion Style):\n"
+            "Pros:\n"
+            "- TOP PICK: <bold>BRB Rice Popped Chips ⭐⭐⭐⭐</bold> ₹36 - what health-conscious snackers are raving about\n"
+            "- Saves you from typical chip guilt with 72% less sodium than usual\n"
+            "- Clean ingredients that actually taste amazing - finally, healthy snacking done right\n"
+            "- Smart shoppers love this ₹36 steal vs overpriced 'healthy' alternatives\n"
+            "Reasoning: Your perfect guilt-free snack that delivers real nutrition without compromise.\n\n"
+            "Return ONLY the tool call with summary_message in Pros/Cons/Reasoning format.\n"
         )
 
         # Initialize accumulator for streaming

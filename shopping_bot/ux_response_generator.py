@@ -250,21 +250,21 @@ You are generating UX components for a WhatsApp shopping bot response.
 ### YOUR TASK:
 Generate 3 components for this {intent} response:
 
-1. **DPL (Dynamic Persuasion Layer)**: 
+1. **DPL (Dynamic Persuasion Layer)**:
    - Focus: {intent_config['dpl_focus']}
-   - Should be persuasive and personal (1-2 sentences)
-   - Address why the user should consider these products
-   - Use information from the previous_answer and enriched_top to make it specific
-   - Leverage product quality signals when available:
-     • flean_percentile (overall quality in %)
-     • bonus_percentiles (e.g., protein, fiber, wholefood, fortification, simplicity)
-     • penalty_percentiles (e.g., sugar, sodium, trans_fat, saturated_fat, oil, sweetener, calories)
-   - Also use:
-     • health_claims and dietary_labels
-     • category_data.nutritional.nutri_breakdown (e.g., sugars_g, protein_g)
-     • category_data.processing_type and tags_and_sentiments (usage/occasion/emotional triggers)
-     • flean_score.bonuses and flean_score.penalties details
-   - Give evidence-based reasons such as "Top 10% on wholefood score" or "Lower sodium than typical choices".
+   - Write as HIGH-CONVERSION marketing copy that drives immediate action (1-2 sentences)
+   - Transform technical data into irresistible benefits that make shoppers want this NOW
+   - Use psychological triggers: social proof, urgency, exclusivity, emotional connection
+   - Leverage product quality signals to create desire:
+     • flean_percentile becomes "health score that stands out above the rest"
+     • bonus_percentiles become "what smart shoppers are choosing for [benefit]"
+     • penalty_percentiles become "finally free from [pain point] that ruins other options"
+   - Also use emotional triggers:
+     • health_claims and dietary_labels become "the clean choice your body deserves"
+     • nutritional data becomes "gives you the [benefit] you've been missing"
+     • processing_type and tags_and_sentiments become "the premium feel you crave"
+     • flean_score.bonuses become "delivers the quality difference you can actually taste"
+   - Make it feel like a personal recommendation from a trusted expert who gets their needs.
 
 2. **UX Surface Type**:
    - SPM: Single Product Module (use for 1 item or clear single recommendation)
@@ -278,11 +278,11 @@ Generate 3 components for this {intent} response:
    - If budget info available, include price-based options like "Under ₹{budget_info.get('upper_limit', 500)}"
    - Keep labels short (1-3 words)
 
-### DPL EVIDENCE RULES (MANDATORY)
-- Structure: 1) Opening verdict with one key number; 2) Specific superiority claim with metric; 3) Usage fit or decision helper
-- REQUIRED: At least 2 numbers, 1 percentile (convert 0.78 → "top 22%"), and 1 comparison (vs average/typical)
-- BANNED PHRASES: great, awesome, amazing, healthy, good (use quantified statements instead)
-- Max 3 sentences; each ≤20 words; professional and concise
+### DPL HIGH-CONVERSION RULES (MANDATORY)
+- Structure: 1) Hook with emotional benefit; 2) Social proof + specificity; 3) Call to action urgency
+- REQUIRED: Transform metrics into benefits (e.g., "top 22%" becomes "stands out above 78% of options")
+- BANNED PHRASES: great, awesome, amazing, healthy, good (use desire-creating language instead)
+- Max 3 sentences; each ≤20 words; conversational yet sophisticated tone that builds trust and desire
 
 ### PERSONAL CARE CONTEXT (MANDATORY WHEN PRESENT)
 - You MUST incorporate the personal care planning outputs if available:
@@ -301,10 +301,10 @@ Generate 3 components for this {intent} response:
 - For is_this_good: include "Compare similar", "Healthier options", "Cheaper options", "Why this rating?".
 - For which_is_better: include "See more options", "Compare nutrition", "Find middle ground", "Different category".
 
-### EXAMPLES:
-- "is_this_good" → DPL: "This protein powder suits your goals. 25g protein (top 5% category) outperforms most. Ideal for post-workout recovery."
-- "which_is_better" → DPL: "Top choice offers best value. 78/100 flean (top 22%) and 25% less sodium than average. Pick based on taste vs nutrition."
-- "show_me_options" → DPL: "Found 10 under ₹100. Modern Kitchen at ₹72 has 30% less sodium than average. Start here for healthier snacking." 
+### HIGH-CONVERSION EXAMPLES:
+- "is_this_good" → DPL: "Finally, the protein powder that actually delivers what your body craves. Stands out above 95% of options with 25g protein. What serious fitness enthusiasts choose for real results."
+- "which_is_better" → DPL: "The smart choice that premium shoppers keep coming back to. Exceptional 78/100 health score and saves you from 25% more sodium than typical options. Your shortcut to better nutrition."
+- "show_me_options" → DPL: "Discovered these premium picks that deliver real quality without the premium price. Our ₹72 standout beats 70% of 'healthy' alternatives. What conscious snackers are stocking up on right now." 
 
 Return ONLY a tool call to generate_ux_response.
 """

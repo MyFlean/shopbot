@@ -2731,6 +2731,7 @@ Generate your answer now:"""
 
             # Extract fallback information from ES results
             fallback_info = self._extract_fallback_info(fetched)
+            log.info(f"FALLBACK_INFO_EXTRACTED | fallback_applied={fallback_info.get('fallback_applied')} | original_failed={fallback_info.get('original_query_failed')} | reason={fallback_info.get('fallback_reason')}")
 
             unified_context = {
                 "user_query": query,

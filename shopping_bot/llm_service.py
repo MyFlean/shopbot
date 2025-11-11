@@ -2810,83 +2810,6 @@ Generate your answer now:"""
             except Exception:
                 pass
 
-    def _extract_fallback_info(self, fetched: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract fallback information from ES results to inform user about search adjustments."""
-        fallback_info = {
-            "fallback_applied": None,
-            "original_query_failed": False,
-            "fallback_reason": None,
-            "fallback_description": None
-        }
-
-        try:
-            meta = fetched.get('search_products', {}).get('meta', {})
-            fallback_type = meta.get('fallback_applied')
-
-            if fallback_type:
-                fallback_info["fallback_applied"] = fallback_type
-                fallback_info["original_query_failed"] = True
-
-                # Map fallback types to user-friendly explanations
-                fallback_mapping = {
-                    # F&B fallbacks
-                    'price_any': {
-                        'reason': 'price_constraints',
-                        'description': 'No products found within your budget, showing options with flexible pricing'
-                    },
-                    'drop_hard_soft_keep_category': {
-                        'reason': 'specific_filters',
-                        'description': 'No exact matches for your specific requirements, showing broader options in the same category'
-                    },
-                    'sibling_l2_full': {
-                        'reason': 'category_adjustment',
-                        'description': 'Your specific category had no matches, showing similar products from a related category'
-                    },
-                    'sibling_l2_price_any': {
-                        'reason': 'category_and_price',
-                        'description': 'No matches in your category or budget, showing alternatives from a similar category'
-                    },
-                    'sibling_l2_drop_hard_soft': {
-                        'reason': 'category_and_filters',
-                        'description': 'Your specific category and requirements had no matches, showing broader options from a related category'
-                    },
-                    'drop_category_l4_to_l3': {
-                        'reason': 'specific_category',
-                        'description': 'No exact category matches, showing products from the broader category family'
-                    },
-                    'drop_category_l3': {
-                        'reason': 'category_broadening',
-                        'description': 'Your specific category preferences had limited options, showing products across the entire category group'
-                    },
-                    # Personal care fallbacks
-                    'pc_price_any': {
-                        'reason': 'price_constraints',
-                        'description': 'No personal care products found within your budget, showing options with flexible pricing'
-                    },
-                    'pc_relax_reviews': {
-                        'reason': 'review_filters',
-                        'description': 'Fewer products met your review standards, showing options with varying review counts'
-                    },
-                    'pc_drop_hard_soft': {
-                        'reason': 'specific_filters',
-                        'description': 'No exact matches for your personal care requirements, showing broader options in the same category'
-                    },
-                    'pc_expand_size_30': {
-                        'reason': 'limited_results',
-                        'description': 'Limited options available, showing additional products to give you more choices'
-                    }
-                }
-
-                if fallback_type in fallback_mapping:
-                    mapping = fallback_mapping[fallback_type]
-                    fallback_info["fallback_reason"] = mapping["reason"]
-                    fallback_info["fallback_description"] = mapping["description"]
-
-        except Exception as e:
-            log.warning(f"Failed to extract fallback info: {e}")
-
-        return fallback_info
-
             # Enforce exactly one product for SPM in final result
             if spm_mode:
                 one = []
@@ -3002,6 +2925,83 @@ Generate your answer now:"""
         except Exception as exc:
             log.error(f"Product response generation failed: {exc}")
             return self._create_fallback_product_response(products_data, query)
+
+    def _extract_fallback_info(self, fetched: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract fallback information from ES results to inform user about search adjustments."""
+        fallback_info = {
+            "fallback_applied": None,
+            "original_query_failed": False,
+            "fallback_reason": None,
+            "fallback_description": None
+        }
+
+        try:
+            meta = fetched.get('search_products', {}).get('meta', {})
+            fallback_type = meta.get('fallback_applied')
+
+            if fallback_type:
+                fallback_info["fallback_applied"] = fallback_type
+                fallback_info["original_query_failed"] = True
+
+                # Map fallback types to user-friendly explanations
+                fallback_mapping = {
+                    # F&B fallbacks
+                    'price_any': {
+                        'reason': 'price_constraints',
+                        'description': 'No products found within your budget, showing options with flexible pricing'
+                    },
+                    'drop_hard_soft_keep_category': {
+                        'reason': 'specific_filters',
+                        'description': 'No exact matches for your specific requirements, showing broader options in the same category'
+                    },
+                    'sibling_l2_full': {
+                        'reason': 'category_adjustment',
+                        'description': 'Your specific category had no matches, showing similar products from a related category'
+                    },
+                    'sibling_l2_price_any': {
+                        'reason': 'category_and_price',
+                        'description': 'No matches in your category or budget, showing alternatives from a similar category'
+                    },
+                    'sibling_l2_drop_hard_soft': {
+                        'reason': 'category_and_filters',
+                        'description': 'Your specific category and requirements had no matches, showing broader options from a related category'
+                    },
+                    'drop_category_l4_to_l3': {
+                        'reason': 'specific_category',
+                        'description': 'No exact category matches, showing products from the broader category family'
+                    },
+                    'drop_category_l3': {
+                        'reason': 'category_broadening',
+                        'description': 'Your specific category preferences had limited options, showing products across the entire category group'
+                    },
+                    # Personal care fallbacks
+                    'pc_price_any': {
+                        'reason': 'price_constraints',
+                        'description': 'No personal care products found within your budget, showing options with flexible pricing'
+                    },
+                    'pc_relax_reviews': {
+                        'reason': 'review_filters',
+                        'description': 'Fewer products met your review standards, showing options with varying review counts'
+                    },
+                    'pc_drop_hard_soft': {
+                        'reason': 'specific_filters',
+                        'description': 'No exact matches for your personal care requirements, showing broader options in the same category'
+                    },
+                    'pc_expand_size_30': {
+                        'reason': 'limited_results',
+                        'description': 'Limited options available, showing additional products to give you more choices'
+                    }
+                }
+
+                if fallback_type in fallback_mapping:
+                    mapping = fallback_mapping[fallback_type]
+                    fallback_info["fallback_reason"] = mapping["reason"]
+                    fallback_info["fallback_description"] = mapping["description"]
+
+        except Exception as e:
+            log.warning(f"Failed to extract fallback info: {e}")
+
+        return fallback_info
 
     def _create_fallback_product_response(self, products_data: List[Dict], query: str) -> Dict[str, Any]:
         """Create a fallback product response if LLM fails."""

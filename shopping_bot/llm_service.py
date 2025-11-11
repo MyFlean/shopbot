@@ -795,6 +795,7 @@ Query: "peanut butter"
 Reasoning: Spreads category
 Paths: ["f_and_b/food/spreads_and_condiments/peanut_butter"]
 </example>
+
 <example name="packaged_meals">
 Query: "ready to eat meals"
 Reasoning: Convenience foods
@@ -1547,6 +1548,8 @@ def _safe_get(d: Dict[str, Any], key: str, default: Any = None) -> Any:
             if isinstance(k, str) and k.strip() == key:
                 return d[k]
     return default
+
+
 # ─────────────────────────────────────────────────────────────
 # LLM Service
 # ─────────────────────────────────────────────────────────────
@@ -2250,317 +2253,6 @@ Now classify the user's current message. Return ONLY the tool call."""
 
         return data
 
-    async def classify_and_assess_stream(
-        self, 
-        query: str, 
-        ctx: Optional[UserContext] = None,
-        emit_callback: Optional[Any] = None
-    ) -> Dict[str, Any]:
-        """
-        Streaming version of classify_and_assess using Anthropic's native tool streaming.
-        
-        Leverages input_json_delta events to:
-        1. Accumulate complete tool payload (for routing logic)
-        2. Extract user-facing strings incrementally (for SSE display)
-        
-        Args:
-            query: User input text
-            ctx: User context with session/history
-            emit_callback: Async callable for SSE emission
-                          Signature: async def callback(event_dict) -> None
-                          Event format: {"event": str, "data": dict}
-        
-        Returns:
-            Complete classification dict (identical structure to non-streaming version)
-        """
-        from .streaming.tool_stream_accumulator import ToolStreamAccumulator
-        
-        # Build prompt (identical to non-streaming version)
-        context_summary = {
-            "has_history": False,
-            "last_intent": None,
-            "last_category": None,
-            "last_slots": {},
-            "recent_turns": [],
-            "last_recommended_products": []
-        }
-        try:
-            if ctx:
-                history = ctx.session.get("history", [])
-                if history:
-                    last = history[-1]
-                    context_summary.update({
-                        "has_history": True,
-                        "last_intent": last.get("intent"),
-                        "last_category": last.get("category"),
-                        "last_slots": {k: v for k, v in (last.get("slots") or {}).items() if v}
-                    })
-                convo = ctx.session.get("conversation_history", []) or []
-                if isinstance(convo, list) and convo:
-                    for turn in convo[-6:]:
-                        if isinstance(turn, dict):
-                            context_summary["recent_turns"].append({
-                                "user": str(turn.get("user_query", ""))[:100],
-                                "bot": str(turn.get("bot_reply", ""))[:120]
-                            })
-                
-                last_rec = ctx.session.get("last_recommendation", {}) or {}
-                if isinstance(last_rec, dict) and last_rec.get("products"):
-                    products = last_rec.get("products", [])
-                    if isinstance(products, list):
-                        for p in products[:8]:
-                            if isinstance(p, dict):
-                                name = p.get("name", "")
-                                brand = p.get("brand", "")
-                                if name or brand:
-                                    context_summary["last_recommended_products"].append({
-                                        "name": str(name)[:80] if name else "",
-                                        "brand": str(brand)[:40] if brand else ""
-                                    })
-        except Exception as e:
-            log.warning(f"Context extraction failed: {e}")
-
-        personal_care_taxonomy = self._get_personal_care_taxonomy()
-        prompt = f"""You are a classification engine for a WhatsApp shopping bot selling food/beverages and personal care products.
-
-Your job: Analyze the user's message and classify it in ONE tool call using chain-of-thought reasoning.
-
-<bot_identity>
-Name: Flean
-Purpose: Shopping assistant specializing EXCLUSIVELY in food, beverages, and personal care products
-Scope: Only handles product searches and recommendations within these two categories
-Personality: Helpful, friendly, polite, and honest about limitations
-</bot_identity>
-
-<context>
-Previous conversation:
-{json.dumps(context_summary, ensure_ascii=False, indent=2)}
-
-Current user message: "{query.strip()}"
-</context>
-
-<personal_care_taxonomy>
-{json.dumps(personal_care_taxonomy, ensure_ascii=False)}
-</personal_care_taxonomy>
-
-<critical_instructions>
-1. Always start with "reasoning" field explaining your classification
-2. Be decisive - avoid hedging in classifications
-3. For follow-up detection, heavily weight the most recent turn (last 1-2 exchanges)
-4. Write ASK messages in natural, conversational tone (not robotic)
-5. Question count (MANDATORY):
-   - If domain == personal_care: return EXACTLY 4 ask_slots (no more, no less)
-   - Else (food & beverages/other): return EXACTLY 2 ask_slots (no more, no less)
-6. Options (MANDATORY for each ask_slot):
-   - Provide EXACTLY 3 options per question
-   - Each option must be 2-5 words, discrete, and actionable
-   - Avoid generic placeholders like "Option 1" or "Other"
-   - Include a flexible option when relevant (e.g., "No preference", "Not sure yet", "Flexible")
-7. Order ask_slots by priority (most important first)
-8. For support queries, be warm and provide the phone number clearly
-9. For general queries, be friendly and redirect to product search
-</critical_instructions>
-Now classify the user's current message. Return ONLY the tool call."""
-
-        # Initialize accumulator
-        accumulator = ToolStreamAccumulator()
-        
-        log.info(f"🌊 STREAM_CLASSIFY_START | model={Cfg.LLM_MODEL} | query='{query[:60]}...'")
-        
-        try:
-            # Emit start event
-            if emit_callback:
-                await emit_callback({"event": "classification_start", "data": {}})
-            
-            # Stream the tool call
-            event_count = 0
-            async with self.anthropic.messages.stream(
-                model=Cfg.LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                tools=[COMBINED_CLASSIFY_ASSESS_TOOL],
-                tool_choice={"type": "tool", "name": "classify_and_assess"},
-                temperature=0,
-                max_tokens=2000,
-                extra_headers={"anthropic-beta": "fine-grained-tool-streaming-2025-05-14"},
-            ) as stream:
-                async for event in stream:
-                    event_count += 1
-                    try:
-                        et = getattr(event, 'type', None)
-                        if et is None and isinstance(event, dict):
-                            et = event.get('type', 'unknown')
-
-                        # Extract block and delta details (robust across SDK variants)
-                        content_block = getattr(event, 'content_block', None)
-                        if content_block is None and isinstance(event, dict):
-                            content_block = event.get('content_block')
-                        block_type = None
-                        tool_name = None
-                        tool_id = None
-                        if content_block is not None:
-                            block_type = getattr(content_block, 'type', None)
-                            if block_type is None and isinstance(content_block, dict):
-                                block_type = content_block.get('type')
-                            tool_name = getattr(content_block, 'name', None)
-                            if tool_name is None and isinstance(content_block, dict):
-                                tool_name = content_block.get('name')
-                            tool_id = getattr(content_block, 'id', None)
-                            if tool_id is None and isinstance(content_block, dict):
-                                tool_id = content_block.get('id')
-
-                        delta = getattr(event, 'delta', None)
-                        if delta is None and isinstance(event, dict):
-                            delta = event.get('delta')
-                        partial_json = None
-                        if delta is not None:
-                            partial_json = getattr(delta, 'partial_json', None)
-                            if partial_json is None and isinstance(delta, dict):
-                                partial_json = delta.get('partial_json')
-
-                        preview = ""
-                        pj_len = 0
-                        if partial_json:
-                            pj_len = len(partial_json)
-                            try:
-                                preview = str(partial_json)[:200]
-                            except Exception:
-                                preview = "<unprintable>"
-
-                        log.info(
-                            f"📨 STREAM_EVENT #{event_count} | type={et} | block={block_type} | tool={tool_name} | id={tool_id} | partial_json_len={pj_len} | preview='{preview}'"
-                        )
-                    except Exception:
-                        pass
-                    # Accumulate tool payload
-                    extracted = accumulator.process_event(event)
-                    
-                    # Emit user-facing deltas
-                    if extracted and emit_callback:
-                        event_type = extracted.get("type")
-                        try:
-                            if event_type in ("ask_message", "simple_response", "simple_response_delta"):
-                                txt = extracted.get("text") or ""
-                                log.info(f"STREAM_EXTRACT | type={event_type} | size={len(txt)} | preview='{txt[:120]}'")
-                            elif event_type == "ask_options":
-                                opts = extracted.get("options") or []
-                                log.info(f"STREAM_EXTRACT | type=ask_options | count={len(opts)} | slot={extracted.get('slot_name')}")
-                            elif event_type == "tool_complete":
-                                log.info("STREAM_EXTRACT | type=tool_complete | tool payload received")
-                        except Exception:
-                            pass
-                        if event_type == "ask_message":
-                            await emit_callback({
-                                "event": "ask_message_delta",
-                                "data": {"text": extracted.get("text"), "slot_name": extracted.get("slot_name")}
-                            })
-                        elif event_type == "ask_options":
-                            await emit_callback({
-                                "event": "ask_options_delta",
-                                "data": {"slot_name": extracted.get("slot_name"), "options": extracted.get("options")}
-                            })
-                        elif event_type == "simple_response_delta":
-                            # Emit incremental delta as it arrives from Anthropic
-                            await emit_callback({
-                                "event": "final_answer.delta",
-                                "data": {"delta": extracted.get("text"), "path": "content.summary_message"}
-                            })
-                        elif event_type == "tool_complete":
-                            full_input = extracted.get("input") or {}
-
-                            # Emit ordered ask plan so FE can stage questions sequentially
-                            try:
-                                ask_slots = full_input.get("ask_slots") if isinstance(full_input, dict) else None
-                                if isinstance(ask_slots, list) and ask_slots:
-                                    plan_slots = []
-                                    for idx, slot in enumerate(ask_slots):
-                                        if not isinstance(slot, dict):
-                                            continue
-                                        slot_name = slot.get("slot_name")
-                                        if not slot_name:
-                                            continue
-                                        plan_slots.append({
-                                            "slot_name": slot_name,
-                                            "order": idx,
-                                            "message": slot.get("message"),
-                                            "options": (slot.get("options") or [])[:3],
-                                        })
-                                    if plan_slots:
-                                        await emit_callback({
-                                            "event": "ask_plan",
-                                            "data": {"slots": plan_slots}
-                                        })
-                            except Exception:
-                                log.warning("ASK_PLAN_EMIT_FAILED", exc_info=True)
-
-                            pending = extracted.get("pending_options") or {}
-                            if isinstance(pending, dict) and pending:
-                                for _slot_name, _opts in pending.items():
-                                    try:
-                                        await emit_callback({
-                                            "event": "ask_options_delta",
-                                            "data": {"slot_name": _slot_name, "options": _opts}
-                                        })
-                                    except Exception:
-                                        pass
-                            await emit_callback({
-                                "event": "classification_complete",
-                                "data": {}
-                            })
-            
-            log.info(f"📊 STREAM_COMPLETE | events_processed={event_count}")
-            # Get complete payload
-            data = accumulator.get_complete_input()
-            
-            if not data:
-                log.warning(f"⚠️ NO_TOOL_DATA | events_seen={event_count} | buffer_size={len(accumulator.input_buffer)} | falling back to default response")
-                return self._fallback_response()
-                
-            log.info(f"🔀 STREAM_CLASSIFY_RESULT | route={data.get('route')} | data_strategy={data.get('data_strategy')} | domain={data.get('domain')}")
-            
-        except Exception as e:
-            log.error(f"❌ Streaming classification failed: {e}")
-            return self._fallback_response()
-
-        # === Validation and enrichment (identical to non-streaming) ===
-        route = data.get("route")
-        if route == "product":
-            ask_slots = list(data.get("ask_slots", []) or [])
-            domain = str(data.get("domain", "")).lower()
-
-            expected_count = 4 if domain == "personal_care" else 2
-            if len(ask_slots) != expected_count:
-                log.warning(
-                    "ASK slot count mismatch for domain=%s; expected=%s got=%s",
-                    domain,
-                    expected_count,
-                    len(ask_slots),
-                )
-            if len(ask_slots) > expected_count:
-                ask_slots = ask_slots[:expected_count]
-
-            enriched_asks: Dict[str, Dict[str, Any]] = {}
-            for slot in ask_slots:
-                slot_name = slot.get("slot_name")
-                message = slot.get("message")
-                options = slot.get("options") or []
-                if not isinstance(options, list):
-                    options = [str(options)]
-                if len(options) > 3:
-                    options = options[:3]
-
-                enriched_asks[slot_name] = {"message": message, "options": options}
-
-            data["ask"] = enriched_asks
-            data.pop("ask_slots", None)
-
-            data["is_product_related"] = True
-            data["layer3"] = str(data.get("category", ""))
-        else:
-            data["is_product_related"] = False
-            data["layer3"] = "general"
-
-        return data
-
     # ---------------- UPDATED: INTENT CLASSIFICATION ----------------
     async def classify_intent(self, query: str, ctx: Optional[UserContext] = None) -> IntentResult:
         """Updated intent classification with product-related detection."""
@@ -2655,49 +2347,24 @@ Now classify the user's current message. Return ONLY the tool call."""
         fetched: Dict[str, Any],
         intent_l3: str,
         query_intent: QueryIntent,
-        product_intent: Optional[str] = None,
-        emit_callback: Optional[Any] = None
+        product_intent: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Enhanced unified response generation.
-        
-        Args:
-            emit_callback: Optional callback for streaming final answer to frontend
-        """
+        """Enhanced unified response generation."""
         product_intents = {
             "Product_Discovery", "Recommendation", 
             "Specific_Product_Search", "Product_Comparison"
         }
         
         has_products = self._has_product_results(fetched)
-        is_product_related = bool(getattr(ctx, "session", {}).get("is_product_related"))
-        is_product_query = has_products and (
-            product_intent
-            or is_product_related
-            or intent_l3 in product_intents
-        )
         
         # Log which path we're taking
         try:
-            print(
-                "CORE:LLM1_PATH_DECISION | "
-                f"intent_l3={intent_l3} | has_products={has_products} | "
-                f"product_intents={intent_l3 in product_intents} | "
-                f"product_intent_set={bool(product_intent)} | "
-                f"is_product_related={is_product_related}"
-            )
+            print(f"CORE:LLM1_PATH_DECISION | intent_l3={intent_l3} | has_products={has_products} | product_intents={intent_l3 in product_intents}")
         except Exception:
             pass
         
-        if is_product_query:
-            # Use streaming version if callback provided
-            if emit_callback:
-                result = await self._generate_product_response_stream(
-                    query, ctx, fetched, intent_l3, product_intent, emit_callback
-                )
-            else:
-                result = await self._generate_product_response(query, ctx, fetched, intent_l3, product_intent)
-            
+        if intent_l3 in product_intents and has_products:
+            result = await self._generate_product_response(query, ctx, fetched, intent_l3, product_intent)
             if product_intent:
                 result["product_intent"] = product_intent
             return result
@@ -2897,6 +2564,7 @@ Answer the user's question using ONLY the conversation memory and product data a
  - quick_replies: [3-4 strings]
  </output_format>
 </task>
+
 Generate your answer now:"""
 
         # ═══════════════════════════════════════════════════════════
@@ -3061,6 +2729,9 @@ Generate your answer now:"""
             except Exception:
                 _conversation_pairs = []
 
+            # Extract fallback information from ES results
+            fallback_info = self._extract_fallback_info(fetched)
+
             unified_context = {
                 "user_query": query,
                 "intent_l3": intent_l3,
@@ -3069,6 +2740,7 @@ Generate your answer now:"""
                 "conversation_history": _conversation_pairs,
                 "products": products_for_llm,
                 "enriched_top": top_products_brief,
+                "fallback_info": fallback_info,
                 "personal_care": {
                     "efficacy_terms": (ctx.session.get("debug", {}).get("last_skin_search_params", {}).get("efficacy_terms") if isinstance(ctx.session.get("debug", {}), dict) else None),
                     "avoid_terms": (ctx.session.get("debug", {}).get("last_skin_search_params", {}).get("avoid_terms") if isinstance(ctx.session.get("debug", {}), dict) else None),
@@ -3080,61 +2752,27 @@ Generate your answer now:"""
                 }
             }
             unified_prompt = (
-                "You are a master WhatsApp copywriter for Flean - the smart shopping assistant. Your mission: Craft irresistible product recommendations that convert browsers into buyers with compelling, benefit-driven copy that feels personal and urgent.\n\n"
+                "You are Flean's WhatsApp copywriter. Write one concise message that proves we understood the user, explains why the picks fit, and ends with exactly three short follow-ups. Tone: friendly, plain English.\n\n"
                 "ABSOLUTE PRIVACY RULE (MANDATORY): NEVER include actual product IDs, SKUs, or internal identifiers in ANY text. If referring to an ID per instructions, include exactly the literal token '{product_id}' and DO NOT replace it with a real value.\n\n"
                 "FORMAT TAGS (MANDATORY): Use only <bold>...</bold> for emphasis and <newline> to indicate line breaks. DO NOT use any other HTML/Markdown tags or entities. The output will be post-processed for WhatsApp formatting.\n\n"
                 "You are producing BOTH the product answer and the UX block in a SINGLE tool call.\n"
-                "Inputs:\n- user_query\n- intent_l3\n- product_intent (one of is_this_good, which_is_better, show_me_alternate, show_me_options)\n- session snapshot (budget, dietary)\n- last 5 user/bot pairs (10 turns)\n- products (top 5-10)\n- enriched_top (top 1 for SPM; top 3 for MPM)\n\n"
+                "Inputs:\n- user_query\n- intent_l3\n- product_intent (one of is_this_good, which_is_better, show_me_alternate, show_me_options)\n- session snapshot (budget, dietary)\n- last 5 user/bot pairs (10 turns)\n- products (top 5-10)\n- enriched_top (top 1 for SPM; top 3 for MPM)\n- fallback_info (contains details about search adjustments if original query failed)\n\n"
                 "Output JSON (tool generate_final_answer_unified):\n"
                 "{response_type:'final_answer', summary_message (Pros/Cons/Reasoning format), product_ids?, hero_product_id?, ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}\n\n"
-                "### HIGH-CONVERSION COPYWRITING FRAMEWORK (MANDATORY):\n"
-                "Your Pros/Cons bullets MUST be written as irresistible marketing copy that:\n"
-                "• Focuses on CUSTOMER BENEFITS, not just technical metrics\n"
-                "• Creates URGENCY and FOMO (fear of missing out)\n"
-                "• Uses EMOTIONAL language that resonates with shoppers\n"
-                "• Includes SOCIAL PROOF elements (ratings, rankings, popularity)\n"
-                "• Makes the product feel EXCLUSIVE and SPECIAL\n"
-                "• Positions it as the SMART CHOICE for their needs\n\n"
-                "### SUMMARY_MESSAGE FORMAT (MANDATORY - 2025 best practices):\n"
-                "The summary_message MUST be structured exactly as:\n"
-                "- <bullet 1: TOP PICK with compelling benefit hook, price, and social proof>\n"
-                "- <bullet 2: Key benefit that addresses user's core need>\n"
-                "- <bullet 3-4: Additional benefits with emotional appeal>\n"
-                "[optional Cons: section ONLY if meaningful drawbacks exist - frame them positively]\n"
-                "Cons:\n"
-                "- <bullet 1: Minor drawback framed as acceptable trade-off>\n"
-                "[optional bullet 2 if needed]\n"
-                "Reasoning: <one persuasive sentence that seals the deal (≤18 words)>\n\n"
-                "### STRICT FORMAT RULES:\n"
-                "- Start directly with 2–4 benefit bullet points (no \"Pros:\" heading - let content flow naturally).\n"
-                "- Include \"Cons:\" as a section header ONLY when there are meaningful drawbacks (0–2 bullets, each ≤12 words). If no cons, skip the Cons section entirely.\n"
-                "- End with \"Reasoning:\" as a section header followed by one persuasive sentence (≤18 words).\n"
-                "- First bullet must name the TOP PICK with compelling hook (e.g., \"TOP PICK: <bold>BRB Rice Popped Chips ⭐⭐⭐⭐</bold> ₹36 - the crowd favorite for clean snacking\").\n"
-                "- Transform technical metrics into customer benefits: flean score becomes \"health score\", percentiles become \"stands out above\", etc.\n"
-                "- Use enriched_top evidence to craft benefit statements, not just list metrics.\n"
-                "- Every bullet must include at least one concrete benefit or proof point.\n"
-                "- Include at least one comparison that makes the product feel superior.\n"
-                "- Append star ratings as ⭐ repeated N times based on review_stats.average (rounded to nearest integer, clamp 1–5). If rating missing, omit stars.\n"
-                "- NEVER include actual product IDs in text - use '{product_id}' literal token if needed.\n\n"
-                "### CONVERSION PSYCHOLOGY RULES:\n"
-                "- **Scarcity & Popularity**: Use words like \"favorite\", \"top-rated\", \"crowd-pleasing\", \"limited-time feel\"\n"
-                "- **Social Proof**: Reference ratings, rankings, \"what others are choosing\"\n"
-                "- **Benefit Stacking**: Layer benefits so they feel overwhelming\n"
-                "- **Pain Point Relief**: Address what the user is trying to avoid\n"
-                "- **Smart Choice Framing**: Make the user feel intelligent for choosing this\n"
-                "- **Emotional Connection**: Use words that create desire and satisfaction\n\n"
-                "### RULES FOR INTENT:\n"
-                "- For is_this_good (SPM): choose 1 best item → ux_surface='SPM'; product_ids=[that_id]; dpl_runtime_text should read like a confident recommendation from a trusted advisor.\n"
+                "### FALLBACK-AWARE MESSAGING (CRITICAL):\n"
+                "If fallback_info.original_query_failed is true, you MUST acknowledge this transparently:\n"
+                "- Start with a brief acknowledgment: \"I couldn't find exact matches for your specific request\"\n"
+                "- Explain the fallback reason using fallback_info.fallback_description\n"
+                "- Present alternatives as helpful suggestions, not exact matches\n"
+                "- Use phrases like \"Here are some great alternatives\" or \"While we don't have exact matches, these options work well\"\n"
+                "- Make it clear these are fallback suggestions, not the originally requested products\n\n"
+                "Rules (MANDATORY):\n"
+                "- For is_this_good (SPM): choose 1 best item → ux_surface='SPM'; product_ids=[that_id]; dpl_runtime_text should read like a concise expert verdict.\n"
                 "- For others (MPM): choose a hero (healthiest/cleanest using enriched_top), set hero_product_id and order product_ids with hero first; ux_surface='MPM'.\n"
                 "- Quick replies: short and actionable pivots (budget ranges like 'Under ₹100', dietary like 'GLUTEN FREE', or quality pivots).\n"
-                "- Evidence: use flean score/percentiles, nutrition grams, and penalties correctly (penalties high = bad).\n\n"
-                "### EXAMPLE OUTPUT (High-Conversion Style):\n"
-                "- TOP PICK: <bold>BRB Rice Popped Chips ⭐⭐⭐⭐</bold> ₹36 - what health-conscious snackers are raving about\n"
-                "- Saves you from typical chip guilt with 72% less sodium than usual\n"
-                "- Clean ingredients that actually taste amazing - finally, healthy snacking done right\n"
-                "- Smart shoppers love this ₹36 steal vs overpriced 'healthy' alternatives\n"
-                "Reasoning: Your perfect guilt-free snack that delivers real nutrition without compromise.\n\n"
-                "Return ONLY the tool call with summary_message in benefit-bullets/Cons/Reasoning format.\n"
+                "- Evidence: use flean score/percentiles, nutrition grams, and penalties correctly (penalties high = bad).\n"
+                "- REDACTION RULE: NEVER reveal product IDs/SKUs/internal identifiers anywhere in the output. If the model generates one, replace it with '{product_id}'.\n"
+                "Return ONLY the tool call.\n"
             )
 
             resp = await self.anthropic.messages.create(
@@ -3152,40 +2790,101 @@ Generate your answer now:"""
                 return self._create_fallback_product_response(products_data, query)
 
             result = _strip_keys(tool_use.input or {})
-            # Handle summary_message: prefer Pros/Cons format if present, otherwise fall back to 3-part assembly
+            # Assemble 3-part summary into summary_message if parts present
             try:
-                _summary = (result.get("summary_message") or "").strip()
-                # Check if summary_message already has Pros/Cons format
-                _has_pros_cons = _summary and ("Pros:" in _summary or "pros:" in _summary.lower())
-                
-                if not _has_pros_cons:
-                    # Fallback: assemble from 3 parts if summary_message is missing or doesn't have Pros/Cons format
-                    _p1 = (result.get("summary_message_part_1") or "").strip()
-                    _p2 = (result.get("summary_message_part_2") or "").strip()
-                    _p3 = (result.get("summary_message_part_3") or "").strip()
-                    if any([_p1, _p2, _p3]):
-                        _joined = "\n".join([s for s in [_p1, _p2, _p3] if s])
-                        # Sanitize accidental IDs
-                        try:
-                            import re as _re
-                            _joined = _re.sub(r"\{\s*id\s*[:=]\s*[^}]+\}", "{product_id}", _joined, flags=_re.IGNORECASE)
-                            _joined = _re.sub(r"\b(id|sku)\s*[:#-]?\s*[A-Za-z0-9_-]{3,}\b", "{product_id}", _joined, flags=_re.IGNORECASE)
-                            _joined = _re.sub(r"#[0-9]{4,}", "{product_id}", _joined)
-                        except Exception:
-                            pass
-                        result["summary_message"] = _joined
-                else:
-                    # summary_message has Pros/Cons format - sanitize IDs but keep format
+                _p1 = (result.get("summary_message_part_1") or "").strip()
+                _p2 = (result.get("summary_message_part_2") or "").strip()
+                _p3 = (result.get("summary_message_part_3") or "").strip()
+                if any([_p1, _p2, _p3]):
+                    _joined = "\n".join([s for s in [_p1, _p2, _p3] if s])
+                    # Sanitize accidental IDs
                     try:
                         import re as _re
-                        _summary = _re.sub(r"\{\s*id\s*[:=]\s*[^}]+\}", "{product_id}", _summary, flags=_re.IGNORECASE)
-                        _summary = _re.sub(r"\b(id|sku)\s*[:#-]?\s*[A-Za-z0-9_-]{3,}\b", "{product_id}", _summary, flags=_re.IGNORECASE)
-                        _summary = _re.sub(r"#[0-9]{4,}", "{product_id}", _summary)
-                        result["summary_message"] = _summary
+                        _joined = _re.sub(r"\{\s*id\s*[:=]\s*[^}]+\}", "{product_id}", _joined, flags=_re.IGNORECASE)
+                        _joined = _re.sub(r"\b(id|sku)\s*[:#-]?\s*[A-Za-z0-9_-]{3,}\b", "{product_id}", _joined, flags=_re.IGNORECASE)
+                        _joined = _re.sub(r"#[0-9]{4,}", "{product_id}", _joined)
                     except Exception:
                         pass
+                    result["summary_message"] = _joined
             except Exception:
                 pass
+
+    def _extract_fallback_info(self, fetched: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract fallback information from ES results to inform user about search adjustments."""
+        fallback_info = {
+            "fallback_applied": None,
+            "original_query_failed": False,
+            "fallback_reason": None,
+            "fallback_description": None
+        }
+
+        try:
+            meta = fetched.get('search_products', {}).get('meta', {})
+            fallback_type = meta.get('fallback_applied')
+
+            if fallback_type:
+                fallback_info["fallback_applied"] = fallback_type
+                fallback_info["original_query_failed"] = True
+
+                # Map fallback types to user-friendly explanations
+                fallback_mapping = {
+                    # F&B fallbacks
+                    'price_any': {
+                        'reason': 'price_constraints',
+                        'description': 'No products found within your budget, showing options with flexible pricing'
+                    },
+                    'drop_hard_soft_keep_category': {
+                        'reason': 'specific_filters',
+                        'description': 'No exact matches for your specific requirements, showing broader options in the same category'
+                    },
+                    'sibling_l2_full': {
+                        'reason': 'category_adjustment',
+                        'description': 'Your specific category had no matches, showing similar products from a related category'
+                    },
+                    'sibling_l2_price_any': {
+                        'reason': 'category_and_price',
+                        'description': 'No matches in your category or budget, showing alternatives from a similar category'
+                    },
+                    'sibling_l2_drop_hard_soft': {
+                        'reason': 'category_and_filters',
+                        'description': 'Your specific category and requirements had no matches, showing broader options from a related category'
+                    },
+                    'drop_category_l4_to_l3': {
+                        'reason': 'specific_category',
+                        'description': 'No exact category matches, showing products from the broader category family'
+                    },
+                    'drop_category_l3': {
+                        'reason': 'category_broadening',
+                        'description': 'Your specific category preferences had limited options, showing products across the entire category group'
+                    },
+                    # Personal care fallbacks
+                    'pc_price_any': {
+                        'reason': 'price_constraints',
+                        'description': 'No personal care products found within your budget, showing options with flexible pricing'
+                    },
+                    'pc_relax_reviews': {
+                        'reason': 'review_filters',
+                        'description': 'Fewer products met your review standards, showing options with varying review counts'
+                    },
+                    'pc_drop_hard_soft': {
+                        'reason': 'specific_filters',
+                        'description': 'No exact matches for your personal care requirements, showing broader options in the same category'
+                    },
+                    'pc_expand_size_30': {
+                        'reason': 'limited_results',
+                        'description': 'Limited options available, showing additional products to give you more choices'
+                    }
+                }
+
+                if fallback_type in fallback_mapping:
+                    mapping = fallback_mapping[fallback_type]
+                    fallback_info["fallback_reason"] = mapping["reason"]
+                    fallback_info["fallback_description"] = mapping["description"]
+
+        except Exception as e:
+            log.warning(f"Failed to extract fallback info: {e}")
+
+        return fallback_info
 
             # Enforce exactly one product for SPM in final result
             if spm_mode:
@@ -3301,330 +3000,6 @@ Generate your answer now:"""
             
         except Exception as exc:
             log.error(f"Product response generation failed: {exc}")
-            return self._create_fallback_product_response(products_data, query)
-
-    async def _generate_product_response_stream(
-        self,
-        query: str,
-        ctx: UserContext,
-        fetched: Dict[str, Any],
-        intent_l3: str,
-        product_intent: Optional[str] = None,
-        emit_callback: Optional[Any] = None
-    ) -> Dict[str, Any]:
-        """
-        Streaming version of _generate_product_response.
-        Streams summary text parts to frontend via emit_callback as they arrive.
-        """
-        from .streaming.tool_stream_accumulator import ToolStreamAccumulator
-        
-        products_data = []
-        if 'search_products' in fetched:
-            search_data = fetched['search_products']
-            if isinstance(search_data, dict):
-                data = search_data.get('data', search_data)
-                # For SPM (is_this_good) we only need one product end-to-end
-                if product_intent and product_intent == "is_this_good":
-                    products_data = data.get('products', [])[:1]
-                else:
-                    products_data = data.get('products', [])[:10]
-        
-        if not products_data:
-            result = {
-                "response_type": "final_answer",
-                "summary_message": "I couldn't find any products matching your search. Please try different keywords.",
-                "products": []
-            }
-            if emit_callback:
-                await emit_callback({
-                    "event": "final_answer.delta",
-                    "data": {"delta": result["summary_message"], "complete": True}
-                })
-            return result
-        
-        # Build compact briefs directly from search hits
-        def _first_25_words(text: str) -> str:
-            if not text:
-                return ""
-            words = str(text).split()
-            return " ".join(words[:25])
-        
-        top_k = 1 if (product_intent and product_intent == "is_this_good") else 3
-        top_products_brief: List[Dict[str, Any]] = []
-        for p in products_data[:top_k]:
-            try:
-                brief = {
-                    "id": p.get("id"),
-                    "name": p.get("name"),
-                    "brand": p.get("brand"),
-                    "price": p.get("price"),
-                    "review_stats": p.get("review_stats", {}),
-                    "skin_compatibility": p.get("skin_compatibility", {}),
-                    "efficacy": p.get("efficacy", {}),
-                    "side_effects": p.get("side_effects", {}),
-                    "claims": {
-                        "health_claims": ((p.get("package_claims", {}) or {}).get("health_claims") or []),
-                        "dietary_labels": ((p.get("package_claims", {}) or {}).get("dietary_labels") or []),
-                    },
-                    "review_snippet": _first_25_words(p.get("review_text", "")),
-                }
-                top_products_brief.append(brief)
-            except Exception:
-                continue
-
-        # Narrow LLM input
-        spm_mode = bool(product_intent and product_intent == "is_this_good")
-        products_for_llm = products_data[:5] if spm_mode else products_data[:10]
-
-        # Include last 10 conversation turns as 5 user/bot pairs
-        _conversation_pairs = []
-        try:
-            _convo = ctx.session.get("conversation_history", []) or []
-            if isinstance(_convo, list) and _convo:
-                for _h in _convo[-10:]:
-                    if isinstance(_h, dict):
-                        _conversation_pairs.append({
-                            "user_query": str(_h.get("user_query", ""))[:160],
-                            "bot_reply": str(_h.get("bot_reply", ""))[:240],
-                        })
-        except Exception:
-            _conversation_pairs = []
-
-        unified_context = {
-            "user_query": query,
-            "intent_l3": intent_l3,
-            "product_intent": product_intent or ctx.session.get("product_intent") or "show_me_options",
-            "session": {k: ctx.session.get(k) for k in ["budget", "dietary_requirements"] if k in ctx.session},
-            "conversation_history": _conversation_pairs,
-            "products": products_for_llm,
-            "enriched_top": top_products_brief,
-        }
-        
-        unified_prompt = (
-            "You are a master WhatsApp copywriter for Flean - the smart shopping assistant. Your mission: Craft irresistible product recommendations that convert browsers into buyers with compelling, benefit-driven copy that feels personal and urgent.\n\n"
-            "ABSOLUTE PRIVACY RULE (MANDATORY): NEVER include actual product IDs, SKUs, or internal identifiers in ANY text. If referring to an ID per instructions, include exactly the literal token '{product_id}' and DO NOT replace it with a real value.\n\n"
-            "FORMAT TAGS (MANDATORY): Use only <bold>...</bold> for emphasis and <newline> to indicate line breaks. DO NOT use any other HTML/Markdown tags or entities. The output will be post-processed for WhatsApp formatting.\n\n"
-            "You are producing BOTH the product answer and the UX block in a SINGLE tool call.\n"
-            "Inputs:\n- user_query\n- intent_l3\n- product_intent (one of is_this_good, which_is_better, show_me_alternate, show_me_options)\n- session snapshot (budget, dietary)\n- last 5 user/bot pairs (10 turns)\n- products (top 5-10)\n- enriched_top (top 1 for SPM; top 3 for MPM)\n\n"
-            "Output JSON (tool generate_final_answer_unified):\n"
-            "{response_type:'final_answer', summary_message (Pros/Cons/Reasoning format), product_ids?, hero_product_id?, ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}\n\n"
-            "### HIGH-CONVERSION COPYWRITING FRAMEWORK (MANDATORY):\n"
-            "Your Pros/Cons bullets MUST be written as irresistible marketing copy that:\n"
-            "• Focuses on CUSTOMER BENEFITS, not just technical metrics\n"
-            "• Creates URGENCY and FOMO (fear of missing out)\n"
-            "• Uses EMOTIONAL language that resonates with shoppers\n"
-            "• Includes SOCIAL PROOF elements (ratings, rankings, popularity)\n"
-            "• Makes the product feel EXCLUSIVE and SPECIAL\n"
-            "• Positions it as the SMART CHOICE for their needs\n\n"
-                "### SUMMARY_MESSAGE FORMAT (MANDATORY - 2025 best practices):\n"
-                "The summary_message MUST be structured exactly as:\n"
-                "- <bullet 1: TOP PICK with compelling benefit hook, price, and social proof>\n"
-                "- <bullet 2: Key benefit that addresses user's core need>\n"
-                "- <bullet 3-4: Additional benefits with emotional appeal>\n"
-                "[optional Cons: section ONLY if meaningful drawbacks exist - frame them positively]\n"
-                "Cons:\n"
-                "- <bullet 1: Minor drawback framed as acceptable trade-off>\n"
-                "[optional bullet 2 if needed]\n"
-                "Reasoning: <one persuasive sentence that seals the deal (≤18 words)>\n\n"
-                "### STRICT FORMAT RULES:\n"
-                "- Start directly with 2–4 benefit bullet points (no \"Pros:\" heading - let content flow naturally).\n"
-                "- Include \"Cons:\" as a section header ONLY when there are meaningful drawbacks (0–2 bullets, each ≤12 words). If no cons, skip the Cons section entirely.\n"
-                "- End with \"Reasoning:\" as a section header followed by one persuasive sentence (≤18 words).\n"
-                "- First bullet must name the TOP PICK with compelling hook (e.g., \"TOP PICK: <bold>BRB Rice Popped Chips ⭐⭐⭐⭐</bold> ₹36 - the crowd favorite for clean snacking\").\n"
-            "- Transform technical metrics into customer benefits: flean score becomes \"health score\", percentiles become \"stands out above\", etc.\n"
-            "- Use enriched_top evidence to craft benefit statements, not just list metrics.\n"
-            "- Every bullet must include at least one concrete benefit or proof point.\n"
-            "- Include at least one comparison that makes the product feel superior.\n"
-            "- Append star ratings as ⭐ repeated N times based on review_stats.average (rounded to nearest integer, clamp 1–5). If rating missing, omit stars.\n"
-            "- NEVER include actual product IDs in text - use '{product_id}' literal token if needed.\n\n"
-            "### CONVERSION PSYCHOLOGY RULES:\n"
-            "- **Scarcity & Popularity**: Use words like \"favorite\", \"top-rated\", \"crowd-pleasing\", \"limited-time feel\"\n"
-            "- **Social Proof**: Reference ratings, rankings, \"what others are choosing\"\n"
-            "- **Benefit Stacking**: Layer benefits so they feel overwhelming\n"
-            "- **Pain Point Relief**: Address what the user is trying to avoid\n"
-            "- **Smart Choice Framing**: Make the user feel intelligent for choosing this\n"
-            "- **Emotional Connection**: Use words that create desire and satisfaction\n\n"
-            "### RULES FOR INTENT:\n"
-            "- For is_this_good (SPM): choose 1 best item → ux_surface='SPM'; product_ids=[that_id]; dpl_runtime_text should read like a confident recommendation from a trusted advisor.\n"
-            "- For others (MPM): choose a hero (healthiest/cleanest using enriched_top), set hero_product_id and order product_ids with hero first; ux_surface='MPM'.\n"
-            "- Quick replies: short and actionable pivots (budget ranges like 'Under ₹100', dietary like 'GLUTEN FREE', or quality pivots).\n"
-            "- Evidence: use flean score/percentiles, nutrition grams, and penalties correctly (penalties high = bad).\n\n"
-            "### EXAMPLE OUTPUT (High-Conversion Style):\n"
-            "- TOP PICK: <bold>BRB Rice Popped Chips ⭐⭐⭐⭐</bold> ₹36 - what health-conscious snackers are raving about\n"
-            "- Saves you from typical chip guilt with 72% less sodium than usual\n"
-            "- Clean ingredients that actually taste amazing - finally, healthy snacking done right\n"
-            "- Smart shoppers love this ₹36 steal vs overpriced 'healthy' alternatives\n"
-            "Reasoning: Your perfect guilt-free snack that delivers real nutrition without compromise.\n\n"
-            "Return ONLY the tool call with summary_message in benefit-bullets/Cons/Reasoning format.\n"
-        )
-
-        # Initialize accumulator for streaming
-        accumulator = ToolStreamAccumulator()
-        accumulated_text = ""
-        
-        log.info(f"🌊 STREAM_FINAL_ANSWER_START | model={Cfg.LLM_MODEL} | query='{query[:60]}...' | intent={product_intent}")
-        
-        try:
-            # Emit start event
-            if emit_callback:
-                await emit_callback({"event": "final_answer.start", "data": {}})
-            
-            event_count = 0
-            async with self.anthropic.messages.stream(
-                model=Cfg.LLM_MODEL,
-                messages=[{"role": "user", "content": unified_prompt + "\n" + json.dumps(unified_context, ensure_ascii=False)}],
-                tools=[FINAL_ANSWER_UNIFIED_TOOL],
-                tool_choice={"type": "tool", "name": "generate_final_answer_unified"},
-                temperature=0,
-                max_tokens=2000,
-                extra_headers={"anthropic-beta": "fine-grained-tool-streaming-2025-05-14"},
-            ) as stream:
-                async for event in stream:
-                    event_count += 1
-                    try:
-                        et = getattr(event, 'type', None)
-                        log.info(f"📨 STREAM_EVENT #{event_count} | type={et}")
-                    except Exception:
-                        pass
-                    
-                    # Accumulate tool payload
-                    extracted = accumulator.process_event(event)
-                    
-                    # Stream text deltas to frontend
-                    if extracted and emit_callback:
-                        event_type = extracted.get("type")
-                        if event_type == "summary_part_delta":
-                            part_num = extracted.get("part_number")
-                            delta_text = extracted.get("text", "")
-                            accumulated_text += delta_text
-                            
-                            log.info(f"STREAM_EXTRACT | type=summary_part_{part_num} | size={len(delta_text)} | preview='{delta_text[:80]}'")
-                            
-                            await emit_callback({
-                                "event": "final_answer.delta",
-                                "data": {
-                                    "delta": delta_text,
-                                    "part": part_num,
-                                    "complete": False
-                                }
-                            })
-                        elif event_type == "product_ids":
-                            ids = extracted.get("product_ids", [])
-                            if ids:
-                                log.info(f"STREAM_EXTRACT | type=product_ids | count={len(ids)} | preview={ids[:4]}")
-                                await emit_callback({
-                                    "event": "final_answer.product_ids.delta",
-                                    "data": {
-                                        "product_ids": ids
-                                    }
-                                })
-                        elif event_type == "hero_product":
-                            hero_id = extracted.get("hero_product_id")
-                            if hero_id:
-                                log.info(f"STREAM_EXTRACT | type=hero_product | id={hero_id}")
-                                await emit_callback({
-                                    "event": "final_answer.hero_product.delta",
-                                    "data": {
-                                        "hero_product_id": hero_id
-                                    }
-                                })
-                        elif event_type == "quick_replies":
-                            qrs = extracted.get("quick_replies", [])
-                            if qrs:
-                                log.info(f"STREAM_EXTRACT | type=quick_replies | count={len(qrs)} | preview={qrs[:4]}")
-                                await emit_callback({
-                                    "event": "final_answer.quick_replies.delta",
-                                    "data": {
-                                        "quick_replies": qrs
-                                    }
-                                })
-            
-            log.info(f"📊 STREAM_FINAL_ANSWER_COMPLETE | events_processed={event_count}")
-            
-            # Get complete result from accumulator
-            result = accumulator.get_complete_payload()
-            if not result:
-                log.warning("STREAM_FINAL_ANSWER_NO_RESULT | using fallback")
-                return self._create_fallback_product_response(products_data, query)
-            
-            # Assemble 3-part summary into summary_message if parts present
-            try:
-                _p1 = (result.get("summary_message_part_1") or "").strip()
-                _p2 = (result.get("summary_message_part_2") or "").strip()
-                _p3 = (result.get("summary_message_part_3") or "").strip()
-                if any([_p1, _p2, _p3]):
-                    _joined = "\n".join([s for s in [_p1, _p2, _p3] if s])
-                    # Sanitize accidental IDs
-                    try:
-                        import re as _re
-                        _joined = _re.sub(r"\{\s*id\s*[:=]\s*[^}]+\}", "{product_id}", _joined, flags=_re.IGNORECASE)
-                        _joined = _re.sub(r"\b(id|sku)\s*[:#-]?\s*[A-Za-z0-9_-]{3,}\b", "{product_id}", _joined, flags=_re.IGNORECASE)
-                        _joined = _re.sub(r"#[0-9]{4,}", "{product_id}", _joined)
-                    except Exception:
-                        pass
-                    result["summary_message"] = _joined
-            except Exception:
-                pass
-
-            # Enforce exactly one product for SPM in final result
-            if spm_mode:
-                one = []
-                if isinstance(result.get("products"), list) and result["products"]:
-                    one = [result["products"][0]]
-                
-                # Brand-aware selection among top-K using session brand hints
-                chosen_index = 0
-                try:
-                    brand_hints = []
-                    try:
-                        dbg = (ctx.session.get('debug', {}) or {})
-                        last_params = dbg.get('last_search_params', {}) or {}
-                        bval = last_params.get('brands')
-                        if isinstance(bval, list):
-                            brand_hints = [str(x).strip().lower() for x in bval if str(x).strip()]
-                        elif isinstance(bval, str) and bval.strip():
-                            brand_hints = [bval.strip().lower()]
-                    except Exception:
-                        brand_hints = []
-                    if brand_hints and isinstance(products_data, list):
-                        for idx, cand in enumerate(products_data[:5]):
-                            try:
-                                cbrand = str(cand.get('brand') or '').strip().lower()
-                                if cbrand and any(h in cbrand for h in brand_hints):
-                                    chosen_index = idx
-                                    break
-                            except Exception:
-                                continue
-                except Exception:
-                    chosen_index = 0
-
-                if not one and products_data:
-                    p = products_data[chosen_index]
-                    one = [{
-                        "id": str(p.get("id") or "").strip(),
-                        "text": p.get("name", "Product"),
-                        "description": f"Solid choice at ₹{p.get('price','N/A')}",
-                        "price": f"₹{p.get('price','N/A')}",
-                        "special_features": ""
-                    }]
-                result["products"] = one
-
-            # Emit complete event
-            if emit_callback:
-                await emit_callback({
-                    "event": "final_answer.complete",
-                    "data": {"summary_message": result.get("summary_message", "")}
-                })
-            
-            return result
-            
-        except Exception as exc:
-            log.error(f"Streaming product response generation failed: {exc}")
-            if emit_callback:
-                await emit_callback({
-                    "event": "error",
-                    "data": {"message": str(exc)}
-                })
             return self._create_fallback_product_response(products_data, query)
 
     def _create_fallback_product_response(self, products_data: List[Dict], query: str) -> Dict[str, Any]:
@@ -4482,6 +3857,7 @@ Output:
 }
 Note: must_keywords=['chana'] prevents drift; narrow category avoids nut L3s
 </example>
+
 <output>
 Return tool call to generate_unified_es_params with complete JSON.
 Validation: q has product noun, no prices/brands in q, category_group valid, category_paths from taxonomy, dietary_terms UPPERCASE, must_keywords preserves anchor when specific
@@ -4490,7 +3866,7 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
                 prompt = f"""<task_definition>
 Extract ALL Elasticsearch parameters in ONE call, maintaining product focus across turns.
 </task_definition>
- 
+
 <conversation_type>{"FOLLOW_UP" if is_follow_up else "NEW_QUERY"}</conversation_type>
 
 <inputs>
@@ -4522,14 +3898,14 @@ Think through these steps:
 <rules>
 <rule id="anchor_persistence" priority="CRITICAL">
 Keep same product noun for follow-ups unless explicitly changed.
--- "shampoo" → "dry scalp" → q: "dry scalp shampoo" ✓
--- "chips" → "banana" → q: "banana chips" ✓
+- "shampoo" → "dry scalp" → q: "dry scalp shampoo" ✓
+- "chips" → "banana" → q: "banana chips" ✓
 </rule>
 
 <rule id="field_separation" priority="CRITICAL">
 NEVER put budget/dietary/brand in q field.
--- ❌ q: "gluten free chips under 100"
--- ✓ q: "gluten free chips", price_max: 100
+- ❌ q: "gluten free chips under 100"
+- ✓ q: "gluten free chips", price_max: 100
 </rule>
 
 <rule id="category_group" priority="CRITICAL">
@@ -4539,34 +3915,34 @@ NEVER use subcategory names like "chips" or "snacks"
 
 <rule id="category_paths_taxonomy" priority="CRITICAL">
 category_paths MUST come from provided fnb_taxonomy only.
--- Return 1-3 paths ranked by relevance (MOST likely first)
--- Format: "f_and_b/{{food|beverages}}/{{l2}}/{{l3}}" or "f_and_b/{{food|beverages}}/{{l2}}"
--- For ambiguous queries, include multiple plausible L3s
--- Never hallucinate paths not in taxonomy
--- CATEGORY TIGHTENING: When anchor_product_noun is a SPECIFIC product (e.g., 'roasted chana', 'peanuts'), emit category_paths that semantically align. Avoid broad L3 like 'dry_fruit_and_nut_snacks' when anchor is chana/peanuts.
+- Return 1-3 paths ranked by relevance (MOST likely first)
+- Format: "f_and_b/{{food|beverages}}/{{l2}}/{{l3}}" or "f_and_b/{{food|beverages}}/{{l2}}"
+- For ambiguous queries, include multiple plausible L3s
+- Never hallucinate paths not in taxonomy
+- CATEGORY TIGHTENING: When anchor_product_noun is a SPECIFIC product (e.g., 'roasted chana', 'peanuts'), emit category_paths that semantically align. Avoid broad L3 like 'dry_fruit_and_nut_snacks' when anchor is chana/peanuts.
 </rule>
 
 <rule id="anchor_preservation_must_keywords" priority="CRITICAL">
 When anchor_product_noun contains a specific product noun (e.g., 'chana', 'peanuts', 'makhana'), include that noun in must_keywords to prevent drift.
--- Example: anchor='roasted chana' → must_keywords: ['chana'] (prevents cashew/almond drift)
--- Exception: If anchor is generic ('snacks', 'nuts'), do NOT add to must_keywords.
+- Example: anchor='roasted chana' → must_keywords: ['chana'] (prevents cashew/almond drift)
+- Exception: If anchor is generic ('snacks', 'nuts'), do NOT add to must_keywords.
 </rule>
 
 <rule id="brand_extraction_strict" priority="HIGH">
 When user mentions brand (e.g., 'Lays', 'Let's Try'), populate brands field. Normalize quotes. 'X brand' or 'of Y brand' → extract Y.
--- Example: 'roasted chana of Let's Try brand' → brands: ['Let's Try'], anchor: 'roasted chana'
+- Example: 'roasted chana of Let's Try brand' → brands: ['Let's Try'], anchor: 'roasted chana'
 </rule>
 
 <rule id="pack_size_keywords" priority="MEDIUM">
 When user mentions pack size ('small pack', 'mini pack', 'large pack'), include in keywords as soft boost.
--- Example: 'small pack' → keywords: ['small pack'] or ['small']
+- Example: 'small pack' → keywords: ['small pack'] or ['small']
 </rule>
 
 <rule id="dietary_normalization" priority="HIGH">
 Normalize to UPPERCASE:
--- "no palm oil" → ["PALM OIL FREE"]
--- "gluten free" → ["GLUTEN FREE"]
--- "vegan" → ["VEGAN"]
+- "no palm oil" → ["PALM OIL FREE"]
+- "gluten free" → ["GLUTEN FREE"]
+- "vegan" → ["VEGAN"]
 </rule>
 <rule id="negative_category_avoidance" priority="CRITICAL">
 From <current_message> and <conversation_history>, infer disallowed product/category nouns (e.g., "don't give me X", "avoid X", "no X", "not X").
@@ -5350,6 +4726,7 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
             "  \"size\": 20,\n"
             "  \"reasoning\": \"Context 'with chai' mapped to multiple paths; using 2-3 concrete nouns for broader search surface\"\n"
             "}\n"
+            "</output>\n"
             "<note>Post-processing will expand q to 'namkeen, cookies' for better coverage</note>\n"
             "</example>\n\n"
             "<example type=\"roasted_chana_brand_pack\">\n"
@@ -5369,6 +4746,7 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
             "  \"size\": 20,\n"
             "  \"reasoning\": \"Follow-up: 'small pack' modifier; preserved anchor 'roasted chana' with must_keywords=['chana'] to prevent cashew/almond drift; extracted brand 'Let's Try'; added pack size to keywords; avoided broad 'dry_fruit_and_nut_snacks' L3\"\n"
             "}\n"
+            "</output>\n"
             "<note>CRITICAL: must_keywords=['chana'] prevents ES from returning 'roasted cashews' or 'roasted almonds'; narrow category_paths avoids nut drift</note>\n"
             "</example>\n\n"
             "<example type=\"carry_over_concrete\">\n"
@@ -5739,6 +5117,7 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
     # ============================================================================
     # PERSONAL CARE 2025 METHODS (Parallel to Food Path)
     # ============================================================================
+
     async def _generate_personal_care_es_params_2025(self, ctx: UserContext, current_text: str) -> Dict[str, Any]:
         """2025 best-practices for Personal Care: schema-first, optimized prompt, forced tool, minimal post-process."""
         session = ctx.session or {}
@@ -6422,6 +5801,7 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
             return getattr(engine, "_fnb_taxonomy", {})
         except Exception:
             return {}
+
     def _get_fnb_taxonomy_hierarchical(self) -> Dict[str, Any]:
         """Load hierarchical F&B taxonomy and flatten for LLM prompt efficiency."""
         import os, json

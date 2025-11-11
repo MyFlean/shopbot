@@ -1395,60 +1395,71 @@ Permanent: {permanent}
 {enriched_top}
 
 ### INSTRUCTIONS
-Create a helpful response with:
+Create a helpful response with the following structure (2025 best practices):
 
-1. **summary_message** (USE enriched_top for top 3 products):
-   Structure the summary as 4 concise bullets/sentences:
-   - Positives (from tags_and_sentiments and marketing/usage/occasion signals) for the top 1-3 products
-   - Quantitative quality signals (flean_score, key percentiles like protein/wholefood; penalties like sodium/sugar/additives when notable)
-   - Caveats or watch-outs (e.g., ultra_processed, high sodium, saturated fat, additives)
-   - One lean line summarizing the overall 10-product set (coverage/value/variety)
+1. **summary_message** (bullet format; concise; evidence-driven)
+   - Start with a **Pros:** section (2–4 bullets). Each bullet ≤12 words, includes a concrete metric (score/percentile/grams/₹/%). Use enriched_top evidence. The first Pros bullet should name the TOP PICK with price and one standout metric.
+   - Include a **Cons:** section ONLY if there is a meaningful drawback (0–2 bullets). Each bullet ≤12 words, include a quantitative penalty where possible (e.g., sodium mg, penalty percentile). If there are no significant cons, omit the Cons section entirely.
+   - End with a **Reasoning:** one-liner (≤18 words) that states the decision basis or fit, referencing at least one metric or comparison.
 
 2. **products**: For each relevant product (up to 10):
    - text: The exact product name from results
-   - description: A compelling one-liner about why this product is worth buying
+   - description: A crisp one-liner on why this product is worth buying (≤18 words)
    - price: The price with currency (e.g., "₹60")
    - special_features: Key differentiators (e.g., "High protein, organic")
 
 Guidelines:
-- Focus on actual product attributes from the search results and enriched_top.
-- Keep it crisp, persuasive, and evidence-driven.
-- Use percentiles/penalties explicitly when helpful (e.g., "Top 10% protein" or "Sodium penalty high").
-- If no products found, provide helpful message with empty products array.
+- Focus on actual product attributes from search results and enriched_top.
+- Always quantify claims: score, percentile, grams, mg, ₹, or % vs typical.
+- Prefer minimal, scannable bullets over paragraphs; no fluff or marketing speak.
+- If no products found, provide a helpful message with an empty products array.
 
 ### STRICT FORMAT RULES (MANDATORY)
-- summary_message: EXACTLY 4 bullets, each 15-25 words
-- Line 1: Overall verdict with flean score and percentile (translate percentiles: 0.78 → "top 22%")
-- Line 2: Top 2-3 nutritional strengths with exact numbers and units (e.g., protein_g, fiber_g)
-- Line 3: Honest caveat prefixed with "Note:" or "Caution:" and include a number (e.g., sodium mg, penalty percentile)
-- Line 4: Value/variety statement for the set (price span, count, use-cases). Include at least one number.
+- summary_message MUST be structured exactly as:
+  **Pros:**
+  - <bullet 1>
+  - <bullet 2>
+  [optional additional pros bullets]
+  [optional **Cons:** section if needed, then 0–2 bullets]
+  **Reasoning:** <one concise sentence with at least one number or comparison>
+- Always start with "Pros:" as a section header, followed by 2–4 bullet points.
+- Include "Cons:" as a section header ONLY when there are meaningful drawbacks (0–2 bullets). If no cons, skip the Cons section entirely.
+- End with "Reasoning:" as a section header followed by one concise sentence.
+- Bullets ≤12 words; Reasoning ≤18 words; use numerals and units (e.g., 25g, 350mg, ₹80).
+- Convert percentiles: 0.78 → "top 22%" (higher=better for bonuses; higher=worst for penalties described correctly).
 
 ### EVIDENCE AND COMPARISON REQUIREMENTS
-- Every positive claim MUST include a metric: score, grams, percentage, or ranking
-- Always compare to category average or benchmark (e.g., "25% less sugar than typical chips")
-- Avoid vague terms: replace "healthy" with quantified statements (e.g., "flean score 78/100")
-- Keep each sentence ≤20 words; avoid marketing fluff, be professional and conversational
+- Every positive claim MUST include a metric (score, grams, percentage, ₹, ranking).
+- Include at least one explicit comparison vs category average/typical (e.g., "25% less sodium than typical chips").
+- Avoid vague terms: replace "healthy" with quantified statements (e.g., "flean score 78/100").
 
 ### CRITICAL COMMANDMENTS (NEVER VIOLATE)
 - Flean Score: If score ≥ 0, higher is better → "scores 78/100". If score < 0, NEVER present as positive → write "fails quality standards" or "poor quality score".
 - Percentiles:
   • BONUSES (protein, fiber, wholefood): higher percentile = GOOD → 0.90 = "top 10% for protein".
   • PENALTIES (sugar, sodium, saturated_fat, trans_fat, sweetener, calories): higher percentile = BAD → 0.90 = "bottom 10% - high sodium warning". NEVER say "top 90%" for penalties.
-- Processing Honesty: Always mention "ultra_processed" as a caution; mention "processed" if >50% of products; highlight "minimally_processed" as positive.
+- Processing Honesty: Mention "ultra_processed" as a caution when applicable; mention "processed" if >50% of products; highlight "minimally_processed" as positive.
 
 ### HERO_SELECTION_RULES (MANDATORY FOR MPM)
 1) SELECT HERO: From enriched_top, choose the healthiest/cleanest product (highest positive flean; else minimally_processed; else best nutrition profile). If all are poor, pick least problematic and be honest.
 2) REORDER IDS: Return hero_product_id and ensure hero appears FIRST in product_ids (followed by #2, #3, then others).
-3) SUMMARY STRUCTURE FOR MPM:
-   Line 1: "TOP PICK: [Hero Name] (₹[price]) - [score]/100, [best attribute with number]"
-   Line 2: "Why it wins: [2-3 specific data points]"
-   Line 3: "Other options: [Name 2] ([trait]), [Name 3] ([trait]), [Name 4] ([trait])"
-   Line 4: "Overview: [X] total products ₹[min]-[max], [aggregate insight]"
-4) DPL FOCUS: Spend ~70% on hero, ~30% on alternatives/filters.
+3) PROS FIRST BULLET: In the Pros section, the first bullet must name the TOP PICK with price and one standout metric (e.g., "TOP PICK: [Name] ₹[price], [metric]").
+4) DPL FOCUS: Spend ~70% on hero signals in Pros section, ~30% on alternatives/filters.
 5) BANNED WORDS: elevate, indulge, delight, companion, munchies.
 
 ### VALIDATION CHECKLIST (self-verify before responding)
-- Exactly 4 lines in summary_message; DPL ≤3 sentences; numbers have units; penalties described correctly; #1 recommendation clear; no fluff; hero identified and first.
+- Pros section present with 2–4 bullets; Cons section included only if meaningful drawbacks exist; Reasoning section present; bullets within word limits; numbers have units; penalties described correctly; hero identified and first in product_ids.
+
+### EXAMPLE OUTPUT FORMAT
+```
+Pros:
+- TOP PICK: Modern Kitchen Chips ₹72, flean score 78/100 (top 22%)
+- 30% less sodium than typical chips (350mg vs 500mg average)
+- High wholefood score (top 15%), minimally processed
+Cons:
+- Slightly higher price than budget options (₹72 vs ₹50 average)
+Reasoning: Best balance of quality and value, with superior nutrition metrics compared to category average.
+```
 
 Return ONLY a tool call to generate_product_response.
 """

@@ -2729,6 +2729,9 @@ Generate your answer now:"""
             except Exception:
                 _conversation_pairs = []
 
+            # Extract fallback information from ES results
+            fallback_info = self._extract_fallback_info(fetched)
+
             unified_context = {
                 "user_query": query,
                 "intent_l3": intent_l3,
@@ -2737,6 +2740,7 @@ Generate your answer now:"""
                 "conversation_history": _conversation_pairs,
                 "products": products_for_llm,
                 "enriched_top": top_products_brief,
+                "fallback_info": fallback_info,
                 "personal_care": {
                     "efficacy_terms": (ctx.session.get("debug", {}).get("last_skin_search_params", {}).get("efficacy_terms") if isinstance(ctx.session.get("debug", {}), dict) else None),
                     "avoid_terms": (ctx.session.get("debug", {}).get("last_skin_search_params", {}).get("avoid_terms") if isinstance(ctx.session.get("debug", {}), dict) else None),
@@ -2752,13 +2756,16 @@ Generate your answer now:"""
                 "ABSOLUTE PRIVACY RULE (MANDATORY): NEVER include actual product IDs, SKUs, or internal identifiers in ANY text. If referring to an ID per instructions, include exactly the literal token '{product_id}' and DO NOT replace it with a real value.\n\n"
                 "FORMAT TAGS (MANDATORY): Use only <bold>...</bold> for emphasis and <newline> to indicate line breaks. DO NOT use any other HTML/Markdown tags or entities. The output will be post-processed for WhatsApp formatting.\n\n"
                 "You are producing BOTH the product answer and the UX block in a SINGLE tool call.\n"
-                "Inputs:\n- user_query\n- intent_l3\n- product_intent (one of is_this_good, which_is_better, show_me_alternate, show_me_options)\n- session snapshot (budget, dietary)\n- last 5 user/bot pairs (10 turns)\n- products (top 5-10)\n- enriched_top (top 1 for SPM; top 3 for MPM)\n\n"
+                "Inputs:\n- user_query\n- intent_l3\n- product_intent (one of is_this_good, which_is_better, show_me_alternate, show_me_options)\n- session snapshot (budget, dietary)\n- last 5 user/bot pairs (10 turns)\n- products (top 5-10)\n- enriched_top (top 1 for SPM; top 3 for MPM)\n- fallback_info (contains details about search adjustments if original query failed)\n\n"
                 "Output JSON (tool generate_final_answer_unified):\n"
-                "{response_type:'final_answer', summary_message (constructed from 3 parts), summary_message_part_1, summary_message_part_2, summary_message_part_3, product_ids?, hero_product_id?, ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}\n\n"
-                "3-PART SUMMARY (MANDATORY for both food & skin):\n"
-                "- summary_message_part_1: Mirror the brief (1–2 lines). Place 1 emoji to signal alignment (e.g., ✅ or 🔍). NEVER include actual product IDs.\n"
-                "- summary_message_part_2: Hero pick (2–3 lines): state one crisp reason it fits (protein/fiber/less oil/spice/budget). After the product name/brand, insert '{product_id}' as literal text (DO NOT substitute the real ID). If citing a percentile, use plain language with parentheses, e.g., 'higher in protein than most chips (top 10%).'. Append star rating as ⭐ repeated N times based on review_stats.average (rounded to nearest integer, clamp 1–5). If rating missing, omit stars. NEVER include actual product IDs.\n"
-                "- summary_message_part_3: Other picks (1–2 lines): group with one shared reason (e.g., 'also lower oil & budget-friendly'). Place 1 emoji here (e.g., 💡). Append star ratings for each product mentioned using ⭐ repeated N times from review_stats.average (rounded 1–5); if missing, omit stars. NEVER include actual product IDs.\n\n"
+                "{response_type:'final_answer', summary_message (Pros/Cons/Reasoning format), product_ids?, hero_product_id?, ux:{ux_surface, dpl_runtime_text, quick_replies(3-4)}}\n\n"
+                "### FALLBACK-AWARE MESSAGING (CRITICAL):\n"
+                "If fallback_info.original_query_failed is true, you MUST acknowledge this transparently:\n"
+                "- Start with a brief acknowledgment: \"I couldn't find exact matches for your specific request\"\n"
+                "- Explain the fallback reason using fallback_info.fallback_description\n"
+                "- Present alternatives as helpful suggestions, not exact matches\n"
+                "- Use phrases like \"Here are some great alternatives\" or \"While we don't have exact matches, these options work well\"\n"
+                "- Make it clear these are fallback suggestions, not the originally requested products\n\n"
                 "Rules (MANDATORY):\n"
                 "- For is_this_good (SPM): choose 1 best item → ux_surface='SPM'; product_ids=[that_id]; dpl_runtime_text should read like a concise expert verdict.\n"
                 "- For others (MPM): choose a hero (healthiest/cleanest using enriched_top), set hero_product_id and order product_ids with hero first; ux_surface='MPM'.\n"
@@ -2801,6 +2808,83 @@ Generate your answer now:"""
                     result["summary_message"] = _joined
             except Exception:
                 pass
+
+    def _extract_fallback_info(self, fetched: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract fallback information from ES results to inform user about search adjustments."""
+        fallback_info = {
+            "fallback_applied": None,
+            "original_query_failed": False,
+            "fallback_reason": None,
+            "fallback_description": None
+        }
+
+        try:
+            meta = fetched.get('search_products', {}).get('meta', {})
+            fallback_type = meta.get('fallback_applied')
+
+            if fallback_type:
+                fallback_info["fallback_applied"] = fallback_type
+                fallback_info["original_query_failed"] = True
+
+                # Map fallback types to user-friendly explanations
+                fallback_mapping = {
+                    # F&B fallbacks
+                    'price_any': {
+                        'reason': 'price_constraints',
+                        'description': 'No products found within your budget, showing options with flexible pricing'
+                    },
+                    'drop_hard_soft_keep_category': {
+                        'reason': 'specific_filters',
+                        'description': 'No exact matches for your specific requirements, showing broader options in the same category'
+                    },
+                    'sibling_l2_full': {
+                        'reason': 'category_adjustment',
+                        'description': 'Your specific category had no matches, showing similar products from a related category'
+                    },
+                    'sibling_l2_price_any': {
+                        'reason': 'category_and_price',
+                        'description': 'No matches in your category or budget, showing alternatives from a similar category'
+                    },
+                    'sibling_l2_drop_hard_soft': {
+                        'reason': 'category_and_filters',
+                        'description': 'Your specific category and requirements had no matches, showing broader options from a related category'
+                    },
+                    'drop_category_l4_to_l3': {
+                        'reason': 'specific_category',
+                        'description': 'No exact category matches, showing products from the broader category family'
+                    },
+                    'drop_category_l3': {
+                        'reason': 'category_broadening',
+                        'description': 'Your specific category preferences had limited options, showing products across the entire category group'
+                    },
+                    # Personal care fallbacks
+                    'pc_price_any': {
+                        'reason': 'price_constraints',
+                        'description': 'No personal care products found within your budget, showing options with flexible pricing'
+                    },
+                    'pc_relax_reviews': {
+                        'reason': 'review_filters',
+                        'description': 'Fewer products met your review standards, showing options with varying review counts'
+                    },
+                    'pc_drop_hard_soft': {
+                        'reason': 'specific_filters',
+                        'description': 'No exact matches for your personal care requirements, showing broader options in the same category'
+                    },
+                    'pc_expand_size_30': {
+                        'reason': 'limited_results',
+                        'description': 'Limited options available, showing additional products to give you more choices'
+                    }
+                }
+
+                if fallback_type in fallback_mapping:
+                    mapping = fallback_mapping[fallback_type]
+                    fallback_info["fallback_reason"] = mapping["reason"]
+                    fallback_info["fallback_description"] = mapping["description"]
+
+        except Exception as e:
+            log.warning(f"Failed to extract fallback info: {e}")
+
+        return fallback_info
 
             # Enforce exactly one product for SPM in final result
             if spm_mode:

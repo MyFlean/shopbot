@@ -3290,7 +3290,11 @@ Generate your answer now:"""
         """Assess what data is needed for the query."""
         assessment_tool = build_assessment_tool()
         intent_config = INTENT_MAPPING.get(layer3, {})
-        suggested_slots = [s.value for s in intent_config.get("suggested_slots", [])]
+        suggested_slots = [
+            s.value
+            for s in intent_config.get("suggested_slots", [])
+            if (getattr(Cfg, "ASK_ENABLE_BUDGET", False) or s != UserSlot.USER_BUDGET)
+        ]
         suggested_functions = [f.value for f in intent_config.get("suggested_functions", [])]
 
         prompt = REQUIREMENTS_ASSESSMENT_PROMPT.format(
@@ -3375,6 +3379,8 @@ Generate your answer now:"""
         filtered_slots: List[UserSlot] = []
         product_intents_l3 = {"Product_Discovery", "Recommendation", "Specific_Product_Search", "Product_Comparison"}
         for slot in slots_needed:
+            if (slot == UserSlot.USER_BUDGET) and (not getattr(Cfg, "ASK_ENABLE_BUDGET", False)):
+                continue
             if slot == UserSlot.PRODUCT_CATEGORY and (category_group or has_cat_path):
                 continue
             # Also skip category ask for product-related intents; taxonomy classifier will infer it
@@ -3411,13 +3417,18 @@ Generate your answer now:"""
             for sl in merged:
                 if sl == UserSlot.PRODUCT_CATEGORY:
                     continue
+                if (sl == UserSlot.USER_BUDGET) and (not getattr(Cfg, "ASK_ENABLE_BUDGET", False)):
+                    continue
                 if sl == UserSlot.USER_BUDGET and has_price:
                     continue
                 final_list.append(sl)
             filtered_slots = final_list[:3]
         # If still nothing to ask but this is a product flow, ask smart defaults to aid ES
         if not filtered_slots and intent_l3 in product_intents_l3:
-            filtered_slots = [UserSlot.USER_BUDGET, UserSlot.DIETARY_REQUIREMENTS, UserSlot.USER_PREFERENCES]
+            if getattr(Cfg, "ASK_ENABLE_BUDGET", False):
+                filtered_slots = [UserSlot.USER_BUDGET, UserSlot.DIETARY_REQUIREMENTS, UserSlot.USER_PREFERENCES]
+            else:
+                filtered_slots = [UserSlot.DIETARY_REQUIREMENTS, UserSlot.USER_PREFERENCES]
         if not filtered_slots:
             return {}
 
@@ -3438,6 +3449,11 @@ Generate your answer now:"""
         slots_needed_desc = ", ".join([slot.value for slot in filtered_slots])
 
         # Stronger instructions for INR/currency and relevance
+        budget_rule = ""
+        budget_examples = ""
+        if getattr(Cfg, "ASK_ENABLE_BUDGET", False):
+            budget_rule = "- For budget questions, choose ONLY from these INR buckets: " + ", ".join(domain_hints.get("budget_ranges", [])) + ".\n"
+            budget_examples = "- Query: 'spicy chips' → Ask budget (₹ ranges), oil preference (No palm oil), heat level.\n- Query: 'face wash for oily skin' → Ask skin type, fragrance preference, budget (₹ ranges).\n"
         prompt = (
             CONTEXTUAL_QUESTIONS_PROMPT
             + "\nPersona & goal:\n"
@@ -3445,13 +3461,11 @@ Generate your answer now:"""
             + "- Ask only what is necessary to refine search and improve ES filters.\n"
             + "\nStrict rules:\n"
             + "- Currency MUST be INR with symbol '₹'. Never use '$' or other currencies.\n"
-            + "- For budget questions, choose ONLY from these INR buckets: "
-            + ", ".join(domain_hints.get("budget_ranges", []))
-            + ".\n- Questions must directly aid Elasticsearch filtering (budget, dietary labels/health claims like 'NO PALM OIL', brand preference as a multiple-choice concept), avoid asking category if already known.\n"
+            + budget_rule
+            + "- Questions must directly aid Elasticsearch filtering (dietary labels/health claims like 'NO PALM OIL', brand preference as a multiple-choice concept), avoid asking category if already known.\n"
             + "- Options must be 1-4 words, discrete, non-overlapping.\n"
             + "\nContext examples:\n"
-            + "- Query: 'spicy chips' → Ask budget (₹ ranges), oil preference (No palm oil), heat level.\n"
-            + "- Query: 'face wash for oily skin' → Ask skin type, fragrance preference, budget (₹ ranges).\n"
+            + (budget_examples or "- Query: 'spicy chips' → Ask oil preference (No palm oil), heat level.\n- Query: 'face wash for oily skin' → Ask skin type, fragrance preference.\n")
         ).format(
             query=query,
             intent_l3=intent_l3,
@@ -3489,6 +3503,9 @@ Generate your answer now:"""
 
             processed_questions: Dict[str, Dict[str, Any]] = {}
             for slot_value, question_data in questions_data.items():
+                if (slot_value == UserSlot.USER_BUDGET.value) and (not getattr(Cfg, "ASK_ENABLE_BUDGET", False)):
+                    # Drop budget question entirely when disabled
+                    continue
                 options = question_data.get("options", [])
 
                 formatted_options: List[Dict[str, str]] = []
@@ -3510,7 +3527,7 @@ Generate your answer now:"""
                 formatted_options = formatted_options[:3]
 
                 # Budget-specific override: always use fixed Gen-Z style buckets
-                if slot_value == UserSlot.USER_BUDGET.value:
+                if slot_value == UserSlot.USER_BUDGET.value and getattr(Cfg, "ASK_ENABLE_BUDGET", False):
                     formatted_options = _coerce_budget_options_genz()
 
                 processed_questions[slot_value] = {
@@ -3544,6 +3561,18 @@ Generate your answer now:"""
             "has_price": (last_params.get("price_min") is not None) or (last_params.get("price_max") is not None),
             "dietary_terms": last_params.get("dietary_terms") or last_params.get("dietary_labels") or [],
         }
+        allowed_lines = []
+        if getattr(Cfg, "ASK_ENABLE_BUDGET", False):
+            allowed_lines.append("- ASK_USER_BUDGET (₹ ranges)")
+        allowed_lines.extend([
+            "- ASK_DIETARY_REQUIREMENTS (e.g., NO PALM OIL, VEGAN, GLUTEN FREE)",
+            "- ASK_USER_PREFERENCES (e.g., taste/brand/features)",
+            "- ASK_USE_CASE (e.g., party, daily use)",
+            "- ASK_QUANTITY",
+        ])
+        rules_pref = "- Prefer dietary for FOOD queries; skin-type/preferences for PERSONAL_CARE.\n"
+        if getattr(Cfg, "ASK_ENABLE_BUDGET", False):
+            rules_pref = "- Prefer budget and dietary for FOOD queries; skin-type/preferences for PERSONAL_CARE.\n"
         prompt = (
             "Select up to 3 user slots to ask next for a shopping query.\n\n"
             f"QUERY: {query}\n"
@@ -3551,14 +3580,10 @@ Generate your answer now:"""
             f"DOMAIN: {domain or 'unknown'}\n"
             f"KNOWN: {json.dumps(known, ensure_ascii=False)}\n\n"
             "Allowed slots (choose any up to 3):\n"
-            "- ASK_USER_BUDGET (₹ ranges)\n"
-            "- ASK_DIETARY_REQUIREMENTS (e.g., NO PALM OIL, VEGAN, GLUTEN FREE)\n"
-            "- ASK_USER_PREFERENCES (e.g., taste/brand/features)\n"
-            "- ASK_USE_CASE (e.g., party, daily use)\n"
-            "- ASK_QUANTITY\n\n"
+            + "\n".join(allowed_lines) + "\n\n"
             "Rules:\n"
             "- Do NOT include ASK_PRODUCT_CATEGORY (category is inferred).\n"
-            "- Prefer budget and dietary for FOOD queries; skin-type/preferences for PERSONAL_CARE.\n"
+            + rules_pref +
             "- Avoid slots already known (e.g., price range exists).\n"
             "Return ONLY a tool call to select_slots_to_ask."
         )
@@ -3580,6 +3605,9 @@ Generate your answer now:"""
             out: List[str] = []
             for s in slots:
                 if isinstance(s, str) and s.strip() and s.strip() != UserSlot.PRODUCT_CATEGORY.value:
+                    # Drop budget if disabled
+                    if (not getattr(Cfg, "ASK_ENABLE_BUDGET", False)) and (s.strip() == UserSlot.USER_BUDGET.value):
+                        continue
                     out.append(s.strip())
             return out[:3]
         except Exception as exc:

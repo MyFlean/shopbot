@@ -551,6 +551,9 @@ class ShoppingBotCore:
                     domain_for_ask = str(combined.get("domain") or ctx.session.get("domain") or "").strip()
                     max_asks = 4 if domain_for_ask == "personal_care" else 2
                     ask_keys = list(ask.keys())[:max_asks] if isinstance(ask, dict) else []
+                    # Gate out budget asks globally when disabled
+                    if not getattr(Cfg, "ASK_ENABLE_BUDGET", False):
+                        ask_keys = [k for k in ask_keys if k != UserSlot.USER_BUDGET.value]
                     missing_names = ask_keys[:]
                     priority_order = ask_keys[:]
                     ctx.session["contextual_questions"] = {}
@@ -657,6 +660,10 @@ class ShoppingBotCore:
         if result.is_product_related:
             assessment.missing_data = [f for f in assessment.missing_data if get_func_value(f) != UserSlot.PRODUCT_CATEGORY.value]
             assessment.priority_order = [f for f in assessment.priority_order if get_func_value(f) != UserSlot.PRODUCT_CATEGORY.value]
+        # Globally remove budget asks when disabled
+        if not getattr(Cfg, "ASK_ENABLE_BUDGET", False):
+            assessment.missing_data = [f for f in assessment.missing_data if get_func_value(f) != UserSlot.USER_BUDGET.value]
+            assessment.priority_order = [f for f in assessment.priority_order if get_func_value(f) != UserSlot.USER_BUDGET.value]
 
         user_slots = [f for f in assessment.missing_data if is_user_slot(f)]
         missing_data_names = [get_func_value(f) for f in assessment.missing_data]
@@ -717,7 +724,7 @@ class ShoppingBotCore:
         try:
             if result.is_product_related:
                 essentials: list[str] = []
-                if "budget" not in ctx.session:
+                if getattr(Cfg, "ASK_ENABLE_BUDGET", False) and ("budget" not in ctx.session):
                     essentials.append(UserSlot.USER_BUDGET.value)
                 # Do NOT add PRODUCT_CATEGORY here; category is inferred by taxonomy/ES
                 if essentials:
@@ -805,6 +812,9 @@ class ShoppingBotCore:
             pass
         ask_first = [f for f in still_missing if is_user_slot(f)]
         fetch_later = [f for f in still_missing if not is_user_slot(f)]
+        # Gate out budget asks globally when disabled
+        if not getattr(Cfg, "ASK_ENABLE_BUDGET", False):
+            ask_first = [f for f in ask_first if get_func_value(f) != UserSlot.USER_BUDGET.value]
 
         # Enforce no-ask policy for specific product intents
         no_ask_intents = {"is_this_good", "which_is_better"}

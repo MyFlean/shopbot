@@ -63,6 +63,8 @@ class BaseConfig:
     ASK_ONLY_MODE: bool = os.getenv("ASK_ONLY_MODE", "false").lower() in {"1", "true", "yes", "on"}
     # New: Use assessment only for ask_user; ignore for ES planning/anchoring
     USE_ASSESSMENT_FOR_ASK_ONLY: bool = os.getenv("USE_ASSESSMENT_FOR_ASK_ONLY", "false").lower() in {"1", "true", "yes", "on"}
+    # Flag: enable/disable budget questions globally in ASKUSER flows
+    ASK_ENABLE_BUDGET: bool = os.getenv("ASK_ENABLE_BUDGET", "false").lower() in {"1", "true", "yes", "on"}
 
 
 class DevelopmentConfig(BaseConfig):

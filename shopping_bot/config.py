@@ -65,6 +65,9 @@ class BaseConfig:
     USE_ASSESSMENT_FOR_ASK_ONLY: bool = os.getenv("USE_ASSESSMENT_FOR_ASK_ONLY", "false").lower() in {"1", "true", "yes", "on"}
     # Flag: enable/disable budget questions globally in ASKUSER flows
     ASK_ENABLE_BUDGET: bool = os.getenv("ASK_ENABLE_BUDGET", "false").lower() in {"1", "true", "yes", "on"}
+    
+    # Health threshold filter: minimum flean percentile to include products (0-100, default 0 = disabled)
+    HEALTH_THRESHOLD_PERCENTILE: float = float(os.getenv("HEALTH_THRESHOLD_PERCENTILE", "0"))
 
 
 class DevelopmentConfig(BaseConfig):
@@ -129,6 +132,8 @@ def get_config() -> BaseConfig:
         log.info(f"🔍 ES_CONFIG | index={cfg.ELASTIC_INDEX} | timeout={cfg.ELASTIC_TIMEOUT_SECONDS}s | max_results={cfg.ELASTIC_MAX_RESULTS}")
         log.info(f"📊 HISTORY_CONFIG | max_snapshots={cfg.HISTORY_MAX_SNAPSHOTS}")
         log.info(f"🚀 ASYNC_CONFIG | enable_async={cfg.ENABLE_ASYNC}")
+        if cfg.HEALTH_THRESHOLD_PERCENTILE > 0:
+            log.info(f"🏥 HEALTH_FILTER | enabled=true | threshold={cfg.HEALTH_THRESHOLD_PERCENTILE} | only_products_above_percentile_will_be_shown")
         get_config._logged_startup = True
 
     return cfg

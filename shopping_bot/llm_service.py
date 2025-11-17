@@ -2665,17 +2665,23 @@ Generate your answer now:"""
                 else:
                     products_data = data.get('products', [])[:10]
         
-        # Apply health threshold filter if enabled
+        # Apply adaptive health threshold filter if enabled
         Cfg = get_config()
-        health_threshold = Cfg.HEALTH_THRESHOLD_PERCENTILE
-        if health_threshold > 0:
+        # For now, we enforce a strict adaptive window: start at 100 and stop at 90.
+        # Goal: only surface genuinely healthy products; if none, tell the user instead of falling back.
+        base_threshold = 100.0
+        lower_bound = 90.0
+        if base_threshold > 0:
             original_count = len(products_data)
-            filtered_products = []
-            dropped_products = []
+            min_products = getattr(Cfg, "HEALTH_MIN_PRODUCTS", 5)
+            step = getattr(Cfg, "HEALTH_THRESHOLD_STEP", 0.5)
 
             # Log all products before filtering
+            numeric_products: List[Dict[str, Any]] = []
+            numeric_values: List[float] = []
+            non_numeric_dropped: List[Dict[str, Any]] = []
             try:
-                log.info(f"HEALTH_FILTER_START | threshold={health_threshold} | total_products={original_count}")
+                log.info(f"HEALTH_FILTER_START | base_threshold={base_threshold} | min_products={min_products} | step={step} | total_products={original_count}")
                 for product in products_data:
                     pid = product.get('id', 'unknown')
                     pname = product.get('name', 'unknown')[:60]
@@ -2683,86 +2689,148 @@ Generate your answer now:"""
                     if percentile is not None:
                         try:
                             percentile_val = float(percentile)
+                            numeric_products.append(product)
+                            numeric_values.append(percentile_val)
                             log.info(f"HEALTH_FILTER_PRODUCT | id={pid} | name='{pname}' | percentile={percentile_val:.1f}")
                         except (ValueError, TypeError):
+                            non_numeric_dropped.append({
+                                "id": pid,
+                                "name": pname,
+                                "reason": "invalid_percentile",
+                            })
                             log.info(f"HEALTH_FILTER_PRODUCT | id={pid} | name='{pname}' | percentile=INVALID")
                     else:
+                        non_numeric_dropped.append({
+                            "id": pid,
+                            "name": pname,
+                            "reason": "missing_percentile",
+                        })
                         log.info(f"HEALTH_FILTER_PRODUCT | id={pid} | name='{pname}' | percentile=MISSING")
             except Exception:
+                # If logging fails, continue with filtering logic
                 pass
 
-            for product in products_data:
-                flean_percentile = product.get('flean_percentile')
-                
-                # Handle both numeric and None values
-                if flean_percentile is None:
-                    # If percentile is missing, drop the product
-                    dropped_products.append({
-                        'id': product.get('id', 'unknown'),
-                        'name': product.get('name', 'unknown')[:50],
-                        'reason': 'missing_percentile'
-                    })
+            filtered_products: List[Dict[str, Any]] = []
+            dropped_products: List[Dict[str, Any]] = []
+
+            # Adaptive threshold: start at 100 and relax by `step` down to 90,
+            # aiming for at least `min_products` but never going below 90.
+            final_threshold = None
+            if numeric_products:
+                threshold = float(base_threshold)
+                try:
+                    log.info(
+                        f"HEALTH_FILTER_ADAPT_START | base_threshold={base_threshold} | lower_bound={lower_bound} | min_products={min_products} | numeric_count={len(numeric_products)}"
+                    )
+                except Exception:
+                    pass
+
+                last_candidate_count = 0
+                while threshold >= lower_bound:
+                    # Count how many would pass at this threshold
+                    candidate_count = sum(1 for v in numeric_values if v >= threshold)
+                    last_candidate_count = candidate_count
                     try:
-                        log.info(f"HEALTH_FILTER_DROP | product_id={product.get('id', 'unknown')} | name='{product.get('name', 'unknown')[:50]}' | reason=missing_percentile | threshold={health_threshold}")
+                        log.info(
+                            f"HEALTH_FILTER_ADAPT_STEP | threshold={threshold:.2f} | candidate_count={candidate_count}"
+                        )
                     except Exception:
                         pass
-                else:
+                    if candidate_count >= min_products:
+                        final_threshold = threshold
+                        break
+                    threshold -= step
+
+                # If no threshold met the min_products requirement within [lower_bound, base_threshold],
+                # fix the threshold at the lower bound (e.g., 90). We might still end up with < min_products.
+                if final_threshold is None:
                     try:
-                        percentile_value = float(flean_percentile)
-                        if percentile_value >= health_threshold:
-                            filtered_products.append(product)
-                        else:
-                            dropped_products.append({
-                                'id': product.get('id', 'unknown'),
-                                'name': product.get('name', 'unknown')[:50],
-                                'percentile': percentile_value,
-                                'reason': 'below_threshold'
-                            })
-                            try:
-                                log.info(f"HEALTH_FILTER_DROP | product_id={product.get('id', 'unknown')} | name='{product.get('name', 'unknown')[:50]}' | percentile={percentile_value:.1f} | threshold={health_threshold} | reason=below_threshold")
-                            except Exception:
-                                pass
-                    except (ValueError, TypeError):
-                        # If percentile can't be converted to float, drop it
-                        dropped_products.append({
-                            'id': product.get('id', 'unknown'),
-                            'name': product.get('name', 'unknown')[:50],
-                            'reason': 'invalid_percentile'
-                        })
+                        final_threshold = float(lower_bound)
+                        log.info(
+                            f"HEALTH_FILTER_ADAPT_FALLBACK | using_floor_threshold={final_threshold:.2f} | candidate_count_at_floor={last_candidate_count}"
+                        )
+                    except ValueError:
+                        final_threshold = 0.0
+
+                # Partition numeric products into accepted vs dropped using final_threshold
+                for product, val in zip(numeric_products, numeric_values):
+                    pid = product.get("id", "unknown")
+                    pname = product.get("name", "unknown")[:50]
+                    if val >= final_threshold:
+                        filtered_products.append(product)
+                    else:
+                        dropped_products.append(
+                            {
+                                "id": pid,
+                                "name": pname,
+                                "percentile": val,
+                                "reason": "below_threshold",
+                            }
+                        )
                         try:
-                            log.info(f"HEALTH_FILTER_DROP | product_id={product.get('id', 'unknown')} | name='{product.get('name', 'unknown')[:50]}' | reason=invalid_percentile | threshold={health_threshold}")
+                            log.info(
+                                f"HEALTH_FILTER_DROP | product_id={pid} | name='{pname}' | percentile={val:.1f} | threshold={final_threshold:.1f} | reason=below_threshold"
+                            )
                         except Exception:
                             pass
-            
+
+                try:
+                    log.info(
+                        f"HEALTH_FILTER_ADAPT_RESULT | base_threshold={base_threshold} | final_threshold={final_threshold:.2f} | accepted={len(filtered_products)} | min_products={min_products}"
+                    )
+                except Exception:
+                    pass
+
+            # Add non-numeric (missing/invalid) products to dropped list with appropriate reasons
+            for p in non_numeric_dropped:
+                dropped_products.append(p)
+                try:
+                    log.info(
+                        f"HEALTH_FILTER_DROP | product_id={p.get('id', 'unknown')} | name='{p.get('name', 'unknown')}' | reason={p.get('reason', 'non_numeric')} | threshold={final_threshold if numeric_products else base_threshold}"
+                    )
+                except Exception:
+                    pass
+
+            # If adaptive filter somehow produced zero accepted products, fall back to original products_data
             products_data = filtered_products
             filtered_count = len(products_data)
 
             # Log summary with rejected and accepted IDs
             try:
-                log.info(f"HEALTH_FILTER_SUMMARY | threshold={health_threshold} | original_count={original_count} | filtered_count={filtered_count} | dropped_count={len(dropped_products)}")
+                log.info(
+                    f"HEALTH_FILTER_SUMMARY | base_threshold={base_threshold} | final_threshold={final_threshold if numeric_products else base_threshold} | original_count={original_count} | filtered_count={filtered_count} | dropped_count={len(dropped_products)}"
+                )
 
                 # Log rejected IDs
                 if dropped_products:
-                    rejected_ids = [p['id'] for p in dropped_products]
+                    rejected_ids = [p["id"] for p in dropped_products]
                     log.info(f"HEALTH_FILTER_REJECTED | count={len(rejected_ids)} | ids={rejected_ids}")
 
                 # Log accepted IDs
                 if filtered_products:
-                    accepted_ids = [p.get('id', 'unknown') for p in filtered_products]
+                    accepted_ids = [p.get("id", "unknown") for p in filtered_products]
                     log.info(f"HEALTH_FILTER_ACCEPTED | count={len(accepted_ids)} | ids={accepted_ids}")
 
                 # Log dropped products details
                 if dropped_products:
-                    dropped_summary = [f"{p['id']}({p.get('percentile', 'N/A')})" for p in dropped_products]
+                    dropped_summary = [
+                        f"{p['id']}({p.get('percentile', 'N/A')})" for p in dropped_products
+                    ]
                     log.info(f"HEALTH_FILTER_DROPPED_DETAILS | products={dropped_summary}")
 
             except Exception:
                 pass
         
         if not products_data:
+            # At this point, either ES returned no products at all, or
+            # the health filter removed all options above the minimum threshold.
+            # We explicitly tell the user we couldn't find healthy options.
             return {
                 "response_type": "final_answer",
-                "summary_message": "I couldn't find any products matching your search. Please try different keywords.",
+                "summary_message": (
+                    "I couldn't find any healthy products that meet your request in this category. "
+                    "You can try changing the price range, category, or asking for a different type of product."
+                ),
                 "products": []
             }
         

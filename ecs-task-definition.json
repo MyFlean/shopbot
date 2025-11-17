@@ -101,6 +101,14 @@
         {
           "name": "USE_ASSESSMENT_FOR_ASK_ONLY",
           "value": "true"
+        },
+        {
+          "name": "ASK_ENABLE_BUDGET",
+          "value": "false"
+        },
+        {
+          "name": "HEALTH_THRESHOLD_PERCENTILE",
+          "value": "70"
         }
       ],
       "secrets": [

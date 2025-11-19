@@ -41,10 +41,21 @@ def create_app() -> Flask:
     app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key')
     
     # Enable CORS for frontend dev origins on /rs/* routes
-    allowed_origins = (os.getenv("CORS_ALLOW_ORIGINS") or "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    # Allow null origin (file:// URLs) and common dev origins for local development
+    cors_origins_env = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
+    if cors_origins_env:
+        allowed_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
+    else:
+        # Default: allow all origins for local development (including null origin)
+        allowed_origins = ["*"]
+    
     CORS(
         app,
-        resources={r"/rs/*": {"origins": [o.strip() for o in allowed_origins]}},
+        resources={r"/rs/*": {
+            "origins": allowed_origins,
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"],
+        }},
         supports_credentials=False,
     )
     
@@ -105,6 +116,14 @@ def create_app() -> Flask:
             app.register_blueprint(health_bp, url_prefix='/rs')
         except ImportError:
             log.info("REGISTER_ROUTES | health routes not found, using built-in health check")
+
+        # Register simple search endpoint
+        try:
+            from .routes.simple_search import bp as simple_search_bp
+            app.register_blueprint(simple_search_bp, url_prefix='/rs')
+            log.info("REGISTER_ROUTES_SUCCESS | simple search route registered (/rs/search)")
+        except ImportError as e:
+            log.error(f"REGISTER_ROUTES_ERROR | simple search route failed: {e}")
 
         # Register onboarding/meta flow routes
         try:

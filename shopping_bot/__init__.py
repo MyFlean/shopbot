@@ -117,13 +117,10 @@ def create_app() -> Flask:
         except ImportError:
             log.info("REGISTER_ROUTES | health routes not found, using built-in health check")
 
-        # Register simple search endpoint
-        try:
-            from .routes.simple_search import bp as simple_search_bp
-            app.register_blueprint(simple_search_bp, url_prefix='/rs')
-            log.info("REGISTER_ROUTES_SUCCESS | simple search route registered (/rs/search)")
-        except ImportError as e:
-            log.error(f"REGISTER_ROUTES_ERROR | simple search route failed: {e}")
+        # Register simple search endpoint (same pattern as chat - fail fast if there's an issue)
+        from .routes.simple_search import bp as simple_search_bp
+        app.register_blueprint(simple_search_bp, url_prefix='/rs')
+        log.info("REGISTER_ROUTES_SUCCESS | simple search route registered (/rs/search)")
 
         # Register onboarding/meta flow routes
         try:

@@ -191,6 +191,44 @@ def _get_current_user_text(ctx) -> str:
         pass
     return ""
 
+def _mentions_budget_or_price(text: str) -> bool:
+    """Check if the current user text explicitly mentions budget or price.
+    
+    Returns True only if the text contains explicit budget/price keywords or numeric price indicators.
+    This ensures we only apply budget filters when the user explicitly mentions budget/price.
+    """
+    if not text or not isinstance(text, str):
+        return False
+    
+    text_lower = text.lower().strip()
+    
+    # Budget/price keywords
+    budget_keywords = [
+        "budget", "price", "priced", "pricing", "cost", "costs", "costing",
+        "rupee", "rupees", "rs", "₹", "inr", "under", "below", "above", "over",
+        "cheap", "cheaper", "affordable", "expensive", "premium", "value",
+        "range", "ranges", "maximum", "minimum", "max", "min", "upto", "up to"
+    ]
+    
+    # Check for budget keywords
+    if any(keyword in text_lower for keyword in budget_keywords):
+        return True
+    
+    # Check for numeric patterns that suggest price (e.g., "100", "50-200", "under 100")
+    # Look for patterns like: number, number-number, number rupees, etc.
+    price_patterns = [
+        r'\d+\s*(rupee|rs|₹|inr)',
+        r'\d+\s*-\s*\d+',  # e.g., "50-200"
+        r'(under|below|above|over|upto|up to)\s*\d+',
+        r'\d+\s*(or less|or more|and below|and above)',
+    ]
+    
+    for pattern in price_patterns:
+        if re.search(pattern, text_lower):
+            return True
+    
+    return False
+
 def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Build ES query with improved brand handling and percentile-based ranking.
@@ -1683,6 +1721,10 @@ def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
 
     Critical: Always use CURRENT user text for follow-ups so we rebuild ES params
     from the latest delta rather than reusing stale query text from a prior turn.
+    
+    IMPORTANT: Budget is only extracted from session if the user explicitly mentions
+    budget/price in the current query. This prevents old budget values from persisting
+    when the user doesn't mention budget in their current query.
     """
     session = ctx.session or {}
     assessment = session.get("assessment", {})
@@ -1691,41 +1733,54 @@ def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
     base_query = (assessment or {}).get("original_query") or session.get("last_query", "")
     query = base_query or ""
     
-    # Extract budget
+    # Get current user text to check if budget is mentioned
+    current_text = _get_current_user_text(ctx)
+    
+    # Extract budget ONLY if user explicitly mentions budget/price in current query
+    # This prevents old budget values from persisting when user doesn't mention budget
     budget = session.get("budget", {})
     price_min = None
     price_max = None
     
-    if isinstance(budget, dict):
-        price_min = budget.get("min")
-        price_max = budget.get("max")
-    elif isinstance(budget, str):
-        # Try to parse budget string like "100-200" or "under 100"
-        budget_lower = budget.lower()
-        if "under" in budget_lower or "below" in budget_lower:
-            try:
-                price_max = float(re.search(r'\d+', budget).group())
-            except:
-                pass
-        elif "-" in budget:
-            try:
-                parts = budget.split("-")
-                price_min = float(parts[0].strip())
-                price_max = float(parts[1].strip())
-            except:
-                pass
-        else:
-            # Map gen-z style labels to INR ranges
-            label = budget_lower.strip()
-            if label in {"budget-friendly", "budget friendly", "budget", "cheap", "affordable"}:
-                price_min = None
-                price_max = 100.0
-            elif label in {"smart value", "value", "mid", "mid-range", "mid range"}:
-                price_min = 100.0
-                price_max = 200.0
-            elif label in {"premium", "expensive", "high-end", "high end"}:
-                price_min = 200.0
-                price_max = None
+    # Only extract budget from session if current query mentions budget/price
+    if _mentions_budget_or_price(current_text) or _mentions_budget_or_price(query):
+        if isinstance(budget, dict):
+            price_min = budget.get("min")
+            price_max = budget.get("max")
+        elif isinstance(budget, str):
+            # Try to parse budget string like "100-200" or "under 100"
+            budget_lower = budget.lower()
+            if "under" in budget_lower or "below" in budget_lower:
+                try:
+                    price_max = float(re.search(r'\d+', budget).group())
+                except:
+                    pass
+            elif "-" in budget:
+                try:
+                    parts = budget.split("-")
+                    price_min = float(parts[0].strip())
+                    price_max = float(parts[1].strip())
+                except:
+                    pass
+            else:
+                # Map gen-z style labels to INR ranges
+                label = budget_lower.strip()
+                if label in {"budget-friendly", "budget friendly", "budget", "cheap", "affordable"}:
+                    price_min = None
+                    price_max = 100.0
+                elif label in {"smart value", "value", "mid", "mid-range", "mid range"}:
+                    price_min = 100.0
+                    price_max = 200.0
+                elif label in {"premium", "expensive", "high-end", "high end"}:
+                    price_min = 200.0
+                    price_max = None
+    else:
+        # User didn't mention budget/price, so don't apply budget filters
+        # This ensures old budget values don't persist for new queries
+        try:
+            print(f"DEBUG: BUDGET_NOT_MENTIONED | current_text='{current_text[:50]}' | query='{query[:50]}' | skipping_budget_extraction")
+        except Exception:
+            pass
     
     # Determine product_intent from context
     product_intent = str(session.get("product_intent") or "show_me_options")

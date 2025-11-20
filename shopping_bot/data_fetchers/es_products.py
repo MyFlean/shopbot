@@ -1400,6 +1400,25 @@ def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
             
         products.append(product)
     
+    # Re-rank products by flean_percentile (descending: best at top, worst at bottom)
+    # Products with None flean_percentile are placed at the end
+    def _get_sort_key(product: Dict[str, Any]) -> float:
+        """Get sort key for flean_percentile. None values go to the end."""
+        flean = product.get("flean_percentile")
+        if flean is None:
+            return -1.0  # Put None values at the end (after all numeric values)
+        try:
+            return float(flean)
+        except (TypeError, ValueError):
+            return -1.0
+    
+    # Sort by flean_percentile descending (highest first)
+    products.sort(key=_get_sort_key, reverse=True)
+    
+    # Update rank field after re-ranking
+    for new_rank, product in enumerate(products, 1):
+        product["rank"] = new_rank
+    
     return {
         "meta": {
             "total_hits": total,

@@ -344,7 +344,7 @@ def _build_response(
 # API Endpoint
 # ============================================================================
 
-@bp.post("/api/v1/products/search")
+@bp.route("/api/v1/products/search", methods=["POST"])
 def product_search() -> tuple[Dict[str, Any], int]:
     """
     Product Search API
@@ -500,7 +500,7 @@ def product_search() -> tuple[Dict[str, Any], int]:
 # Health Check for this Blueprint
 # ============================================================================
 
-@bp.get("/api/v1/products/health")
+@bp.route("/api/v1/products/health", methods=["GET"])
 def product_search_health() -> tuple[Dict[str, Any], int]:
     """Health check for the product search API."""
     try:

@@ -104,7 +104,7 @@ def _extract_feedback(message: str) -> tuple[str | None, str]:
 # ─────────────────────────────────────────────────────────────
 # Test endpoint
 # ─────────────────────────────────────────────────────────────
-@bp.get("/chat/test")
+@bp.route("/chat/test", methods=["GET"])
 def chat_test():
     return {"test": "working", "architecture": "simplified", "features": ["4_intent_classification", "ux_generation"]}
 
@@ -112,7 +112,7 @@ def chat_test():
 # ─────────────────────────────────────────────────────────────
 # Runtime flags endpoint (debug)
 # ─────────────────────────────────────────────────────────────
-@bp.get("/chat/flags")
+@bp.route("/chat/flags", methods=["GET"])
 def chat_flags() -> Response:
     try:
         _cfg_now = get_config()
@@ -136,7 +136,7 @@ def chat_flags() -> Response:
 # ─────────────────────────────────────────────────────────────
 # Main chat endpoint
 # ─────────────────────────────────────────────────────────────
-@bp.post("/chat")
+@bp.route("/chat", methods=["POST"])
 async def chat() -> Response:
     """
     Simplified chat endpoint using the new architecture.
@@ -682,7 +682,7 @@ async def _handle_cli_fallback(bot_resp, ctx: UserContext, user_id: str, channel
 # ─────────────────────────────────────────────────────────────
 # Health and debug endpoints
 # ─────────────────────────────────────────────────────────────
-@bp.get("/chat/health")
+@bp.route("/chat/health", methods=["GET"])
 def chat_health() -> Response:
     """Health check for chat service."""
     try:
@@ -718,7 +718,7 @@ def chat_health() -> Response:
         return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
 
-@bp.get("/chat/debug/<user_id>")
+@bp.route("/chat/debug/<user_id>", methods=["GET"])
 def debug_user_context(user_id: str) -> Response:
     """Get user context debug information."""
     try:
@@ -759,7 +759,7 @@ def debug_user_context(user_id: str) -> Response:
 # ─────────────────────────────────────────────────────────────
 # UX System testing endpoints
 # ─────────────────────────────────────────────────────────────
-@bp.post("/chat/test_ux")
+@bp.route("/chat/test_ux", methods=["POST"])
 async def test_ux_system() -> Response:
     """Test the UX generation system with a sample query."""
     try:

@@ -66,7 +66,7 @@ def _parse_es_product_to_payload(es_product: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
-@bp.post("/search")
+@bp.route("/search", methods=["POST"])
 def simple_search() -> tuple[Dict[str, Any], int]:
     """
     Simple search endpoint that takes a query and returns enriched product information.

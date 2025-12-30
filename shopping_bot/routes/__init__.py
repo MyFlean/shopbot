@@ -30,6 +30,9 @@ def register_routes(app: Flask) -> None:
             print(f"DEBUG: Module {name} bp = {bp}")
             if isinstance(bp, Blueprint):
                 app.register_blueprint(bp)
-                print(f"DEBUG: Registered blueprint {name}")
+                if name == "product_search":
+                    print(f"DEBUG: ✅ PRODUCT_SEARCH REGISTERED with {len(bp.deferred_functions)} routes")
+                else:
+                    print(f"DEBUG: Registered blueprint {name}")
         except Exception as e:
             print(f"DEBUG: Failed to import {name}: {e}")

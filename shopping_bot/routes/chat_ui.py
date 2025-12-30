@@ -9,7 +9,7 @@ from flask import Blueprint, Response
 bp = Blueprint("chat_ui", __name__)
 
 
-@bp.get("/chat/ui")
+@bp.route("/chat/ui", methods=["GET"])
 def chat_ui() -> Response:
     html = _build_html_page()
     return Response(html, mimetype="text/html; charset=utf-8")

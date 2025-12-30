@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 bp = Blueprint("health", __name__)
 
 
-@bp.get("/health")
+@bp.route("/health", methods=["GET"])
 def health_check() -> tuple[Dict[str, Any], int]:
     """Health check endpoint for ALB routing (with /rs prefix from blueprint)."""
     try:

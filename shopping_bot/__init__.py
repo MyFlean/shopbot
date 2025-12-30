@@ -125,6 +125,14 @@ def create_app() -> Flask:
         except ImportError as e:
             log.error(f"REGISTER_ROUTES_ERROR | simple search route failed: {e}")
 
+        # Register product search API for Flutter app
+        try:
+            from .routes.product_search import bp as product_search_bp
+            app.register_blueprint(product_search_bp, url_prefix='/rs')
+            log.info("REGISTER_ROUTES_SUCCESS | product search API registered (/rs/api/v1/products/)")
+        except Exception as e:
+            log.error(f"REGISTER_ROUTES_ERROR | product search API failed: {e}")
+
         # Register onboarding/meta flow routes
         try:
             from .routes.onboarding_flow import bp as flow_bp

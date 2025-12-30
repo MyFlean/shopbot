@@ -124,8 +124,8 @@ def create_app() -> Flask:
 
         # Register product search API for Flutter app
         from .routes.product_search import bp as product_search_bp
-        app.register_blueprint(product_search_bp)
-        log.info("REGISTER_ROUTES_SUCCESS | product search API registered (/api/v1/products/)")
+        app.register_blueprint(product_search_bp, url_prefix='/rs')
+        log.info("REGISTER_ROUTES_SUCCESS | product search API registered (/rs/api/v1/products/)")
 
         # Register onboarding/meta flow routes
         try:

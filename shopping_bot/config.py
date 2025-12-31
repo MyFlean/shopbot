@@ -22,17 +22,17 @@ class BaseConfig:
     REDIS_TTL_SECONDS: int = int(os.getenv("REDIS_TTL_SECONDS", 3600))
 
     # Anthropic - MUST be set via environment variable
-    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-    
-    def __post_init__(self):
-        """Validate critical settings."""
-        if not self.ANTHROPIC_API_KEY:
-            raise ValueError("ANTHROPIC_API_KEY environment variable is required")
-        if not self.ANTHROPIC_API_KEY.startswith("sk-ant-"):
-            raise ValueError("ANTHROPIC_API_KEY appears to be invalid (should start with 'sk-ant-')")
+    # Use property to read from environment at access time, not class definition time
+    # This is critical for Lambda where secrets are loaded after module import
+    @property
+    def ANTHROPIC_API_KEY(self):
+        """Read ANTHROPIC_API_KEY from environment at access time"""
+        return os.getenv("ANTHROPIC_API_KEY", "")
 
     # LLM
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "claude-3-5-sonnet-20241022")
+    # Default to claude-sonnet-4-20250514 (newer model) or claude-3-5-sonnet-20250219 (fallback)
+    # claude-3-5-sonnet-20241022 is deprecated
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "claude-sonnet-4-20250514")
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "1000"))
 
@@ -79,6 +79,14 @@ class ProductionConfig(BaseConfig):
     REDIS_TTL_SECONDS: int = int(os.getenv("REDIS_TTL_SECONDS", "900"))
 
 
+class LambdaConfig(ProductionConfig):
+    """Lambda-specific configuration."""
+    DEBUG: bool = False
+    # Lambda uses /tmp for writable filesystem (handled in __init__.py)
+    # Redis connection is lazy (initialized on first access)
+    # This prevents cold start timeouts
+
+
 class TestingConfig(BaseConfig):
     TESTING: bool = True
     REDIS_DB: int = 15
@@ -90,11 +98,26 @@ def get_config() -> BaseConfig:
     mapping = {
         "development": DevelopmentConfig,
         "production": ProductionConfig,
+        "lambda": LambdaConfig,
         "testing": TestingConfig,
         "test": TestingConfig,
     }
     config_class = mapping.get(env, DevelopmentConfig)
     cfg = config_class()
+    
+    # Validate ANTHROPIC_API_KEY after config is created (secrets may be loaded later in Lambda)
+    # Only validate if we're not in Lambda or if the key is actually set
+    if not os.getenv('AWS_LAMBDA_FUNCTION_NAME') or cfg.ANTHROPIC_API_KEY:
+        try:
+            # Access via property to trigger validation
+            api_key = cfg.ANTHROPIC_API_KEY
+            if api_key and not api_key.startswith("sk-ant-"):
+                raise ValueError("ANTHROPIC_API_KEY appears to be invalid (should start with 'sk-ant-')")
+        except ValueError:
+            # In Lambda, we might not have secrets loaded yet, so don't fail here
+            # The error will be caught when LLMService tries to initialize
+            if not os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
+                raise
 
     # Optional local override to emulate production flag behavior exactly.
     # Enable by running with: LOCAL_USE_PROD_FLAGS=true
@@ -109,7 +132,7 @@ def get_config() -> BaseConfig:
             cfg.USE_CONVERSATION_AWARE_CLASSIFIER = True
 
             # Model/token settings to match prod profile
-            cfg.LLM_MODEL = os.getenv("LLM_MODEL", "claude-3-5-sonnet-20241022")
+            cfg.LLM_MODEL = os.getenv("LLM_MODEL", "claude-sonnet-4-5-20250929")
             cfg.LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1000"))
 
             # TTL/logging if needed

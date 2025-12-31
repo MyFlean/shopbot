@@ -17,6 +17,11 @@ pytest-asyncio>=0.23       # run async tests
 gunicorn>=22.0             # WSGI (sync) – good enough for simple deploys
 hypercorn>=0.16            # ASGI (async) – use if you need full async throughput
 
+# ── Lambda deployment ─────────────────────────────────────
+serverless-wsgi==3.1.0    # WSGI adapter for AWS Lambda (matches UserService)
+aws-lambda-powertools>=2.40.0  # AWS Lambda Powertools for logging, tracing, metrics
+aws-xray-sdk>=2.14.0      # AWS X-Ray SDK for distributed tracing
+boto3>=1.34.0             # AWS SDK for Secrets Manager access
 
 cryptography
 requests

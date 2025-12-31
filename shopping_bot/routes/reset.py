@@ -28,7 +28,13 @@ def reset_session() -> tuple[Dict[str, Any], int]:
         if not session_id:
             return jsonify({"error": "Missing session_id"}), 400
 
-        ctx_mgr = current_app.extensions["ctx_mgr"]
+        # Handle lazy initialization in Lambda
+        ctx_mgr = current_app.extensions.get("ctx_mgr")
+        if ctx_mgr is None and "_get_or_init_redis" in current_app.extensions:
+            ctx_mgr = current_app.extensions["_get_or_init_redis"]()
+        elif ctx_mgr is None:
+            return jsonify({"error": "Redis not initialized"}), 500
+
         ctx_mgr.delete_session(session_id)
 
         return jsonify({"message": "Session reset successfully"}), 200

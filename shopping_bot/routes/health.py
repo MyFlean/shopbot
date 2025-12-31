@@ -24,7 +24,13 @@ bp = Blueprint("health", __name__)
 def health_check() -> tuple[Dict[str, Any], int]:
     """Health check endpoint for ALB routing (with /rs prefix from blueprint)."""
     try:
-        ctx_mgr = current_app.extensions["ctx_mgr"]  # RedisContextManager
+        # Handle lazy initialization in Lambda
+        ctx_mgr = current_app.extensions.get("ctx_mgr")
+        if ctx_mgr is None and "_get_or_init_redis" in current_app.extensions:
+            ctx_mgr = current_app.extensions["_get_or_init_redis"]()
+        elif ctx_mgr is None:
+            return jsonify({"status": "unhealthy", "redis": "not_initialized", "service": "shopbot"}), 500
+        
         ctx_mgr.redis.ping()
         return jsonify({"status": "healthy", "redis": "connected", "service": "shopbot"}), 200
     except Exception as exc:  # noqa: BLE001

@@ -401,15 +401,15 @@ def _coerce_product_id(val) -> str:
 # ─────────────────────────────────────────────────────────────
 # Unified Flow request handler
 # ─────────────────────────────────────────────────────────────
-@bp.post("/flow/onboarding")
+@bp.route("/flow/onboarding", methods=["POST"])
 async def onboarding_flow():
     return await _handle_flow_request("onboarding")
 
-@bp.post("/flow/products")
+@bp.route("/flow/products", methods=["POST"])
 async def product_flow():
     return await _handle_flow_request("products")
 
-@bp.post("/flow/product_recommendations")
+@bp.route("/flow/product_recommendations", methods=["POST"])
 async def product_recommendations_flow():
     return await _handle_flow_request("product_recommendations")
 
@@ -479,19 +479,19 @@ async def _handle_flow_request(flow_type: str):
 # ─────────────────────────────────────────────────────────────
 # Health checks
 # ─────────────────────────────────────────────────────────────
-@bp.get("/flow/health")
+@bp.route("/flow/health", methods=["GET"])
 def health_check():
     return jsonify({"status": "healthy", "endpoints": ["onboarding", "products", "product_recommendations"]}), 200
 
-@bp.get("/flow/onboarding/health")
+@bp.route("/flow/onboarding/health", methods=["GET"])
 def onboarding_health():
     return jsonify({"status": "healthy", "flow": "onboarding"}), 200
 
-@bp.get("/flow/products/health")
+@bp.route("/flow/products/health", methods=["GET"])
 def products_health():
     return jsonify({"status": "healthy", "flow": "products"}), 200
 
-@bp.get("/flow/product_recommendations/health")
+@bp.route("/flow/product_recommendations/health", methods=["GET"])
 def product_recommendations_health():
     return jsonify({"status": "healthy", "flow": "product_recommendations"}), 200
 

@@ -201,6 +201,11 @@ def create_app(config_name: str = 'production') -> Flask:
         app.register_blueprint(simple_search_bp, url_prefix='/rs')
         log.info("REGISTER_ROUTES_SUCCESS | simple search route registered (/rs/search)")
 
+        # Register product search API for Flutter app
+        from .routes.product_search import bp as product_search_bp
+        app.register_blueprint(product_search_bp, url_prefix='/rs')
+        log.info("REGISTER_ROUTES_SUCCESS | product search API registered (/rs/api/v1/products/)")
+
         # Register onboarding/meta flow routes
         try:
             from .routes.onboarding_flow import bp as flow_bp
@@ -236,7 +241,7 @@ def create_app(config_name: str = 'production') -> Flask:
         raise RuntimeError(f"Failed to register routes: {e}")
 
 
-    @app.get("/__diagnostics/<user_id>")
+    @app.route("/__diagnostics/<user_id>", methods=["GET"])
     def user_diagnostics(user_id: str):
         """Get user diagnostics for debugging."""
         try:

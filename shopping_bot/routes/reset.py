@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 bp = Blueprint("reset", __name__)
 
 
-@bp.post("/reset")
+@bp.route("/reset", methods=["POST"])
 def reset_session() -> tuple[Dict[str, Any], int]:
     try:
         data: Dict[str, str] = request.get_json(force=True)  # type: ignore[assignment]

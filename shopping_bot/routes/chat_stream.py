@@ -32,7 +32,7 @@ def _heartbeat_event() -> str:
     return _sse_event("heartbeat", {"ts": datetime.utcnow().isoformat() + "Z"})
 
 
-@bp.post("/chat/stream")
+@bp.route("/chat/stream", methods=["POST"])
 def chat_stream() -> Response:
     cfg = get_config()
     if not getattr(cfg, "ENABLE_STREAMING", False):

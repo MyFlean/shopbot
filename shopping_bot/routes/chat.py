@@ -209,11 +209,26 @@ async def chat() -> Response:
         # 2. Get dependencies and load context
         # ─────────────────────────────────────────────────────────────
         try:
-            ctx_mgr = current_app.extensions["ctx_mgr"]
-            bot_core = current_app.extensions["bot_core"]
+            # In Lambda, components are initialized lazily via before_request
+            # But we also handle the case where they might still be None
+            ctx_mgr = current_app.extensions.get("ctx_mgr")
+            bot_core = current_app.extensions.get("bot_core")
+            
+            # If in Lambda and not initialized yet, initialize now
+            if ctx_mgr is None and "_get_or_init_redis" in current_app.extensions:
+                ctx_mgr = current_app.extensions["_get_or_init_redis"]()
+            if bot_core is None and "_get_or_init_bot_core" in current_app.extensions:
+                bot_core = current_app.extensions["_get_or_init_bot_core"]()
+            
+            if not ctx_mgr or not bot_core:
+                log.error(f"CHAT_MISSING_EXTENSION | ctx_mgr={bool(ctx_mgr)}, bot_core={bool(bot_core)}")
+                return jsonify({"error": "Required service not available"}), 500
         except KeyError as e:
             log.error(f"CHAT_MISSING_EXTENSION | extension={e}")
             return jsonify({"error": f"Required service not available: {e}"}), 500
+        except Exception as e:
+            log.error(f"CHAT_INIT_ERROR | error={e}", exc_info=True)
+            return jsonify({"error": f"Failed to initialize services: {e}"}), 500
 
         if not bot_core:
             log.error("CHAT_NO_BOT_CORE | bot core not available")
@@ -686,8 +701,20 @@ async def _handle_cli_fallback(bot_resp, ctx: UserContext, user_id: str, channel
 def chat_health() -> Response:
     """Health check for chat service."""
     try:
+        # Handle lazy initialization in Lambda
         ctx_mgr = current_app.extensions.get("ctx_mgr")
+        if ctx_mgr is None and "_get_or_init_redis" in current_app.extensions:
+            try:
+                ctx_mgr = current_app.extensions["_get_or_init_redis"]()
+            except Exception as e:
+                log.warning(f"Failed to initialize Redis in health check: {e}")
+        
         bot_core = current_app.extensions.get("bot_core")
+        if bot_core is None and "_get_or_init_bot_core" in current_app.extensions:
+            try:
+                bot_core = current_app.extensions["_get_or_init_bot_core"]()
+            except Exception as e:
+                log.warning(f"Failed to initialize bot_core in health check: {e}")
 
         health_status = {
             "status": "healthy",

@@ -11,12 +11,9 @@ from shopping_bot import create_app
 from aws_lambda_powertools import Logger, Tracer, Metrics
 from aws_lambda_powertools.utilities.typing import LambdaContext
 
-# Initialize AWS Lambda Powertools with readable text format
-logger = Logger(
-    service="shopbot-service",
-    logger_formatter="text",  # Use text format instead of JSON for better readability
-    log_level="INFO"
-)
+# Initialize AWS Lambda Powertools
+# Use default JSON format (logger_formatter parameter removed for compatibility)
+logger = Logger(service="shopbot-service")
 tracer = Tracer(service="shopbot-service")
 metrics = Metrics(service="shopbot-service", namespace="ShopbotService")
 

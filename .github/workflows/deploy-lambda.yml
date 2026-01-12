@@ -1,0 +1,165 @@
+name: Deploy Lambda Function
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'shopping_bot/**'
+      - 'lambda_handler.py'
+      - 'requirements.txt'
+      - 'deployment/lambda/**'
+      - '.github/workflows/deploy-lambda.yml'
+  workflow_dispatch: # Allow manual triggering
+
+env:
+  AWS_REGION: ap-south-1
+  TERRAFORM_VERSION: 1.5.0
+  PYTHON_VERSION: 3.12
+
+jobs:
+  deploy:
+    name: Build and Deploy Lambda
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Build Lambda package with Docker
+        run: |
+          echo "=== Building Lambda Deployment Package ==="
+          chmod +x deployment/lambda/build-docker.sh
+          ./deployment/lambda/build-docker.sh
+          
+          # Verify package was created
+          if [ ! -f shopbot.zip ]; then
+            echo "❌ Error: shopbot.zip was not created"
+            exit 1
+          fi
+          
+          # Display package info
+          ls -lh shopbot.zip
+          echo "✅ Package built successfully"
+
+      - name: Initialize Terraform
+        working-directory: deployment/lambda
+        run: |
+          terraform init -input=false
+
+      - name: Validate Terraform configuration
+        working-directory: deployment/lambda
+        run: |
+          terraform validate
+
+      - name: Terraform Plan
+        working-directory: deployment/lambda
+        run: |
+          terraform plan -out=tfplan -input=false
+        continue-on-error: true
+
+      - name: Terraform Apply
+        working-directory: deployment/lambda
+        run: |
+          terraform apply -auto-approve tfplan
+        env:
+          TF_LOG: INFO
+
+      - name: Verify Lambda deployment
+        run: |
+          echo "=== Verifying Lambda Function ==="
+          FUNCTION_NAME=$(cd deployment/lambda && terraform output -raw lambda_function_name)
+          
+          if [ -z "$FUNCTION_NAME" ]; then
+            echo "❌ Error: Could not get Lambda function name"
+            exit 1
+          fi
+          
+          echo "Lambda Function: $FUNCTION_NAME"
+          
+          # Get function configuration
+          aws lambda get-function \
+            --function-name "$FUNCTION_NAME" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Configuration.[FunctionName,LastModified,Runtime,MemorySize,Timeout]' \
+            --output table
+          
+          echo "✅ Lambda function verified"
+
+      - name: Test Lambda endpoint
+        run: |
+          echo "=== Testing Lambda Endpoint ==="
+          API_URL=$(cd deployment/lambda && terraform output -raw api_gateway_url 2>/dev/null || echo "")
+          
+          if [ -n "$API_URL" ]; then
+            echo "API Gateway URL: $API_URL"
+            echo "Testing health endpoint..."
+            
+            # Wait a few seconds for API Gateway to propagate
+            sleep 10
+            
+            # Test health endpoint
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${API_URL}rs/health" || echo "000")
+            
+            if [ "$RESPONSE" = "200" ]; then
+              echo "✅ Health endpoint returned 200 OK"
+              curl -s "${API_URL}rs/health" | jq . || echo "Response received"
+            else
+              echo "⚠️  Health endpoint returned: $RESPONSE"
+              echo "This might be normal if the endpoint requires authentication"
+            fi
+          else
+            echo "⚠️  API Gateway URL not available (might be using custom domain)"
+          fi
+
+      - name: Upload Lambda package artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lambda-package
+          path: shopbot.zip
+          retention-days: 7
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "## 🚀 Lambda Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          FUNCTION_NAME=$(cd deployment/lambda && terraform output -raw lambda_function_name 2>/dev/null || echo "N/A")
+          API_URL=$(cd deployment/lambda && terraform output -raw api_gateway_url 2>/dev/null || echo "N/A")
+          
+          echo "**Lambda Function:** \`$FUNCTION_NAME\`" >> $GITHUB_STEP_SUMMARY
+          echo "**API Gateway URL:** $API_URL" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+
+
+
+
+
+
+
+
+

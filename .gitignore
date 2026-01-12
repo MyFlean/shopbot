@@ -93,3 +93,14 @@ ECS_DEPLOYMENT_GUIDE.md
 GITHUB_DEPLOYMENT.md
 QUICK_START_GITHUB.md
 SECRETS_MANAGER_GUIDE.md
+
+# Lambda build artifacts
+shopbot.zip
+*.zip
+
+# Terraform state files
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform/
+.terraform.lock.hcl

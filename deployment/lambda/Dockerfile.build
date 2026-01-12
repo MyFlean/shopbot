@@ -1,0 +1,38 @@
+# Dockerfile for building Lambda package in Linux environment
+FROM public.ecr.aws/lambda/python:3.12
+
+# Install zip utility (Lambda base image uses microdnf)
+RUN microdnf install -y zip findutils && microdnf clean all
+
+# Set working directory
+WORKDIR /build
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install dependencies to a temporary directory
+RUN pip install --no-cache-dir -r requirements.txt -t /build/package/
+
+# Copy application code
+COPY lambda_handler.py /build/package/
+COPY run.py /build/package/
+COPY shopping_bot/ /build/package/shopping_bot/
+
+# Clean up unnecessary files using Python (find command not available in minimal image)
+RUN python3.12 -c "import os, shutil; [shutil.rmtree(os.path.join(root, d)) for root, dirs, files in os.walk('/build/package') for d in dirs if d in ['__pycache__', '*.dist-info', '*.egg-info'] or (d == 'tests' and 'shopping_bot' in root)]" 2>/dev/null || true && \
+    python3.12 -c "import os; [os.remove(os.path.join(root, f)) for root, dirs, files in os.walk('/build/package') for f in files if f.endswith('.pyc') or ('test' in f and f.endswith('.py') and 'shopping_bot' in root)]" 2>/dev/null || true
+
+# Create zip file
+WORKDIR /build/package
+RUN zip -r /build/shopbot.zip . -q
+
+# The zip file will be copied out via volume mount
+
+
+
+
+
+
+
+
+

@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import time
 from datetime import datetime
 
 from flask import Flask
@@ -96,15 +97,24 @@ def create_app(config_name: str = 'production') -> Flask:
     Args:
         config_name: Configuration name ('lambda', 'production', 'development', etc.)
     """
+    create_app_start = time.time()
+    log.info("CREATE_APP_START", extra={"config_name": config_name, "timestamp": create_app_start})
     
+    flask_start = time.time()
     # Lambda uses /tmp for writable filesystem
     if config_name == 'lambda':
         app = Flask(__name__, instance_path=tempfile.gettempdir())
     else:
         app = Flask(__name__)
+    flask_time = time.time() - flask_start
+    log.info("FLASK_APP_CREATED", extra={"duration_ms": flask_time * 1000})
     
+    config_start = time.time()
     app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key')
+    config_time = time.time() - config_start
+    log.info("APP_CONFIG_SET", extra={"duration_ms": config_time * 1000})
     
+    cors_start = time.time()
     # Enable CORS for frontend dev origins on /rs/* routes
     # Allow null origin (file:// URLs) and common dev origins for local development
     cors_origins_env = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
@@ -123,6 +133,8 @@ def create_app(config_name: str = 'production') -> Flask:
         }},
         supports_credentials=False,
     )
+    cors_time = time.time() - cors_start
+    log.info("CORS_CONFIGURED", extra={"duration_ms": cors_time * 1000})
     
     # ────────────────────────────────────────────────────────
     # STEP 1: Initialize Redis (lazy in Lambda to avoid cold start timeouts)
@@ -182,62 +194,107 @@ def create_app(config_name: str = 'production') -> Flask:
     # ────────────────────────────────────────────────────────
     # STEP 3: Register Routes
     # ────────────────────────────────────────────────────────
+    routes_start = time.time()
     try:
-        log.info("REGISTER_ROUTES | registering simplified routes")
+        log.info("REGISTER_ROUTES_START | registering simplified routes")
         
         # Import and register the simplified chat routes
+        chat_import_start = time.time()
         from .routes.chat import bp as chat_bp
+        chat_import_time = time.time() - chat_import_start
+        log.info("ROUTE_IMPORT", extra={"route": "chat", "duration_ms": chat_import_time * 1000})
         app.register_blueprint(chat_bp, url_prefix='/rs')
         
         # Import other essential routes
+        health_import_start = time.time()
         try:
             from .routes.health import bp as health_bp
+            health_import_time = time.time() - health_import_start
+            log.info("ROUTE_IMPORT", extra={"route": "health", "duration_ms": health_import_time * 1000})
             app.register_blueprint(health_bp, url_prefix='/rs')
-        except ImportError:
-            log.info("REGISTER_ROUTES | health routes not found, using built-in health check")
+        except ImportError as e:
+            health_import_time = time.time() - health_import_start
+            log.info("REGISTER_ROUTES | health routes not found", extra={
+                "duration_ms": health_import_time * 1000,
+                "error": str(e)
+            })
 
         # Register simple search endpoint (same pattern as chat - fail fast if there's an issue)
+        simple_search_import_start = time.time()
         from .routes.simple_search import bp as simple_search_bp
+        simple_search_import_time = time.time() - simple_search_import_start
+        log.info("ROUTE_IMPORT", extra={"route": "simple_search", "duration_ms": simple_search_import_time * 1000})
         app.register_blueprint(simple_search_bp, url_prefix='/rs')
         log.info("REGISTER_ROUTES_SUCCESS | simple search route registered (/rs/search)")
 
         # Register product search API for Flutter app
+        product_search_import_start = time.time()
         from .routes.product_search import bp as product_search_bp
+        product_search_import_time = time.time() - product_search_import_start
+        log.info("ROUTE_IMPORT", extra={"route": "product_search", "duration_ms": product_search_import_time * 1000})
         app.register_blueprint(product_search_bp, url_prefix='/rs')
         log.info("REGISTER_ROUTES_SUCCESS | product search API registered (/rs/api/v1/products/)")
 
         # Register onboarding/meta flow routes
+        flow_import_start = time.time()
         try:
             from .routes.onboarding_flow import bp as flow_bp
+            flow_import_time = time.time() - flow_import_start
+            log.info("ROUTE_IMPORT", extra={"route": "onboarding_flow", "duration_ms": flow_import_time * 1000})
             app.register_blueprint(flow_bp)
             log.info("REGISTER_ROUTES_SUCCESS | onboarding/meta flow routes registered")
         except Exception as e:
-            log.error(f"REGISTER_ROUTES_ERROR | onboarding/meta flow routes failed: {e}")
+            flow_import_time = time.time() - flow_import_start
+            log.error("REGISTER_ROUTES_ERROR | onboarding/meta flow routes failed", extra={
+                "duration_ms": flow_import_time * 1000,
+                "error": str(e)
+            })
         
         # Conditionally register streaming routes (SSE)
+        stream_import_start = time.time()
         try:
             from .routes.chat_stream import bp as chat_stream_bp
             from .config import get_config as _get_cfg
+            stream_import_time = time.time() - stream_import_start
+            log.info("ROUTE_IMPORT", extra={"route": "chat_stream", "duration_ms": stream_import_time * 1000})
             if getattr(_get_cfg(), "ENABLE_STREAMING", False):
                 app.register_blueprint(chat_stream_bp, url_prefix='/rs')
                 log.info("REGISTER_ROUTES_SUCCESS | streaming routes registered (ENABLE_STREAMING=true)")
             else:
                 log.info("REGISTER_ROUTES | streaming disabled (ENABLE_STREAMING=false)")
         except Exception as e:
-            log.error(f"REGISTER_ROUTES_ERROR | streaming routes failed: {e}")
+            stream_import_time = time.time() - stream_import_start
+            log.error("REGISTER_ROUTES_ERROR | streaming routes failed", extra={
+                "duration_ms": stream_import_time * 1000,
+                "error": str(e)
+            })
 
         # Register simple in-app chat UI page
+        chat_ui_import_start = time.time()
         try:
             from .routes.chat_ui import bp as chat_ui_bp
+            chat_ui_import_time = time.time() - chat_ui_import_start
+            log.info("ROUTE_IMPORT", extra={"route": "chat_ui", "duration_ms": chat_ui_import_time * 1000})
             app.register_blueprint(chat_ui_bp)
             log.info("REGISTER_ROUTES_SUCCESS | chat UI route registered (/chat/ui)")
         except Exception as e:
-            log.error(f"REGISTER_ROUTES_ERROR | chat UI failed: {e}")
+            chat_ui_import_time = time.time() - chat_ui_import_start
+            log.error("REGISTER_ROUTES_ERROR | chat UI failed", extra={
+                "duration_ms": chat_ui_import_time * 1000,
+                "error": str(e)
+            })
 
-        log.info("REGISTER_ROUTES_SUCCESS | simplified routes registered")
+        routes_time = time.time() - routes_start
+        log.info("REGISTER_ROUTES_SUCCESS | simplified routes registered", extra={
+            "total_duration_ms": routes_time * 1000
+        })
         
     except Exception as e:
-        log.error(f"REGISTER_ROUTES_ERROR | error={e}", exc_info=True)
+        routes_time = time.time() - routes_start
+        log.error("REGISTER_ROUTES_ERROR", extra={
+            "error": str(e),
+            "duration_ms": routes_time * 1000
+        }, exc_info=True)
         raise RuntimeError(f"Failed to register routes: {e}")
 
 

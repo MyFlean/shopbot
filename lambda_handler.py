@@ -31,9 +31,10 @@ _secrets_load_error = None
 
 
 def get_secrets():
-    """Retrieve secrets from AWS Secrets Manager"""
+    """Retrieve secrets from AWS Secrets Manager using standard endpoint (resolves to public endpoint)"""
     start_time = time.time()
     secret_name = os.getenv('SECRETS_MANAGER_SECRET', 'flean-services/shopbot')
+    redis_secret_name = os.getenv('REDIS_SECRET_NAME', 'flean-services/redis')
     region = os.getenv('AWS_REGION', 'ap-south-1')
     
     logger.info("SECRETS_LOAD_START", extra={"secret_name": secret_name, "region": region})
@@ -43,37 +44,82 @@ def get_secrets():
         # Configure client with shorter timeout and retries
         from botocore.config import Config
         config = Config(
-            connect_timeout=5,
-            read_timeout=10,
-            retries={'max_attempts': 2, 'mode': 'standard'}
+            connect_timeout=3,
+            read_timeout=3,
+            retries={'max_attempts': 1}
         )
+        # Use standard endpoint - Lambda outside VPC uses public endpoint automatically
         client = boto3.client('secretsmanager', region_name=region, config=config)
         client_time = time.time() - client_start
         logger.info("SECRETS_CLIENT_CREATED", extra={"duration_ms": client_time * 1000})
         
-        get_start = time.time()
-        response = client.get_secret_value(SecretId=secret_name)
-        get_time = time.time() - get_start
-        logger.info("SECRETS_GET_COMPLETE", extra={"duration_ms": get_time * 1000})
+        # Load shopbot secrets (required)
+        try:
+            get_start = time.time()
+            response = client.get_secret_value(SecretId=secret_name)
+            get_time = time.time() - get_start
+            logger.info("SECRETS_GET_COMPLETE", extra={"duration_ms": get_time * 1000})
+            
+            parse_start = time.time()
+            secret = json.loads(response['SecretString'])
+            parse_time = time.time() - parse_start
+            
+            # Set environment variables for Flask app
+            env_start = time.time()
+            for key, value in secret.items():
+                if value:
+                    # Map secret keys to environment variable names
+                    env_key = key.upper()
+                    # Handle special mappings
+                    if key == "ES_API_KEY":
+                        # Also set ELASTIC_API_KEY for backward compatibility
+                        os.environ["ES_API_KEY"] = str(value)
+                        os.environ["ELASTIC_API_KEY"] = str(value)
+                    else:
+                        os.environ[env_key] = str(value)
+            env_time = time.time() - env_start
+            
+            logger.info("Shopbot secrets retrieved successfully from {}".format(secret_name))
+        except Exception as ui_error:
+            logger.error("Failed to load shopbot secrets: {}: {}".format(type(ui_error).__name__, str(ui_error)))
+            raise  # Re-raise as shopbot secrets are critical
         
-        parse_start = time.time()
-        secret = json.loads(response['SecretString'])
-        parse_time = time.time() - parse_start
-        
-        # Set environment variables for Flask app
-        env_start = time.time()
-        for key, value in secret.items():
-            if value:
-                # Map secret keys to environment variable names
-                env_key = key.upper()
-                # Handle special mappings
-                if key == "ES_API_KEY":
-                    # Also set ELASTIC_API_KEY for backward compatibility
-                    os.environ["ES_API_KEY"] = str(value)
-                    os.environ["ELASTIC_API_KEY"] = str(value)
-                else:
-                    os.environ[env_key] = str(value)
-        env_time = time.time() - env_start
+        # Load Redis secrets (optional - can fail gracefully)
+        try:
+            redis_response = client.get_secret_value(SecretId=redis_secret_name)
+            redis_secret = json.loads(redis_response['SecretString'])
+            
+            # Map Redis secret keys to environment variables
+            redis_mapping = {
+                'host': 'REDIS_HOST',
+                'port': 'REDIS_PORT',
+                'password': 'REDIS_PASSWORD',
+                'db': 'REDIS_DB'
+            }
+            
+            for secret_key, env_key in redis_mapping.items():
+                if secret_key in redis_secret and redis_secret[secret_key] is not None:
+                    os.environ[env_key] = str(redis_secret[secret_key])
+            
+            logger.info("Redis secrets retrieved successfully from {}".format(redis_secret_name))
+            redis_host = os.getenv('REDIS_HOST', 'NOT_SET')
+            redis_port = os.getenv('REDIS_PORT', 'NOT_SET')
+            redis_db = os.getenv('REDIS_DB', 'NOT_SET')
+            redis_password_set = 'YES' if os.getenv('REDIS_PASSWORD') else 'NO'
+            logger.info("Redis configured: host={}, port={}, db={}, password_set={}".format(
+                redis_host, redis_port, redis_db, redis_password_set))
+            
+            # Warn if Redis host is still localhost (secrets not loaded properly)
+            if redis_host == 'localhost' or redis_host == 'NOT_SET':
+                logger.error("⚠️ WARNING: Redis host is '{}' - secrets may not have loaded correctly! Check Secrets Manager configuration.".format(redis_host))
+            
+        except Exception as redis_error:
+            logger.error("❌ Could not retrieve Redis secrets from {}: {}: {}".format(
+                redis_secret_name, type(redis_error).__name__, str(redis_error)), exc_info=True)
+            logger.warning("Continuing with existing Redis configuration if available")
+            # Log current Redis config to help debug
+            logger.info("Current Redis config: host={}, port={}".format(
+                os.getenv('REDIS_HOST', 'NOT_SET'), os.getenv('REDIS_PORT', 'NOT_SET')))
         
         total_time = time.time() - start_time
         logger.info("SECRETS_LOAD_SUCCESS", extra={
@@ -131,14 +177,22 @@ def _wait_for_secrets(timeout_seconds=5.0):
     while time.time() - start_time < timeout_seconds:
         with _secrets_lock:
             if _secrets_loaded:
-                return True
+                # Verify Redis secrets are actually set
+                redis_host = os.getenv("REDIS_HOST", "localhost")
+                if redis_host != "localhost":
+                    logger.info(f"Secrets loaded and verified: REDIS_HOST={redis_host}")
+                    return True
+                else:
+                    logger.warning("Secrets marked as loaded but REDIS_HOST is still 'localhost'")
             if _secrets_load_error:
                 logger.warning(f"Secrets load failed: {_secrets_load_error}")
                 return False
         
         time.sleep(0.1)  # Check every 100ms
     
-    logger.warning(f"Secrets load timeout after {timeout_seconds}s")
+    # Final check - log what we have
+    redis_host = os.getenv("REDIS_HOST", "localhost")
+    logger.warning(f"Secrets load timeout after {timeout_seconds}s | REDIS_HOST={redis_host}")
     return False
 
 def get_app(require_secrets=True, secrets_timeout=5.0):
@@ -148,12 +202,44 @@ def get_app(require_secrets=True, secrets_timeout=5.0):
         require_secrets: If True, wait for secrets to load before creating app
         secrets_timeout: Maximum time to wait for secrets (seconds)
     """
-    global _app
+    global _app, _secrets_loaded, _secrets_loading, _secrets_load_error
     
     app_start_time = time.time()
     logger.info("GET_APP_START", extra={"require_secrets": require_secrets})
     
     if _app is not None:
+        # App is cached, but we still need to verify secrets are loaded for critical endpoints
+        if require_secrets and os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
+            redis_host = os.getenv("REDIS_HOST", "localhost")
+            logger.info(f"GET_APP_CACHED | Checking secrets | REDIS_HOST={redis_host} | _secrets_loaded={_secrets_loaded}")
+            
+            if redis_host == "localhost":
+                logger.warning("GET_APP_CACHED | App cached but REDIS_HOST is 'localhost' - loading secrets now")
+                # Always reload secrets if Redis host is localhost (secrets may not have loaded properly)
+                try:
+                    get_secrets()
+                    # Update the flag after successful load
+                    with _secrets_lock:
+                        _secrets_loaded = True
+                        _secrets_load_error = None
+                    
+                    # Verify Redis host is now set
+                    redis_host = os.getenv("REDIS_HOST", "localhost")
+                    if redis_host != "localhost":
+                        logger.info(f"GET_APP_CACHED | Secrets loaded successfully | REDIS_HOST={redis_host}")
+                    else:
+                        logger.error("GET_APP_CACHED | Secrets loaded but REDIS_HOST is still 'localhost' - secret may be missing 'host' key")
+                        # Log what we got from secrets
+                        logger.error(f"GET_APP_CACHED | REDIS_PORT={os.getenv('REDIS_PORT', 'NOT_SET')} | REDIS_DB={os.getenv('REDIS_DB', 'NOT_SET')}")
+                        raise RuntimeError("Redis secrets not loaded - REDIS_HOST is still 'localhost' after loading secrets")
+                except Exception as e:
+                    with _secrets_lock:
+                        _secrets_load_error = str(e)
+                    logger.error(f"GET_APP_CACHED | Failed to load secrets: {e}", exc_info=True)
+                    raise
+            else:
+                logger.info(f"GET_APP_CACHED | Secrets verified | REDIS_HOST={redis_host}")
+        
         logger.info("GET_APP_CACHED", extra={"duration_ms": (time.time() - app_start_time) * 1000})
         return _app
     
@@ -161,15 +247,40 @@ def get_app(require_secrets=True, secrets_timeout=5.0):
     if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
         with _secrets_lock:
             if not _secrets_loaded and not _secrets_loading:
-                # Start background thread to load secrets
-                thread = threading.Thread(target=_load_secrets_async, daemon=True)
-                thread.start()
-                logger.info("SECRETS_LOAD_ASYNC_STARTED")
+                # For critical endpoints, load secrets synchronously to ensure they're available
+                if require_secrets:
+                    logger.info("SECRETS_LOAD_SYNC_START | loading secrets synchronously for critical endpoint")
+                    try:
+                        get_secrets()
+                        with _secrets_lock:
+                            _secrets_loaded = True
+                            _secrets_load_error = None
+                        logger.info("SECRETS_LOAD_SYNC_SUCCESS")
+                        # Verify Redis secrets are set
+                        redis_host = os.getenv("REDIS_HOST", "localhost")
+                        if redis_host == "localhost":
+                            logger.error("SECRETS_LOAD_SYNC_WARNING | REDIS_HOST is still 'localhost' after loading secrets")
+                        else:
+                            logger.info(f"SECRETS_LOAD_SYNC_VERIFIED | REDIS_HOST={redis_host}")
+                    except Exception as e:
+                        with _secrets_lock:
+                            _secrets_load_error = str(e)
+                        logger.error(f"SECRETS_LOAD_SYNC_ERROR | error={e}", exc_info=True)
+                        raise
+                else:
+                    # For non-critical endpoints, load asynchronously
+                    thread = threading.Thread(target=_load_secrets_async, daemon=True)
+                    thread.start()
+                    logger.info("SECRETS_LOAD_ASYNC_STARTED")
         
-        # Wait for secrets if required
+        # Wait for secrets if required (for async case)
         if require_secrets:
             if not _wait_for_secrets(secrets_timeout):
-                logger.warning("SECRETS_NOT_LOADED | proceeding without secrets (may cause errors)")
+                redis_host = os.getenv("REDIS_HOST", "localhost")
+                logger.error(f"SECRETS_NOT_LOADED | REDIS_HOST={redis_host} | proceeding may cause errors")
+                # Don't proceed if Redis host is still localhost for critical endpoints
+                if redis_host == "localhost":
+                    raise RuntimeError("Redis secrets not loaded - REDIS_HOST is still 'localhost'")
     
     # Determine config based on environment
     config_name = 'lambda' if os.getenv('AWS_LAMBDA_FUNCTION_NAME') else 'production'
@@ -256,7 +367,23 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
         # For non-critical endpoints, proceed without waiting
         if is_critical_endpoint:
             logger.info("CRITICAL_ENDPOINT | waiting for secrets")
-            current_app = get_app(require_secrets=True, secrets_timeout=3.0)
+            current_app = get_app(require_secrets=True, secrets_timeout=5.0)  # Increased timeout
+            
+            # Double-check Redis host is set after getting app
+            redis_host_check = os.getenv("REDIS_HOST", "localhost")
+            if redis_host_check == "localhost":
+                logger.error(f"CRITICAL_ENDPOINT | REDIS_HOST is still 'localhost' after get_app | This should not happen!")
+                # Force reload secrets one more time
+                logger.info("CRITICAL_ENDPOINT | Force reloading secrets")
+                try:
+                    get_secrets()
+                    redis_host_check = os.getenv("REDIS_HOST", "localhost")
+                    if redis_host_check == "localhost":
+                        raise RuntimeError("Redis secrets failed to load - REDIS_HOST is still 'localhost' after force reload")
+                    logger.info(f"CRITICAL_ENDPOINT | Secrets force reloaded successfully | REDIS_HOST={redis_host_check}")
+                except Exception as e:
+                    logger.error(f"CRITICAL_ENDPOINT | Force reload failed: {e}", exc_info=True)
+                    raise
         else:
             logger.info("NON_CRITICAL_ENDPOINT | proceeding without waiting for secrets")
             current_app = get_app(require_secrets=False)

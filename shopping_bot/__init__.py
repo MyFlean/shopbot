@@ -48,6 +48,82 @@ def _get_or_init_redis(app: Flask) -> RedisContextManager:
         return app.extensions["ctx_mgr"]
     
     log.info("INIT_REDIS | Lambda lazy initialization - starting Redis connection")
+    
+    # In Lambda, ensure secrets are loaded before initializing Redis
+    if os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
+        # Check if Redis secrets are available
+        redis_host = os.getenv("REDIS_HOST", "localhost")
+        redis_port = os.getenv("REDIS_PORT", "NOT_SET")
+        redis_db = os.getenv("REDIS_DB", "NOT_SET")
+        log.info(f"INIT_REDIS_CHECK | host={redis_host} | port={redis_port} | db={redis_db}")
+        
+        if redis_host == "localhost":
+            # Redis host is localhost - secrets haven't loaded. Try to load them directly from Secrets Manager
+            log.warning(f"INIT_REDIS | Redis host is 'localhost' - loading secrets directly from Secrets Manager")
+            
+            try:
+                import boto3
+                import json
+                from botocore.config import Config
+                
+                redis_secret_name = os.getenv('REDIS_SECRET_NAME', 'flean-services/redis')
+                region = os.getenv('AWS_REGION', 'ap-south-1')
+                
+                log.info(f"INIT_REDIS | Loading Redis secrets from {redis_secret_name} in {region}")
+                
+                config = Config(
+                    connect_timeout=3,
+                    read_timeout=3,
+                    retries={'max_attempts': 1}
+                )
+                client = boto3.client('secretsmanager', region_name=region, config=config)
+                
+                redis_response = client.get_secret_value(SecretId=redis_secret_name)
+                redis_secret = json.loads(redis_response['SecretString'])
+                
+                # Map Redis secret keys to environment variables
+                redis_mapping = {
+                    'host': 'REDIS_HOST',
+                    'port': 'REDIS_PORT',
+                    'password': 'REDIS_PASSWORD',
+                    'db': 'REDIS_DB'
+                }
+                
+                for secret_key, env_key in redis_mapping.items():
+                    if secret_key in redis_secret and redis_secret[secret_key] is not None:
+                        os.environ[env_key] = str(redis_secret[secret_key])
+                
+                # Verify
+                redis_host = os.getenv("REDIS_HOST", "localhost")
+                if redis_host != "localhost":
+                    log.info(f"INIT_REDIS | Secrets loaded successfully | host={redis_host}")
+                else:
+                    log.error(f"INIT_REDIS | Secrets loaded but REDIS_HOST is still 'localhost' | secret_keys={list(redis_secret.keys())}")
+                    
+            except Exception as e:
+                log.error(f"INIT_REDIS | Failed to load secrets directly: {e}", exc_info=True)
+            
+            # Final check - fail if still localhost
+            redis_host = os.getenv("REDIS_HOST", "localhost")
+            redis_port = os.getenv("REDIS_PORT", "NOT_SET")
+            redis_db = os.getenv("REDIS_DB", "NOT_SET")
+            
+            if redis_host == "localhost":
+                # Log all environment variables that might help debug
+                log.error(f"INIT_REDIS_FAILED | Redis host is still 'localhost' after attempting to load secrets")
+                log.error(f"INIT_REDIS_ENV | REDIS_HOST={redis_host} | REDIS_PORT={redis_port} | REDIS_DB={redis_db}")
+                log.error(f"INIT_REDIS_ENV | REDIS_SECRET_NAME={os.getenv('REDIS_SECRET_NAME', 'NOT_SET')}")
+                log.error(f"INIT_REDIS_ENV | SECRETS_MANAGER_SECRET={os.getenv('SECRETS_MANAGER_SECRET', 'NOT_SET')}")
+                
+                error_msg = (
+                    f"❌ CRITICAL: Redis host is still 'localhost' after attempting to load secrets. "
+                    f"Secrets Manager may not have loaded Redis configuration. "
+                    f"REDIS_SECRET_NAME={os.getenv('REDIS_SECRET_NAME', 'NOT_SET')}. "
+                    f"Check Lambda IAM permissions and Secrets Manager configuration."
+                )
+                log.error(error_msg)
+                raise RuntimeError(error_msg)
+    
     try:
         ctx_mgr = RedisContextManager()
         

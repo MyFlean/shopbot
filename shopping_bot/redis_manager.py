@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import hashlib
 from datetime import timedelta
@@ -36,17 +37,43 @@ class RedisContextManager:
     """
 
     def __init__(self, client: redis.Redis | None = None):
+        # Read Redis config directly from environment variables (set by Secrets Manager)
+        # to ensure we get the latest values even if config module was imported before secrets were loaded.
+        # Fallback to config if env vars not set (for local development)
+        redis_host = os.getenv("REDIS_HOST", getattr(Cfg, "REDIS_HOST", "localhost"))
+        redis_port = int(os.getenv("REDIS_PORT", str(getattr(Cfg, "REDIS_PORT", 6379))))
+        redis_db = int(os.getenv("REDIS_DB", str(getattr(Cfg, "REDIS_DB", 0))))
+        redis_password = os.getenv("REDIS_PASSWORD")  # Optional: Redis AUTH token
+        redis_decode_responses = getattr(Cfg, "REDIS_DECODE_RESPONSES", True)
+        redis_ttl = int(os.getenv("REDIS_TTL_SECONDS", str(getattr(Cfg, "REDIS_TTL_SECONDS", 3600))))
+        
+        log.info(f"💾 REDIS_INIT | host={redis_host} | port={redis_port} | db={redis_db} | password_set={'YES' if redis_password else 'NO'}")
+        
+        # In Lambda/production, fail fast if Redis host is still localhost (secrets not loaded)
+        is_lambda = bool(os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+        is_production = os.getenv("FLASK_ENV") == "production" or os.getenv("ENVIRONMENT") == "production"
+        
+        if (is_lambda or is_production) and redis_host == "localhost":
+            error_msg = (
+                f"❌ CRITICAL: Redis host is 'localhost' in {('Lambda' if is_lambda else 'production')} environment. "
+                f"Secrets Manager configuration may not have loaded correctly. "
+                f"Check that REDIS_HOST is set from Secrets Manager before Redis initialization."
+            )
+            log.error(error_msg)
+            raise RuntimeError(error_msg)
+        
         self.redis: redis.Redis = client or redis.Redis(
-            host=Cfg.REDIS_HOST,
-            port=Cfg.REDIS_PORT,
-            db=Cfg.REDIS_DB,
-            decode_responses=Cfg.REDIS_DECODE_RESPONSES,
+            host=redis_host,
+            port=redis_port,
+            db=redis_db,
+            password=redis_password,
+            decode_responses=redis_decode_responses,
             socket_timeout=10,  # FIX: Add timeout to prevent hanging
             socket_connect_timeout=5,
             retry_on_timeout=True,
             health_check_interval=30
         )
-        self.ttl = timedelta(seconds=Cfg.REDIS_TTL_SECONDS)
+        self.ttl = timedelta(seconds=redis_ttl)
         
         # FIX: Debouncing to prevent duplicate writes
         self._last_save_hash = {}  # user_session -> (hash, timestamp)

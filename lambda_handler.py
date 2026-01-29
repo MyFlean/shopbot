@@ -252,9 +252,9 @@ def get_app(require_secrets=True, secrets_timeout=5.0):
                     logger.info("SECRETS_LOAD_SYNC_START | loading secrets synchronously for critical endpoint")
                     try:
                         get_secrets()
-                        with _secrets_lock:
-                            _secrets_loaded = True
-                            _secrets_load_error = None
+                        # Already holding _secrets_lock - do not nest (threading.Lock is not re-entrant)
+                        _secrets_loaded = True
+                        _secrets_load_error = None
                         logger.info("SECRETS_LOAD_SYNC_SUCCESS")
                         # Verify Redis secrets are set
                         redis_host = os.getenv("REDIS_HOST", "localhost")
@@ -263,8 +263,8 @@ def get_app(require_secrets=True, secrets_timeout=5.0):
                         else:
                             logger.info(f"SECRETS_LOAD_SYNC_VERIFIED | REDIS_HOST={redis_host}")
                     except Exception as e:
-                        with _secrets_lock:
-                            _secrets_load_error = str(e)
+                        # Already holding _secrets_lock
+                        _secrets_load_error = str(e)
                         logger.error(f"SECRETS_LOAD_SYNC_ERROR | error={e}", exc_info=True)
                         raise
                 else:

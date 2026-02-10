@@ -270,6 +270,24 @@ def create_app(config_name: str = 'production') -> Flask:
     # ────────────────────────────────────────────────────────
     # STEP 3: Register Routes
     # ────────────────────────────────────────────────────────
+    # 
+    # IMPORTANT: Route Registration Convention
+    # =========================================
+    # All blueprints MUST be registered with url_prefix='/rs' because:
+    # 
+    # 1. Production API Gateway routes all traffic to /rs/* paths
+    #    Example: http://api.flean.ai/rs/chat -> Lambda -> Flask /rs/chat
+    # 
+    # 2. Blueprint routes are defined WITHOUT the /rs prefix
+    #    Example: @bp.route("/chat") in chat.py
+    # 
+    # 3. The url_prefix='/rs' is added during registration here
+    #    Example: app.register_blueprint(chat_bp, url_prefix='/rs')
+    # 
+    # 4. Final Flask route becomes: /rs/chat (matches API Gateway path)
+    # 
+    # If you forget url_prefix='/rs', routes will return 404 in production!
+    # ────────────────────────────────────────────────────────
     routes_start = time.time()
     try:
         log.info("REGISTER_ROUTES_START | registering simplified routes")
@@ -363,8 +381,8 @@ def create_app(config_name: str = 'production') -> Flask:
         # Register home page API endpoints for Flutter app
         try:
             from .routes.home_page import bp as home_page_bp
-            app.register_blueprint(home_page_bp)
-            log.info("REGISTER_ROUTES_SUCCESS | home page API registered (/api/v1/home/*)")
+            app.register_blueprint(home_page_bp, url_prefix='/rs')
+            log.info("REGISTER_ROUTES_SUCCESS | home page API registered (/rs/api/v1/home/*)")
         except Exception as e:
             log.error(f"REGISTER_ROUTES_ERROR | home page API failed: {e}")
 

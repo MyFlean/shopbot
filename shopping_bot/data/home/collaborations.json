@@ -2,34 +2,33 @@
   "collaborations": [
     {
       "id": "collab_1",
-      "brand_name": "Organic India",
-      "logo_url": "https://example.com/logos/organic-india.png",
-      "description": "Premium organic wellness products"
+      "brand_name": "Everaw",
+      "logo_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Everaw.png",
+      "description": "Raw and natural food products"
     },
     {
       "id": "collab_2",
-      "brand_name": "True Elements",
-      "logo_url": "https://example.com/logos/true-elements.png",
-      "description": "Healthy breakfast and snacking solutions"
+      "brand_name": "Hoyi",
+      "logo_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Hoyi.png",
+      "description": "Premium health foods"
     },
     {
       "id": "collab_3",
-      "brand_name": "Happilo",
-      "logo_url": "https://example.com/logos/happilo.png",
-      "description": "Premium dry fruits and healthy snacks"
+      "brand_name": "Millet Amma",
+      "logo_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Millet+Amma.png",
+      "description": "Traditional millet-based products"
     },
     {
       "id": "collab_4",
-      "brand_name": "Epigamia",
-      "logo_url": "https://example.com/logos/epigamia.png",
-      "description": "Greek yogurt and dairy alternatives"
+      "brand_name": "Nutrivate",
+      "logo_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Nutrivate.png",
+      "description": "Nutritious food innovations"
     },
     {
       "id": "collab_5",
-      "brand_name": "Yoga Bar",
-      "logo_url": "https://example.com/logos/yoga-bar.png",
-      "description": "Protein-rich energy bars and breakfast options"
+      "brand_name": "Safe Bee",
+      "logo_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Safe+Bee.png",
+      "description": "Pure honey and bee products"
     }
   ]
 }
-

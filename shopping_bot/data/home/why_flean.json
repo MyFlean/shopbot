@@ -4,30 +4,29 @@
       "id": "why_1",
       "main_heading": "AI-Powered Curation",
       "text_body": "Our AI analyzes 300+ toxins and ingredients to curate a personalized store just for you, filtering out harmful products automatically.",
-      "icon_url": "https://example.com/icons/ai-powered.png",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/1+(1).png",
       "display_order": 1
     },
     {
       "id": "why_2",
       "main_heading": "Toxin-Free Guarantee",
       "text_body": "Every product in your feed has been vetted against our comprehensive database of harmful chemicals and additives.",
-      "icon_url": "https://example.com/icons/toxin-free.png",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/2+(2).png",
       "display_order": 2
     },
     {
       "id": "why_3",
       "main_heading": "Personalized For You",
       "text_body": "Set your dietary preferences, allergies, and health goals once. We'll remember and filter every product accordingly.",
-      "icon_url": "https://example.com/icons/personalized.png",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/3+(2).png",
       "display_order": 3
     },
     {
       "id": "why_4",
       "main_heading": "Trusted Brands Only",
       "text_body": "We partner exclusively with brands that meet our strict quality standards and share our commitment to clean ingredients.",
-      "icon_url": "https://example.com/icons/trusted-brands.png",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/4+(2).png",
       "display_order": 4
     }
   ]
 }
-

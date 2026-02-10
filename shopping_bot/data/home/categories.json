@@ -3,28 +3,28 @@
     {
       "id": "smart_snacks",
       "name": "Smart Snacks",
-      "icon_url": "https://example.com/icons/smart-snacks.png",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Smart+Snacks.png",
       "deep_link": "flean://category/smart-snacks",
       "display_order": 1
     },
     {
       "id": "dairy_bakery",
       "name": "Dairy & Bakery",
-      "icon_url": "https://example.com/icons/dairy-bakery.png",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Dairy+%26+Bakery.png",
       "deep_link": "flean://category/dairy-bakery",
       "display_order": 2
     },
     {
       "id": "power_breakfast",
       "name": "Power Breakfast",
-      "icon_url": "https://example.com/icons/power-breakfast.png",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Power+Breakfast.png",
       "deep_link": "flean://category/power-breakfast",
       "display_order": 3
     },
     {
       "id": "sweet_treats",
       "name": "Sweet Treats",
-      "icon_url": "https://example.com/icons/sweet-treats.png",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Sweet+Treats.webp",
       "deep_link": "flean://category/sweet-treats",
       "display_order": 4
     },

@@ -181,7 +181,7 @@ def create_app(config_name: str = 'production') -> Flask:
     if config_name == 'lambda':
         app = Flask(__name__, instance_path=tempfile.gettempdir())
     else:
-    app = Flask(__name__)
+        app = Flask(__name__)
     flask_time = time.time() - flask_start
     log.info("FLASK_APP_CREATED", extra={"duration_ms": flask_time * 1000})
     
@@ -223,30 +223,30 @@ def create_app(config_name: str = 'production') -> Flask:
         app.extensions["_redis_initialized"] = False
     else:
         # In ECS/other environments, initialize Redis at startup
-    try:
-        log.info("INIT_REDIS | starting Redis connection")
-        ctx_mgr = RedisContextManager()
-        
-        # Test Redis connection - use ping instead of full health check for startup
-        # Full health check (with set/get/delete test) is too strict for startup
-        health = ctx_mgr.health_check()
-        ping_success = health.get("ping_success", False)
-        
-        if not ping_success:
-            log.error(f"INIT_REDIS_FAILED | health={health}")
-            raise RuntimeError(f"Redis connection failed: {health.get('error')}")
-        
-        # Log warning if full health check failed but ping succeeded
-        if not health.get("connection_healthy"):
-            log.warning(f"INIT_REDIS_WARNING | Full health check failed but ping succeeded. health={health}")
+        try:
+            log.info("INIT_REDIS | starting Redis connection")
+            ctx_mgr = RedisContextManager()
             
-        log.info(f"INIT_REDIS_SUCCESS | memory_usage={health.get('memory_info', {}).get('used_memory_human', 'unknown')}")
-        app.extensions["ctx_mgr"] = ctx_mgr
+            # Test Redis connection - use ping instead of full health check for startup
+            # Full health check (with set/get/delete test) is too strict for startup
+            health = ctx_mgr.health_check()
+            ping_success = health.get("ping_success", False)
+            
+            if not ping_success:
+                log.error(f"INIT_REDIS_FAILED | health={health}")
+                raise RuntimeError(f"Redis connection failed: {health.get('error')}")
+            
+            # Log warning if full health check failed but ping succeeded
+            if not health.get("connection_healthy"):
+                log.warning(f"INIT_REDIS_WARNING | Full health check failed but ping succeeded. health={health}")
+                
+            log.info(f"INIT_REDIS_SUCCESS | memory_usage={health.get('memory_info', {}).get('used_memory_human', 'unknown')}")
+            app.extensions["ctx_mgr"] = ctx_mgr
             app.extensions["_redis_initialized"] = True
-        
-    except Exception as e:
-        log.error(f"INIT_REDIS_ERROR | error={e}", exc_info=True)
-        raise RuntimeError(f"Failed to initialize Redis: {e}")
+            
+        except Exception as e:
+            log.error(f"INIT_REDIS_ERROR | error={e}", exc_info=True)
+            raise RuntimeError(f"Failed to initialize Redis: {e}")
 
     # ────────────────────────────────────────────────────────  
     # STEP 2: Initialize Bot Core (includes 4-intent + UX generation)
@@ -258,8 +258,8 @@ def create_app(config_name: str = 'production') -> Flask:
         if config_name == 'lambda':
             app.extensions["bot_core"] = None  # Will be initialized on first access
         else:
-        bot_core = ShoppingBotCore(ctx_mgr)
-        app.extensions["bot_core"] = bot_core
+            bot_core = ShoppingBotCore(ctx_mgr)
+            app.extensions["bot_core"] = bot_core
         
         log.info("INIT_BOT_CORE_SUCCESS | 4-intent classification enabled | UX generation enabled")
         
@@ -470,13 +470,13 @@ def create_app(config_name: str = 'production') -> Flask:
         # In Lambda, extensions are initialized lazily
         log.info("APP_VALIDATION_SUCCESS | Lambda mode - components will be initialized on first request")
     else:
-    required_extensions = ["ctx_mgr", "bot_core"]
-    missing_extensions = [ext for ext in required_extensions if ext not in app.extensions]
-    
-    if missing_extensions:
-        raise RuntimeError(f"Missing required extensions: {missing_extensions}")
-    
-    log.info(f"APP_VALIDATION_SUCCESS | extensions={list(app.extensions.keys())}")
+        required_extensions = ["ctx_mgr", "bot_core"]
+        missing_extensions = [ext for ext in required_extensions if ext not in app.extensions]
+        
+        if missing_extensions:
+            raise RuntimeError(f"Missing required extensions: {missing_extensions}")
+        
+        log.info(f"APP_VALIDATION_SUCCESS | extensions={list(app.extensions.keys())}")
     
     log.info(f"APP_INIT_COMPLETE | config={config_name}")
     

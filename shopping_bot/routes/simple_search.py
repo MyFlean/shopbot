@@ -4,14 +4,14 @@ Simple Search Endpoint - Direct Elasticsearch Query Search
 
 This endpoint takes a user query and performs a direct Elasticsearch search
 without any filters, tags, categories, or subcategories.
-Returns enriched product information.
+Returns enriched product information with macro tags and quantity.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Blueprint, jsonify, request
 
@@ -21,18 +21,99 @@ log = logging.getLogger(__name__)
 bp = Blueprint("simple_search", __name__)
 
 
+# ============================================================================
+# Macro Tag Generation
+# ============================================================================
+
+def _generate_macro_tags(es_product: Dict[str, Any], max_tags: int = 2) -> List[Dict[str, Any]]:
+    """
+    Generate macro tags from nutritional data.
+    
+    Collects available macros (protein, carbs, fat, calories), sorts by value,
+    and returns the top N highest values as formatted tags.
+    
+    Args:
+        es_product: Product dict from Elasticsearch
+        max_tags: Maximum number of macro tags to return (default: 2)
+    
+    Returns:
+        List of macro tag objects: [{"label": "32 gms of Protein", "nutrient": "protein", "value": 32, "unit": "g"}]
+    """
+    # Define macro nutrients with their display names and units
+    macro_config = {
+        "protein_g": {"nutrient": "protein", "display_name": "Protein", "unit": "g", "label_format": "{value} gms of Protein"},
+        "carbs_g": {"nutrient": "carbs", "display_name": "Carbs", "unit": "g", "label_format": "{value} gms of Carbs"},
+        "fat_g": {"nutrient": "fat", "display_name": "Fat", "unit": "g", "label_format": "{value} gms of Fat"},
+        "calories": {"nutrient": "calories", "display_name": "Calories", "unit": "kcal", "label_format": "{value} Calories"},
+    }
+    
+    # Collect available macros with their values
+    available_macros: List[Tuple[str, float, Dict[str, Any]]] = []
+    
+    for field_name, config in macro_config.items():
+        value = es_product.get(field_name)
+        if value is not None:
+            try:
+                numeric_value = float(value)
+                if numeric_value > 0:
+                    available_macros.append((field_name, numeric_value, config))
+            except (TypeError, ValueError):
+                continue
+    
+    # Sort by value descending (highest first)
+    available_macros.sort(key=lambda x: x[1], reverse=True)
+    
+    # Take top N macros
+    top_macros = available_macros[:max_tags]
+    
+    # Format as tag objects
+    macro_tags = []
+    for field_name, value, config in top_macros:
+        # Round value for display
+        display_value = int(value) if value == int(value) else round(value, 1)
+        
+        tag = {
+            "label": config["label_format"].format(value=display_value),
+            "nutrient": config["nutrient"],
+            "value": display_value,
+            "unit": config["unit"]
+        }
+        macro_tags.append(tag)
+    
+    return macro_tags
+
+
+def _extract_quantity(es_product: Dict[str, Any]) -> str:
+    """
+    Extract product quantity/weight from ES product data.
+    
+    Tries multiple fields and formats the quantity consistently.
+    
+    Args:
+        es_product: Product dict from Elasticsearch
+    
+    Returns:
+        Formatted quantity string (e.g., "250 gm", "1 Kg", "500 ml") or empty string
+    """
+    # Try direct qty field (now extracted from category_data.nutritional.qty by ES fetcher)
+    qty = es_product.get("qty", "")
+    if qty and isinstance(qty, str) and qty.strip():
+        return qty.strip()
+    
+    # Fallback - no quantity data available
+    return ""
+
+
 def _parse_es_product_to_payload(es_product: Dict[str, Any]) -> Dict[str, Any]:
     """
     Parse Elasticsearch product response to the desired payload format.
     
     Maps ES fields to the required structure:
-    - id, name, brand, price: Direct mapping
-    - currency: Hardcoded to "INR"
-    - unit_size: Hardcoded to "1"
+    - id, name, brand, price, mrp: Direct mapping
+    - qty: Extracted from various ES fields
     - image_url: From ES 'image' field
-    - health_tags: Hardcoded for now (can be enhanced later with dietary_labels/health_claims)
+    - macro_tags: Top 2 highest nutritional values
     - flean_score: From ES 'flean_score' field
-    - expert_counts: Hardcoded for now
     - in_stock: Hardcoded to True
     """
     # Extract basic fields
@@ -40,8 +121,16 @@ def _parse_es_product_to_payload(es_product: Dict[str, Any]) -> Dict[str, Any]:
     name = es_product.get("name", "")
     brand = es_product.get("brand", "")
     price = es_product.get("price")
+    mrp = es_product.get("mrp")
     image_url = es_product.get("image")  # This is the CDN URL
     flean_score = es_product.get("flean_score")
+    flean_percentile = es_product.get("flean_percentile")
+    
+    # Extract quantity
+    qty = _extract_quantity(es_product)
+    
+    # Generate macro tags (top 2 highest nutritional values)
+    macro_tags = _generate_macro_tags(es_product, max_tags=2)
     
     # Build the payload
     payload = {
@@ -49,18 +138,14 @@ def _parse_es_product_to_payload(es_product: Dict[str, Any]) -> Dict[str, Any]:
         "name": name,
         "brand": brand,
         "price": price,
-        "currency": "INR",  # Hardcoded
-        "unit_size": "1",  # Hardcoded
+        "mrp": mrp,
+        "currency": "INR",
+        "qty": qty,
         "image_url": image_url,
-        "health_tags": ["Low sugar", "Better oils"],  # Hardcoded for now
+        "macro_tags": macro_tags,
         "flean_score": flean_score,
-        "expert_counts": {  # Hardcoded for now
-            "Picked by 5 experts": True,
-            "trainers": 2,
-            "nutritionists": 1,
-            "doctors": 0
-        },
-        "in_stock": True  # Hardcoded
+        "flean_percentile": flean_percentile,
+        "in_stock": True
     }
     
     return payload
@@ -80,21 +165,20 @@ def simple_search() -> tuple[Dict[str, Any], int]:
         {
             "products": [
                 {
-                    "id": "...",
-                    "name": "...",
-                    "brand": "...",
-                    "price": 299,
+                    "id": "prod_123",
+                    "name": "High Protein Peanut Butter",
+                    "brand": "Pintola",
+                    "price": 79,
+                    "mrp": 99,
                     "currency": "INR",
-                    "unit_size": "1",
+                    "qty": "250 gm",
                     "image_url": "https://...",
-                    "health_tags": ["Low sugar", "Better oils"],
-                    "flean_score": 8.6,
-                    "expert_counts": {
-                        "Picked by 5 experts": True,
-                        "trainers": 2,
-                        "nutritionists": 1,
-                        "doctors": 0
-                    },
+                    "macro_tags": [
+                        {"label": "32 gms of Protein", "nutrient": "protein", "value": 32, "unit": "g"},
+                        {"label": "15 gms of Carbs", "nutrient": "carbs", "value": 15, "unit": "g"}
+                    ],
+                    "flean_score": 85.5,
+                    "flean_percentile": 92.0,
                     "in_stock": true
                 },
                 ...
@@ -102,6 +186,10 @@ def simple_search() -> tuple[Dict[str, Any], int]:
             "total_hits": 100,
             "returned": 20
         }
+    
+    Note:
+        - macro_tags: Top 2 highest nutritional values from the product
+        - qty: Product quantity/weight extracted from ES data (may be empty if not available)
     """
     try:
         # Parse request

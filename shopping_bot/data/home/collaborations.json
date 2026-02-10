@@ -1,0 +1,35 @@
+{
+  "collaborations": [
+    {
+      "id": "collab_1",
+      "brand_name": "Organic India",
+      "logo_url": "https://example.com/logos/organic-india.png",
+      "description": "Premium organic wellness products"
+    },
+    {
+      "id": "collab_2",
+      "brand_name": "True Elements",
+      "logo_url": "https://example.com/logos/true-elements.png",
+      "description": "Healthy breakfast and snacking solutions"
+    },
+    {
+      "id": "collab_3",
+      "brand_name": "Happilo",
+      "logo_url": "https://example.com/logos/happilo.png",
+      "description": "Premium dry fruits and healthy snacks"
+    },
+    {
+      "id": "collab_4",
+      "brand_name": "Epigamia",
+      "logo_url": "https://example.com/logos/epigamia.png",
+      "description": "Greek yogurt and dairy alternatives"
+    },
+    {
+      "id": "collab_5",
+      "brand_name": "Yoga Bar",
+      "logo_url": "https://example.com/logos/yoga-bar.png",
+      "description": "Protein-rich energy bars and breakfast options"
+    }
+  ]
+}
+

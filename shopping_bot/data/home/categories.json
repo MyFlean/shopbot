@@ -1,0 +1,61 @@
+{
+  "categories": [
+    {
+      "id": "smart_snacks",
+      "name": "Smart Snacks",
+      "icon_url": "https://example.com/icons/smart-snacks.png",
+      "deep_link": "flean://category/smart-snacks",
+      "display_order": 1
+    },
+    {
+      "id": "dairy_bakery",
+      "name": "Dairy & Bakery",
+      "icon_url": "https://example.com/icons/dairy-bakery.png",
+      "deep_link": "flean://category/dairy-bakery",
+      "display_order": 2
+    },
+    {
+      "id": "power_breakfast",
+      "name": "Power Breakfast",
+      "icon_url": "https://example.com/icons/power-breakfast.png",
+      "deep_link": "flean://category/power-breakfast",
+      "display_order": 3
+    },
+    {
+      "id": "sweet_treats",
+      "name": "Sweet Treats",
+      "icon_url": "https://example.com/icons/sweet-treats.png",
+      "deep_link": "flean://category/sweet-treats",
+      "display_order": 4
+    },
+    {
+      "id": "beverages",
+      "name": "Beverages",
+      "icon_url": "https://example.com/icons/beverages.png",
+      "deep_link": "flean://category/beverages",
+      "display_order": 5
+    },
+    {
+      "id": "personal_care",
+      "name": "Personal Care",
+      "icon_url": "https://example.com/icons/personal-care.png",
+      "deep_link": "flean://category/personal-care",
+      "display_order": 6
+    },
+    {
+      "id": "fruits_veggies",
+      "name": "Fruits & Veggies",
+      "icon_url": "https://example.com/icons/fruits-veggies.png",
+      "deep_link": "flean://category/fruits-veggies",
+      "display_order": 7
+    },
+    {
+      "id": "pantry_staples",
+      "name": "Pantry Staples",
+      "icon_url": "https://example.com/icons/pantry-staples.png",
+      "deep_link": "flean://category/pantry-staples",
+      "display_order": 8
+    }
+  ]
+}
+

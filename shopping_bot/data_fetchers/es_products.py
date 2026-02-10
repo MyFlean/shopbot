@@ -1323,8 +1323,9 @@ def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
         src = hit.get("_source", {})
         score = hit.get("_score", 0)
         
-        # Extract nutritional info
-        nutrition = src.get("category_data", {}).get("nutritional", {}).get("nutri_breakdown", {})
+        # Extract nutritional info (try both nutri_breakdown and nutri_breakdown_updated)
+        nutritional_data = src.get("category_data", {}).get("nutritional", {})
+        nutrition = nutritional_data.get("nutri_breakdown_updated", {}) or nutritional_data.get("nutri_breakdown", {})
         
         # Extract package claims
         package_claims = src.get("package_claims", {})
@@ -1367,11 +1368,11 @@ def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
             "category_paths": src.get("category_paths", []),
             "description": _clean_text(src.get("description", "")),
             
-            # Nutritional information
-            "protein_g": nutrition.get("protein_g"),
-            "carbs_g": nutrition.get("carbs_g"),
-            "fat_g": nutrition.get("fat_g"),
-            "calories": nutrition.get("energy_kcal"),
+            # Nutritional information (try both underscore and space variants)
+            "protein_g": nutrition.get("protein_g") or nutrition.get("protein g"),
+            "carbs_g": nutrition.get("carbs_g") or nutrition.get("carbohydrates g") or nutrition.get("carbs g"),
+            "fat_g": nutrition.get("fat_g") or nutrition.get("total fat g") or nutrition.get("fat g"),
+            "calories": nutrition.get("energy_kcal") or nutrition.get("energy kcal"),
             
             # Claims and labels
             "health_claims": health_claims if isinstance(health_claims, list) else [],
@@ -1385,6 +1386,9 @@ def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
             
             # Image
             "image": _get_best_image(src.get("hero_image", {})),
+            
+            # Quantity/weight info
+            "qty": nutritional_data.get("qty", ""),
             
             # Ingredients
             "ingredients": _clean_text(src.get("ingredients", {}).get("raw_text", "")),

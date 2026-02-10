@@ -1,0 +1,281 @@
+{
+  "_comment": "Add 25 curated products here. 4 random products will be selected for display.",
+  "products": [
+    {
+      "id": "prod_cur_001",
+      "name": "A2 Cow Milk",
+      "brand": "Akshayakalpa",
+      "price": 85.0,
+      "mrp": 95.0,
+      "image_url": "https://example.com/products/a2-milk.jpg",
+      "flean_score": 92.0,
+      "flean_percentile": 98.0,
+      "category": "Dairy & Bakery"
+    },
+    {
+      "id": "prod_cur_002",
+      "name": "Sourdough Bread",
+      "brand": "The Baker's Dozen",
+      "price": 180.0,
+      "mrp": 200.0,
+      "image_url": "https://example.com/products/sourdough.jpg",
+      "flean_score": 85.0,
+      "flean_percentile": 92.0,
+      "category": "Dairy & Bakery"
+    },
+    {
+      "id": "prod_cur_003",
+      "name": "Organic Honey",
+      "brand": "Dabur",
+      "price": 320.0,
+      "mrp": 380.0,
+      "image_url": "https://example.com/products/honey.jpg",
+      "flean_score": 78.0,
+      "flean_percentile": 85.0,
+      "category": "Pantry Staples"
+    },
+    {
+      "id": "prod_cur_004",
+      "name": "Oats Steel Cut",
+      "brand": "True Elements",
+      "price": 220.0,
+      "mrp": 260.0,
+      "image_url": "https://example.com/products/steel-cut-oats.jpg",
+      "flean_score": 88.0,
+      "flean_percentile": 94.0,
+      "category": "Power Breakfast"
+    },
+    {
+      "id": "prod_cur_005",
+      "name": "Green Tea Matcha",
+      "brand": "Organic India",
+      "price": 450.0,
+      "mrp": 520.0,
+      "image_url": "https://example.com/products/matcha.jpg",
+      "flean_score": 82.0,
+      "flean_percentile": 90.0,
+      "category": "Beverages"
+    },
+    {
+      "id": "prod_cur_006",
+      "name": "Chia Seeds",
+      "brand": "Nourish Organics",
+      "price": 299.0,
+      "mrp": 350.0,
+      "image_url": "https://example.com/products/chia-seeds.jpg",
+      "flean_score": 91.0,
+      "flean_percentile": 97.0,
+      "category": "Smart Snacks"
+    },
+    {
+      "id": "prod_cur_007",
+      "name": "Brown Rice Organic",
+      "brand": "24 Mantra",
+      "price": 180.0,
+      "mrp": 220.0,
+      "image_url": "https://example.com/products/brown-rice.jpg",
+      "flean_score": 86.0,
+      "flean_percentile": 93.0,
+      "category": "Pantry Staples"
+    },
+    {
+      "id": "prod_cur_008",
+      "name": "Paneer Fresh",
+      "brand": "Mother Dairy",
+      "price": 120.0,
+      "mrp": 140.0,
+      "image_url": "https://example.com/products/paneer.jpg",
+      "flean_score": 75.0,
+      "flean_percentile": 80.0,
+      "category": "Dairy & Bakery"
+    },
+    {
+      "id": "prod_cur_009",
+      "name": "Extra Virgin Olive Oil",
+      "brand": "Borges",
+      "price": 650.0,
+      "mrp": 750.0,
+      "image_url": "https://example.com/products/olive-oil.jpg",
+      "flean_score": 89.0,
+      "flean_percentile": 95.0,
+      "category": "Pantry Staples"
+    },
+    {
+      "id": "prod_cur_010",
+      "name": "Flax Seeds",
+      "brand": "True Elements",
+      "price": 199.0,
+      "mrp": 250.0,
+      "image_url": "https://example.com/products/flax-seeds.jpg",
+      "flean_score": 90.0,
+      "flean_percentile": 96.0,
+      "category": "Smart Snacks"
+    },
+    {
+      "id": "prod_cur_011",
+      "name": "Coconut Water",
+      "brand": "Raw Pressery",
+      "price": 60.0,
+      "mrp": 75.0,
+      "image_url": "https://example.com/products/coconut-water.jpg",
+      "flean_score": 84.0,
+      "flean_percentile": 91.0,
+      "category": "Beverages"
+    },
+    {
+      "id": "prod_cur_012",
+      "name": "Dates Medjool",
+      "brand": "Lion",
+      "price": 450.0,
+      "mrp": 520.0,
+      "image_url": "https://example.com/products/dates.jpg",
+      "flean_score": 87.0,
+      "flean_percentile": 93.0,
+      "category": "Sweet Treats"
+    },
+    {
+      "id": "prod_cur_013",
+      "name": "Gluten Free Pasta",
+      "brand": "Barilla",
+      "price": 280.0,
+      "mrp": 320.0,
+      "image_url": "https://example.com/products/gf-pasta.jpg",
+      "flean_score": 76.0,
+      "flean_percentile": 82.0,
+      "category": "Pantry Staples"
+    },
+    {
+      "id": "prod_cur_014",
+      "name": "Kombucha Ginger",
+      "brand": "Atmosphere",
+      "price": 150.0,
+      "mrp": 180.0,
+      "image_url": "https://example.com/products/kombucha.jpg",
+      "flean_score": 81.0,
+      "flean_percentile": 88.0,
+      "category": "Beverages"
+    },
+    {
+      "id": "prod_cur_015",
+      "name": "Pumpkin Seeds",
+      "brand": "Happilo",
+      "price": 350.0,
+      "mrp": 420.0,
+      "image_url": "https://example.com/products/pumpkin-seeds.jpg",
+      "flean_score": 89.0,
+      "flean_percentile": 95.0,
+      "category": "Smart Snacks"
+    },
+    {
+      "id": "prod_cur_016",
+      "name": "Cottage Cheese",
+      "brand": "Amul",
+      "price": 110.0,
+      "mrp": 130.0,
+      "image_url": "https://example.com/products/cottage-cheese.jpg",
+      "flean_score": 77.0,
+      "flean_percentile": 84.0,
+      "category": "Dairy & Bakery"
+    },
+    {
+      "id": "prod_cur_017",
+      "name": "Granola Bars",
+      "brand": "Nourish Vitals",
+      "price": 180.0,
+      "mrp": 220.0,
+      "image_url": "https://example.com/products/granola-bars.jpg",
+      "flean_score": 73.0,
+      "flean_percentile": 78.0,
+      "category": "Smart Snacks"
+    },
+    {
+      "id": "prod_cur_018",
+      "name": "Avocado Oil",
+      "brand": "Chosen Foods",
+      "price": 850.0,
+      "mrp": 950.0,
+      "image_url": "https://example.com/products/avocado-oil.jpg",
+      "flean_score": 92.0,
+      "flean_percentile": 98.0,
+      "category": "Pantry Staples"
+    },
+    {
+      "id": "prod_cur_019",
+      "name": "Ragi Flour",
+      "brand": "24 Mantra",
+      "price": 95.0,
+      "mrp": 120.0,
+      "image_url": "https://example.com/products/ragi-flour.jpg",
+      "flean_score": 88.0,
+      "flean_percentile": 94.0,
+      "category": "Pantry Staples"
+    },
+    {
+      "id": "prod_cur_020",
+      "name": "Herbal Tea Tulsi",
+      "brand": "Organic India",
+      "price": 220.0,
+      "mrp": 260.0,
+      "image_url": "https://example.com/products/tulsi-tea.jpg",
+      "flean_score": 85.0,
+      "flean_percentile": 92.0,
+      "category": "Beverages"
+    },
+    {
+      "id": "prod_cur_021",
+      "name": "Walnut Kernels",
+      "brand": "Happilo",
+      "price": 480.0,
+      "mrp": 580.0,
+      "image_url": "https://example.com/products/walnuts.jpg",
+      "flean_score": 91.0,
+      "flean_percentile": 97.0,
+      "category": "Smart Snacks"
+    },
+    {
+      "id": "prod_cur_022",
+      "name": "Dark Chocolate 85%",
+      "brand": "Lindt",
+      "price": 320.0,
+      "mrp": 380.0,
+      "image_url": "https://example.com/products/lindt-chocolate.jpg",
+      "flean_score": 79.0,
+      "flean_percentile": 86.0,
+      "category": "Sweet Treats"
+    },
+    {
+      "id": "prod_cur_023",
+      "name": "Sprouted Moong",
+      "brand": "Fresho",
+      "price": 45.0,
+      "mrp": 55.0,
+      "image_url": "https://example.com/products/sprouts.jpg",
+      "flean_score": 94.0,
+      "flean_percentile": 99.0,
+      "category": "Fruits & Veggies"
+    },
+    {
+      "id": "prod_cur_024",
+      "name": "Almond Butter",
+      "brand": "MyFitness",
+      "price": 449.0,
+      "mrp": 520.0,
+      "image_url": "https://example.com/products/almond-butter.jpg",
+      "flean_score": 86.0,
+      "flean_percentile": 93.0,
+      "category": "Smart Snacks"
+    },
+    {
+      "id": "prod_cur_025",
+      "name": "Probiotic Drink",
+      "brand": "Yakult",
+      "price": 75.0,
+      "mrp": 85.0,
+      "image_url": "https://example.com/products/yakult.jpg",
+      "flean_score": 72.0,
+      "flean_percentile": 76.0,
+      "category": "Beverages"
+    }
+  ]
+}
+

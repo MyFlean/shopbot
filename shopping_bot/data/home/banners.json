@@ -5,7 +5,7 @@
       "main_heading": "Republic Day Offer",
       "sub_heading": "Get 25%",
       "button_text": "Grab Offer",
-      "image_url": "https://example.com/banners/republic-day.jpg",
+      "image_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/1+(2).png",
       "deep_link": "flean://offers/republic-day",
       "background_color": "#FF6B35",
       "active": true
@@ -15,7 +15,7 @@
       "main_heading": "New Year Offer",
       "sub_heading": "Get 25%",
       "button_text": "Grab Offer",
-      "image_url": "https://example.com/banners/new-year.jpg",
+      "image_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/2+(3).png",
       "deep_link": "flean://offers/new-year",
       "background_color": "#4A90D9",
       "active": true
@@ -25,11 +25,10 @@
       "main_heading": "Ramadan Offer",
       "sub_heading": "Get 25%",
       "button_text": "Grab Offer",
-      "image_url": "https://example.com/banners/ramadan.jpg",
+      "image_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/3+(3).png",
       "deep_link": "flean://offers/ramadan",
       "background_color": "#2ECC71",
       "active": true
     }
   ]
 }
-

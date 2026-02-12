@@ -175,16 +175,112 @@ VALID_SORT_OPTIONS = {
     "fat_asc",        # Fat Low to High
 }
 
+# ============================================================================
+# Filter Validation Constants
+# ============================================================================
+
+# Valid price range filter options
+VALID_PRICE_RANGES = {
+    "below_99",   # Below Rs.99
+    "100_249",    # Rs.100-249
+    "250_499",    # Rs.250-499
+    "above_500",  # Above Rs.500
+}
+
+# Valid Flean score filter options (0-10 scale)
+VALID_FLEAN_SCORES = {
+    "10",         # Perfect 10
+    "9_plus",     # 9+
+    "8_plus",     # 8+
+    "7_plus",     # 7+
+}
+
+# Valid preference filter options
+VALID_PREFERENCES = {
+    "no_palm_oil",      # No Palm Oil
+    "no_added_sugar",   # No Added Sugar
+    "no_additives",     # No Additives (No Preservatives, No Artificial Colors)
+}
+
+# Valid dietary restriction filter options
+VALID_DIETARY = {
+    "dairy_free",   # Dairy Free
+    "gluten_free",  # Gluten Free
+}
+
+
+def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """
+    Validate the filters object from the request.
+    
+    Args:
+        filters: The filters dict from request body
+        
+    Returns:
+        Tuple of (validated_filters, error_message)
+        - If valid: (filters_dict, None)
+        - If invalid: (None, error_string)
+    """
+    if not filters:
+        return None, None
+    
+    if not isinstance(filters, dict):
+        return None, "filters must be an object"
+    
+    validated = {}
+    
+    # Validate price_range (single value)
+    price_range = filters.get("price_range")
+    if price_range:
+        if price_range not in VALID_PRICE_RANGES:
+            return None, f"Invalid price_range: '{price_range}'. Valid options: {sorted(VALID_PRICE_RANGES)}"
+        validated["price_range"] = price_range
+    
+    # Validate flean_score (single value)
+    flean_score = filters.get("flean_score")
+    if flean_score:
+        if flean_score not in VALID_FLEAN_SCORES:
+            return None, f"Invalid flean_score: '{flean_score}'. Valid options: {sorted(VALID_FLEAN_SCORES)}"
+        validated["flean_score"] = flean_score
+    
+    # Validate preferences (list)
+    preferences = filters.get("preferences", [])
+    if preferences:
+        if not isinstance(preferences, list):
+            return None, "preferences must be an array"
+        invalid_prefs = [p for p in preferences if p not in VALID_PREFERENCES]
+        if invalid_prefs:
+            return None, f"Invalid preferences: {invalid_prefs}. Valid options: {sorted(VALID_PREFERENCES)}"
+        validated["preferences"] = preferences
+    
+    # Validate dietary (list)
+    dietary = filters.get("dietary", [])
+    if dietary:
+        if not isinstance(dietary, list):
+            return None, "dietary must be an array"
+        invalid_dietary = [d for d in dietary if d not in VALID_DIETARY]
+        if invalid_dietary:
+            return None, f"Invalid dietary: {invalid_dietary}. Valid options: {sorted(VALID_DIETARY)}"
+        validated["dietary"] = dietary
+    
+    return validated if validated else None, None
+
 
 @bp.route("/search", methods=["POST"])
 def simple_search() -> tuple[Dict[str, Any], int]:
     """
-    Simple search endpoint that takes a query and returns enriched product information.
+    Simple search endpoint with sorting and filtering capabilities.
     
     Request body:
         {
             "query": "user search query",
-            "sort_by": "price_asc"  // Optional, defaults to "relevance"
+            "sort_by": "price_asc",  // Optional, defaults to "relevance"
+            "filters": {             // Optional, all filters use AND logic
+                "price_range": "100_249",
+                "flean_score": "8_plus",
+                "preferences": ["no_palm_oil", "no_added_sugar"],
+                "dietary": ["gluten_free", "dairy_free"]
+            }
         }
     
     Sort options:
@@ -195,37 +291,41 @@ def simple_search() -> tuple[Dict[str, Any], int]:
         - "fiber_desc": Fibre High to Low
         - "fat_asc": Fat Low to High
     
+    Filter options:
+        price_range (single):
+            - "below_99": Below Rs.99
+            - "100_249": Rs.100-249
+            - "250_499": Rs.250-499
+            - "above_500": Above Rs.500
+        
+        flean_score (single):
+            - "10": Perfect 10
+            - "9_plus": 9+
+            - "8_plus": 8+
+            - "7_plus": 7+
+        
+        preferences (array, OR logic within):
+            - "no_palm_oil": No Palm Oil
+            - "no_added_sugar": No Added Sugar
+            - "no_additives": No Additives
+        
+        dietary (array, AND logic - each must match):
+            - "dairy_free": Dairy Free
+            - "gluten_free": Gluten Free
+    
     Response:
         {
-            "products": [
-                {
-                    "id": "prod_123",
-                    "name": "High Protein Peanut Butter",
-                    "brand": "Pintola",
-                    "price": 79,
-                    "mrp": 99,
-                    "currency": "INR",
-                    "qty": "250 gm",
-                    "image_url": "https://...",
-                    "macro_tags": [
-                        {"label": "32 gms of Protein", "nutrient": "protein", "value": 32, "unit": "g"},
-                        {"label": "15 gms of Carbs", "nutrient": "carbs", "value": 15, "unit": "g"}
-                    ],
-                    "flean_score": 85.5,
-                    "flean_percentile": 92.0,
-                    "in_stock": true
-                },
-                ...
-            ],
+            "products": [...],
             "total_hits": 100,
             "returned": 20,
-            "sort_by": "price_asc"
+            "sort_by": "price_asc",
+            "filters_applied": {
+                "price_range": "100_249",
+                "flean_score": "8_plus",
+                "preferences": ["no_palm_oil"],
+                "dietary": ["gluten_free"]
+            }
         }
-    
-    Note:
-        - macro_tags: Top 2 highest nutritional values from the product
-        - qty: Product quantity/weight extracted from ES data (may be empty if not available)
-        - Products with null values for sort field are placed at the end
     """
     try:
         # Parse request
@@ -247,16 +347,25 @@ def simple_search() -> tuple[Dict[str, Any], int]:
                 "error": f"Invalid 'sort_by' value: '{sort_by}'. Valid options: {sorted(VALID_SORT_OPTIONS)}"
             }), 400
         
-        log.info(f"SIMPLE_SEARCH_REQUEST | query='{query}' | sort_by='{sort_by}'")
+        # Extract and validate filters
+        raw_filters = data.get("filters")
+        validated_filters, filter_error = _validate_filters(raw_filters)
+        if filter_error:
+            return jsonify({
+                "error": f"Invalid filters: {filter_error}"
+            }), 400
+        
+        log.info(f"SIMPLE_SEARCH_REQUEST | query='{query}' | sort_by='{sort_by}' | filters={validated_filters}")
         
         # Get ES fetcher instance
         fetcher = get_es_fetcher()
         
-        # Build params with query and optional sort
+        # Build params with query, sort, and filters
         params = {
             "q": query,
             "size": 20,  # Default to 20 results
-            "sort_by": sort_by if sort_by != "relevance" else None  # Only pass if not default
+            "sort_by": sort_by if sort_by != "relevance" else None,  # Only pass if not default
+            "filters": validated_filters  # Pass validated filters to ES
         }
         
         # Perform ES search
@@ -312,13 +421,19 @@ def simple_search() -> tuple[Dict[str, Any], int]:
             except Exception as e:
                 log.warning(f"PARSED_PRODUCT_PRINT_ERROR | Could not print parsed product: {e}")
         
-        # Return parsed products in desired format
-        return jsonify({
+        # Build response
+        response = {
             "products": parsed_products,
             "total_hits": total_hits,
             "returned": len(parsed_products),
             "sort_by": sort_by
-        }), 200
+        }
+        
+        # Include filters_applied if any filters were used
+        if validated_filters:
+            response["filters_applied"] = validated_filters
+        
+        return jsonify(response), 200
         
     except Exception as exc:
         log.error(f"SIMPLE_SEARCH_ERROR | error={exc}", exc_info=True)

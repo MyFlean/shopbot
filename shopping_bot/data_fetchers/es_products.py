@@ -270,6 +270,140 @@ def _build_sort_config(sort_by: Optional[str]) -> List[Dict[str, Any]]:
     return [{"_score": "desc"}]
 
 
+# ============================================================================
+# Filter Configuration for Simple Search API
+# ============================================================================
+
+# Price range filter mappings
+PRICE_RANGE_FILTERS = {
+    "below_99": {"lt": 99},
+    "100_249": {"gte": 100, "lte": 249},
+    "250_499": {"gte": 250, "lte": 499},
+    "above_500": {"gt": 500},
+}
+
+# Flean score filter mappings (based on flean_percentile, 0-100 scale)
+# Maps user-friendly names to percentile thresholds
+FLEAN_SCORE_FILTERS = {
+    "10": {"gte": 90},      # Top 10% (90th percentile and above)
+    "9_plus": {"gte": 80},  # Top 20% (80th percentile and above)
+    "8_plus": {"gte": 70},  # Top 30% (70th percentile and above)
+    "7_plus": {"gte": 60},  # Top 40% (60th percentile and above)
+}
+
+# Preference filters - map to dietary_labels values
+PREFERENCE_FILTERS = {
+    "no_palm_oil": ["PALM OIL FREE"],
+    "no_added_sugar": ["NO ADDED SUGAR", "SUGAR FREE"],
+    "no_additives": ["NO PRESERVATIVES", "NO ARTIFICIAL COLORS"],
+}
+
+# Dietary restriction filters - map to dietary_labels values
+DIETARY_FILTERS = {
+    "dairy_free": ["DAIRY FREE"],
+    "gluten_free": ["GLUTEN FREE"],
+}
+
+
+def _build_filter_clauses(filters: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Build Elasticsearch filter clauses from the filters object.
+    
+    Args:
+        filters: Dict containing filter options:
+            - price_range: One of 'below_99', '100_249', '250_499', 'above_500'
+            - flean_score: One of '10', '9_plus', '8_plus', '7_plus'
+            - preferences: List of 'no_palm_oil', 'no_added_sugar', 'no_additives'
+            - dietary: List of 'dairy_free', 'gluten_free'
+    
+    Returns:
+        List of ES filter clauses to be added to bool.filter
+    """
+    if not filters or not isinstance(filters, dict):
+        return []
+    
+    filter_clauses: List[Dict[str, Any]] = []
+    
+    # 1. Price Range Filter (mutually exclusive - only one allowed)
+    price_range = filters.get("price_range")
+    if price_range and price_range in PRICE_RANGE_FILTERS:
+        filter_clauses.append({
+            "range": {"price": PRICE_RANGE_FILTERS[price_range]}
+        })
+    
+    # 2. Flean Score Filter (mutually exclusive - only one allowed)
+    # Uses subcategory_percentile (0-100 scale) for better user experience
+    flean_score = filters.get("flean_score")
+    if flean_score and flean_score in FLEAN_SCORE_FILTERS:
+        filter_clauses.append({
+            "range": {"stats.adjusted_score_percentiles.subcategory_percentile": FLEAN_SCORE_FILTERS[flean_score]}
+        })
+    
+    # 3. Preference Filters (multiple allowed, combined with OR within category)
+    # Search across name, description, and claims for flexible matching
+    preferences = filters.get("preferences", [])
+    if isinstance(preferences, list) and preferences:
+        preference_terms: List[str] = []
+        for pref in preferences:
+            if pref in PREFERENCE_FILTERS:
+                preference_terms.extend(PREFERENCE_FILTERS[pref])
+        
+        if preference_terms:
+            # Use multi_match across multiple fields for comprehensive coverage
+            filter_clauses.append({
+                "bool": {
+                    "should": [
+                        {
+                            "multi_match": {
+                                "query": term,
+                                "fields": [
+                                    "name^2",
+                                    "package_claims.dietary_labels^3",
+                                    "package_claims.health_claims^3",
+                                    "description"
+                                ],
+                                "type": "best_fields",
+                                "operator": "and"
+                            }
+                        }
+                        for term in preference_terms
+                    ],
+                    "minimum_should_match": 1
+                }
+            })
+    
+    # 4. Dietary Restriction Filters (multiple allowed, combined with AND)
+    dietary = filters.get("dietary", [])
+    if isinstance(dietary, list) and dietary:
+        for diet_filter in dietary:
+            if diet_filter in DIETARY_FILTERS:
+                diet_terms = DIETARY_FILTERS[diet_filter]
+                # Each dietary restriction must be matched (AND logic between restrictions)
+                filter_clauses.append({
+                    "bool": {
+                        "should": [
+                            {
+                                "multi_match": {
+                                    "query": term,
+                                    "fields": [
+                                        "name^2",
+                                        "package_claims.dietary_labels^3",
+                                        "package_claims.health_claims^3",
+                                        "description"
+                                    ],
+                                    "type": "best_fields",
+                                    "operator": "and"
+                                }
+                            }
+                            for term in diet_terms
+                        ],
+                        "minimum_should_match": 1
+                    }
+                })
+    
+    return filter_clauses
+
+
 def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Build ES query with improved brand handling and percentile-based ranking.
@@ -322,6 +456,12 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     filters: List[Dict[str, Any]] = bq["filter"]
     shoulds: List[Dict[str, Any]] = bq["should"]
     musts: List[Dict[str, Any]] = bq.setdefault("must", [])
+
+    # Apply filters from simple search API (price_range, flean_score, preferences, dietary)
+    simple_search_filters = p.get("filters")
+    if simple_search_filters:
+        filter_clauses = _build_filter_clauses(simple_search_filters)
+        filters.extend(filter_clauses)
 
     # 1) Hard filters
     # Category group filter

@@ -1,0 +1,520 @@
+{
+	"info": {
+		"_postman_id": "flean-flutter-apis-2026",
+		"name": "Flean Flutter App APIs",
+		"description": "# Flean Flutter App API Collection\n\nThis collection contains all API endpoints for the Flean Flutter mobile application.\n\n## Base URLs\n\n| Environment | Base URL |\n|-------------|----------|\n| Production (ALB) | `http://flean-services-alb-806741654.ap-south-1.elb.amazonaws.com` |\n| Production (CloudFront) | `https://api.flean.ai` |\n| Local Development | `http://localhost:8080` |\n\n## API Categories\n\n1. **Search API** - Product search with sorting and filtering\n2. **Home Page APIs** - Home screen data (banners, categories, products)\n3. **Product APIs** - PDP, Scanner, Catalogue\n\n## Authentication\n\nNo authentication required for these APIs.\n\n## Common Response Format\n\n```json\n{\n  \"success\": true,\n  \"data\": { ... },\n  \"meta\": { ... }  // Optional pagination/stats\n}\n```\n\n## Error Response Format\n\n```json\n{\n  \"success\": false,\n  \"error\": {\n    \"code\": \"ERROR_CODE\",\n    \"message\": \"Human-readable message\"\n  }\n}\n```",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://flean-services-alb-806741654.ap-south-1.elb.amazonaws.com",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "1. Search API",
+			"description": "Product search endpoint with sorting and filtering capabilities.\n\nUsed for: Search results page, filtered product listings",
+			"item": [
+				{
+					"name": "Basic Search",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"query\": \"protein bars\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/rs/search",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "search"]
+						},
+						"description": "## Basic Product Search\n\nSimple search by keyword. Returns products sorted by relevance (Flean percentile ranking).\n\n### Use Case\n- User types in search bar\n- Initial search results\n\n### Request\n```json\n{\n    \"query\": \"protein bars\"\n}\n```\n\n### Response Fields\n- `products[]` - Array of matching products\n  - `id` - Elasticsearch product ID\n  - `name` - Product name\n  - `brand` - Brand name\n  - `price` - Selling price (INR)\n  - `mrp` - Maximum retail price\n  - `qty` - Quantity/weight\n  - `image_url` - Product image CDN URL\n  - `macro_tags[]` - Top 2 nutritional highlights\n  - `nutrition{}` - Raw nutritional values\n  - `flean_score` - Quality score (-10 to 10)\n  - `flean_percentile` - Quality percentile (0-100)\n- `total_hits` - Total matching products\n- `returned` - Products in response\n- `sort_by` - Applied sort option"
+					},
+					"response": [
+						{
+							"name": "Basic Search - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"products\": [\n        {\n            \"id\": \"01K1B1BPGN2WAXFB5DNSGXX4W3\",\n            \"name\": \"Yoga Bar 20g Protein Bar, Almond Fudge\",\n            \"brand\": \"Yoga Bar\",\n            \"price\": 100.0,\n            \"mrp\": 120.0,\n            \"currency\": \"INR\",\n            \"qty\": \"60 g\",\n            \"image_url\": \"https://cdn.flean.ai/products/yogabar-protein.jpg\",\n            \"macro_tags\": [\n                {\"label\": \"20 gms of Protein\", \"nutrient\": \"protein\", \"value\": 20, \"unit\": \"g\"},\n                {\"label\": \"225 Calories\", \"nutrient\": \"calories\", \"value\": 225, \"unit\": \"kcal\"}\n            ],\n            \"nutrition\": {\n                \"protein_g\": 20,\n                \"carbs_g\": 28,\n                \"fat_g\": 8,\n                \"fiber_g\": 3,\n                \"calories\": 225\n            },\n            \"flean_score\": 2.5,\n            \"flean_percentile\": 85.2,\n            \"in_stock\": true\n        }\n    ],\n    \"total_hits\": 2486,\n    \"returned\": 20,\n    \"sort_by\": \"relevance\"\n}"
+						}
+					]
+				},
+				{
+					"name": "Search with Sorting",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"query\": \"protein bars\",\n    \"sort_by\": \"protein_desc\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/rs/search",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "search"]
+						},
+						"description": "## Search with Sorting\n\nSearch with custom sort order.\n\n### Sort Options\n\n| Value | Description |\n|-------|-------------|\n| `relevance` | Default - Flean quality ranking |\n| `price_asc` | Price Low to High |\n| `price_desc` | Price High to Low |\n| `protein_desc` | Protein High to Low |\n| `fiber_desc` | Fibre High to Low |\n| `fat_asc` | Fat Low to High |\n\n### Use Case\n- Sort button/dropdown in search results\n- \"Sort by Price\" feature"
+					},
+					"response": [
+						{
+							"name": "Search with Sorting - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"products\": [\n        {\n            \"id\": \"01K1B1XXXX\",\n            \"name\": \"MuscleBlaze Biozyme Whey Protein\",\n            \"brand\": \"MuscleBlaze\",\n            \"price\": 2499.0,\n            \"mrp\": 2999.0,\n            \"nutrition\": {\n                \"protein_g\": 60,\n                \"carbs_g\": 5,\n                \"fat_g\": 2\n            },\n            \"flean_percentile\": 92.5\n        }\n    ],\n    \"total_hits\": 2486,\n    \"returned\": 20,\n    \"sort_by\": \"protein_desc\"\n}"
+						}
+					]
+				},
+				{
+					"name": "Search with Filters",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"query\": \"chips\",\n    \"filters\": {\n        \"price_range\": \"below_99\",\n        \"flean_score\": \"8_plus\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/rs/search",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "search"]
+						},
+						"description": "## Search with Filters\n\nApply filters to narrow search results. All filters use AND logic.\n\n### Price Range Options\n\n| Value | Meaning |\n|-------|--------|\n| `below_99` | Below Rs.99 |\n| `100_249` | Rs.100-249 |\n| `250_499` | Rs.250-499 |\n| `above_500` | Above Rs.500 |\n\n### Flean Score Options\n\n| Value | Meaning |\n|-------|--------|\n| `10` | Top 10% quality |\n| `9_plus` | Top 20% quality |\n| `8_plus` | Top 30% quality |\n| `7_plus` | Top 40% quality |\n\n### Use Case\n- Filter chips/buttons in search results\n- Price filter selection\n- Quality filter"
+					},
+					"response": [
+						{
+							"name": "Search with Filters - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"products\": [\n        {\n            \"id\": \"01K1BXXX\",\n            \"name\": \"Modern Kitchens Banana Chips\",\n            \"brand\": \"Modern Kitchens\",\n            \"price\": 49.0,\n            \"flean_percentile\": 98.15\n        }\n    ],\n    \"total_hits\": 45,\n    \"returned\": 20,\n    \"sort_by\": \"relevance\",\n    \"filters_applied\": {\n        \"price_range\": \"below_99\",\n        \"flean_score\": \"8_plus\"\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Search with Dietary Filters",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"query\": \"snacks\",\n    \"filters\": {\n        \"preferences\": [\"no_palm_oil\", \"no_added_sugar\"],\n        \"dietary\": [\"gluten_free\"]\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/rs/search",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "search"]
+						},
+						"description": "## Search with Dietary Filters\n\nFilter products by dietary preferences and restrictions.\n\n### Preference Options (OR logic within)\n\n| Value | Meaning |\n|-------|--------|\n| `no_palm_oil` | No Palm Oil |\n| `no_added_sugar` | No Added Sugar |\n| `no_additives` | No Preservatives/Artificial Colors |\n\n### Dietary Options (AND logic between)\n\n| Value | Meaning |\n|-------|--------|\n| `dairy_free` | Dairy Free |\n| `gluten_free` | Gluten Free |\n\n### Use Case\n- Dietary preference toggles\n- Health-conscious filtering"
+					},
+					"response": [
+						{
+							"name": "Search with Dietary Filters - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"products\": [\n        {\n            \"id\": \"01K1BXXX\",\n            \"name\": \"Pluckk Gluten Free Spinach Soup\",\n            \"brand\": \"Pluckk\",\n            \"price\": 129.0\n        }\n    ],\n    \"total_hits\": 5,\n    \"returned\": 5,\n    \"sort_by\": \"relevance\",\n    \"filters_applied\": {\n        \"preferences\": [\"no_palm_oil\", \"no_added_sugar\"],\n        \"dietary\": [\"gluten_free\"]\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Search with All Options",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"query\": \"protein bars\",\n    \"sort_by\": \"protein_desc\",\n    \"filters\": {\n        \"price_range\": \"100_249\",\n        \"flean_score\": \"9_plus\",\n        \"preferences\": [\"no_added_sugar\"],\n        \"dietary\": [\"gluten_free\"]\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/rs/search",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "search"]
+						},
+						"description": "## Combined Search (Sort + Filters)\n\nFull-featured search with sorting and multiple filters combined.\n\n### Use Case\n- Advanced search page\n- When user applies multiple filters + sort\n\n### Note\n- All filters use AND logic\n- Products must match ALL specified filters"
+					},
+					"response": [
+						{
+							"name": "Combined Search - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"products\": [...],\n    \"total_hits\": 3,\n    \"returned\": 3,\n    \"sort_by\": \"protein_desc\",\n    \"filters_applied\": {\n        \"price_range\": \"100_249\",\n        \"flean_score\": \"9_plus\",\n        \"preferences\": [\"no_added_sugar\"],\n        \"dietary\": [\"gluten_free\"]\n    }\n}"
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "2. Home Page APIs",
+			"description": "APIs for the Flutter app home screen.\n\nUsed for: Home page data loading, promotional content, featured products",
+			"item": [
+				{
+					"name": "Get Banners",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/home/banners",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "home", "banners"]
+						},
+						"description": "## Get Promotional Banners\n\nFetch promotional banners/ads for the home page carousel.\n\n### Use Case\n- Home page hero carousel\n- Promotional ads section\n\n### Response Fields\n- `banners[]` - Array of banner objects\n  - `id` - Unique banner ID\n  - `main_heading` - Large text heading\n  - `sub_heading_1` - First subheading\n  - `sub_heading_2` - Second subheading (optional)\n  - `button_text` - CTA button text\n  - `button_link` - Deep link/URL\n  - `image_url` - Banner image URL\n  - `background_color` - Hex color code"
+					},
+					"response": [
+						{
+							"name": "Get Banners - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"success\": true,\n    \"data\": {\n        \"banners\": [\n            {\n                \"id\": \"banner_1\",\n                \"main_heading\": \"Healthy Snacking Made Easy\",\n                \"sub_heading_1\": \"Discover 500+ healthy products\",\n                \"sub_heading_2\": \"Curated just for you\",\n                \"button_text\": \"Shop Now\",\n                \"button_link\": \"flean://browse/snacks\",\n                \"image_url\": \"https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/1+(2).png\",\n                \"background_color\": \"#F5F5DC\",\n                \"active\": true,\n                \"display_order\": 1\n            }\n        ]\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Get Categories",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/home/categories",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "home", "categories"]
+						},
+						"description": "## Get Product Categories\n\nFetch product categories for the home page. Returns 4 by default.\n\n### Query Parameters\n- `all=true` - Return all categories (for 'See All' page)\n\n### Use Case\n- Category grid on home page\n- Category selection page\n\n### Response Fields\n- `categories[]` - Array of category objects\n  - `id` - Category ID\n  - `name` - Display name\n  - `icon_url` - Category icon URL\n  - `deep_link` - Navigation link\n- `has_more` - Whether more categories exist\n- `total_count` - Total category count"
+					},
+					"response": [
+						{
+							"name": "Get Categories - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"success\": true,\n    \"data\": {\n        \"categories\": [\n            {\n                \"id\": \"smart_snacks\",\n                \"name\": \"Smart Snacks\",\n                \"icon_url\": \"https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Smart+Snacks.png\",\n                \"deep_link\": \"flean://category/smart_snacks\",\n                \"display_order\": 1\n            },\n            {\n                \"id\": \"dairy_bakery\",\n                \"name\": \"Dairy & Bakery\",\n                \"icon_url\": \"https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Dairy+%26+Bakery.png\",\n                \"deep_link\": \"flean://category/dairy_bakery\",\n                \"display_order\": 2\n            }\n        ],\n        \"has_more\": true,\n        \"total_count\": 8\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Get Categories (All)",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/home/categories?all=true",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "home", "categories"],
+							"query": [
+								{
+									"key": "all",
+									"value": "true"
+								}
+							]
+						},
+						"description": "## Get All Categories\n\nFetch all product categories (for 'See All' page).\n\n### Use Case\n- Category selection page\n- 'See All Categories' screen"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Best Selling",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/home/best-selling",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "home", "best-selling"]
+						},
+						"description": "## Get Best Selling Products\n\nFetch best-selling products for the home page. Products are fetched from Elasticsearch using pre-configured IDs.\n\n### Use Case\n- \"Best Selling\" section on home page\n- Featured products display\n\n### Response Fields\n- `products[]` - Array of product objects with full details\n- `section_title` - Section heading text"
+					},
+					"response": [
+						{
+							"name": "Get Best Selling - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"success\": true,\n    \"data\": {\n        \"products\": [\n            {\n                \"id\": \"01K1B1BPGN2WAXFB5DNSGXX4W3\",\n                \"name\": \"Yoga Bar Protein Bar\",\n                \"brand\": \"Yoga Bar\",\n                \"price\": 100.0,\n                \"mrp\": 120.0,\n                \"currency\": \"INR\",\n                \"image_url\": \"https://cdn.flean.ai/...\",\n                \"macro_tags\": [\n                    {\"label\": \"20 gms of Protein\", \"nutrient\": \"protein\", \"value\": 20, \"unit\": \"g\"}\n                ],\n                \"flean_score\": 2.5,\n                \"flean_percentile\": 85.2,\n                \"in_stock\": true\n            }\n        ],\n        \"section_title\": \"Best Selling\"\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Get Curated (Home)",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/home/curated",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "home", "curated"]
+						},
+						"description": "## Get Curated Products (Home)\n\nFetch 4 random curated products for the home page. Returns different products on each call (randomized from pool).\n\n### Use Case\n- \"Curated For You\" section on home page\n- Personalized recommendations\n\n### Response Fields\n- `products[]` - 4 randomly selected products\n- `section_title` - Section heading\n- `has_more` - Whether more products exist\n- `total_in_pool` - Total curated products available"
+					},
+					"response": [
+						{
+							"name": "Get Curated (Home) - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"success\": true,\n    \"data\": {\n        \"products\": [\n            {\n                \"id\": \"01K1BXXX\",\n                \"name\": \"Premium Granola\",\n                \"brand\": \"Yogabar\",\n                \"price\": 349.0,\n                \"image_url\": \"https://cdn.flean.ai/...\"\n            }\n        ],\n        \"section_title\": \"Curated For You\",\n        \"has_more\": true,\n        \"total_in_pool\": 25\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Get Curated (All)",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/home/curated/all",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "home", "curated", "all"]
+						},
+						"description": "## Get All Curated Products\n\nFetch all curated products (for 'See All' page).\n\n### Use Case\n- \"See All\" page for curated products\n- Full curated collection display"
+					},
+					"response": [
+						{
+							"name": "Get Curated (All) - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"success\": true,\n    \"data\": {\n        \"products\": [...],\n        \"section_title\": \"Curated For You\",\n        \"total_count\": 25\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Get Why Flean",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/home/why-flean",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "home", "why-flean"]
+						},
+						"description": "## Get Why Flean Cards\n\nFetch value proposition cards explaining Flean's benefits.\n\n### Use Case\n- \"Why Flean\" section on home page\n- App intro/onboarding\n\n### Response Fields\n- `cards[]` - Array of card objects\n  - `id` - Card ID\n  - `main_heading` - Card title\n  - `text_body` - Description text\n  - `icon_url` - Card icon/image URL"
+					},
+					"response": [
+						{
+							"name": "Get Why Flean - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"success\": true,\n    \"data\": {\n        \"cards\": [\n            {\n                \"id\": \"why_1\",\n                \"main_heading\": \"AI-Powered Analysis\",\n                \"text_body\": \"Every product is analyzed by our AI to give you the healthiest recommendations.\",\n                \"icon_url\": \"https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/1+(1).png\",\n                \"display_order\": 1\n            }\n        ],\n        \"section_title\": \"Why Flean\"\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Get Collaborations",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/home/collaborations",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "home", "collaborations"]
+						},
+						"description": "## Get Brand Collaborations\n\nFetch exclusive partner brand information.\n\n### Use Case\n- \"Exclusive Collaborations\" section\n- Partner brands showcase"
+					},
+					"response": [
+						{
+							"name": "Get Collaborations - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"success\": true,\n    \"data\": {\n        \"brands\": [\n            {\n                \"id\": \"collab_1\",\n                \"name\": \"Everaw\",\n                \"logo_url\": \"https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Everaw.png\",\n                \"display_order\": 1\n            },\n            {\n                \"id\": \"collab_2\",\n                \"name\": \"Hoyi\",\n                \"logo_url\": \"https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Hoyi.png\",\n                \"display_order\": 2\n            }\n        ],\n        \"section_title\": \"Exclusive Collaborations\"\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Refresh Cache",
+					"request": {
+						"method": "POST",
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/home/refresh",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "home", "refresh"]
+						},
+						"description": "## Refresh Home Page Cache\n\nClear the JSON file cache to force reload data on next request.\n\n### Use Case\n- After updating home page data files\n- Force refresh without server restart\n- Admin/debug tool"
+					},
+					"response": [
+						{
+							"name": "Refresh Cache - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"success\": true,\n    \"message\": \"Cache cleared successfully. Data will be reloaded on next request.\"\n}"
+						}
+					]
+				},
+				{
+					"name": "Health Check",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/home/health",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "home", "health"]
+						},
+						"description": "## Home Page Health Check\n\nCheck status of all home page data files.\n\n### Use Case\n- Monitoring/alerting\n- Debug data loading issues"
+					},
+					"response": [
+						{
+							"name": "Health Check - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"status\": \"healthy\",\n    \"data_files\": {\n        \"banners.json\": \"ok\",\n        \"categories.json\": \"ok\",\n        \"best_selling_products.json\": \"ok\",\n        \"curated_products.json\": \"ok\",\n        \"why_flean.json\": \"ok\",\n        \"collaborations.json\": \"ok\"\n    },\n    \"version\": \"1.1.0\"\n}"
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "3. Product APIs",
+			"description": "Product-specific APIs for detail pages, scanning, and catalogues.\n\nUsed for: PDP, barcode scanner, category browsing",
+			"item": [
+				{
+					"name": "Get Product Detail (PDP)",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/product/01K1B1BPGN2WAXFB5DNSGXX4W3",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "product", "01K1B1BPGN2WAXFB5DNSGXX4W3"]
+						},
+						"description": "## Get Product Detail (PDP)\n\nFetch complete product data by Elasticsearch ID. Returns raw ES data for Flutter app to parse.\n\n### Path Parameter\n- `product_id` - Elasticsearch product ID\n\n### Use Case\n- Product Detail Page (PDP)\n- Product quick view\n- After scanning a product\n\n### Response\nReturns full raw Elasticsearch `_source` document with all available fields:\n- Basic info (name, brand, price, mrp)\n- Images (hero_image)\n- Nutritional data (category_data.nutritional)\n- Flean scores (flean_score, stats)\n- Ingredients\n- Package claims\n- And more..."
+					},
+					"response": [
+						{
+							"name": "PDP - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"success\": true,\n    \"data\": {\n        \"id\": \"01K1B1BPGN2WAXFB5DNSGXX4W3\",\n        \"name\": \"Yoga Bar 20g Protein Bar, Almond Fudge, Multigrain Energy Bars\",\n        \"brand\": \"Yoga Bar\",\n        \"price\": 100.0,\n        \"mrp\": 120.0,\n        \"hero_image\": {\n            \"1080\": \"https://cdn.flean.ai/products/yogabar-1080.jpg\",\n            \"720\": \"https://cdn.flean.ai/products/yogabar-720.jpg\"\n        },\n        \"category_group\": \"f_and_b\",\n        \"category_paths\": [\"f_and_b/food/power_breakfast/protein_bars\"],\n        \"package_claims\": {\n            \"dietary_labels\": [\"GLUTEN FREE\", \"HIGH PROTEIN\"],\n            \"health_claims\": [\"Source of Fiber\"]\n        },\n        \"category_data\": {\n            \"nutritional\": {\n                \"qty\": \"60 g\",\n                \"nutri_breakdown_updated\": {\n                    \"protein g\": 20,\n                    \"carbohydrates g\": 28,\n                    \"total fat g\": 8,\n                    \"fiber g\": 3,\n                    \"energy kcal\": 225\n                }\n            }\n        },\n        \"flean_score\": {\n            \"adjusted_score\": 2.5\n        },\n        \"stats\": {\n            \"adjusted_score_percentiles\": {\n                \"subcategory_percentile\": 85.2\n            }\n        },\n        \"ingredients\": {\n            \"raw_text\": \"Oats, Whey Protein, Almonds, Honey...\"\n        }\n    }\n}"
+						},
+						{
+							"name": "PDP - Not Found",
+							"status": "Not Found",
+							"code": 404,
+							"body": "{\n    \"success\": false,\n    \"error\": {\n        \"code\": \"PRODUCT_NOT_FOUND\",\n        \"message\": \"Product with ID 'INVALID_ID' not found\"\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Scanner (Image Lookup)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"image\": \"data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD...\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/scanner",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "scanner"]
+						},
+						"description": "## Scanner API (Image Lookup)\n\nScan a product image to identify and fetch product details. Uses Anthropic Claude Vision to extract product name and brand, then searches Elasticsearch.\n\n### Request Body\n```json\n{\n    \"image\": \"<base64_image_data>\"\n}\n```\n\n### Image Format\n- Data URL: `data:image/jpeg;base64,...`\n- Raw base64: `/9j/4AAQSkZ...`\n- Supported: JPEG, PNG, GIF, WebP\n- Max size: 5 MB\n\n### Use Case\n- Barcode/product scanner feature\n- Camera-based product lookup\n- \"Scan to find\" functionality\n\n### Response Fields\n- `extracted` - Vision AI extraction results\n  - `product_name` - Detected product name\n  - `brand_name` - Detected brand\n  - `ocr_text` - All visible text\n  - `category_group` - Detected category\n- `products[]` - Matching products from ES"
+					},
+					"response": [
+						{
+							"name": "Scanner - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"success\": true,\n    \"data\": {\n        \"extracted\": {\n            \"product_name\": \"Yoga Bar Protein Bar Almond Fudge\",\n            \"brand_name\": \"Yoga Bar\",\n            \"ocr_text\": \"YOGA BAR\\n20g PROTEIN\\nAlmond Fudge\\n60g\",\n            \"category_group\": \"f_and_b\"\n        },\n        \"products\": [\n            {\n                \"id\": \"01K1B1BPGN2WAXFB5DNSGXX4W3\",\n                \"name\": \"Yoga Bar 20g Protein Bar, Almond Fudge\",\n                \"brand\": \"Yoga Bar\",\n                \"price\": 100.0\n            }\n        ]\n    }\n}"
+						},
+						{
+							"name": "Scanner - No Match",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"success\": true,\n    \"data\": {\n        \"extracted\": {\n            \"product_name\": \"\",\n            \"brand_name\": \"\",\n            \"ocr_text\": \"\",\n            \"category_group\": \"f_and_b\"\n        },\n        \"products\": [],\n        \"message\": \"Could not identify product from image\"\n    }\n}"
+						},
+						{
+							"name": "Scanner - Invalid Image",
+							"status": "Bad Request",
+							"code": 400,
+							"body": "{\n    \"success\": false,\n    \"error\": {\n        \"code\": \"INVALID_IMAGE\",\n        \"message\": \"Unsupported image format. Allowed: image/jpeg, image/png, image/gif, image/webp\"\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Get Catalogue",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/catalogue?subcategory=chips&page=0&size=20",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "catalogue"],
+							"query": [
+								{
+									"key": "subcategory",
+									"value": "chips"
+								},
+								{
+									"key": "page",
+									"value": "0"
+								},
+								{
+									"key": "size",
+									"value": "20"
+								}
+							]
+						},
+						"description": "## Get Catalogue Products\n\nList products by subcategory with pagination.\n\n### Query Parameters\n- `subcategory` (required) - Category path (e.g., 'chips', 'f_and_b/food/munchies_and_snacks')\n- `page` (optional) - Page number, 0-indexed (default: 0)\n- `size` (optional) - Products per page, max 100 (default: 20)\n- `sort` (optional) - 'flean_score' (default) or 'price'\n\n### Use Case\n- Category listing page\n- Browse products by category\n- Subcategory product grid\n\n### Response Fields\n- `products[]` - Array of products (raw ES data)\n- `meta` - Pagination info\n  - `total` - Total products in category\n  - `page` - Current page\n  - `size` - Page size\n  - `total_pages` - Total pages\n  - `has_next` - More pages available\n  - `has_prev` - Previous page exists"
+					},
+					"response": [
+						{
+							"name": "Catalogue - Success",
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"success\": true,\n    \"data\": {\n        \"products\": [\n            {\n                \"id\": \"01K1BXXX\",\n                \"name\": \"Ritz Toasted Original Chips\",\n                \"brand\": \"Ritz\",\n                \"price\": 45.0\n            }\n        ]\n    },\n    \"meta\": {\n        \"total\": 298,\n        \"page\": 0,\n        \"size\": 20,\n        \"total_pages\": 15,\n        \"has_next\": true,\n        \"has_prev\": false\n    }\n}"
+						},
+						{
+							"name": "Catalogue - Missing Subcategory",
+							"status": "Bad Request",
+							"code": 400,
+							"body": "{\n    \"success\": false,\n    \"error\": {\n        \"code\": \"MISSING_SUBCATEGORY\",\n        \"message\": \"Query parameter 'subcategory' is required (e.g., 'f_and_b/food/munchies_and_snacks')\"\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Get Catalogue (Page 2)",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/catalogue?subcategory=chips&page=1&size=20",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "catalogue"],
+							"query": [
+								{
+									"key": "subcategory",
+									"value": "chips"
+								},
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "size",
+									"value": "20"
+								}
+							]
+						},
+						"description": "## Get Catalogue (Pagination Example)\n\nExample of fetching page 2 of catalogue results.\n\n### Use Case\n- Infinite scroll loading\n- \"Load More\" button\n- Pagination navigation"
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}
+

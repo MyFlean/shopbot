@@ -229,6 +229,47 @@ def _mentions_budget_or_price(text: str) -> bool:
     
     return False
 
+def _build_sort_config(sort_by: Optional[str]) -> List[Dict[str, Any]]:
+    """
+    Build Elasticsearch sort configuration based on sort_by parameter.
+    
+    Args:
+        sort_by: Sort option - one of:
+            - 'relevance' (default): ES score + flean_percentile
+            - 'price_asc': Price Low to High
+            - 'price_desc': Price High to Low
+            - 'protein_desc': Protein High to Low
+            - 'fiber_desc': Fibre High to Low
+            - 'fat_asc': Fat Low to High
+    
+    Returns:
+        List of ES sort clauses
+    """
+    # Mapping of sort options to ES field paths and order
+    SORT_MAPPINGS = {
+        "price_asc": [{"price": {"order": "asc", "missing": "_last"}}],
+        "price_desc": [{"price": {"order": "desc", "missing": "_last"}}],
+        "protein_desc": [
+            {"category_data.nutritional.nutri_breakdown_updated.protein g": {"order": "desc", "missing": "_last"}},
+            {"_score": "desc"}  # Secondary sort by relevance
+        ],
+        "fiber_desc": [
+            {"category_data.nutritional.nutri_breakdown_updated.fiber g": {"order": "desc", "missing": "_last"}},
+            {"_score": "desc"}
+        ],
+        "fat_asc": [
+            {"category_data.nutritional.nutri_breakdown_updated.total fat g": {"order": "asc", "missing": "_last"}},
+            {"_score": "desc"}
+        ],
+    }
+    
+    if sort_by and sort_by in SORT_MAPPINGS:
+        return SORT_MAPPINGS[sort_by]
+    
+    # Default: relevance (ES score)
+    return [{"_score": "desc"}]
+
+
 def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Build ES query with improved brand handling and percentile-based ranking.
@@ -238,6 +279,10 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
 
     # Determine size based on product intent
     desired_size = 1 if str(p.get("product_intent", "")).strip().lower() == "is_this_good" else 10
+
+    # Build sort configuration based on sort_by parameter
+    sort_by = p.get("sort_by")
+    sort_config = _build_sort_config(sort_by)
 
     # Base document structure with enhanced source fields
     body: Dict[str, Any] = {
@@ -269,7 +314,7 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
             ]
         },
         "query": {"bool": {"filter": [], "should": [], "minimum_should_match": 0}},
-        "sort": [{"_score": "desc"}],
+        "sort": sort_config,
         "min_score": 0.5,  # Add minimum score threshold
     }
 
@@ -1312,8 +1357,13 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
 
     return body
 
-def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
-    """Transform ES response with enhanced field coverage"""
+def _transform_results(raw_response: Dict[str, Any], skip_rerank: bool = False) -> Dict[str, Any]:
+    """Transform ES response with enhanced field coverage.
+    
+    Args:
+        raw_response: Raw Elasticsearch response
+        skip_rerank: If True, skip the flean_percentile re-ranking (used when explicit sort is applied)
+    """
     hits = raw_response.get("hits", {}).get("hits", [])
     total = raw_response.get("hits", {}).get("total", {}).get("value", len(hits))
     took = raw_response.get("took", 0)
@@ -1356,6 +1406,9 @@ def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
             "empty_food": (stats.get("empty_food_penalty_percentiles", {}) or {}).get("subcategory_percentile"),
         }
         
+        # Extract fiber value for display (try both field name variants)
+        fiber_g = nutrition.get("fiber g") or nutrition.get("fiber_g")
+        
         product = {
             "rank": rank,
             "score": round(score, 3) if isinstance(score, (int, float)) else score,
@@ -1372,6 +1425,7 @@ def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
             "protein_g": nutrition.get("protein_g") or nutrition.get("protein g"),
             "carbs_g": nutrition.get("carbs_g") or nutrition.get("carbohydrates g") or nutrition.get("carbs g"),
             "fat_g": nutrition.get("fat_g") or nutrition.get("total fat g") or nutrition.get("fat g"),
+            "fiber_g": fiber_g,  # Added fiber for sorting visibility
             "calories": nutrition.get("energy_kcal") or nutrition.get("energy kcal"),
             
             # Claims and labels
@@ -1404,22 +1458,25 @@ def _transform_results(raw_response: Dict[str, Any]) -> Dict[str, Any]:
             
         products.append(product)
     
-    # Re-rank products by flean_percentile (descending: best at top, worst at bottom)
-    # Products with None flean_percentile are placed at the end
-    def _get_sort_key(product: Dict[str, Any]) -> float:
-        """Get sort key for flean_percentile. None values go to the end."""
-        flean = product.get("flean_percentile")
-        if flean is None:
-            return -1.0  # Put None values at the end (after all numeric values)
-        try:
-            return float(flean)
-        except (TypeError, ValueError):
-            return -1.0
+    # Re-rank products by flean_percentile ONLY if no explicit sort was requested
+    # When skip_rerank=True, preserve the ES-returned order (explicit sort applied)
+    if not skip_rerank:
+        # Re-rank products by flean_percentile (descending: best at top, worst at bottom)
+        # Products with None flean_percentile are placed at the end
+        def _get_sort_key(product: Dict[str, Any]) -> float:
+            """Get sort key for flean_percentile. None values go to the end."""
+            flean = product.get("flean_percentile")
+            if flean is None:
+                return -1.0  # Put None values at the end (after all numeric values)
+            try:
+                return float(flean)
+            except (TypeError, ValueError):
+                return -1.0
+        
+        # Sort by flean_percentile descending (highest first)
+        products.sort(key=_get_sort_key, reverse=True)
     
-    # Sort by flean_percentile descending (highest first)
-    products.sort(key=_get_sort_key, reverse=True)
-    
-    # Update rank field after re-ranking
+    # Update rank field after re-ranking (or preserve ES order)
     for new_rank, product in enumerate(products, 1):
         product["rank"] = new_rank
     
@@ -1507,6 +1564,11 @@ class ElasticsearchProductsFetcher:
             self._ensure_mapping_hints()
             p = dict(params or {})
             p["_has_category_paths_keyword"] = bool(self._has_category_paths_keyword)
+            
+            # Check if explicit sort is requested (skip flean_percentile re-ranking)
+            sort_by = p.get("sort_by")
+            skip_rerank = sort_by is not None and sort_by != "relevance"
+            
             # Route by domain: personal_care → skin builder; else generic
             if str(p.get("category_group") or "").strip() == "personal_care":
                 query_body = _build_skin_es_query(p)
@@ -1517,6 +1579,7 @@ class ElasticsearchProductsFetcher:
             print(f"DEBUG: Enhanced ES Query Structure:")
             print(f"  - Query: {params.get('q', '')}")
             print(f"  - Category: {params.get('category_group', 'all')}")
+            print(f"  - Sort by: {sort_by or 'relevance'}")
             print(f"  - Brands: {params.get('brands', [])}")
             print(f"  - Price range: {params.get('price_min', 'no min')}-{params.get('price_max', 'no max')}")
             print(f"  - Dietary: {params.get('dietary_labels', [])}")
@@ -1544,7 +1607,8 @@ class ElasticsearchProductsFetcher:
             response.raise_for_status()
             
             raw_data = response.json()
-            result = _transform_results(raw_data)
+            # Pass skip_rerank flag to preserve ES sort order when explicit sort is applied
+            result = _transform_results(raw_data, skip_rerank=skip_rerank)
             
             print("="*80)
             print("✅✅✅ ELASTICSEARCH REQUEST SUCCESSFUL ✅✅✅")
@@ -1553,6 +1617,8 @@ class ElasticsearchProductsFetcher:
             print(f"📊 TOTAL_HITS: {result['meta']['total_hits']}")
             print(f"📦 RETURNED: {result['meta']['returned']}")
             print(f"⏱️  TOOK: {result['meta']['took_ms']}ms")
+            if sort_by:
+                print(f"🔀 SORT_BY: {sort_by}")
             print("="*80)
             
             # No brand-specific fallback; brand handling is disabled (see note above)

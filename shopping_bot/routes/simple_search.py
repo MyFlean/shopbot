@@ -113,6 +113,7 @@ def _parse_es_product_to_payload(es_product: Dict[str, Any]) -> Dict[str, Any]:
     - qty: Extracted from various ES fields
     - image_url: From ES 'image' field
     - macro_tags: Top 2 highest nutritional values
+    - nutrition: Raw nutritional values (protein, carbs, fat, fiber, calories)
     - flean_score: From ES 'flean_score' field
     - in_stock: Hardcoded to True
     """
@@ -132,6 +133,17 @@ def _parse_es_product_to_payload(es_product: Dict[str, Any]) -> Dict[str, Any]:
     # Generate macro tags (top 2 highest nutritional values)
     macro_tags = _generate_macro_tags(es_product, max_tags=2)
     
+    # Extract raw nutritional values for sorting visibility
+    nutrition = {
+        "protein_g": es_product.get("protein_g"),
+        "carbs_g": es_product.get("carbs_g"),
+        "fat_g": es_product.get("fat_g"),
+        "fiber_g": es_product.get("fiber_g"),
+        "calories": es_product.get("calories"),
+    }
+    # Remove None values for cleaner response
+    nutrition = {k: v for k, v in nutrition.items() if v is not None}
+    
     # Build the payload
     payload = {
         "id": product_id,
@@ -143,12 +155,25 @@ def _parse_es_product_to_payload(es_product: Dict[str, Any]) -> Dict[str, Any]:
         "qty": qty,
         "image_url": image_url,
         "macro_tags": macro_tags,
+        "nutrition": nutrition if nutrition else None,
         "flean_score": flean_score,
         "flean_percentile": flean_percentile,
         "in_stock": True
     }
     
-    return payload
+    # Remove None values
+    return {k: v for k, v in payload.items() if v is not None}
+
+
+# Valid sort_by options for the search API
+VALID_SORT_OPTIONS = {
+    "relevance",      # Default: ES score + flean_percentile
+    "price_asc",      # Price Low to High
+    "price_desc",     # Price High to Low
+    "protein_desc",   # Protein High to Low
+    "fiber_desc",     # Fibre High to Low
+    "fat_asc",        # Fat Low to High
+}
 
 
 @bp.route("/search", methods=["POST"])
@@ -158,8 +183,17 @@ def simple_search() -> tuple[Dict[str, Any], int]:
     
     Request body:
         {
-            "query": "user search query"
+            "query": "user search query",
+            "sort_by": "price_asc"  // Optional, defaults to "relevance"
         }
+    
+    Sort options:
+        - "relevance" (default): ES score + flean_percentile ranking
+        - "price_asc": Price Low to High
+        - "price_desc": Price High to Low
+        - "protein_desc": Protein High to Low
+        - "fiber_desc": Fibre High to Low
+        - "fat_asc": Fat Low to High
     
     Response:
         {
@@ -184,12 +218,14 @@ def simple_search() -> tuple[Dict[str, Any], int]:
                 ...
             ],
             "total_hits": 100,
-            "returned": 20
+            "returned": 20,
+            "sort_by": "price_asc"
         }
     
     Note:
         - macro_tags: Top 2 highest nutritional values from the product
         - qty: Product quantity/weight extracted from ES data (may be empty if not available)
+        - Products with null values for sort field are placed at the end
     """
     try:
         # Parse request
@@ -203,15 +239,24 @@ def simple_search() -> tuple[Dict[str, Any], int]:
             }), 400
         
         query = query.strip()
-        log.info(f"SIMPLE_SEARCH_REQUEST | query='{query}'")
+        
+        # Extract and validate sort_by parameter
+        sort_by = data.get("sort_by", "relevance")
+        if sort_by and sort_by not in VALID_SORT_OPTIONS:
+            return jsonify({
+                "error": f"Invalid 'sort_by' value: '{sort_by}'. Valid options: {sorted(VALID_SORT_OPTIONS)}"
+            }), 400
+        
+        log.info(f"SIMPLE_SEARCH_REQUEST | query='{query}' | sort_by='{sort_by}'")
         
         # Get ES fetcher instance
         fetcher = get_es_fetcher()
         
-        # Build simple params - only the query, no filters
+        # Build params with query and optional sort
         params = {
             "q": query,
-            "size": 20  # Default to 20 results
+            "size": 20,  # Default to 20 results
+            "sort_by": sort_by if sort_by != "relevance" else None  # Only pass if not default
         }
         
         # Perform ES search
@@ -271,7 +316,8 @@ def simple_search() -> tuple[Dict[str, Any], int]:
         return jsonify({
             "products": parsed_products,
             "total_hits": total_hits,
-            "returned": len(parsed_products)
+            "returned": len(parsed_products),
+            "sort_by": sort_by
         }), 200
         
     except Exception as exc:

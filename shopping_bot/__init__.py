@@ -386,6 +386,14 @@ def create_app(config_name: str = 'production') -> Flask:
         except Exception as e:
             log.error(f"REGISTER_ROUTES_ERROR | home page API failed: {e}")
 
+        # Register product API endpoints for Flutter app (PDP, Scanner, Catalogue)
+        try:
+            from .routes.product_api import bp as product_api_bp
+            app.register_blueprint(product_api_bp, url_prefix='/rs')
+            log.info("REGISTER_ROUTES_SUCCESS | product API registered (/rs/api/v1/product/*, /rs/api/v1/scanner, /rs/api/v1/catalogue)")
+        except Exception as e:
+            log.error(f"REGISTER_ROUTES_ERROR | product API failed: {e}")
+
         routes_time = time.time() - routes_start
         log.info("REGISTER_ROUTES_SUCCESS | simplified routes registered", extra={
             "total_duration_ms": routes_time * 1000

@@ -1738,6 +1738,163 @@ class ElasticsearchProductsFetcher:
             print(f"DEBUG: ES ids-search failed: {exc}")
             return []
 
+    def get_product_by_id(self, product_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single product by ID, returning the complete raw _source.
+        
+        Used by PDP API to return all product data without transformation.
+        
+        Args:
+            product_id: Elasticsearch product ID
+            
+        Returns:
+            Complete _source dict or None if not found
+        """
+        if not product_id or not str(product_id).strip():
+            return None
+        
+        try:
+            pid = str(product_id).strip()
+            # Use _search with terms query to get full document
+            body = {
+                "size": 1,
+                # Return ALL fields - no filtering
+                "query": {
+                    "term": {"id": pid}
+                }
+            }
+            search_endpoint = f"{self.base_url}/{self.index}/_search"
+            print(f"DEBUG: ES get_product_by_id | endpoint={search_endpoint} | id={pid}")
+            
+            response = requests.post(
+                search_endpoint,
+                headers=self.headers,
+                json=body,
+                timeout=TIMEOUT
+            )
+            response.raise_for_status()
+            data = response.json() or {}
+            hits = (data.get("hits", {}) or {}).get("hits", []) or []
+            
+            if hits:
+                src = hits[0].get("_source", {})
+                print(f"DEBUG: ES get_product_by_id | found=True | name={src.get('name', '')[:30]}")
+                return src
+            
+            print(f"DEBUG: ES get_product_by_id | found=False | id={pid}")
+            return None
+            
+        except requests.exceptions.Timeout:
+            print(f"DEBUG: ES get_product_by_id timeout | id={product_id}")
+            return None
+        except Exception as exc:
+            print(f"DEBUG: ES get_product_by_id failed | id={product_id} | error={exc}")
+            return None
+
+    def search_by_subcategory(
+        self, 
+        subcategory: str, 
+        page: int = 0, 
+        size: int = 20,
+        sort_by: str = "flean_score"
+    ) -> Dict[str, Any]:
+        """Search products by subcategory path with pagination.
+        
+        Used by Catalogue API to list all products in a subcategory.
+        
+        Args:
+            subcategory: Category path (e.g., 'f_and_b/food/munchies_and_snacks')
+            page: Page number (0-indexed)
+            size: Number of products per page (max 100)
+            sort_by: Sort field ('flean_score' or 'price')
+            
+        Returns:
+            Dict with 'products' list and 'meta' pagination info
+        """
+        if not subcategory or not str(subcategory).strip():
+            return {"products": [], "meta": {"total": 0, "page": page, "size": size}}
+        
+        try:
+            subcat = str(subcategory).strip()
+            # Clamp size to prevent excessive queries
+            size = max(1, min(size, 100))
+            offset = page * size
+            
+            # Build sort configuration
+            sort_config = []
+            if sort_by == "price":
+                sort_config = [{"price": {"order": "asc"}}]
+            else:
+                # Default: sort by flean_score descending
+                sort_config = [
+                    {"stats.adjusted_score_percentiles.subcategory_percentile": {"order": "desc", "missing": "_last"}},
+                    {"_score": "desc"}
+                ]
+            
+            body = {
+                "size": size,
+                "from": offset,
+                "track_total_hits": True,
+                # Return all fields for raw response
+                "query": {
+                    "bool": {
+                        "filter": [
+                            # Hard filter on category_paths
+                            {
+                                "bool": {
+                                    "should": [
+                                        {"term": {"category_paths.keyword": subcat}},
+                                        {"wildcard": {"category_paths": {"value": f"*{subcat}*"}}}
+                                    ],
+                                    "minimum_should_match": 1
+                                }
+                            }
+                        ]
+                    }
+                },
+                "sort": sort_config
+            }
+            
+            search_endpoint = f"{self.base_url}/{self.index}/_search"
+            print(f"DEBUG: ES search_by_subcategory | subcategory={subcat} | page={page} | size={size}")
+            
+            response = requests.post(
+                search_endpoint,
+                headers=self.headers,
+                json=body,
+                timeout=TIMEOUT
+            )
+            response.raise_for_status()
+            data = response.json() or {}
+            
+            hits = (data.get("hits", {}) or {}).get("hits", []) or []
+            total = (data.get("hits", {}) or {}).get("total", {})
+            total_count = total.get("value", 0) if isinstance(total, dict) else total
+            
+            # Extract raw _source from each hit
+            products = [h.get("_source", {}) for h in hits if h.get("_source")]
+            
+            print(f"DEBUG: ES search_by_subcategory | total={total_count} | returned={len(products)}")
+            
+            return {
+                "products": products,
+                "meta": {
+                    "total": total_count,
+                    "page": page,
+                    "size": size,
+                    "total_pages": (total_count + size - 1) // size if size > 0 else 0,
+                    "has_next": offset + len(products) < total_count,
+                    "has_prev": page > 0
+                }
+            }
+            
+        except requests.exceptions.Timeout:
+            print(f"DEBUG: ES search_by_subcategory timeout | subcategory={subcategory}")
+            return {"products": [], "meta": {"total": 0, "page": page, "size": size, "error": "timeout"}}
+        except Exception as exc:
+            print(f"DEBUG: ES search_by_subcategory failed | subcategory={subcategory} | error={exc}")
+            return {"products": [], "meta": {"total": 0, "page": page, "size": size, "error": str(exc)}}
+
+
 # Parameter extraction and normalization
 def _extract_defaults_from_context(ctx) -> Dict[str, Any]:
     """Extract search parameters from user context

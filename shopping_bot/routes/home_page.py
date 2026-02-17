@@ -27,6 +27,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Blueprint, jsonify, request
 
+from ..data_fetchers.es_products import get_es_fetcher, transform_to_product_card
+
 log = logging.getLogger(__name__)
 bp = Blueprint("home_page", __name__)
 
@@ -96,171 +98,22 @@ def _build_error_response(code: str, message: str) -> Dict[str, Any]:
 
 
 # ============================================================================
-# Elasticsearch Product Fetching
+# Elasticsearch Product Fetching (uses shared transformer)
 # ============================================================================
 
 def _fetch_products_by_ids(product_ids: List[str]) -> List[Dict[str, Any]]:
-    """
-    Fetch products from Elasticsearch by their IDs.
-    
-    Args:
-        product_ids: List of Elasticsearch product IDs
-    
-    Returns:
-        List of product dictionaries with standardized format
-    """
+    """Fetch products from ES by IDs and return standardized product cards."""
     if not product_ids:
         return []
-    
     try:
-        from ..data_fetchers.es_products import get_es_fetcher
-        
         fetcher = get_es_fetcher()
-        
-        # Use the IDs query - returns list of raw _source dicts
         es_products = fetcher.search_by_ids(product_ids)
-        
-        # Transform ES products to API format
-        transformed = []
-        for es_prod in es_products:
-            transformed.append(_transform_es_product(es_prod))
-        
-        log.debug(f"ES_FETCH | requested={len(product_ids)} | returned={len(transformed)}")
-        return transformed
-        
+        cards = [transform_to_product_card(src) for src in es_products if src]
+        log.debug(f"ES_FETCH | requested={len(product_ids)} | returned={len(cards)}")
+        return cards
     except Exception as e:
         log.error(f"ES_FETCH_ERROR | error={e}", exc_info=True)
         return []
-
-
-def _transform_es_product(src: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Transform raw ES _source to standardized API format.
-    
-    Includes macro_tags generation (top 2 nutritional values).
-    
-    Args:
-        src: Raw _source dict from Elasticsearch
-    
-    Returns:
-        Transformed product dict for API response
-    """
-    # Extract nutritional info (try both nutri_breakdown and nutri_breakdown_updated)
-    nutritional_data = src.get("category_data", {}).get("nutritional", {})
-    nutrition = nutritional_data.get("nutri_breakdown_updated", {}) or nutritional_data.get("nutri_breakdown", {})
-    
-    # Extract nutrition values (try both underscore and space variants)
-    protein_g = nutrition.get("protein_g") or nutrition.get("protein g")
-    carbs_g = nutrition.get("carbs_g") or nutrition.get("carbohydrates g") or nutrition.get("carbs g")
-    fat_g = nutrition.get("fat_g") or nutrition.get("total fat g") or nutrition.get("fat g")
-    calories = nutrition.get("energy_kcal") or nutrition.get("energy kcal")
-    
-    # Generate macro tags from nutritional data
-    macro_tags = _generate_macro_tags_from_values(protein_g, carbs_g, fat_g, calories)
-    
-    # Extract quantity
-    qty = nutritional_data.get("qty", "")
-    
-    # Extract flean_score (nested structure)
-    flean_score_data = src.get("flean_score", {})
-    flean_score = flean_score_data.get("adjusted_score") if isinstance(flean_score_data, dict) else flean_score_data
-    
-    # Extract flean_percentile from stats
-    stats = src.get("stats", {})
-    flean_percentile = None
-    if stats.get("adjusted_score_percentiles"):
-        flean_percentile = stats["adjusted_score_percentiles"].get("subcategory_percentile")
-    
-    # Get best image URL
-    image_url = _get_best_image(src.get("hero_image", {}))
-    
-    return {
-        "id": src.get("id", ""),
-        "name": src.get("name", ""),
-        "brand": src.get("brand", ""),
-        "price": src.get("price"),
-        "mrp": src.get("mrp"),
-        "image_url": image_url,
-        "qty": qty,
-        "macro_tags": macro_tags,
-        "flean_score": flean_score,
-        "flean_percentile": flean_percentile,
-        "in_stock": True
-    }
-
-
-def _get_best_image(hero_image: Dict[str, Any]) -> str:
-    """Extract best available image URL from hero_image structure."""
-    if not hero_image or not isinstance(hero_image, dict):
-        return ""
-    
-    # Priority: amazon_cdn_thumbnail → amazon_cdn_link → original
-    for key in ["amazon_cdn_thumbnail", "amazon_cdn_link", "url", "original"]:
-        url = hero_image.get(key)
-        if url and isinstance(url, str) and url.startswith("http"):
-            return url
-    
-    return ""
-
-
-def _generate_macro_tags_from_values(
-    protein_g: Optional[float],
-    carbs_g: Optional[float],
-    fat_g: Optional[float],
-    calories: Optional[float],
-    max_tags: int = 2
-) -> List[Dict[str, Any]]:
-    """
-    Generate macro tags from nutritional values.
-    
-    Returns top N highest nutritional values as formatted tags.
-    
-    Args:
-        protein_g: Protein in grams
-        carbs_g: Carbohydrates in grams
-        fat_g: Fat in grams
-        calories: Calories in kcal
-        max_tags: Maximum number of tags to return (default: 2)
-    
-    Returns:
-        List of macro tag dicts with label, nutrient, value, and unit
-    """
-    macro_data = [
-        (protein_g, "protein", "g", "{value} gms of Protein"),
-        (carbs_g, "carbs", "g", "{value} gms of Carbs"),
-        (fat_g, "fat", "g", "{value} gms of Fat"),
-        (calories, "calories", "kcal", "{value} Calories"),
-    ]
-    
-    available_macros: List[Tuple[float, str, str, str]] = []
-    
-    for value, nutrient, unit, label_format in macro_data:
-        if value is not None:
-            try:
-                numeric_value = float(value)
-                if numeric_value > 0:
-                    available_macros.append((numeric_value, nutrient, unit, label_format))
-            except (TypeError, ValueError):
-                continue
-    
-    # Sort by value descending (highest macros first)
-    available_macros.sort(key=lambda x: x[0], reverse=True)
-    
-    # Take top N
-    top_macros = available_macros[:max_tags]
-    
-    macro_tags = []
-    for numeric_value, nutrient, unit, label_format in top_macros:
-        display_value = int(numeric_value) if numeric_value == int(numeric_value) else round(numeric_value, 1)
-        tag = {
-            "label": label_format.format(value=display_value),
-            "nutrient": nutrient,
-            "value": display_value,
-            "unit": unit
-        }
-        macro_tags.append(tag)
-    
-    return macro_tags
 
 
 # ============================================================================

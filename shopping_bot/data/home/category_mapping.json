@@ -1,0 +1,174 @@
+{
+  "categories": [
+    {
+      "display_name": "Smart Snacks",
+      "es_path": "f_and_b/food/light_bites",
+      "subcategories": [
+        { "display_name": "Chips & Crisps", "es_path": "f_and_b/food/light_bites/chips_and_crisps" },
+        { "display_name": "Dry Fruits & Nuts", "es_path": "f_and_b/food/light_bites/dry_fruit_and_nut_snacks" },
+        { "display_name": "Energy Bars", "es_path": "f_and_b/food/light_bites/energy_bars" },
+        { "display_name": "Nachos", "es_path": "f_and_b/food/light_bites/nachos" },
+        { "display_name": "Popcorn", "es_path": "f_and_b/food/light_bites/popcorn" },
+        { "display_name": "Savory Namkeen", "es_path": "f_and_b/food/light_bites/savory_namkeen" }
+      ]
+    },
+    {
+      "display_name": "Packaged Meals",
+      "es_path": "f_and_b/food/packaged_meals",
+      "subcategories": [
+        { "display_name": "Baby Food", "es_path": "f_and_b/food/packaged_meals/baby_food" },
+        { "display_name": "Baking Mixes & Ingredients", "es_path": "f_and_b/food/packaged_meals/baking_mixes_and_ingredients" },
+        { "display_name": "Papads, Pickles & Chutneys", "es_path": "f_and_b/food/packaged_meals/papads_pickles_and_chutneys" },
+        { "display_name": "Pasta & Soups", "es_path": "f_and_b/food/packaged_meals/pasta_and_soups" },
+        { "display_name": "Ready to Cook", "es_path": "f_and_b/food/packaged_meals/ready_to_cook_meals" },
+        { "display_name": "Ready to Eat", "es_path": "f_and_b/food/packaged_meals/ready_to_eat_meals" }
+      ]
+    },
+    {
+      "display_name": "Dairy & Bakery",
+      "es_path": "f_and_b/food/dairy_and_bakery",
+      "subcategories": [
+        { "display_name": "Batter & Mix", "es_path": "f_and_b/food/dairy_and_bakery/batter_and_mix" },
+        { "display_name": "Bread & Buns", "es_path": "f_and_b/food/dairy_and_bakery/bread_and_buns" },
+        { "display_name": "Butter", "es_path": "f_and_b/food/dairy_and_bakery/butter" },
+        { "display_name": "Cheese", "es_path": "f_and_b/food/dairy_and_bakery/cheese" },
+        { "display_name": "Curd & Probiotic Drinks", "es_path": "f_and_b/food/dairy_and_bakery/curd_and_probiotic_drinks" },
+        { "display_name": "Eggs", "es_path": "f_and_b/food/dairy_and_bakery/eggs" },
+        { "display_name": "Paneer & Cream", "es_path": "f_and_b/food/dairy_and_bakery/paneer_and_cream" },
+        { "display_name": "Vegan Beverages", "es_path": "f_and_b/food/dairy_and_bakery/vegan_beverages" },
+        { "display_name": "Yogurt & Shrikhand", "es_path": "f_and_b/food/dairy_and_bakery/yogurt_and_shrikhand" },
+        { "display_name": "Gourmet Specialties", "es_path": "f_and_b/food/dairy_and_bakery/gourmet_specialties" }
+      ]
+    },
+    {
+      "display_name": "Frozen Treats",
+      "es_path": "f_and_b/food/frozen_treats",
+      "subcategories": [
+        { "display_name": "Frozen Pops", "es_path": "f_and_b/food/frozen_treats/frozen_pop_cubes" },
+        { "display_name": "Ice Cream Cakes & Sandwiches", "es_path": "f_and_b/food/frozen_treats/ice_cream_cakes_and_sandwiches" },
+        { "display_name": "Ice Cream Cones", "es_path": "f_and_b/food/frozen_treats/ice_cream_cones" },
+        { "display_name": "Ice Cream Cups", "es_path": "f_and_b/food/frozen_treats/ice_cream_cups" },
+        { "display_name": "Ice Cream Sticks", "es_path": "f_and_b/food/frozen_treats/ice_cream_sticks" },
+        { "display_name": "Ice Cream Tubs", "es_path": "f_and_b/food/frozen_treats/ice_cream_tubs" },
+        { "display_name": "Kulfi", "es_path": "f_and_b/food/frozen_treats/kulfi" },
+        { "display_name": "Light Ice Cream", "es_path": "f_and_b/food/frozen_treats/light_ice_cream" }
+      ]
+    },
+    {
+      "display_name": "Power Breakfast",
+      "es_path": "f_and_b/food/breakfast_essentials",
+      "subcategories": [
+        { "display_name": "Breakfast Cereals", "es_path": "f_and_b/food/breakfast_essentials/breakfast_cereals" },
+        { "display_name": "Dates & Seeds", "es_path": "f_and_b/food/breakfast_essentials/dates_and_seeds" },
+        { "display_name": "Muesli & Oats", "es_path": "f_and_b/food/breakfast_essentials/muesli_and_oats" }
+      ]
+    },
+    {
+      "display_name": "Noodles & Vermicelli",
+      "es_path": "f_and_b/food/noodles_and_vermicelli",
+      "subcategories": [
+        { "display_name": "Vermicelli & Noodles", "es_path": "f_and_b/food/noodles_and_vermicelli/vermicelli_and_noodles" }
+      ]
+    },
+    {
+      "display_name": "Sweet Treats",
+      "es_path": "f_and_b/food/sweet_treats",
+      "subcategories": [
+        { "display_name": "Candies, Gums & Mints", "es_path": "f_and_b/food/sweet_treats/candies_gums_and_mints" },
+        { "display_name": "Chocolates", "es_path": "f_and_b/food/sweet_treats/chocolates" },
+        { "display_name": "Dessert Mixes", "es_path": "f_and_b/food/sweet_treats/dessert_mixes" },
+        { "display_name": "Indian Mithai", "es_path": "f_and_b/food/sweet_treats/indian_mithai" },
+        { "display_name": "Pastries & Cakes", "es_path": "f_and_b/food/sweet_treats/pastries_and_cakes" },
+        { "display_name": "Premium Chocolates", "es_path": "f_and_b/food/sweet_treats/premium_chocolates" }
+      ]
+    },
+    {
+      "display_name": "Biscuits & Crackers",
+      "es_path": "f_and_b/food/biscuits_and_crackers",
+      "subcategories": [
+        { "display_name": "Cookies", "es_path": "f_and_b/food/biscuits_and_crackers/cookies" },
+        { "display_name": "Crackers", "es_path": "f_and_b/food/biscuits_and_crackers/crackers" },
+        { "display_name": "Cream Filled Biscuits", "es_path": "f_and_b/food/biscuits_and_crackers/cream_filled_biscuits" },
+        { "display_name": "Digestive Biscuits", "es_path": "f_and_b/food/biscuits_and_crackers/digestive_biscuits" },
+        { "display_name": "Glucose & Marie Biscuits", "es_path": "f_and_b/food/biscuits_and_crackers/glucose_and_marie_biscuits" },
+        { "display_name": "Rusks & Khari", "es_path": "f_and_b/food/biscuits_and_crackers/rusks_and_khari" },
+        { "display_name": "Wafer Biscuits", "es_path": "f_and_b/food/biscuits_and_crackers/wafer_biscuits" }
+      ]
+    },
+    {
+      "display_name": "Spreads & Condiments",
+      "es_path": "f_and_b/food/spreads_and_condiments",
+      "subcategories": [
+        { "display_name": "Honey & Spreads", "es_path": "f_and_b/food/spreads_and_condiments/honey_and_spreads" },
+        { "display_name": "Ketchup & Sauces", "es_path": "f_and_b/food/spreads_and_condiments/ketchup_and_sauces" },
+        { "display_name": "Peanut Butter", "es_path": "f_and_b/food/spreads_and_condiments/peanut_butter" },
+        { "display_name": "Jams & Jellies", "es_path": "f_and_b/food/spreads_and_condiments/jams_and_jellies" }
+      ]
+    },
+    {
+      "display_name": "Frozen Foods",
+      "es_path": "f_and_b/food/frozen_foods",
+      "subcategories": [
+        { "display_name": "Frozen Raw Meats", "es_path": "f_and_b/food/frozen_foods/frozen_raw_meats" },
+        { "display_name": "Frozen Roti & Paratha", "es_path": "f_and_b/food/frozen_foods/frozen_roti_and_paratha" },
+        { "display_name": "Frozen Sausages, Salami & Ham", "es_path": "f_and_b/food/frozen_foods/frozen_sausages_salami_and_ham" },
+        { "display_name": "Frozen Vegetables & Pulp", "es_path": "f_and_b/food/frozen_foods/frozen_vegetables_and_pulp" },
+        { "display_name": "Frozen Veg Snacks", "es_path": "f_and_b/food/frozen_foods/frozen_vegetarian_snacks" },
+        { "display_name": "Momos & Similar", "es_path": "f_and_b/food/frozen_foods/momos_and_similar" },
+        { "display_name": "Frozen Non-Veg Snacks", "es_path": "f_and_b/food/frozen_foods/non_veg_frozen_snacks" }
+      ]
+    },
+    {
+      "display_name": "Dry Fruits, Nuts & Seeds",
+      "es_path": "f_and_b/food/dry_fruits_nuts_and_seeds",
+      "subcategories": [
+        { "display_name": "Almonds", "es_path": "f_and_b/food/dry_fruits_nuts_and_seeds/almonds" },
+        { "display_name": "Cashews", "es_path": "f_and_b/food/dry_fruits_nuts_and_seeds/cashews" },
+        { "display_name": "Raisins", "es_path": "f_and_b/food/dry_fruits_nuts_and_seeds/raisins" },
+        { "display_name": "Pistachios", "es_path": "f_and_b/food/dry_fruits_nuts_and_seeds/pistachios" },
+        { "display_name": "Walnuts", "es_path": "f_and_b/food/dry_fruits_nuts_and_seeds/walnuts" },
+        { "display_name": "Dates", "es_path": "f_and_b/food/dry_fruits_nuts_and_seeds/dates" },
+        { "display_name": "Seeds", "es_path": "f_and_b/food/dry_fruits_nuts_and_seeds/seeds" }
+      ]
+    },
+    {
+      "display_name": "Sodas, Juices & More",
+      "es_path": "f_and_b/beverages/sodas_juices_and_more",
+      "subcategories": [
+        { "display_name": "Bottled Water", "es_path": "f_and_b/beverages/sodas_juices_and_more/bottled_water" },
+        { "display_name": "Energy & Non-Alcoholic Drinks", "es_path": "f_and_b/beverages/sodas_juices_and_more/energy_and_non_alcoholic_drinks" },
+        { "display_name": "Enhanced Hydration", "es_path": "f_and_b/beverages/sodas_juices_and_more/enhanced_hydration" },
+        { "display_name": "Fruit Juices", "es_path": "f_and_b/beverages/sodas_juices_and_more/fruit_juices" },
+        { "display_name": "Iced Coffee & Tea", "es_path": "f_and_b/beverages/sodas_juices_and_more/iced_coffee_and_tea" },
+        { "display_name": "Instant Beverage Mixes", "es_path": "f_and_b/beverages/sodas_juices_and_more/instant_beverage_mixes" },
+        { "display_name": "Soda & Mixers", "es_path": "f_and_b/beverages/sodas_juices_and_more/soda_and_mixers" },
+        { "display_name": "Soft Drinks", "es_path": "f_and_b/beverages/sodas_juices_and_more/soft_drinks" },
+        { "display_name": "Flavored Milk Drinks", "es_path": "f_and_b/beverages/sodas_juices_and_more/flavored_milk_drinks" }
+      ]
+    },
+    {
+      "display_name": "Tea, Coffee & More",
+      "es_path": "f_and_b/beverages/tea_coffee_and_more",
+      "subcategories": [
+        { "display_name": "Beverage Mix", "es_path": "f_and_b/beverages/tea_coffee_and_more/beverage_mix" },
+        { "display_name": "Coffee", "es_path": "f_and_b/beverages/tea_coffee_and_more/coffee" },
+        { "display_name": "Green & Herbal Tea", "es_path": "f_and_b/beverages/tea_coffee_and_more/green_and_herbal_tea" },
+        { "display_name": "Iced Coffee & Tea", "es_path": "f_and_b/beverages/tea_coffee_and_more/iced_coffee_and_tea" },
+        { "display_name": "Tea", "es_path": "f_and_b/beverages/tea_coffee_and_more/tea" }
+      ]
+    }
+  ],
+  "popular_searches": [
+    "High Protein Snacks",
+    "No Added Sugar Peanut Butter",
+    "High Protein Yogurt",
+    "Millet Protein Cookies"
+  ],
+  "search_by_category": [
+    { "display_name": "Dairy & Bakery", "es_path": "f_and_b/food/dairy_and_bakery" },
+    { "display_name": "Smart Snacks", "es_path": "f_and_b/food/light_bites" },
+    { "display_name": "Power Breakfast", "es_path": "f_and_b/food/breakfast_essentials" },
+    { "display_name": "Sweet Treats", "es_path": "f_and_b/food/sweet_treats" }
+  ]
+}
+

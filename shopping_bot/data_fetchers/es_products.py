@@ -124,6 +124,350 @@ def _extract_highlight(hit: Dict[str, Any]) -> Optional[str]:
             return _clean_text(hl[field][0])
     return None
 
+
+# ============================================================================
+# Shared Product Transformers (used by ALL Flutter APIs)
+# ============================================================================
+
+def _extract_nutrition_from_source(src: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    """Extract nutritional values from raw ES _source, handling field name variants."""
+    nutritional_data = src.get("category_data", {}).get("nutritional", {})
+    nutrition = nutritional_data.get("nutri_breakdown_updated", {}) or nutritional_data.get("nutri_breakdown", {})
+
+    def _safe_float(val: Any) -> Optional[float]:
+        if val is None:
+            return None
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "protein_g": _safe_float(nutrition.get("protein g") or nutrition.get("protein_g")),
+        "carbs_g": _safe_float(nutrition.get("carbohydrates g") or nutrition.get("carbs g") or nutrition.get("carbs_g")),
+        "fat_g": _safe_float(nutrition.get("total fat g") or nutrition.get("fat g") or nutrition.get("fat_g")),
+        "fiber_g": _safe_float(nutrition.get("fiber g") or nutrition.get("fiber_g")),
+        "calories": _safe_float(nutrition.get("energy kcal") or nutrition.get("energy_kcal")),
+        "sugar_g": _safe_float(nutrition.get("total sugar g") or nutrition.get("sugar g") or nutrition.get("sugar_g")),
+        "saturated_fat_g": _safe_float(nutrition.get("saturated fat g") or nutrition.get("saturated_fat_g")),
+        "sodium_mg": _safe_float(nutrition.get("sodium mg") or nutrition.get("sodium_mg")),
+        "cholesterol_mg": _safe_float(nutrition.get("cholesterol mg") or nutrition.get("cholesterol_mg")),
+        "calcium_mg": _safe_float(nutrition.get("calcium mg") or nutrition.get("calcium_mg")),
+        "trans_fat_g": _safe_float(nutrition.get("trans fat g") or nutrition.get("trans_fat_g")),
+    }
+
+
+def _generate_macro_tags(nutrition: Dict[str, Optional[float]], max_tags: int = 2) -> List[Dict[str, Any]]:
+    """Generate top N macro tags sorted by value descending."""
+    macro_config = [
+        ("protein_g", "protein", "g", "{v} gms of Protein"),
+        ("carbs_g", "carbs", "g", "{v} gms of Carbs"),
+        ("fat_g", "fat", "g", "{v} gms of Fat"),
+        ("calories", "calories", "kcal", "{v} Calories"),
+    ]
+    available = []
+    for field, nutrient, unit, fmt in macro_config:
+        val = nutrition.get(field)
+        if val is not None and val > 0:
+            display_val = int(val) if val == int(val) else round(val, 1)
+            available.append({
+                "label": fmt.format(v=display_val),
+                "nutrient": nutrient,
+                "value": display_val,
+                "unit": unit,
+                "_sort": val,
+            })
+    available.sort(key=lambda x: x["_sort"], reverse=True)
+    return [{k: v for k, v in tag.items() if k != "_sort"} for tag in available[:max_tags]]
+
+
+def transform_to_product_card(src: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Shared transformer: any product dict → standardized product card.
+
+    Handles **two input formats**:
+      1. Raw ES ``_source`` (from search_by_ids, search_by_subcategory, get_product_by_id)
+         — has nested ``category_data``, ``hero_image``, ``flean_score`` dict, ``stats``.
+      2. Pre-transformed dict (from ``_transform_results`` / ``search()``)
+         — has flat ``protein_g``, ``image``, ``flean_score`` number, ``flean_percentile``.
+
+    Used by search, catalogue, scanner, best-selling, curated, and alternatives
+    so that the Flutter developer always receives the same JSON shape for
+    product listings / grids.
+    """
+    # Detect format: raw _source has 'category_data'; pre-transformed does not.
+    is_raw_source = "category_data" in src
+
+    if is_raw_source:
+        nutritional_data = src.get("category_data", {}).get("nutritional", {})
+        nutrition = _extract_nutrition_from_source(src)
+        qty = nutritional_data.get("qty", "")
+        image_url = _get_best_image(src.get("hero_image", {})) or ""
+        flean_score_data = src.get("flean_score", {})
+        flean_score = flean_score_data.get("adjusted_score") if isinstance(flean_score_data, dict) else flean_score_data
+        stats = src.get("stats", {})
+        flean_percentile = None
+        if stats.get("adjusted_score_percentiles"):
+            flean_percentile = stats["adjusted_score_percentiles"].get("subcategory_percentile")
+    else:
+        # Pre-transformed format from _transform_results
+        nutrition = {
+            "protein_g": src.get("protein_g"),
+            "carbs_g": src.get("carbs_g"),
+            "fat_g": src.get("fat_g"),
+            "fiber_g": src.get("fiber_g"),
+            "calories": src.get("calories"),
+        }
+        qty = src.get("qty", "")
+        image_url = src.get("image", "") or ""
+        flean_score = src.get("flean_score")
+        flean_percentile = src.get("flean_percentile")
+
+    macro_tags = _generate_macro_tags(nutrition)
+    nutrition_clean = {k: v for k, v in nutrition.items() if v is not None}
+
+    return {
+        "id": src.get("id", ""),
+        "name": _clean_text(src.get("name", "")) or "",
+        "brand": src.get("brand", ""),
+        "price": src.get("price"),
+        "mrp": src.get("mrp"),
+        "currency": "INR",
+        "qty": qty,
+        "image_url": image_url,
+        "macro_tags": macro_tags,
+        "nutrition": nutrition_clean if nutrition_clean else None,
+        "flean_score": flean_score,
+        "flean_percentile": flean_percentile,
+        "in_stock": True,
+    }
+
+
+def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Full PDP transformer: raw ES _source → pre-parsed sectioned PDP data.
+
+    Sections mirror the Figma PDP screens so the Flutter developer can
+    directly map JSON keys to UI widgets.
+    """
+    # ── product_info ──
+    hero_image = src.get("hero_image", {})
+    nutritional_data = src.get("category_data", {}).get("nutritional", {})
+    nutrition = _extract_nutrition_from_source(src)
+
+    product_info = {
+        "id": src.get("id", ""),
+        "name": _clean_text(src.get("name", "")) or "",
+        "brand": src.get("brand", ""),
+        "price": src.get("price"),
+        "mrp": src.get("mrp"),
+        "currency": "INR",
+        "image_url": _get_best_image(hero_image) or "",
+        "image_urls": {k: v for k, v in (hero_image if isinstance(hero_image, dict) else {}).items() if isinstance(v, str) and v.startswith("http")},
+        "qty": nutritional_data.get("qty", ""),
+        "description": _clean_text(src.get("description", "")) or "",
+        "category_group": src.get("category_group", ""),
+        "category_paths": src.get("category_paths", []),
+    }
+
+    # ── safety_badge ──
+    stats = src.get("stats", {})
+    flean_score_data = src.get("flean_score", {})
+    flean_score = flean_score_data.get("adjusted_score") if isinstance(flean_score_data, dict) else flean_score_data
+    flean_percentile = None
+    if stats.get("adjusted_score_percentiles"):
+        flean_percentile = stats["adjusted_score_percentiles"].get("subcategory_percentile")
+
+    # Derive safety badge from percentile
+    if flean_percentile is not None:
+        if flean_percentile >= 70:
+            safety_text, safety_level = "100% Safe", "safe"
+        elif flean_percentile >= 40:
+            safety_text, safety_level = "Use with Caution", "caution"
+        else:
+            safety_text, safety_level = "Not Recommended", "warning"
+    else:
+        safety_text, safety_level = "Not Rated", "unknown"
+
+    safety_badge = {
+        "text": safety_text,
+        "level": safety_level,
+        "flean_score": flean_score,
+        "flean_percentile": flean_percentile,
+    }
+
+    # ── score_cards ──
+    # Derive subcategory label from the most specific (longest) category path
+    cat_paths = src.get("category_paths", [])
+    subcategory_label = ""
+    if cat_paths:
+        # Pick the longest path (most specific subcategory)
+        longest_path = max(cat_paths, key=lambda p: len(str(p)) if p else 0)
+        last_segment = str(longest_path).split("/")[-1] if longest_path else ""
+        subcategory_label = last_segment.replace("_", " ").title()
+
+    score_cards = []
+
+    # Flean Rank card
+    if flean_percentile is not None:
+        rank_pct = round(100 - flean_percentile, 1)
+        score_cards.append({
+            "type": "flean_rank",
+            "title": "Flean Rank",
+            "value": f"Top {rank_pct}%",
+            "subtitle": subcategory_label,
+            "raw_percentile": flean_percentile,
+        })
+
+    # Protein percentile card
+    protein_pctile = (stats.get("protein_percentiles") or {}).get("subcategory_percentile")
+    if protein_pctile is not None:
+        prot_rank = round(100 - protein_pctile, 1)
+        score_cards.append({
+            "type": "protein",
+            "title": "Protein",
+            "value": f"Top {prot_rank}%",
+            "subtitle": "Efficiency",
+            "raw_percentile": protein_pctile,
+        })
+
+    # Fiber percentile card
+    fiber_pctile = (stats.get("fiber_percentiles") or {}).get("subcategory_percentile")
+    if fiber_pctile is not None:
+        fib_rank = round(100 - fiber_pctile, 1)
+        score_cards.append({
+            "type": "fiber",
+            "title": "Fiber",
+            "value": f"Top {fib_rank}%",
+            "subtitle": "Efficiency",
+            "raw_percentile": fiber_pctile,
+        })
+
+    # Sweetener penalty card
+    sweetener_pctile = (stats.get("sweetener_penalty_percentiles") or {}).get("subcategory_percentile")
+    if sweetener_pctile is not None:
+        level = "Low" if sweetener_pctile >= 70 else ("Medium" if sweetener_pctile >= 40 else "High")
+        score_cards.append({
+            "type": "sweeteners",
+            "title": "Sweeteners",
+            "value": level,
+            "subtitle": f"Percentile: {round(sweetener_pctile)}",
+            "raw_percentile": sweetener_pctile,
+        })
+
+    # Oil penalty card
+    oil_pctile = (stats.get("oil_penalty_percentiles") or {}).get("subcategory_percentile")
+    if oil_pctile is not None:
+        level = "Low" if oil_pctile >= 70 else ("Medium" if oil_pctile >= 40 else "High")
+        score_cards.append({
+            "type": "oils",
+            "title": "Oils",
+            "value": level,
+            "subtitle": f"Percentile: {round(oil_pctile)}",
+            "raw_percentile": oil_pctile,
+        })
+
+    # Calories card
+    if nutrition.get("calories") is not None:
+        cal_val = round(nutrition["calories"])
+        cal_basis = nutritional_data.get("qty", "100 g")
+        calories_pctile = (stats.get("calories_penalty_percentiles") or {}).get("subcategory_percentile")
+        score_cards.append({
+            "type": "calories",
+            "title": "Calories",
+            "value": f"{cal_val} kcal",
+            "subtitle": cal_basis,
+            "raw_percentile": calories_pctile,
+        })
+
+    # Watch-outs card (empty food / ultra-processed penalty)
+    empty_food_pctile = (stats.get("empty_food_penalty_percentiles") or {}).get("subcategory_percentile")
+    if empty_food_pctile is not None and empty_food_pctile < 40:
+        score_cards.append({
+            "type": "watch_out",
+            "title": "Watch-outs",
+            "value": "Ultra-Processed",
+            "subtitle": "Caution",
+            "raw_percentile": empty_food_pctile,
+        })
+
+    # ── highlights ──
+    package_claims = src.get("package_claims", {}) or {}
+    dietary_labels = package_claims.get("dietary_labels", [])
+    health_claims = package_claims.get("health_claims", [])
+    metadata = src.get("metadata", {}) or {}
+
+    highlights = {
+        "brand": src.get("brand", ""),
+        "product_name": _clean_text(src.get("name", "")) or "",
+        "weight_volume": nutritional_data.get("qty", ""),
+        "unit": metadata.get("unit", ""),
+        "packaging_type": metadata.get("packaging_type", ""),
+        "dietary_preference": ", ".join(dietary_labels) if isinstance(dietary_labels, list) else str(dietary_labels),
+        "allergen_info": metadata.get("allergen_info", ""),
+        "storage_instructions": metadata.get("storage_instructions", ""),
+        "health_claims": health_claims if isinstance(health_claims, list) else [],
+    }
+
+    # ── ingredients ──
+    ingredients_raw = src.get("ingredients", {})
+    ingredients_text = ""
+    ingredients_list = []
+    if isinstance(ingredients_raw, dict):
+        ingredients_text = _clean_text(ingredients_raw.get("raw_text", "")) or ""
+    elif isinstance(ingredients_raw, str):
+        ingredients_text = _clean_text(ingredients_raw) or ""
+
+    if ingredients_text:
+        ingredients_list = [i.strip() for i in ingredients_text.replace("|", ",").split(",") if i.strip()]
+
+    # ── nutritional_table ──
+    nutri_table = []
+    nutri_map = [
+        ("Energy", nutrition.get("calories"), "kcal"),
+        ("Protein", nutrition.get("protein_g"), "g"),
+        ("Carbohydrates", nutrition.get("carbs_g"), "g"),
+        ("Sugars", nutrition.get("sugar_g"), "g"),
+        ("Total Fat", nutrition.get("fat_g"), "g"),
+        ("Saturated Fat", nutrition.get("saturated_fat_g"), "g"),
+        ("Trans Fat", nutrition.get("trans_fat_g"), "g"),
+        ("Fiber", nutrition.get("fiber_g"), "g"),
+        ("Cholesterol", nutrition.get("cholesterol_mg"), "mg"),
+        ("Calcium", nutrition.get("calcium_mg"), "mg"),
+        ("Sodium", nutrition.get("sodium_mg"), "mg"),
+    ]
+    for name, val, unit in nutri_map:
+        if val is not None:
+            display_val = int(val) if val == int(val) else round(val, 1)
+            nutri_table.append({"nutrient": name, "value": str(display_val), "unit": unit})
+
+    # ── additional_info ──
+    additional_info = {
+        "disclaimer": metadata.get("disclaimer", "Product packaging, specifications and information may change from time to time. Please refer to the product label for the most accurate and updated information."),
+        "seller_name": metadata.get("seller_name", ""),
+        "seller_address": metadata.get("seller_address", ""),
+        "seller_license": metadata.get("seller_license", ""),
+        "manufacturer_name": metadata.get("manufacturer_name", ""),
+        "manufacturer_address": metadata.get("manufacturer_address", ""),
+        "country_of_origin": metadata.get("country_of_origin", "India"),
+        "shelf_life": metadata.get("shelf_life", ""),
+    }
+
+    return {
+        "product_info": product_info,
+        "safety_badge": safety_badge,
+        "score_cards": score_cards,
+        "highlights": highlights,
+        "ingredients": {
+            "list": ingredients_list,
+            "raw_text": ingredients_text,
+        },
+        "nutritional_table": nutri_table,
+        "nutritional_basis": nutritional_data.get("qty", "per 100 g"),
+        "additional_info": additional_info,
+        "macro_tags": _generate_macro_tags(nutrition),
+    }
+
 def _get_current_user_text(ctx) -> str:
     """Best-effort extraction of the CURRENT user utterance.
 
@@ -1995,6 +2339,91 @@ class ElasticsearchProductsFetcher:
         except Exception as exc:
             print(f"DEBUG: ES get_product_by_id failed | id={product_id} | error={exc}")
             return None
+
+    def search_healthier_alternatives(
+        self,
+        product_id: str,
+        limit: int = 5,
+    ) -> Dict[str, Any]:
+        """Find healthier alternatives to a given product.
+
+        Logic:
+        1. Fetch the target product to get its category_paths.
+        2. Search the same subcategory, sorted by subcategory_percentile DESC.
+        3. Exclude the original product.
+        4. Return the top ``limit`` raw _source dicts.
+
+        Returns dict with 'source_product' (the original) and 'alternatives' list.
+        """
+        result: Dict[str, Any] = {"source_product": None, "alternatives": []}
+
+        src = self.get_product_by_id(product_id)
+        if not src:
+            return result
+        result["source_product"] = src
+
+        cat_paths = src.get("category_paths", [])
+        if not cat_paths:
+            print(f"DEBUG: search_healthier_alternatives | no category_paths for {product_id}")
+            return result
+
+        # Use the most specific (longest) category path for precise alternatives
+        if isinstance(cat_paths, list) and cat_paths:
+            subcat = max(cat_paths, key=lambda p: len(str(p)) if p else 0)
+        else:
+            subcat = ""
+        if not subcat:
+            return result
+
+        try:
+            body = {
+                "size": limit + 5,  # fetch extra to allow for exclusion / missing
+                "track_total_hits": False,
+                "_source": {
+                    "includes": [
+                        "id", "name", "brand", "price", "mrp", "hero_image.*",
+                        "package_claims.*", "category_group", "category_paths",
+                        "category_data.*", "flean_score.*", "stats.*",
+                        "ingredients.*", "description",
+                    ]
+                },
+                "query": {
+                    "bool": {
+                        "filter": [
+                            {"bool": {
+                                "should": [
+                                    {"term": {"category_paths.keyword": subcat}},
+                                    {"wildcard": {"category_paths": {"value": f"*{subcat}*"}}},
+                                ],
+                                "minimum_should_match": 1,
+                            }},
+                        ],
+                        "must_not": [
+                            {"term": {"id": product_id}},
+                        ],
+                    }
+                },
+                "sort": [
+                    {"stats.adjusted_score_percentiles.subcategory_percentile": {"order": "desc", "missing": "_last"}},
+                    {"_score": "desc"},
+                ],
+            }
+
+            endpoint = f"{self.base_url}/{self.index}/_search"
+            print(f"DEBUG: ES healthier_alternatives | subcat={subcat} | exclude={product_id}")
+            resp = requests.post(endpoint, headers=self.headers, json=body, timeout=TIMEOUT)
+            resp.raise_for_status()
+            data = resp.json() or {}
+            hits = (data.get("hits", {}) or {}).get("hits", []) or []
+
+            alternatives = [h.get("_source", {}) for h in hits if h.get("_source")][:limit]
+            print(f"DEBUG: ES healthier_alternatives | found={len(alternatives)}")
+            result["alternatives"] = alternatives
+            return result
+
+        except Exception as exc:
+            print(f"DEBUG: ES healthier_alternatives failed | error={exc}")
+            return result
 
     def search_by_subcategory(
         self, 

@@ -16,8 +16,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-import anthropic
-
+from .bedrock_client import AsyncBedrockClient
 from .config import get_config
 from .models import UserContext
 
@@ -117,7 +116,11 @@ class UXResponseGenerator:
     """
     
     def __init__(self):
-        self.anthropic = anthropic.AsyncAnthropic(api_key=Cfg.ANTHROPIC_API_KEY)
+        self.bedrock = AsyncBedrockClient(
+            bearer_token=Cfg.AWS_BEARER_TOKEN_BEDROCK,
+            region=Cfg.BEDROCK_REGION,
+            model_id=Cfg.BEDROCK_MODEL_ID
+        )
     
     async def generate_ux_response(
         self,
@@ -200,7 +203,7 @@ class UXResponseGenerator:
         prompt = self._build_ux_prompt(intent, context_data, intent_config, budget_info)
         
         try:
-            resp = await self.anthropic.messages.create(
+            resp = await self.bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[UX_GENERATION_TOOL],

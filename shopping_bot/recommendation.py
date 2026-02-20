@@ -32,8 +32,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from enum import Enum
 
-import anthropic
-
+from .bedrock_client import AsyncBedrockClient
 from .config import get_config
 import os
 from .models import UserContext
@@ -150,8 +149,12 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
     """Primary recommendation engine using Elasticsearch parameter extraction"""
     
     def __init__(self):
-        # IMPORTANT: async client for awaitable calls
-        self._anthropic = anthropic.AsyncAnthropic(api_key=Cfg.ANTHROPIC_API_KEY)
+        # AWS Bedrock client for LLM calls
+        self._bedrock = AsyncBedrockClient(
+            bearer_token=Cfg.AWS_BEARER_TOKEN_BEDROCK,
+            region=Cfg.BEDROCK_REGION,
+            model_id=Cfg.BEDROCK_MODEL_ID
+        )
         # Caching disabled for correctness-first behavior
         self._extraction_cache = None
         self._valid_categories = [
@@ -692,7 +695,7 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
         )
 
         try:
-            resp = await self._anthropic.messages.create(
+            resp = await self._bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[EXTRACT_CONSTRAINTS_TOOL],
@@ -730,7 +733,7 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
     async def _call_anthropic_for_params(self, prompt: str) -> Optional[Dict[str, Any]]:
         """Make the Anthropic API call for parameter extraction"""
         try:
-            resp = await self._anthropic.messages.create(
+            resp = await self._bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[ES_PARAM_TOOL],
@@ -842,7 +845,7 @@ class ElasticsearchRecommendationEngine(BaseRecommendationEngine):
         )
 
         try:
-            resp = await self._anthropic.messages.create(
+            resp = await self._bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[NORMALISE_PARAMS_TOOL],
@@ -1155,7 +1158,7 @@ Note: Brand dropped per rule
 
 <output>Return ONLY tool call to construct_search_query. Query must be 2-6 words, noun-led, no prices/brands.</output>"""
         try:
-            resp = await self._anthropic.messages.create(
+            resp = await self._bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[CONSTRUCT_QUERY_TOOL],
@@ -1270,7 +1273,7 @@ Note: Brand dropped per rule
             "Return ONLY tool call to fb_category_classify. If not F&B, set is_fnb=false."
         )
         try:
-            resp = await self._anthropic.messages.create(
+            resp = await self._bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[FB_CLASSIFY_TOOL],
@@ -1548,7 +1551,7 @@ Return ONLY the tool call to emit_es_params.
         )
 
         try:
-            resp = await self._anthropic.messages.create(
+            resp = await self._bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[EXTRACT_TOOL],

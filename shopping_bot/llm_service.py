@@ -17,7 +17,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
-import anthropic
+# AWS Bedrock Client (replaces anthropic SDK)
+from .bedrock_client import AsyncBedrockClient, get_async_bedrock_client
 
 from .bot_helpers import pick_tool, string_to_function
 from .config import get_config
@@ -1555,16 +1556,19 @@ def _safe_get(d: Dict[str, Any], key: str, default: Any = None) -> Any:
 # ─────────────────────────────────────────────────────────────
 
 class LLMService:
-    """Service class for all LLM interactions."""
+    """Service class for all LLM interactions using AWS Bedrock."""
 
     def __init__(self) -> None:
-        api_key = getattr(Cfg, "ANTHROPIC_API_KEY", "") or ""
-        if not api_key:
-            raise RuntimeError("Missing ANTHROPIC_API_KEY. Set it in environment or .env file.")
-        if not isinstance(api_key, str) or not api_key.startswith("sk-ant-"):
-            raise RuntimeError("Invalid ANTHROPIC_API_KEY format. It should start with 'sk-ant-'.")
+        # Initialize AWS Bedrock client (replaces Anthropic SDK)
+        bearer_token = getattr(Cfg, "AWS_BEARER_TOKEN_BEDROCK", "") or ""
+        if not bearer_token:
+            raise RuntimeError("Missing AWS_BEARER_TOKEN_BEDROCK. Set it in environment or .env file.")
 
-        self.anthropic = anthropic.AsyncAnthropic(api_key=api_key)
+        self.bedrock = AsyncBedrockClient(
+            bearer_token=bearer_token,
+            region=getattr(Cfg, "BEDROCK_REGION", "ap-south-1"),
+            model_id=getattr(Cfg, "BEDROCK_MODEL_ID", "us.anthropic.claude-3-5-sonnet-20241022-v2:0")
+        )
         self._recommendation_service = get_recommendation_service()
 
     def _extract_noun(self, text: str) -> str:
@@ -1787,7 +1791,7 @@ class LLMService:
             log.warning(f"UNIFIED_ES_PARAMS_FAILED | {exc}")
         
         # Fallback to old path if unified fails
-        resp = await self.anthropic.messages.create(
+        resp = await self.bedrock.converse(
             model=Cfg.LLM_MODEL,
             messages=[{"role": "user", "content": prompt + "\n" + json.dumps(user_block, ensure_ascii=False)}],
             tools=[PLAN_ES_SEARCH_TOOL],
@@ -1849,7 +1853,7 @@ class LLMService:
             "products": products_for_llm,
             "briefs": top_products_brief,
         }
-        resp = await self.anthropic.messages.create(
+        resp = await self.bedrock.converse(
             model=Cfg.LLM_MODEL,
             messages=[{"role": "user", "content": prompt + "\n" + json.dumps(payload, ensure_ascii=False)}],
             tools=[FINAL_ANSWER_UNIFIED_TOOL],
@@ -2188,7 +2192,7 @@ Now classify the user's current message. Return ONLY the tool call."""
             log.info(f"🤖 CLASSIFY_AND_ASSESS_LLM | model={Cfg.LLM_MODEL} | temp=0 | max_tokens=2000 | has_context={context_summary.get('has_history', False)}")
             log.info(f"🧠 CONTEXT_SUMMARY | recent_turns={len(context_summary.get('recent_turns', []))} | last_intent={context_summary.get('last_intent')}")
             
-            resp = await self.anthropic.messages.create(
+            resp = await self.bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[COMBINED_CLASSIFY_ASSESS_TOOL],
@@ -2274,7 +2278,7 @@ Now classify the user's current message. Return ONLY the tool call."""
             query=query.strip(),
         )
         
-        resp = await self.anthropic.messages.create(
+        resp = await self.bedrock.converse(
             model=Cfg.LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
             tools=[INTENT_CLASSIFICATION_TOOL],
@@ -2315,7 +2319,7 @@ Now classify the user's current message. Return ONLY the tool call."""
         )
         
         try:
-            resp = await self.anthropic.messages.create(
+            resp = await self.bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[PRODUCT_INTENT_TOOL],
@@ -2574,7 +2578,7 @@ Generate your answer now:"""
             log.info(f"🤖 MEMORY_LLM_CALL | model={Cfg.LLM_MODEL} | temp=0.7 | max_tokens=700 | products_in_context={len(products)}")
             log.info(f"🧠 XML_MEMORY_PREVIEW | length={len(xml_memory)} chars | turns_formatted={xml_memory.count('<turn>')}")
             
-            resp = await self.anthropic.messages.create(
+            resp = await self.bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[MEMORY_FINAL_ANSWER_TOOL],
@@ -2938,7 +2942,7 @@ Generate your answer now:"""
                 "Return ONLY the tool call.\n"
             )
 
-            resp = await self.anthropic.messages.create(
+            resp = await self.bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": unified_prompt + "\n" + json.dumps(unified_context, ensure_ascii=False)}],
                 tools=[FINAL_ANSWER_UNIFIED_TOOL],
@@ -3202,7 +3206,7 @@ Generate your answer now:"""
         )
         
         try:
-            resp = await self.anthropic.messages.create(
+            resp = await self.bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[SIMPLE_RESPONSE_TOOL],
@@ -3271,7 +3275,7 @@ Generate your answer now:"""
                 ],
             }
 
-            resp = await self.anthropic.messages.create(
+            resp = await self.bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[payload],
                 temperature=0,
@@ -3340,7 +3344,7 @@ Generate your answer now:"""
         )
 
         try:
-            resp = await self.anthropic.messages.create(
+            resp = await self.bedrock.converse(
                 model=getattr(Cfg, "LLM_CLASSIFIER_MODEL", Cfg.LLM_MODEL),
                 messages=[{"role": "user", "content": prompt}],
                 tools=[FOLLOW_UP_TOOL],
@@ -3401,7 +3405,7 @@ Generate your answer now:"""
         )
         
         try:
-            resp = await self.anthropic.messages.create(
+            resp = await self.bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[DELTA_ASSESS_TOOL],
@@ -3470,7 +3474,7 @@ Generate your answer now:"""
             suggested_functions=suggested_functions,
         )
 
-        resp = await self.anthropic.messages.create(
+        resp = await self.bedrock.converse(
             model=Cfg.LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
             tools=[assessment_tool],
@@ -3639,7 +3643,7 @@ Generate your answer now:"""
 
         try:
             questions_tool = build_questions_tool(filtered_slots)
-            resp = await self.anthropic.messages.create(
+            resp = await self.bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[questions_tool],
@@ -3750,7 +3754,7 @@ Generate your answer now:"""
             "Return ONLY a tool call to select_slots_to_ask."
         )
         try:
-            resp = await self.anthropic.messages.create(
+            resp = await self.bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[SLOT_SELECTION_TOOL],
@@ -4234,7 +4238,7 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
             except Exception:
                 pass
 
-            resp = await self.anthropic.messages.create(
+            resp = await self.bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[UNIFIED_ES_PARAMS_TOOL],
@@ -4449,7 +4453,7 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
         )
 
         # Call LLM with forced tool use
-        resp = await self.anthropic.messages.create(
+        resp = await self.bedrock.converse(
             model=Cfg.LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
             tools=[UNIFIED_ES_PARAMS_TOOL],
@@ -5340,7 +5344,7 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
         )
         
         # Force tool call
-        resp = await self.anthropic.messages.create(
+        resp = await self.bedrock.converse(
             model=Cfg.LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
             tools=[PERSONAL_CARE_ES_PARAMS_TOOL_2025],
@@ -5815,7 +5819,7 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
             "Output: Return ONLY tool call to extract_search_parameters."
         )
 
-        resp = await self.anthropic.messages.create(
+        resp = await self.bedrock.converse(
             model=Cfg.LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
             tools=[FOOD_EXTRACT_TOOL],
@@ -6268,7 +6272,7 @@ Validation: q has product noun, no prices/brands in q, category_group valid, cat
             # Use dual tools: initial vs follow-up schemas per provided design
             tool_set = [FOLLOWUP_SKIN_PARAMS_TOOL] if is_follow_up else [INITIAL_SKIN_PARAMS_TOOL]
             tool_name = "extract_followup_skin_params" if is_follow_up else "extract_initial_skin_params"
-            resp = await self.anthropic.messages.create(
+            resp = await self.bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=tool_set,

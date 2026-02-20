@@ -1,81 +1,58 @@
+# shopping_bot/streaming/anthropic_stream.py
+"""
+Streaming Module (DEPRECATED)
+────────────────────────────
+This module previously provided streaming support via Anthropic's streaming API.
+
+With the migration to AWS Bedrock API keys, streaming is NOT supported.
+AWS Bedrock API keys cannot use InvokeModelWithBidirectionalStream.
+
+The streaming feature flag (ENABLE_STREAMING) should be set to false.
+All LLM calls now use the non-streaming converse API via bedrock_client.py.
+
+Kept for backwards compatibility - methods raise NotImplementedError.
+"""
+
 from __future__ import annotations
 
 import logging
 from typing import Dict, Generator, Optional
-
-import anthropic  # type: ignore
-
-from ..config import get_config
 
 log = logging.getLogger(__name__)
 
 
 class AnthropicStreamer:
     """
-    Synchronous streaming wrapper for Anthropic messages.stream.
-    - Logs every event type for debugging/observability
-    - Emits text deltas for each content_block_delta with type=text_delta
-    - Uses the SDK's expected message shape (content blocks)
+    DEPRECATED: Streaming is not supported with AWS Bedrock API keys.
+    
+    This class is kept for backwards compatibility but all methods
+    will raise NotImplementedError.
+    
+    Use the non-streaming BedrockClient.converse() method instead.
     """
 
     def __init__(self) -> None:
-        cfg = get_config()
-        self._client = anthropic.Anthropic(api_key=cfg.ANTHROPIC_API_KEY)
-        self._model = cfg.LLM_MODEL
-        self._max_tokens = cfg.LLM_MAX_TOKENS
+        log.warning(
+            "STREAMING_DEPRECATED | AnthropicStreamer is deprecated. "
+            "Streaming is not supported with AWS Bedrock API keys. "
+            "Use BedrockClient.converse() for non-streaming calls."
+        )
 
-    def stream_text(self, prompt: str, *, temperature: float = 0.2, max_tokens: Optional[int] = None) -> Generator[Dict, None, Dict]:
+    def stream_text(
+        self, 
+        prompt: str, 
+        *, 
+        temperature: float = 0.2, 
+        max_tokens: Optional[int] = None
+    ) -> Generator[Dict, None, Dict]:
         """
-        Stream plain text deltas.
-        - Yields dicts: {type: 'text_delta', text: '...'} for each text delta chunk
-        - Returns final message dict at StopIteration via generator return value
+        DEPRECATED: Streaming not supported with Bedrock API keys.
+        
+        Raises:
+            NotImplementedError: Streaming is disabled in this architecture.
         """
-        model = self._model
-        mx = int(max_tokens or self._max_tokens)
-
-        with self._client.messages.stream(
-            model=model,
-            messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
-            temperature=temperature,
-            max_tokens=mx,
-        ) as stream:
-            try:
-                for event in stream:
-                    # Robust event type extraction (SDK event objects or dicts)
-                    et = getattr(event, "type", None)
-                    if et is None and isinstance(event, dict):
-                        et = event.get("type")
-
-                    # Log every event type (truncate payload for safety)
-                    try:
-                        log.debug(f"ANTHROPIC_EVT | type={et} | preview={str(event)[:200]}")
-                    except Exception:
-                        pass
-
-                    if et == "content_block_delta":
-                        delta = getattr(event, "delta", None)
-                        if delta is None and isinstance(event, dict):
-                            delta = event.get("delta")
-                        if delta is not None:
-                            dt = getattr(delta, "type", None)
-                            if dt is None and isinstance(delta, dict):
-                                dt = delta.get("type")
-                            if dt == "text_delta":
-                                text = getattr(delta, "text", None)
-                                if text is None and isinstance(delta, dict):
-                                    text = delta.get("text", "")
-                                if text:
-                                    yield {"type": "text_delta", "text": text}
-                    # Other notable events are logged but not yielded
-
-                # Final message for completeness
-                try:
-                    final = stream.get_final_message()
-                except Exception:
-                    final = None
-                return {"final": final}
-            except Exception as e:
-                log.error(f"ANTHROPIC_STREAM_ERROR | {e}")
-                raise
-
-
+        raise NotImplementedError(
+            "Streaming is not supported with AWS Bedrock API keys. "
+            "Set ENABLE_STREAMING=false and use non-streaming converse API. "
+            "See bedrock_client.py for the recommended approach."
+        )

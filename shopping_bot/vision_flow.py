@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Tuple
 
-import anthropic
 import base64
 import mimetypes
 import traceback
 
+from .bedrock_client import AsyncBedrockClient
 from .config import get_config
 from .data_fetchers.es_products import get_es_fetcher
 from .models import UserContext
@@ -87,7 +87,13 @@ async def process_image_query(ctx: UserContext, image_url: str) -> Dict[str, Any
     """
     try:
         media_type, b64_data = _normalize_b64_input(image_url)
-        extractor = anthropic.AsyncAnthropic(api_key=Cfg.ANTHROPIC_API_KEY)
+        
+        # Initialize Bedrock client for vision
+        bedrock = AsyncBedrockClient(
+            bearer_token=Cfg.AWS_BEARER_TOKEN_BEDROCK,
+            region=Cfg.BEDROCK_REGION,
+            model_id=Cfg.BEDROCK_MODEL_ID
+        )
 
         TOOL = {
             "name": "parse_product_from_image",
@@ -118,7 +124,9 @@ async def process_image_query(ctx: UserContext, image_url: str) -> Dict[str, Any
             "product_name, brand_name, ocr_full_text, category_group.\n"
         )
 
-        resp = await extractor.messages.create(
+        # Use Bedrock converse with image support
+        # The bedrock client handles conversion of Anthropic-style image format
+        resp = await bedrock.converse(
             model=Cfg.LLM_MODEL,
             messages=[
                 {

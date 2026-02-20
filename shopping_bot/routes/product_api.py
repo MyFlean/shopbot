@@ -19,8 +19,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import anthropic
 from flask import Blueprint, jsonify, request
+
+from ..bedrock_client import BedrockClient
 
 from ..config import get_config
 from ..data_fetchers.es_products import (
@@ -218,14 +219,18 @@ def _normalize_base64_image(image_input: str) -> Tuple[str, str]:
 
 
 def _extract_product_from_image(media_type: str, b64_data: str) -> Dict[str, Any]:
-    """Use Anthropic Claude to extract product name and brand from image."""
+    """Use AWS Bedrock Claude to extract product name and brand from image."""
     import json as _json
 
-    api_key = getattr(Cfg, "ANTHROPIC_API_KEY", "") or ""
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not configured")
+    bearer_token = getattr(Cfg, "AWS_BEARER_TOKEN_BEDROCK", "") or ""
+    if not bearer_token:
+        raise RuntimeError("AWS_BEARER_TOKEN_BEDROCK not configured")
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = BedrockClient(
+        bearer_token=bearer_token,
+        region=getattr(Cfg, "BEDROCK_REGION", "ap-south-1"),
+        model_id=getattr(Cfg, "BEDROCK_MODEL_ID", "us.anthropic.claude-3-5-sonnet-20241022-v2:0")
+    )
     prompt = (
         "Analyze this product image and extract the following information. "
         "Return your answer as valid JSON with these exact fields:\n\n"
@@ -238,8 +243,8 @@ def _extract_product_from_image(media_type: str, b64_data: str) -> Dict[str, Any
         "Return ONLY the JSON object, no other text."
     )
 
-    resp = client.messages.create(
-        model=getattr(Cfg, "LLM_MODEL", "claude-sonnet-4-20250514"),
+    resp = client.converse(
+        model=getattr(Cfg, "LLM_MODEL", "us.anthropic.claude-3-5-sonnet-20241022-v2:0"),
         messages=[{
             "role": "user",
             "content": [

@@ -6,7 +6,11 @@ flask-cors>=4.0
 
 # ── Infrastructure clients ─────────────────────────────────
 redis>=5.0                 # Python client for Redis 7+
-anthropic>=0.17            # Claude API SDK
+# anthropic>=0.17          # DEPRECATED: Claude API SDK (now using AWS Bedrock)
+
+# ── AWS Bedrock (Primary LLM Provider) ────────────────────
+# boto3 is already included below for Lambda deployment
+# AWS Bedrock uses boto3 bedrock-runtime client with bearer token auth
 
 # ── Dev / testing ──────────────────────────────────────────
 python-dotenv>=1.0         # load .env in local dev

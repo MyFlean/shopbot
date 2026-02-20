@@ -13,8 +13,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
-import anthropic
-
+from .bedrock_client import AsyncBedrockClient
 from .config import get_config
 from .models import UserContext
 from .enums import UXIntentType, PSLType
@@ -76,7 +75,11 @@ class UXClassifierService:
     """Service for classifying user queries into UX intent patterns"""
     
     def __init__(self):
-        self.anthropic = anthropic.AsyncAnthropic(api_key=Cfg.ANTHROPIC_API_KEY)
+        self.bedrock = AsyncBedrockClient(
+            bearer_token=Cfg.AWS_BEARER_TOKEN_BEDROCK,
+            region=Cfg.BEDROCK_REGION,
+            model_id=Cfg.BEDROCK_MODEL_ID
+        )
     
     async def classify_ux_intent(
         self, 
@@ -99,7 +102,7 @@ class UXClassifierService:
         prompt = self._build_classification_prompt(query, classification_context)
         
         try:
-            resp = await self.anthropic.messages.create(
+            resp = await self.bedrock.converse(
                 model=Cfg.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[UX_CLASSIFICATION_TOOL],

@@ -21,18 +21,28 @@ class BaseConfig:
     REDIS_DECODE_RESPONSES: bool = True
     REDIS_TTL_SECONDS: int = int(os.getenv("REDIS_TTL_SECONDS", 3600))
 
-    # Anthropic - MUST be set via environment variable
-    # Use property to read from environment at access time, not class definition time
-    # This is critical for Lambda where secrets are loaded after module import
+    # ─────────────────────────────────────────────────────────────
+    # AWS Bedrock Configuration (PRIMARY LLM PROVIDER)
+    # ─────────────────────────────────────────────────────────────
+    @property
+    def AWS_BEARER_TOKEN_BEDROCK(self):
+        """Read AWS_BEARER_TOKEN_BEDROCK from environment at access time"""
+        return os.getenv("AWS_BEARER_TOKEN_BEDROCK", "")
+    
+    BEDROCK_REGION: str = os.getenv("BEDROCK_REGION", "ap-south-1")
+    BEDROCK_MODEL_ID: str = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-3-5-sonnet-20241022-v2:0")
+
+    # ─────────────────────────────────────────────────────────────
+    # Anthropic Direct API (DEPRECATED - kept for backwards compatibility)
+    # Use AWS Bedrock instead via AWS_BEARER_TOKEN_BEDROCK
+    # ─────────────────────────────────────────────────────────────
     @property
     def ANTHROPIC_API_KEY(self):
-        """Read ANTHROPIC_API_KEY from environment at access time"""
+        """Read ANTHROPIC_API_KEY from environment at access time (DEPRECATED)"""
         return os.getenv("ANTHROPIC_API_KEY", "")
 
-    # LLM
-    # Default to claude-sonnet-4-20250514 (newer model) or claude-3-5-sonnet-20250219 (fallback)
-    # claude-3-5-sonnet-20241022 is deprecated
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "claude-sonnet-4-20250514")
+    # LLM Settings (used by both Bedrock and legacy Anthropic)
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "us.anthropic.claude-3-5-sonnet-20241022-v2:0")
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "1000"))
 
@@ -105,19 +115,28 @@ def get_config() -> BaseConfig:
     config_class = mapping.get(env, DevelopmentConfig)
     cfg = config_class()
     
-    # Validate ANTHROPIC_API_KEY after config is created (secrets may be loaded later in Lambda)
+    # Validate AWS_BEARER_TOKEN_BEDROCK (primary) or ANTHROPIC_API_KEY (legacy)
     # Only validate if we're not in Lambda or if the key is actually set
-    if not os.getenv('AWS_LAMBDA_FUNCTION_NAME') or cfg.ANTHROPIC_API_KEY:
+    if not os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
         try:
-            # Access via property to trigger validation
-            api_key = cfg.ANTHROPIC_API_KEY
-            if api_key and not api_key.startswith("sk-ant-"):
-                raise ValueError("ANTHROPIC_API_KEY appears to be invalid (should start with 'sk-ant-')")
+            # Check for Bedrock token first (preferred)
+            bedrock_token = cfg.AWS_BEARER_TOKEN_BEDROCK
+            anthropic_key = cfg.ANTHROPIC_API_KEY
+            
+            if bedrock_token:
+                # Bedrock API keys typically start with ABSK
+                if not bedrock_token.startswith("ABSK"):
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "AWS_BEARER_TOKEN_BEDROCK format may be invalid (expected ABSK prefix)"
+                    )
+            elif anthropic_key:
+                # Legacy Anthropic key validation
+                if not anthropic_key.startswith("sk-ant-"):
+                    raise ValueError("ANTHROPIC_API_KEY appears to be invalid (should start with 'sk-ant-')")
+            # If neither is set, that's okay - will fail at runtime when LLM is needed
         except ValueError:
-            # In Lambda, we might not have secrets loaded yet, so don't fail here
-            # The error will be caught when LLMService tries to initialize
-            if not os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
-                raise
+            raise
 
     # Optional local override to emulate production flag behavior exactly.
     # Enable by running with: LOCAL_USE_PROD_FLAGS=true
@@ -148,6 +167,7 @@ def get_config() -> BaseConfig:
     if not hasattr(get_config, '_logged_startup'):
         log.info(f"⚙️ CONFIG_STARTUP | env={env} | config_class={config_class.__name__}")
         log.info(f"🤖 LLM_CONFIG | model={cfg.LLM_MODEL} | temp={cfg.LLM_TEMPERATURE} | max_tokens={cfg.LLM_MAX_TOKENS}")
+        log.info(f"☁️ BEDROCK_CONFIG | region={cfg.BEDROCK_REGION} | model_id={cfg.BEDROCK_MODEL_ID} | token_set={bool(cfg.AWS_BEARER_TOKEN_BEDROCK)}")
         log.info(f"⚙️ FEATURE_FLAGS | USE_COMBINED_CLASSIFY_ASSESS={cfg.USE_COMBINED_CLASSIFY_ASSESS} | USE_CONVERSATION_AWARE_CLASSIFIER={cfg.USE_CONVERSATION_AWARE_CLASSIFIER}")
         log.info(f"⚙️ FEATURE_FLAGS | USE_TWO_CALL_ES_PIPELINE={cfg.USE_TWO_CALL_ES_PIPELINE} | ASK_ONLY_MODE={cfg.ASK_ONLY_MODE} | USE_ASSESSMENT_FOR_ASK_ONLY={cfg.USE_ASSESSMENT_FOR_ASK_ONLY}")
         log.info(f"📡 STREAMING_CONFIG | enable_streaming={getattr(cfg, 'ENABLE_STREAMING', False)}")

@@ -106,6 +106,57 @@ curl -X GET "http://localhost:8080/api/v1/home/collaborations" \
 
 ---
 
+## 7. Unified Home API (NEW)
+
+The unified endpoint returns all 6 home page sections in a single response. This is designed for the "Save and Refresh" flow from the Curate bottom sheet.
+
+### GET - Simple Refresh
+```bash
+curl -X GET "http://localhost:8080/api/v1/home/unified" \
+  -H "Content-Type: application/json"
+```
+
+### POST - With Macro Preferences (Future Use)
+```bash
+curl -X POST "http://localhost:8080/api/v1/home/unified" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "macro_preferences": {
+      "protein": {"operator": "gte", "value": 15},
+      "sodium": {"operator": "lte", "value": 300}
+    }
+  }'
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "banners": { "banners": [...] },
+    "categories": { "categories": [...], "has_more": true, "total_count": 8 },
+    "best_selling": { "products": [...], "section_title": "Best Selling" },
+    "curated": { "products": [...], "section_title": "Curated For You", "has_more": true },
+    "why_flean": { "cards": [...], "section_title": "Why Flean" },
+    "collaborations": { "brands": [...], "section_title": "Exclusive Collaborations" }
+  },
+  "meta": {
+    "timestamp": "2025-02-26T12:00:00Z",
+    "macro_preferences_received": true,
+    "macro_preferences_applied": false,
+    "sections_count": 6
+  }
+}
+```
+
+**Notes:**
+- The `curated` section is re-randomized on each call (4 random products from pool of 25)
+- `macro_preferences` is accepted but NOT applied on home page (reserved for future use)
+- `macro_preferences_applied: false` indicates no filtering was done
+- All sections are fetched with graceful error handling - partial failures return empty arrays
+
+---
+
 ## Bonus Endpoints
 
 ### Health Check

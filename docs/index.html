@@ -2259,6 +2259,125 @@
                                 <pre><code class="language-bash">curl -X GET "https://api.flean.ai/rs/api/v1/product/01K1B1BPGN2WAXFB5DNSGXX4W3"</code></pre>
                             </div>
 
+                            <h4>Response Structure</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot json"></span>
+                                        JSON Response
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-json">{
+  "success": true,
+  "data": {
+    "product_info": {
+      "id": "01K1B...",
+      "name": "Yoga Bar 20g Protein Bar",
+      "brand": "Yoga Bar",
+      "price": 100,
+      "mrp": 140,
+      "currency": "INR",
+      "image_url": "https://cdn...",
+      "image_urls": { "640": "https://...", "1080": "https://..." },
+      "qty": "60 g",
+      "description": "High protein bar..."
+    },
+    "flean_badge": {
+      "score": 4,
+      "score_display": "4/10",
+      "level": "safe",
+      "level_text": "100% Safe"
+    },
+    "score_cards": {
+      "flean_rank": { "title": "Flean Rank", "value": "Top 18.3%", "subtitle": "Energy Bars", "percentile": 81.7, "status": "good" },
+      "protein": { "title": "Protein", "value": "Top 13.9%", "subtitle": "Efficiency", "percentile": 86.1, "status": "good" },
+      "fiber": { "title": "Fiber", "value": "Top 38.9%", "subtitle": "Efficiency", "percentile": 61.1, "status": "caution" },
+      "sweeteners": { "title": "Sweeteners", "value": "Medium", "subtitle": "Percentile: 49", "percentile": 48.9, "status": "caution" },
+      "oils": { "title": "Oils", "value": "High", "subtitle": "Percentile: 26", "percentile": 26.1, "status": "warning" },
+      "watch_outs": { "title": "Watch-outs", "value": "Ultra-Processed", "subtitle": "Caution", "percentile": 35.0, "status": "warning", "visible": true },
+      "calories": { "title": "Calories", "value": "327 kcal", "subtitle": "60 g", "percentile": 85.6, "status": "neutral" }
+    },
+    "notes": {
+      "criteria_note": "Per 100 g labels reflect Flean Criteria.",
+      "ranking_note": "Note: Overall ranking considers multiple factors."
+    },
+    "highlights": [
+      { "label": "Brand", "value": "Yoga Bar" },
+      { "label": "Product Name", "value": "Yoga Bar 20g Protein Bar" },
+      { "label": "Weight / Volume", "value": "60 g" },
+      { "label": "Dietary Preference", "value": "Vegetarian" }
+    ],
+    "ingredients": ["Almonds 35%", "Protein Blend 25%", "Dates 16%", "Natural Prebiotic Fiber 12%", "Cocoa 10%", "Flax Seeds 2%"],
+    "nutrition": {
+      "basis": "per 100 g",
+      "items": [
+        { "nutrient": "Energy", "value": "327 kcal" },
+        { "nutrient": "Protein", "value": "20.9 g" },
+        { "nutrient": "Total fat", "value": "16.6 g" },
+        { "nutrient": "Fiber", "value": "9.2 g" }
+      ]
+    },
+    "additional_info": [
+      { "label": "Country of Origin", "value": "India" },
+      { "label": "Disclaimer", "value": "Product packaging may change..." }
+    ],
+    "macro_tags": [
+      { "label": "327 Calories", "nutrient": "calories", "value": 327, "unit": "kcal" },
+      { "label": "20.9 gms of Protein", "nutrient": "protein", "value": 20.9, "unit": "g" }
+    ]
+  }
+}</code></pre>
+                            </div>
+
+                            <h4>Response Sections</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Section</th>
+                                            <th>Type</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr><td><code>product_info</code></td><td>object</td><td>Basic product details (id, name, brand, price, images)</td></tr>
+                                        <tr><td><code>flean_badge</code></td><td>object</td><td>Overall health score with display values</td></tr>
+                                        <tr><td><code>score_cards</code></td><td>object</td><td>Named object for direct access (e.g., <code>score_cards.protein.value</code>)</td></tr>
+                                        <tr><td><code>notes</code></td><td>object</td><td>Static display notes for UI footnotes</td></tr>
+                                        <tr><td><code>highlights</code></td><td>array</td><td>Array of {label, value} for ListView (only non-empty)</td></tr>
+                                        <tr><td><code>ingredients</code></td><td>array</td><td>Simple string array for bullet list</td></tr>
+                                        <tr><td><code>nutrition</code></td><td>object</td><td>Nutrition table with basis and items array</td></tr>
+                                        <tr><td><code>additional_info</code></td><td>array</td><td>Array of {label, value} for ListView (only non-empty)</td></tr>
+                                        <tr><td><code>macro_tags</code></td><td>array</td><td>Top 2 macro nutrients for quick display</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Flean Badge Levels</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Level</th>
+                                            <th>Level Text</th>
+                                            <th>Condition</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr><td><code>safe</code></td><td>100% Safe</td><td>percentile >= 70</td></tr>
+                                        <tr><td><code>caution</code></td><td>Use with Caution</td><td>percentile 40-69</td></tr>
+                                        <tr><td><code>warning</code></td><td>Not Recommended</td><td>percentile &lt; 40</td></tr>
+                                        <tr><td><code>unknown</code></td><td>Not Rated</td><td>no percentile data</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
                             <h4>Score Card Status Colors</h4>
                             <div class="table-container">
                                 <table>

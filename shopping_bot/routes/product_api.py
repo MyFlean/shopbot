@@ -68,19 +68,21 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
     PDP API: Returns pre-parsed, sectioned product data ready for Flutter display.
 
     Sections returned:
-      - product_info: id, name, brand, price, mrp, image_url, image_urls, qty, description
-      - safety_badge: text, level, flean_score, flean_percentile
-      - score_cards[]: flean_rank, protein, fiber, sweeteners, oils, calories, watch_out
-      - highlights: brand, product_name, weight_volume, dietary_preference, etc.
-      - ingredients: { list: [...], raw_text: "..." }
-      - nutritional_table[]: { nutrient, value, unit }
-      - additional_info: disclaimer, seller, manufacturer, country, shelf_life
-      - macro_tags[]: top 2 macro nutrient tags
+      - product_info: id, name, brand, price, mrp, currency, image_url, image_urls, qty, description
+      - flean_badge: score (int), score_display ("4/10"), level, level_text
+      - score_cards: named object with keys {flean_rank, protein, fiber, sweeteners, oils, watch_outs, calories}
+                     each containing {title, value, subtitle, percentile, status}
+      - notes: {criteria_note, ranking_note}
+      - highlights: [{label, value}] array (only non-empty values included)
+      - ingredients: [string] simple array of ingredient strings
+      - nutrition: {basis: "per 100 g", items: [{nutrient, value}]}
+      - additional_info: [{label, value}] array (only non-empty values included)
+      - macro_tags: [{label, nutrient, value, unit}] top 2 macro nutrients
 
     Path Parameters:
         product_id: Elasticsearch product ID
 
-    Response (200): { success: true, data: { product_info: {...}, ... } }
+    Response (200): { success: true, data: { product_info: {...}, flean_badge: {...}, ... } }
     Response (404): { success: false, error: { code, message } }
     """
     try:

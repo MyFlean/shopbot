@@ -5,6 +5,7 @@ Product APIs for Flutter App
 Endpoints:
   GET  /api/v1/product/<id>               → PDP (pre-parsed sectioned data)
   GET  /api/v1/product/<id>/alternatives  → 5 healthier alternatives (product cards)
+  GET  /api/v1/product/<id>/recommended   → 8 recommended products for PDP (product cards)
   POST /api/v1/scanner                    → Top 3 product cards from image scan
   GET  /api/v1/catalogue                  → Products by subcategory (product cards)
   GET  /api/v1/catalogue/mapping          → Category → subcategory → ES path mapping
@@ -153,6 +154,81 @@ def get_healthier_alternatives(product_id: str) -> Tuple[Dict[str, Any], int]:
     except Exception as e:
         log.error(f"ALTERNATIVES_ERROR | id={product_id} | error={e}", exc_info=True)
         return _error_response("INTERNAL_ERROR", "Failed to fetch alternatives", 500)
+
+
+# ============================================================================
+# Recommended Products API - Similar products for PDP
+# ============================================================================
+
+@bp.route("/api/v1/product/<product_id>/recommended", methods=["GET"])
+def get_recommended_products(product_id: str) -> Tuple[Dict[str, Any], int]:
+    """
+    Returns recommended products for the PDP "You May Also Like" section.
+
+    Logic: Same subcategory as the source product, sorted by Flean percentile
+    (healthiest first), excluding the source product.
+
+    Path Parameters:
+        product_id: Elasticsearch product ID
+
+    Query Parameters:
+        limit (optional): Number of products to return, 1-10 (default 8)
+
+    Response (200):
+        {
+            "success": true,
+            "data": {
+                "products": [ ...product cards... ],
+                "section_title": "You May Also Like",
+                "source_product_id": "...",
+                "subcategory": "f_and_b/food/light_bites/chips_and_crisps"
+            },
+            "meta": {
+                "total_in_subcategory": 45,
+                "returned": 8
+            }
+        }
+    """
+    try:
+        if not product_id or not product_id.strip():
+            return _error_response("INVALID_ID", "Product ID is required", 400)
+
+        pid = product_id.strip()
+
+        # Parse limit from query params
+        try:
+            limit = max(1, min(int(request.args.get("limit", 8)), 10))
+        except (TypeError, ValueError):
+            limit = 8
+
+        fetcher = get_es_fetcher()
+        result = fetcher.search_recommended_products(pid, limit=limit)
+
+        if not result.get("subcategory"):
+            # Product not found or has no category
+            if not result.get("products"):
+                return _error_response("PRODUCT_NOT_FOUND", f"Product '{pid}' not found or has no category", 404)
+
+        product_cards = [transform_to_product_card(p) for p in result.get("products", []) if p]
+
+        log.info(f"RECOMMENDED_SUCCESS | id={pid} | found={len(product_cards)}")
+
+        return jsonify(_success_response(
+            {
+                "products": product_cards,
+                "section_title": "You May Also Like",
+                "source_product_id": result.get("source_product_id", pid),
+                "subcategory": result.get("subcategory", ""),
+            },
+            meta={
+                "total_in_subcategory": result.get("total_in_subcategory", 0),
+                "returned": len(product_cards),
+            }
+        )), 200
+
+    except Exception as e:
+        log.error(f"RECOMMENDED_ERROR | id={product_id} | error={e}", exc_info=True)
+        return _error_response("INTERNAL_ERROR", "Failed to fetch recommended products", 500)
 
 
 # ============================================================================
@@ -440,3 +516,206 @@ def get_catalogue_mapping() -> Tuple[Dict[str, Any], int]:
     except Exception as e:
         log.error(f"CATALOGUE_MAPPING_ERROR | error={e}", exc_info=True)
         return _error_response("INTERNAL_ERROR", "Failed to load category mapping", 500)
+
+
+# ============================================================================
+# Unified Products API - Search + Catalogue with Pagination and Filters
+# ============================================================================
+
+# Sort & Filter Constants (shared with simple_search)
+VALID_SORT_OPTIONS = {
+    "relevance",      # Default: ES score
+    "price_asc",      # Price Low to High
+    "price_desc",     # Price High to Low
+    "protein_desc",   # Protein High to Low
+    "fiber_desc",     # Fibre High to Low
+    "fat_asc",        # Fat Low to High
+}
+
+VALID_PRICE_RANGES = {"below_99", "100_249", "250_499", "above_500"}
+VALID_FLEAN_SCORES = {"10", "9_plus", "8_plus", "7_plus"}
+VALID_PREFERENCES = {"no_palm_oil", "no_added_sugar", "no_additives"}
+VALID_DIETARY = {"dairy_free", "gluten_free"}
+
+
+def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Validate the filters object from the request."""
+    if not filters:
+        return None, None
+    if not isinstance(filters, dict):
+        return None, "filters must be an object"
+
+    validated: Dict[str, Any] = {}
+
+    price_range = filters.get("price_range")
+    if price_range:
+        if price_range not in VALID_PRICE_RANGES:
+            return None, f"Invalid price_range: '{price_range}'. Valid: {sorted(VALID_PRICE_RANGES)}"
+        validated["price_range"] = price_range
+
+    flean_score = filters.get("flean_score")
+    if flean_score:
+        if flean_score not in VALID_FLEAN_SCORES:
+            return None, f"Invalid flean_score: '{flean_score}'. Valid: {sorted(VALID_FLEAN_SCORES)}"
+        validated["flean_score"] = flean_score
+
+    preferences = filters.get("preferences", [])
+    if preferences:
+        if not isinstance(preferences, list):
+            return None, "preferences must be an array"
+        invalid = [p for p in preferences if p not in VALID_PREFERENCES]
+        if invalid:
+            return None, f"Invalid preferences: {invalid}. Valid: {sorted(VALID_PREFERENCES)}"
+        validated["preferences"] = preferences
+
+    dietary = filters.get("dietary", [])
+    if dietary:
+        if not isinstance(dietary, list):
+            return None, "dietary must be an array"
+        invalid = [d for d in dietary if d not in VALID_DIETARY]
+        if invalid:
+            return None, f"Invalid dietary: {invalid}. Valid: {sorted(VALID_DIETARY)}"
+        validated["dietary"] = dietary
+
+    return validated if validated else None, None
+
+
+@bp.route("/api/v1/products", methods=["POST"])
+def get_products_unified() -> Tuple[Dict[str, Any], int]:
+    """
+    Unified Products API: Search and/or browse products with pagination and filters.
+
+    This endpoint combines the capabilities of:
+    - POST /search: Text search with filters
+    - GET /api/v1/catalogue: Category browsing with pagination
+
+    Request Body:
+        {
+            "query": "protein bars",              // optional - text search
+            "subcategory": "f_and_b/food/...",    // optional - ES category path
+            "page": 0,                            // optional - 0-indexed (default 0)
+            "size": 20,                           // optional - 1-100 (default 20)
+            "sort_by": "relevance",               // optional - see valid options
+            "filters": {                          // optional - all filter types
+                "price_range": "below_99",
+                "flean_score": "9_plus",
+                "preferences": ["no_palm_oil"],
+                "dietary": ["gluten_free"]
+            }
+        }
+
+    Behavior:
+        - query only: Full-text search with filters
+        - subcategory only: Browse category products with filters
+        - both: Search within specific category
+        - neither: Returns 400 error
+
+    Sort Options:
+        - relevance (default)
+        - price_asc, price_desc
+        - protein_desc, fiber_desc, fat_asc
+
+    Response (200):
+        {
+            "success": true,
+            "data": { "products": [...product cards...] },
+            "meta": {
+                "total": 245,
+                "page": 0,
+                "size": 20,
+                "total_pages": 13,
+                "has_next": true,
+                "has_prev": false,
+                "query": "protein bars",
+                "subcategory": null,
+                "sort_by": "relevance",
+                "filters_applied": { ... }
+            }
+        }
+    """
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+
+        # Extract and validate query
+        query = body.get("query")
+        if query is not None:
+            if not isinstance(query, str):
+                return _error_response("INVALID_QUERY", "'query' must be a string", 400)
+            query = query.strip() if query else None
+
+        # Extract and validate subcategory
+        subcategory = body.get("subcategory")
+        if subcategory is not None:
+            if not isinstance(subcategory, str):
+                return _error_response("INVALID_SUBCATEGORY", "'subcategory' must be a string", 400)
+            subcategory = subcategory.strip() if subcategory else None
+
+        # Require at least one of query or subcategory
+        if not query and not subcategory:
+            return _error_response(
+                "MISSING_PARAMETER",
+                "At least one of 'query' or 'subcategory' must be provided",
+                400
+            )
+
+        # Parse pagination
+        try:
+            page = max(0, int(body.get("page", 0)))
+        except (TypeError, ValueError):
+            page = 0
+        try:
+            size = max(1, min(int(body.get("size", 20)), 100))
+        except (TypeError, ValueError):
+            size = 20
+
+        # Validate sort_by
+        sort_by = body.get("sort_by", "relevance")
+        if sort_by and sort_by not in VALID_SORT_OPTIONS:
+            return _error_response(
+                "INVALID_SORT",
+                f"Invalid 'sort_by': '{sort_by}'. Valid: {sorted(VALID_SORT_OPTIONS)}",
+                400
+            )
+
+        # Validate filters
+        raw_filters = body.get("filters")
+        validated_filters, filter_error = _validate_filters(raw_filters)
+        if filter_error:
+            return _error_response("INVALID_FILTERS", filter_error, 400)
+
+        log.info(
+            f"PRODUCTS_UNIFIED_REQUEST | query={query} | subcategory={subcategory} | "
+            f"page={page} | size={size} | sort={sort_by} | filters={validated_filters}"
+        )
+
+        # Execute unified search
+        fetcher = get_es_fetcher()
+        result = fetcher.search_products_unified(
+            query=query,
+            subcategory=subcategory,
+            page=page,
+            size=size,
+            sort_by=sort_by,
+            filters=validated_filters
+        )
+
+        # Check for errors in result
+        meta = result.get("meta", {})
+        if meta.get("error"):
+            log.error(f"PRODUCTS_UNIFIED_ES_ERROR | error={meta.get('error')}")
+            return _error_response("SEARCH_ERROR", f"Search failed: {meta.get('error')}", 500)
+
+        # Transform products to standardized product cards
+        raw_products = result.get("products", [])
+        product_cards = [transform_to_product_card(p) for p in raw_products if p]
+
+        log.info(
+            f"PRODUCTS_UNIFIED_COMPLETE | query={query} | subcategory={subcategory} | "
+            f"total={meta.get('total', 0)} | returned={len(product_cards)}"
+        )
+
+        return jsonify(_success_response({"products": product_cards}, meta=meta)), 200
+
+    except Exception as e:
+        log.error(f"PRODUCTS_UNIFIED_ERROR | error={e}", exc_info=True)
+        return _error_response("INTERNAL_ERROR", "Failed to fetch products", 500)

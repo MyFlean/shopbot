@@ -384,7 +384,12 @@ def create_app(config_name: str = 'production') -> Flask:
             app.register_blueprint(home_page_bp, url_prefix='/rs')
             log.info("REGISTER_ROUTES_SUCCESS | home page API registered (/rs/api/v1/home/*)")
         except Exception as e:
-            log.error(f"REGISTER_ROUTES_ERROR | home page API failed: {e}")
+            log.error(
+                "REGISTER_ROUTES_ERROR | home page API failed: %s",
+                str(e),
+                exc_info=True,
+                extra={"error_type": type(e).__name__},
+            )
 
         # Register product API endpoints for Flutter app (PDP, Scanner, Catalogue)
         try:
@@ -392,12 +397,24 @@ def create_app(config_name: str = 'production') -> Flask:
             app.register_blueprint(product_api_bp, url_prefix='/rs')
             log.info("REGISTER_ROUTES_SUCCESS | product API registered (/rs/api/v1/product/*, /rs/api/v1/scanner, /rs/api/v1/catalogue)")
         except Exception as e:
-            log.error(f"REGISTER_ROUTES_ERROR | product API failed: {e}")
+            log.error(
+                "REGISTER_ROUTES_ERROR | product API failed: %s",
+                str(e),
+                exc_info=True,
+                extra={"error_type": type(e).__name__},
+            )
 
         routes_time = time.time() - routes_start
-        log.info("REGISTER_ROUTES_SUCCESS | simplified routes registered", extra={
-            "total_duration_ms": routes_time * 1000
-        })
+        # Log registered routes for debugging (helps diagnose 404s)
+        registered_rules = [f"{r.rule} [{','.join(r.methods - {'HEAD', 'OPTIONS'})}]" for r in app.url_map.iter_rules() if not r.rule.startswith("/__")]
+        log.info(
+            "REGISTER_ROUTES_SUCCESS | simplified routes registered",
+            extra={
+                "total_duration_ms": routes_time * 1000,
+                "route_count": len(registered_rules),
+                "routes_sample": registered_rules[:30],  # First 30 for log size limit
+            },
+        )
         
     except Exception as e:
         routes_time = time.time() - routes_start

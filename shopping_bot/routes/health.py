@@ -60,6 +60,23 @@ def health_check() -> tuple[Dict[str, Any], int]:
         }), 200
 
 
+@bp.route("/__routes", methods=["GET"])
+def list_routes() -> tuple[Dict[str, Any], int]:
+    """Debug endpoint: list all registered routes (helps diagnose 404s)."""
+    try:
+        routes = []
+        for rule in current_app.url_map.iter_rules():
+            if rule.rule.startswith("/__"):
+                continue
+            methods = sorted(rule.methods - {"HEAD", "OPTIONS"})
+            routes.append({"rule": rule.rule, "methods": methods})
+        routes.sort(key=lambda r: r["rule"])
+        return jsonify({"routes": routes, "count": len(routes)}), 200
+    except Exception as exc:
+        log.warning("Routes list error: %s", exc)
+        return jsonify({"error": str(exc), "routes": []}), 500
+
+
 @bp.route("/redis-health", methods=["GET"])
 def redis_health_check() -> tuple[Dict[str, Any], int]:
     """

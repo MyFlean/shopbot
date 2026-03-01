@@ -22,8 +22,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Blueprint, jsonify, request
 
-from ..bedrock_client import BedrockClient
-
 from ..config import get_config
 from ..data_fetchers.es_products import (
     get_es_fetcher,
@@ -299,6 +297,8 @@ def _normalize_base64_image(image_input: str) -> Tuple[str, str]:
 def _extract_product_from_image(media_type: str, b64_data: str) -> Dict[str, Any]:
     """Use AWS Bedrock Claude to extract product name and brand from image."""
     import json as _json
+
+    from ..bedrock_client import BedrockClient
 
     bearer_token = getattr(Cfg, "AWS_BEARER_TOKEN_BEDROCK", "") or ""
     if not bearer_token:

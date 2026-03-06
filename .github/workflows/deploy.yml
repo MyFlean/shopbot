@@ -1,10 +1,8 @@
 name: Deploy to ECS
 
+# Paused: Only Lambda deployment runs on push. Trigger manually when needed.
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch: {}
 
 env:
   AWS_REGION: ap-south-1

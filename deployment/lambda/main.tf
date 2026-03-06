@@ -24,23 +24,26 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
-# Get ES_URL from Secrets Manager
+# Get ES_URL from Secrets Manager (skipped when es_url var is provided for CI)
 data "aws_secretsmanager_secret" "es_url" {
-  name = "shopping-bot/es-url"
+  count = var.es_url != "" ? 0 : 1
+  name  = "shopping-bot/es-url"
 }
 
 data "aws_secretsmanager_secret_version" "es_url" {
-  secret_id = data.aws_secretsmanager_secret.es_url.id
+  count     = var.es_url != "" ? 0 : 1
+  secret_id = data.aws_secretsmanager_secret.es_url[0].id
 }
 
-# Get ES_API_KEY from shopbot secret
+# Get ES_API_KEY from shopbot secret (skipped when es_api_key var is provided for CI)
 data "aws_secretsmanager_secret_version" "shopbot_secrets" {
+  count     = var.es_api_key != "" ? 0 : 1
   secret_id = var.secrets_manager_secret_arn
 }
 
 locals {
-  es_url     = data.aws_secretsmanager_secret_version.es_url.secret_string
-  es_api_key = jsondecode(data.aws_secretsmanager_secret_version.shopbot_secrets.secret_string)["ES_API_KEY"]
+  es_url     = var.es_url != "" ? var.es_url : data.aws_secretsmanager_secret_version.es_url[0].secret_string
+  es_api_key = var.es_api_key != "" ? var.es_api_key : jsondecode(data.aws_secretsmanager_secret_version.shopbot_secrets[0].secret_string)["ES_API_KEY"]
 }
 
 # Lambda function

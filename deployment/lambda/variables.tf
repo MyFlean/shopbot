@@ -112,6 +112,20 @@ variable "enable_custom_domain" {
   default     = true
 }
 
+variable "es_url" {
+  description = "Elasticsearch URL. When set, skips Secrets Manager lookup (for CI)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "es_api_key" {
+  description = "Elasticsearch API key. When set, skips Secrets Manager lookup (for CI)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 
 
 

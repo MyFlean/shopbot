@@ -11,7 +11,7 @@ on:
       - 'requirements.txt'
       - 'deployment/lambda/**'
       - '.github/workflows/deploy-lambda.yml'
-  workflow_dispatch: # Allow manual triggering
+  workflow_dispatch: {}  # Allow manual triggering via gh workflow run
 
 env:
   AWS_REGION: ap-south-1

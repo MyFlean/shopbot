@@ -33,15 +33,18 @@ output "lambda_role_arn" {
   value       = aws_iam_role.lambda_role.arn
 }
 
-output "lambda_security_group_id" {
-  description = "Security group ID for Lambda function"
-  value       = aws_security_group.lambda.id
-}
-
 output "cloudwatch_log_group_name" {
   description = "CloudWatch log group name for Lambda"
   value       = aws_cloudwatch_log_group.lambda_logs.name
 }
+
+
+
+
+
+
+
+
 
 
 

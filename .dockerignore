@@ -1,0 +1,15 @@
+.git
+.gitignore
+*.pyc
+__pycache__
+*.zip
+venv
+.venv
+node_modules
+*.md
+.DS_Store
+deployment/lambda/tfplan
+deployment/lambda/.terraform
+*.tfstate*
+.env
+.env.*

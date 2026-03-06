@@ -106,6 +106,25 @@ variable "vpc_endpoints_security_group_id" {
   default     = ""
 }
 
+variable "enable_custom_domain" {
+  description = "Enable custom domain (api-rs.flean.ai) and Route53. Set to false when CI user lacks Route53 permissions."
+  type        = bool
+  default     = true
+}
+
+variable "es_url" {
+  description = "Elasticsearch URL (optional - pass from Secrets Manager or TF_VAR). When set, skips Secrets Manager read."
+  type        = string
+  default     = null
+}
+
+variable "es_api_key" {
+  description = "Elasticsearch API key (optional - pass from Secrets Manager or TF_VAR). When set, skips Secrets Manager read."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
 
 
 

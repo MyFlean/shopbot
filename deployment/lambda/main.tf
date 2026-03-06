@@ -24,24 +24,28 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
-# Get ES_URL from Secrets Manager
+# Get ES_URL from Secrets Manager (skipped when var.es_url is provided)
 data "aws_secretsmanager_secret" "es_url" {
-  name = "shopping-bot/es-url"
+  count = var.es_url == null ? 1 : 0
+  name  = "shopping-bot/es-url"
 }
 
 data "aws_secretsmanager_secret_version" "es_url" {
-  secret_id = data.aws_secretsmanager_secret.es_url.id
+  count     = var.es_url == null ? 1 : 0
+  secret_id = data.aws_secretsmanager_secret.es_url[0].id
 }
 
-# Get ES_API_KEY from shopbot secret
+# Get ES_API_KEY from shopbot secret (skipped when var.es_api_key is provided)
 data "aws_secretsmanager_secret_version" "shopbot_secrets" {
+  count     = var.es_api_key == null ? 1 : 0
   secret_id = var.secrets_manager_secret_arn
 }
 
 locals {
-  # ES_URL is stored as a plain string, not JSON
-  es_url = data.aws_secretsmanager_secret_version.es_url.secret_string
-  shopbot_secrets = jsondecode(data.aws_secretsmanager_secret_version.shopbot_secrets.secret_string)
+  # ES_URL: use variable if provided, else from Secrets Manager
+  es_url = var.es_url != null ? var.es_url : data.aws_secretsmanager_secret_version.es_url[0].secret_string
+  # ES_API_KEY: use variable if provided, else from Secrets Manager
+  es_api_key = var.es_api_key != null ? var.es_api_key : jsondecode(data.aws_secretsmanager_secret_version.shopbot_secrets[0].secret_string)["ES_API_KEY"]
 }
 
 # Lambda function
@@ -70,16 +74,17 @@ resource "aws_lambda_function" "shopbot" {
       FLASK_ENV              = "lambda"
       APP_ENV                = "lambda"
       # AWS_REGION is automatically available in Lambda, don't set it
-      REDIS_HOST            = var.redis_endpoint
-      REDIS_PORT            = var.redis_port
+      # REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_DB are now loaded from Secrets Manager
+      # Do not set REDIS_HOST here - it will override secrets from Secrets Manager
       LOG_LEVEL             = var.log_level
       BOT_LOG_LEVEL         = var.log_level  # Smart logger system uses BOT_LOG_LEVEL
       # Secrets retrieved via Secrets Manager in code
       SECRETS_MANAGER_SECRET = var.secrets_manager_secret_name
+      REDIS_SECRET_NAME     = "flean-services/redis"
       # Elasticsearch - set as environment variables for module import time
       # These are also loaded from secrets, but need to be available when modules are imported
       ES_URL                = local.es_url
-      ES_API_KEY            = local.shopbot_secrets["ES_API_KEY"]
+      ES_API_KEY            = local.es_api_key
       ELASTIC_INDEX         = "products-v2"
       ELASTIC_TIMEOUT_SECONDS = "10"
       # AWS SDK retry configuration to prevent retry storms
@@ -91,13 +96,12 @@ resource "aws_lambda_function" "shopbot" {
     }
   }
 
-  vpc_config {
-    subnet_ids         = var.private_subnet_ids
-    security_group_ids = [aws_security_group.lambda.id]
-  }
+  # VPC config removed - Lambda runs outside VPC
+  # Uses public AWS endpoints (Secrets Manager, STS, CloudWatch Logs)
+  # This eliminates VPC endpoint costs: ~$14.60/month savings
+  # Redis access via public endpoint (3.6.236.100)
 
   depends_on = [
-    aws_iam_role_policy_attachment.lambda_vpc,
     aws_cloudwatch_log_group.lambda_logs
   ]
 
@@ -229,11 +233,8 @@ resource "aws_iam_role_policy_attachment" "lambda_basic" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# VPC access role
-resource "aws_iam_role_policy_attachment" "lambda_vpc" {
-  role       = aws_iam_role.lambda_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-}
+# VPC access role - REMOVED (Lambda runs outside VPC)
+# resource "aws_iam_role_policy_attachment" "lambda_vpc" { ... }
 
 # Secrets Manager access
 resource "aws_iam_role_policy" "lambda_secrets" {
@@ -248,59 +249,15 @@ resource "aws_iam_role_policy" "lambda_secrets" {
         "secretsmanager:GetSecretValue",
         "secretsmanager:DescribeSecret"
       ]
-      Resource = [
-        var.secrets_manager_secret_arn
-      ]
+      Resource = concat(
+        [var.secrets_manager_secret_arn],
+        ["arn:aws:secretsmanager:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:secret:flean-services/redis-*"]
+      )
     }]
   })
 }
 
-# Security Group for Lambda
-resource "aws_security_group" "lambda" {
-  name_prefix = "${var.project_name}-lambda-"
-  description = "Security group for Shopbot Service Lambda"
-  vpc_id      = var.vpc_id
-
-  egress {
-    description     = "Allow outbound to Redis"
-    from_port       = 6379
-    to_port         = 6379
-    protocol        = "tcp"
-    security_groups = var.redis_security_group_ids
-  }
-
-  # Allow HTTPS to VPC Interface Endpoints
-  # This eliminates NAT Gateway traffic for AWS service calls (Secrets Manager, STS, CloudWatch Logs)
-  egress {
-    description     = "HTTPS to VPC Interface Endpoints (Secrets Manager, STS, CloudWatch Logs, Lambda)"
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    security_groups = [data.aws_security_group.vpc_endpoints.id]
-  }
-
-  # Allow HTTPS to external services (Elasticsearch, Anthropic API)
-  # This will still use NAT Gateway but is necessary for functionality
-  egress {
-    description = "HTTPS for external APIs (Elasticsearch, Anthropic)"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    description = "Allow HTTP for Elasticsearch (if not using HTTPS)"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "${var.project_name}-lambda-sg"
-  }
-}
+# Security Group - REMOVED (Lambda runs outside VPC, no security group needed)
 
 # Outputs are defined in outputs.tf
 

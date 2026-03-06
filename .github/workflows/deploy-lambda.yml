@@ -1,6 +1,5 @@
 name: Deploy Lambda Function
 
-# Triggers on push to main/master when Lambda/deployment paths change
 on:
   push:
     branches:

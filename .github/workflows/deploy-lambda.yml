@@ -1,6 +1,5 @@
 name: Deploy Lambda Function
 
-# Deploys shopbot Lambda on push to main
 on:
   push:
     branches:

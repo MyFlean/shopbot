@@ -8,12 +8,12 @@ Add these secrets to your repository (Settings → Secrets and variables → Act
 |--------|-------------|
 | `AWS_ACCESS_KEY_ID` | AWS access key for shopbot-cicd-user |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key for shopbot-cicd-user |
-| `ES_URL` | Elasticsearch URL (from shopping-bot/es-url secret) |
-| `ES_API_KEY` | Elasticsearch API key (from flean-services/shopbot secret) |
+| `SHOPBOT_SECRETS_ARN` | Full ARN of the flean-services/shopbot secret in Secrets Manager (e.g. `arn:aws:secretsmanager:ap-south-1:ACCOUNT:secret:flean-services/shopbot-XXXXX`) |
 
 ## Why These Secrets?
 
-The CI workflow passes `ES_URL` and `ES_API_KEY` as Terraform variables to avoid requiring Secrets Manager permissions for the CI user. This allows deployment without granting the CI user access to read secrets.
+- `terraform.tfvars` is gitignored (contains secrets). CI creates it from `terraform.tfvars.example` and uses `SHOPBOT_SECRETS_ARN` to set the secret ARN.
+- The CI user needs Secrets Manager read access (see `iam-policy-cicd.json`) to fetch ES_URL and shopbot secrets during Terraform plan/apply.
 
 ## Alternative: IAM Permissions
 

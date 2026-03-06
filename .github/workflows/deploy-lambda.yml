@@ -60,10 +60,45 @@ jobs:
           ls -lh shopbot.zip
           echo "✅ Package built successfully"
 
+      - name: Prepare Terraform variables for CI
+        working-directory: deployment/lambda
+        env:
+          SHOPBOT_SECRETS_ARN: ${{ secrets.SHOPBOT_SECRETS_ARN }}
+        run: |
+          # terraform.tfvars is untracked (contains secrets) - create from example for CI
+          if [ ! -f terraform.tfvars ]; then
+            echo "Creating terraform.tfvars from example for CI..."
+            cp terraform.tfvars.example terraform.tfvars
+            # Replace placeholder ARN with value from GitHub secret
+            if [ -n "$SHOPBOT_SECRETS_ARN" ]; then
+              sed -i "s|secrets_manager_secret_arn = \".*\"|secrets_manager_secret_arn = \"$SHOPBOT_SECRETS_ARN\"|" terraform.tfvars
+            else
+              echo "::warning::SHOPBOT_SECRETS_ARN not set - add it to GitHub secrets for CI deployment"
+              echo "Using placeholder from terraform.tfvars.example (plan may fail)"
+            fi
+          fi
+          echo "Terraform variables prepared"
+
       - name: Initialize Terraform
         working-directory: deployment/lambda
         run: |
           terraform init -input=false
+
+      - name: Import existing resources (if needed)
+        working-directory: deployment/lambda
+        continue-on-error: true
+        run: |
+          echo "Attempting to import existing resources..."
+          terraform import aws_iam_role.lambda_role shopbot-service-lambda-role 2>/dev/null || echo "IAM role already in state or doesn't exist"
+          terraform import aws_cloudwatch_log_group.lambda_logs /aws/lambda/shopbot-service 2>/dev/null || echo "Lambda log group already in state or doesn't exist"
+          terraform import aws_cloudwatch_log_group.apigw_logs /aws/apigateway/shopbot-service 2>/dev/null || echo "API Gateway log group already in state or doesn't exist"
+          terraform import aws_lambda_function.shopbot shopbot-service 2>/dev/null || echo "Lambda function already in state or doesn't exist"
+          # Import API Gateway HTTP API if it exists
+          API_ID=$(aws apigatewayv2 get-apis --region ${{ env.AWS_REGION }} --query "Items[?Name=='shopbot-service-api'].ApiId" --output text 2>/dev/null || echo "")
+          if [ -n "$API_ID" ]; then
+            terraform import aws_apigatewayv2_api.shopbot "$API_ID" 2>/dev/null || echo "API Gateway API already in state or doesn't exist"
+            terraform import 'aws_apigatewayv2_stage.shopbot' "${API_ID}/\$default" 2>/dev/null || echo "API Gateway stage already in state or doesn't exist"
+          fi
 
       - name: Validate Terraform configuration
         working-directory: deployment/lambda
@@ -76,8 +111,8 @@ jobs:
           terraform plan -out=tfplan -input=false
         env:
           TF_VAR_enable_custom_domain: "false"
-          TF_VAR_es_url: ${{ secrets.ES_URL }}
-          TF_VAR_es_api_key: ${{ secrets.ES_API_KEY }}
+          TF_VAR_secrets_manager_secret_arn: ${{ secrets.SHOPBOT_SECRETS_ARN }}
+          TF_VAR_secrets_manager_secret_name: "flean-services/shopbot"
 
       - name: Terraform Apply
         working-directory: deployment/lambda
@@ -85,6 +120,8 @@ jobs:
           terraform apply -auto-approve tfplan
         env:
           TF_LOG: INFO
+          TF_VAR_secrets_manager_secret_arn: ${{ secrets.SHOPBOT_SECRETS_ARN }}
+          TF_VAR_secrets_manager_secret_name: "flean-services/shopbot"
 
       - name: Verify Lambda deployment
         run: |
@@ -120,11 +157,11 @@ jobs:
             sleep 10
             
             # Test health endpoint
-            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${API_URL}rs/health" || echo "000")
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${API_URL}/rs/health" || echo "000")
             
             if [ "$RESPONSE" = "200" ]; then
               echo "✅ Health endpoint returned 200 OK"
-              curl -s "${API_URL}rs/health" | jq . || echo "Response received"
+              curl -s "${API_URL}/rs/health" | jq . || echo "Response received"
             else
               echo "⚠️  Health endpoint returned: $RESPONSE"
               echo "This might be normal if the endpoint requires authentication"
@@ -136,6 +173,7 @@ jobs:
       - name: Upload Lambda package artifact
         uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: lambda-package
           path: shopbot.zip

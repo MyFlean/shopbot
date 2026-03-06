@@ -24,28 +24,23 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
-# Get ES_URL from Secrets Manager (skipped when var.es_url is provided)
+# Get ES_URL from Secrets Manager
 data "aws_secretsmanager_secret" "es_url" {
-  count = var.es_url == null ? 1 : 0
-  name  = "shopping-bot/es-url"
+  name = "shopping-bot/es-url"
 }
 
 data "aws_secretsmanager_secret_version" "es_url" {
-  count     = var.es_url == null ? 1 : 0
-  secret_id = data.aws_secretsmanager_secret.es_url[0].id
+  secret_id = data.aws_secretsmanager_secret.es_url.id
 }
 
-# Get ES_API_KEY from shopbot secret (skipped when var.es_api_key is provided)
+# Get ES_API_KEY from shopbot secret
 data "aws_secretsmanager_secret_version" "shopbot_secrets" {
-  count     = var.es_api_key == null ? 1 : 0
   secret_id = var.secrets_manager_secret_arn
 }
 
 locals {
-  # ES_URL: use variable if provided, else from Secrets Manager
-  es_url = var.es_url != null ? var.es_url : data.aws_secretsmanager_secret_version.es_url[0].secret_string
-  # ES_API_KEY: use variable if provided, else from Secrets Manager
-  es_api_key = var.es_api_key != null ? var.es_api_key : jsondecode(data.aws_secretsmanager_secret_version.shopbot_secrets[0].secret_string)["ES_API_KEY"]
+  es_url     = data.aws_secretsmanager_secret_version.es_url.secret_string
+  es_api_key = jsondecode(data.aws_secretsmanager_secret_version.shopbot_secrets.secret_string)["ES_API_KEY"]
 }
 
 # Lambda function

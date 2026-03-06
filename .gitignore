@@ -53,6 +53,7 @@ logs.txt
 .terraform/
 *.tfstate.backup
 .terraform.lock.hcl
+deployment/lambda/terraform.tfvars
 
 # AWS
 .aws/

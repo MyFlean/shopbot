@@ -268,10 +268,25 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     nutritional_data = src.get("category_data", {}).get("nutritional", {})
     nutrition = _extract_nutrition_from_source(src)
     stats = src.get("stats", {})
-    metadata = src.get("metadata", {}) or {}
     package_claims = src.get("package_claims", {}) or {}
+    flean_score_data = src.get("flean_score", {}) or {}
 
-    # ── product_info (flat key-value, removed internal fields) ──
+    # Derive category / subcategory from category_paths
+    cat_paths = src.get("category_paths", [])
+    subcategory_label = ""
+    category_label = ""
+    if cat_paths:
+        longest_path = max(cat_paths, key=lambda p: len(str(p)) if p else 0)
+        segments = str(longest_path).split("/") if longest_path else []
+        subcategory_label = segments[-1].replace("_", " ").title() if segments else ""
+        category_label = segments[-2].replace("_", " ").title() if len(segments) >= 2 else ""
+
+    # Stock status from availability
+    availability = src.get("availability", {}) or {}
+    zepto_avail = availability.get("zepto", {}) or {}
+    in_stock = zepto_avail.get("in_stock", False)
+
+    # ── product_info ──
     product_info = {
         "id": src.get("id", ""),
         "name": _clean_text(src.get("name", "")) or "",
@@ -283,10 +298,12 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "image_urls": {k: v for k, v in (hero_image if isinstance(hero_image, dict) else {}).items() if isinstance(v, str) and v.startswith("http")},
         "qty": nutritional_data.get("qty", ""),
         "description": _clean_text(src.get("description", "")) or "",
+        "in_stock": in_stock,
+        "category": category_label,
+        "subcategory": subcategory_label,
     }
 
-    # ── flean_badge (renamed from safety_badge, with score_display) ──
-    flean_score_data = src.get("flean_score", {})
+    # ── flean_badge ──
     flean_score = flean_score_data.get("adjusted_score") if isinstance(flean_score_data, dict) else flean_score_data
     flean_percentile = None
     if stats.get("adjusted_score_percentiles"):
@@ -319,13 +336,6 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     # ── score_cards (named object with direct access) ──
-    cat_paths = src.get("category_paths", [])
-    subcategory_label = ""
-    if cat_paths:
-        longest_path = max(cat_paths, key=lambda p: len(str(p)) if p else 0)
-        last_segment = str(longest_path).split("/")[-1] if longest_path else ""
-        subcategory_label = last_segment.replace("_", " ").title()
-
     score_cards = {}
 
     # Flean Rank card
@@ -419,32 +429,48 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "ranking_note": "Note: Overall ranking considers multiple factors. Individual warnings highlight specific concerns.",
     }
 
-    # ── highlights (array of {label, value} for direct ListView rendering) ──
+    # ── highlights (from real ES fields only) ──
     dietary_labels = package_claims.get("dietary_labels", [])
     health_claims = package_claims.get("health_claims", [])
+    marketing_kw = package_claims.get("marketing_keywords", [])
 
     highlights_data = [
         ("Brand", src.get("brand", "")),
         ("Product Name", _clean_text(src.get("name", "")) or ""),
         ("Weight / Volume", nutritional_data.get("qty", "")),
-        ("Unit", metadata.get("unit", "")),
-        ("Packaging Type", metadata.get("packaging_type", "")),
-        ("Dietary Preference", ", ".join(dietary_labels) if isinstance(dietary_labels, list) else str(dietary_labels)),
-        ("Allergen Information", metadata.get("allergen_info", "")),
-        ("Storage Instruction", metadata.get("storage_instructions", "")),
+        ("Category", category_label),
+        ("Subcategory", subcategory_label),
+        ("Dietary Preference", ", ".join(dietary_labels) if isinstance(dietary_labels, list) and dietary_labels else ""),
         ("Health Claims", ", ".join(health_claims) if isinstance(health_claims, list) and health_claims else ""),
+        ("Marketing Keywords", ", ".join(marketing_kw) if isinstance(marketing_kw, list) and marketing_kw else ""),
     ]
     highlights = [{"label": label, "value": value} for label, value in highlights_data if value]
 
-    # ── ingredients (direct array for bullet list) ──
-    ingredients_raw = src.get("ingredients", {})
-    ingredients_text = ""
-    if isinstance(ingredients_raw, dict):
-        ingredients_text = _clean_text(ingredients_raw.get("raw_text", "")) or ""
-    elif isinstance(ingredients_raw, str):
-        ingredients_text = _clean_text(ingredients_raw) or ""
+    # ── ingredients (prefer structured data; fallback to raw_text) ──
+    ingredients_raw = src.get("ingredients", {}) or {}
+    structured = ingredients_raw.get("structured", {}) if isinstance(ingredients_raw, dict) else {}
+    structured_list = (structured.get("ingredients") or []) if isinstance(structured, dict) else []
 
-    ingredients = [i.strip() for i in ingredients_text.replace("|", ",").split(",") if i.strip()] if ingredients_text else []
+    if structured_list:
+        ingredients = []
+        for ing in structured_list:
+            if not isinstance(ing, dict):
+                continue
+            entry: Dict[str, Any] = {"name": ing.get("name", "")}
+            if ing.get("percentage") is not None:
+                entry["percentage"] = ing["percentage"]
+            if ing.get("is_composite") and ing.get("components"):
+                entry["components"] = [c.get("name", "") for c in ing["components"] if isinstance(c, dict) and c.get("name")]
+            ingredients.append(entry)
+        additives = structured.get("additives", []) or []
+    else:
+        ingredients_text = ""
+        if isinstance(ingredients_raw, dict):
+            ingredients_text = _clean_text(ingredients_raw.get("raw_text", "")) or ""
+        elif isinstance(ingredients_raw, str):
+            ingredients_text = _clean_text(ingredients_raw) or ""
+        ingredients = [{"name": i.strip()} for i in ingredients_text.replace("|", ",").split(",") if i.strip()] if ingredients_text else []
+        additives = []
 
     # ── nutrition (merged value+unit, with basis) ──
     nutri_map = [
@@ -471,28 +497,47 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "items": nutri_items,
     }
 
-    # ── additional_info (array of {label, value} for direct ListView) ──
-    default_disclaimer = "Product packaging, specifications and information may change from time to time. Please refer to the product label for the most accurate and updated information."
-    additional_data = [
-        ("Disclaimer", metadata.get("disclaimer", default_disclaimer)),
-        ("Seller Name", metadata.get("seller_name", "")),
-        ("Seller Address", metadata.get("seller_address", "")),
-        ("Seller License Number", metadata.get("seller_license", "")),
-        ("Manufacturer Name", metadata.get("manufacturer_name", "")),
-        ("Manufacturer Address", metadata.get("manufacturer_address", "")),
-        ("Country of Origin", metadata.get("country_of_origin", "India")),
-        ("Shelf Life", metadata.get("shelf_life", "")),
+    # ── additional_info (static defaults; manufacturer/seller data not in ES) ──
+    additional_info = [
+        {"label": "Disclaimer", "value": "Product packaging, specifications and information may change from time to time. Please refer to the product label for the most accurate and updated information."},
+        {"label": "Country of Origin", "value": "India"},
     ]
-    additional_info = [{"label": label, "value": value} for label, value in additional_data if value]
+
+    # ── scoring_detail (penalties, bonuses, RDA from flean_score) ──
+    scoring_detail = {}
+    if isinstance(flean_score_data, dict):
+        penalties = flean_score_data.get("penalties", {}) or {}
+        bonuses = flean_score_data.get("bonuses", {}) or {}
+        rda_pct = flean_score_data.get("rda_pct", {}) or {}
+
+        if penalties:
+            scoring_detail["penalties"] = {k: v for k, v in penalties.items() if v is not None and v != 0}
+        if bonuses:
+            scoring_detail["bonuses"] = {k: v for k, v in bonuses.items() if v is not None and v != 0}
+        if rda_pct:
+            scoring_detail["rda_pct"] = {k: round(v, 1) for k, v in rda_pct.items() if v is not None}
+
+        total_penalty = flean_score_data.get("total_penalty")
+        total_bonus = flean_score_data.get("total_bonus")
+        if total_penalty is not None:
+            scoring_detail["total_penalty"] = round(total_penalty, 2)
+        if total_bonus is not None:
+            scoring_detail["total_bonus"] = round(total_bonus, 2)
+
+    # ── cons_list (watch-out items from ES) ──
+    cons_list = src.get("cons_list", []) or []
 
     return {
         "product_info": product_info,
         "flean_badge": flean_badge,
         "score_cards": score_cards,
+        "scoring_detail": scoring_detail,
         "notes": notes,
         "highlights": highlights,
         "ingredients": ingredients,
+        "additives": additives,
         "nutrition": nutrition_section,
+        "cons_list": cons_list,
         "additional_info": additional_info,
         "macro_tags": _generate_macro_tags(nutrition),
     }
@@ -2320,7 +2365,7 @@ class ElasticsearchProductsFetcher:
                         "id", "name", "brand", "price", "mrp", "description", "use",
                         "hero_image.*", "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "ingredients.*", "tags_and_sentiments.*",
-                        "flean_score.*", "stats.*"
+                        "flean_score.*", "stats.*", "availability.*", "cons_list"
                     ]
                 },
                 "query": {
@@ -2447,14 +2492,14 @@ class ElasticsearchProductsFetcher:
 
         try:
             body = {
-                "size": limit + 5,  # fetch extra to allow for exclusion / missing
+                "size": limit + 5,
                 "track_total_hits": False,
                 "_source": {
                     "includes": [
                         "id", "name", "brand", "price", "mrp", "hero_image.*",
                         "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "flean_score.*", "stats.*",
-                        "ingredients.*", "description",
+                        "ingredients.*", "description", "availability.*", "cons_list",
                     ]
                 },
                 "query": {
@@ -2542,14 +2587,14 @@ class ElasticsearchProductsFetcher:
 
         try:
             body = {
-                "size": limit + 3,  # fetch extra to allow for exclusion / missing
+                "size": limit + 3,
                 "track_total_hits": True,
                 "_source": {
                     "includes": [
                         "id", "name", "brand", "price", "mrp", "hero_image.*",
                         "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "flean_score.*", "stats.*",
-                        "ingredients.*", "description",
+                        "ingredients.*", "description", "availability.*", "cons_list",
                     ]
                 },
                 "query": {

@@ -2,7 +2,7 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "SecretsManagerAccess",
+      "Sid": "SecretsManager",
       "Effect": "Allow",
       "Action": [
         "secretsmanager:DescribeSecret",
@@ -15,38 +15,19 @@
       ]
     },
     {
-      "Sid": "Route53Access",
+      "Sid": "Route53",
       "Effect": "Allow",
-      "Action": [
-        "route53:ListHostedZones",
-        "route53:GetHostedZone",
-        "route53:ChangeResourceRecordSets",
-        "route53:ListResourceRecordSets",
-        "route53:ListTagsForResource"
-      ],
+      "Action": "route53:*",
       "Resource": "*"
     },
     {
-      "Sid": "LambdaDeploy",
+      "Sid": "Lambda",
       "Effect": "Allow",
-      "Action": [
-        "lambda:CreateFunction",
-        "lambda:DeleteFunction",
-        "lambda:GetFunction",
-        "lambda:UpdateFunctionCode",
-        "lambda:UpdateFunctionConfiguration",
-        "lambda:AddPermission",
-        "lambda:RemovePermission",
-        "lambda:GetPolicy",
-        "lambda:ListVersionsByFunction",
-        "lambda:TagResource",
-        "lambda:UntagResource",
-        "lambda:ListTags"
-      ],
+      "Action": "lambda:*",
       "Resource": "arn:aws:lambda:ap-south-1:637607366584:function:shopbot-service"
     },
     {
-      "Sid": "IAMRoleDeploy",
+      "Sid": "IAM",
       "Effect": "Allow",
       "Action": [
         "iam:CreateRole",
@@ -58,45 +39,21 @@
         "iam:DeleteRolePolicy",
         "iam:AttachRolePolicy",
         "iam:DetachRolePolicy",
-        "iam:ListAttachedRolePolicies",
-        "iam:ListRolePolicies",
         "iam:TagRole",
-        "iam:UntagRole",
-        "iam:ListRoleTags"
+        "iam:UntagRole"
       ],
       "Resource": "arn:aws:iam::637607366584:role/shopbot-service-lambda-role"
     },
     {
-      "Sid": "APIGatewayDeploy",
+      "Sid": "APIGateway",
       "Effect": "Allow",
-      "Action": [
-        "apigateway:GET",
-        "apigateway:POST",
-        "apigateway:PUT",
-        "apigateway:PATCH",
-        "apigateway:DELETE",
-        "apigateway:TagResource",
-        "apigateway:UntagResource",
-        "apigateway:GetTags",
-        "apigateway:GetStages"
-      ],
+      "Action": "apigateway:*",
       "Resource": "arn:aws:apigateway:ap-south-1::/*"
     },
     {
-      "Sid": "CloudWatchLogsDeploy",
+      "Sid": "CloudWatchLogs",
       "Effect": "Allow",
-      "Action": [
-        "logs:CreateLogGroup",
-        "logs:DeleteLogGroup",
-        "logs:DescribeLogGroups",
-        "logs:DescribeLogStreams",
-        "logs:PutRetentionPolicy",
-        "logs:TagLogGroup",
-        "logs:TagResource",
-        "logs:ListTagsForResource",
-        "logs:UntagLogGroup",
-        "logs:UntagResource"
-      ],
+      "Action": "logs:*",
       "Resource": [
         "arn:aws:logs:ap-south-1:637607366584:log-group:/aws/lambda/shopbot-service*",
         "arn:aws:logs:ap-south-1:637607366584:log-group:/aws/apigateway/shopbot-service*",

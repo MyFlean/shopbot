@@ -13,8 +13,8 @@
 | Home - Categories | `GET` | `/rs/api/v1/home/categories` | Category grid (4 items) |
 | Home - Categories All | `GET` | `/rs/api/v1/home/categories?all=true` | All categories |
 | Home - Best Selling | `GET` | `/rs/api/v1/home/best-selling` | Featured products (4) |
-| Home - Curated | `GET` | `/rs/api/v1/home/curated` | 4 random curated |
-| Home - Curated All | `GET` | `/rs/api/v1/home/curated/all` | All curated products |
+| Home - Curated | `GET`/`POST` | `/rs/api/v1/home/curated` | 4 random curated (supports filters) |
+| Home - Curated All | `GET`/`POST` | `/rs/api/v1/home/curated/all` | All curated (supports filters) |
 | Home - Why Flean | `GET` | `/rs/api/v1/home/why-flean` | Value proposition cards |
 | Home - Collaborations | `GET` | `/rs/api/v1/home/collaborations` | Partner brands |
 | Search | `POST` | `/rs/search` | Search + Sort + Filter |
@@ -106,7 +106,15 @@ Returns 4 random product cards from a curated pool.
 ```
 GET /rs/api/v1/home/curated      # 4 random product cards
 GET /rs/api/v1/home/curated/all  # all curated product cards
+POST /rs/api/v1/home/curated     # same, with personalization filters in body
+POST /rs/api/v1/home/curated/all # same, with filters
 ```
+
+**Personalization filters** (same schema as `POST /api/v1/products`):
+- GET: `?price_range=below_99&flean_score=8_plus&preferences=no_palm_oil&dietary=gluten_free`
+- POST: `{"filters": {"price_range": "below_99", "flean_score": "8_plus", "preferences": ["no_palm_oil"], "dietary": ["gluten_free"]}}`
+
+When filters are provided, curated products are filtered in-memory before random sampling. Response includes `filters_applied: true`.
 
 ### [5] Why Flean
 

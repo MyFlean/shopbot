@@ -29,7 +29,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Blueprint, jsonify, request
 
-from ..data_fetchers.es_products import get_es_fetcher, transform_to_product_card
+from ..data_fetchers.es_products import (
+    filter_products_in_memory,
+    get_es_fetcher,
+    transform_to_product_card,
+)
 
 log = logging.getLogger(__name__)
 bp = Blueprint("home_page", __name__)
@@ -103,6 +107,92 @@ def _build_error_response(code: str, message: str) -> Dict[str, Any]:
 # Elasticsearch Product Fetching (uses shared transformer)
 # ============================================================================
 
+# Filter constants (same as product_api / unified products API)
+_VALID_PRICE_RANGES = {"below_99", "100_249", "250_499", "above_500"}
+_VALID_FLEAN_SCORES = {"10", "9_plus", "8_plus", "7_plus"}
+_VALID_PREFERENCES = {"no_palm_oil", "no_added_sugar", "no_additives"}
+_VALID_DIETARY = {"dairy_free", "gluten_free"}
+
+
+def _parse_filters_from_dict(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Parse and validate filters from a dict (e.g. request body)."""
+    filters = data.get("filters")
+    if not filters or not isinstance(filters, dict):
+        return None
+    validated: Dict[str, Any] = {}
+    if filters.get("price_range") in _VALID_PRICE_RANGES:
+        validated["price_range"] = filters["price_range"]
+    if filters.get("flean_score") in _VALID_FLEAN_SCORES:
+        validated["flean_score"] = filters["flean_score"]
+    prefs = filters.get("preferences", [])
+    if isinstance(prefs, list):
+        prefs = [p for p in prefs if p in _VALID_PREFERENCES]
+    elif isinstance(prefs, str):
+        prefs = [p.strip() for p in prefs.split(",") if p.strip() in _VALID_PREFERENCES]
+    if prefs:
+        validated["preferences"] = prefs
+    diet = filters.get("dietary", [])
+    if isinstance(diet, list):
+        diet = [d for d in diet if d in _VALID_DIETARY]
+    elif isinstance(diet, str):
+        diet = [d.strip() for d in diet.split(",") if d.strip() in _VALID_DIETARY]
+    if diet:
+        validated["dietary"] = diet
+    return validated if validated else None
+
+
+def _parse_filters_from_request() -> Optional[Dict[str, Any]]:
+    """
+    Parse personalization filters from request (GET query params or POST body).
+    Returns validated filters dict or None if no filters provided.
+    """
+    filters = None
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        filters = _parse_filters_from_dict({"filters": payload.get("filters")})
+    if not filters and request.args:
+        # GET with query params
+        f = {}
+        if request.args.get("price_range") in _VALID_PRICE_RANGES:
+            f["price_range"] = request.args.get("price_range")
+        if request.args.get("flean_score") in _VALID_FLEAN_SCORES:
+            f["flean_score"] = request.args.get("flean_score")
+        pref = request.args.get("preferences", "")
+        if pref:
+            prefs = [p.strip() for p in pref.split(",") if p.strip() in _VALID_PREFERENCES]
+            if prefs:
+                f["preferences"] = prefs
+        diet = request.args.get("dietary", "")
+        if diet:
+            diets = [d.strip() for d in diet.split(",") if d.strip() in _VALID_DIETARY]
+            if diets:
+                f["dietary"] = diets
+        filters = f if f else None
+    if not filters or not isinstance(filters, dict):
+        return None
+    # Validate and normalize
+    validated: Dict[str, Any] = {}
+    if filters.get("price_range") in _VALID_PRICE_RANGES:
+        validated["price_range"] = filters["price_range"]
+    if filters.get("flean_score") in _VALID_FLEAN_SCORES:
+        validated["flean_score"] = filters["flean_score"]
+    prefs = filters.get("preferences", [])
+    if isinstance(prefs, list):
+        prefs = [p for p in prefs if p in _VALID_PREFERENCES]
+    elif isinstance(prefs, str):
+        prefs = [p.strip() for p in prefs.split(",") if p.strip() in _VALID_PREFERENCES]
+    if prefs:
+        validated["preferences"] = prefs
+    diet = filters.get("dietary", [])
+    if isinstance(diet, list):
+        diet = [d for d in diet if d in _VALID_DIETARY]
+    elif isinstance(diet, str):
+        diet = [d.strip() for d in diet.split(",") if d.strip() in _VALID_DIETARY]
+    if diet:
+        validated["dietary"] = diet
+    return validated if validated else None
+
+
 def _fetch_products_by_ids(product_ids: List[str]) -> List[Dict[str, Any]]:
     """Fetch products from ES by IDs and return standardized product cards."""
     if not product_ids:
@@ -115,6 +205,18 @@ def _fetch_products_by_ids(product_ids: List[str]) -> List[Dict[str, Any]]:
         return cards
     except Exception as e:
         log.error(f"ES_FETCH_ERROR | error={e}", exc_info=True)
+        return []
+
+
+def _fetch_raw_products_by_ids(product_ids: List[str]) -> List[Dict[str, Any]]:
+    """Fetch raw ES _source docs by IDs (for filtering before transform)."""
+    if not product_ids:
+        return []
+    try:
+        fetcher = get_es_fetcher()
+        return fetcher.search_by_ids(product_ids)
+    except Exception as e:
+        log.error(f"ES_FETCH_RAW_ERROR | error={e}", exc_info=True)
         return []
 
 
@@ -162,28 +264,58 @@ def _get_best_selling_data() -> Dict[str, Any]:
     return {"products": products, "section_title": "Best Selling"}
 
 
-def _get_curated_data() -> Dict[str, Any]:
-    """Fetch curated products data for unified response (randomized)."""
+def _get_curated_data(
+    filters: Optional[Dict[str, Any]] = None,
+    limit: Optional[int] = 4,
+) -> Dict[str, Any]:
+    """
+    Fetch curated products data for unified response (randomized).
+    When filters are provided, fetches all curated products, filters in-memory
+    by personalization criteria, then randomly samples from the filtered pool.
+
+    Args:
+        filters: Optional personalization filters (price_range, flean_score, preferences, dietary)
+        limit: Max products to return. 4 for home, None for "all" (return entire filtered pool)
+    """
     data = _get_json_data("curated_products.json", {"product_ids": []})
     all_product_ids = data.get("product_ids", [])
-    
+
     if not all_product_ids:
         return {
             "products": [],
             "section_title": "Curated For You",
             "has_more": False,
-            "total_in_pool": 0
+            "total_in_pool": 0,
+            "filters_applied": bool(filters),
         }
-    
-    count = min(4, len(all_product_ids))
-    selected_ids = random.sample(all_product_ids, count)
-    products = _fetch_products_by_ids(selected_ids)
-    
+
+    if filters:
+        # Fetch all curated products (raw), filter in-memory, then sample or return all
+        raw_products = _fetch_raw_products_by_ids(all_product_ids)
+        filtered_raw = filter_products_in_memory(raw_products, filters)
+        if limit is not None:
+            count = min(limit, len(filtered_raw))
+            selected_raw = random.sample(filtered_raw, count) if filtered_raw else []
+        else:
+            selected_raw = filtered_raw
+        products = [transform_to_product_card(src) for src in selected_raw if src]
+        total_in_pool = len(filtered_raw)
+    else:
+        # Original behavior: random sample from IDs (or all if limit is None), then fetch
+        if limit is not None:
+            count = min(limit, len(all_product_ids))
+            selected_ids = random.sample(all_product_ids, count)
+        else:
+            selected_ids = all_product_ids
+        products = _fetch_products_by_ids(selected_ids)
+        total_in_pool = len(all_product_ids)
+
     return {
         "products": products,
         "section_title": "Curated For You",
-        "has_more": len(all_product_ids) > 4,
-        "total_in_pool": len(all_product_ids)
+        "has_more": total_in_pool > (limit or 4),
+        "total_in_pool": total_in_pool,
+        "filters_applied": bool(filters),
     }
 
 
@@ -248,52 +380,54 @@ def get_best_selling() -> tuple[Dict[str, Any], int]:
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load best-selling products")), 500
 
 
-@bp.route("/api/v1/home/curated", methods=["GET"])
+@bp.route("/api/v1/home/curated", methods=["GET", "POST"])
 def get_curated_home() -> tuple[Dict[str, Any], int]:
     """
     Get 4 random curated products for the home page.
-    
-    Randomly selects 4 product IDs from the curated list,
-    then fetches full product details from Elasticsearch.
+
+    Randomly selects from the curated pool. Supports personalization filters:
+    - GET: ?price_range=below_99&flean_score=8_plus&preferences=no_palm_oil&dietary=gluten_free
+    - POST: {"filters": {"price_range": "below_99", "flean_score": "8_plus", ...}}
+
+    Same filter schema as POST /api/v1/products (price_range, flean_score, preferences, dietary).
+    When filters are provided, products are filtered in-memory before random sampling.
     """
     try:
-        result = _get_curated_data()
-        log.info(f"HOME_CURATED | pool_size={result.get('total_in_pool', 0)} | returned={len(result.get('products', []))}")
+        filters = _parse_filters_from_request()
+        result = _get_curated_data(filters=filters, limit=4)
+        log.info(
+            f"HOME_CURATED | pool_size={result.get('total_in_pool', 0)} | "
+            f"returned={len(result.get('products', []))} | filters_applied={result.get('filters_applied', False)}"
+        )
         return jsonify(_build_success_response(result)), 200
     except Exception as e:
         log.error(f"HOME_CURATED_ERROR | error={e}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load curated products")), 500
 
 
-@bp.route("/api/v1/home/curated/all", methods=["GET"])
+@bp.route("/api/v1/home/curated/all", methods=["GET", "POST"])
 def get_curated_all() -> tuple[Dict[str, Any], int]:
     """
     Get all curated products (for "See All" page).
-    
-    Fetches full product details from Elasticsearch for all curated product IDs.
+
+    Supports same personalization filters as /curated (GET query params or POST body).
+    When filters are provided, returns only products matching the criteria.
     """
     try:
-        data = _get_json_data("curated_products.json", {"product_ids": []})
-        all_product_ids = data.get("product_ids", [])
-        
-        if not all_product_ids:
-            log.warning("HOME_CURATED_ALL | No product IDs configured")
-            return jsonify(_build_success_response({
-                "products": [],
-                "section_title": "Curated For You"
-            })), 200
-        
-        # Fetch all products from ES
-        products = _fetch_products_by_ids(all_product_ids)
-        
-        log.info(f"HOME_CURATED_ALL | total={len(all_product_ids)} | returned={len(products)}")
-        
-        return jsonify(_build_success_response({
-            "products": products,
+        filters = _parse_filters_from_request()
+        result = _get_curated_data(filters=filters, limit=None)
+        # Normalize response for "all" endpoint (total_count for backward compat)
+        response_data = {
+            "products": result["products"],
             "section_title": "Curated For You",
-            "total_count": len(products)
-        })), 200
-        
+            "total_count": result["total_in_pool"],
+            "filters_applied": result.get("filters_applied", False),
+        }
+        log.info(
+            f"HOME_CURATED_ALL | total={result['total_in_pool']} | "
+            f"returned={len(result['products'])} | filters_applied={result.get('filters_applied', False)}"
+        )
+        return jsonify(_build_success_response(response_data)), 200
     except Exception as e:
         log.error(f"HOME_CURATED_ALL_ERROR | error={e}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load curated products")), 500
@@ -338,15 +472,16 @@ def get_unified_home() -> tuple[Dict[str, Any], int]:
     
     Request Body (optional):
     {
-        "macro_preferences": {
-            "protein": {"operator": "gte", "value": 15},
-            "sodium": {"operator": "lte", "value": 300}
+        "filters": {
+            "price_range": "below_99",
+            "flean_score": "8_plus",
+            "preferences": ["no_palm_oil"],
+            "dietary": ["gluten_free"]
         }
     }
-    
-    Note: macro_preferences is accepted but NOT applied to home page sections.
-    It's reserved for future use. Currently, curated products are randomly
-    selected from a pre-defined pool without any filtering.
+    Same filter schema as POST /api/v1/products. When provided, curated
+    products are filtered by these criteria before random sampling.
+    macro_preferences is also accepted but reserved for future use.
     
     Response:
     {
@@ -361,8 +496,8 @@ def get_unified_home() -> tuple[Dict[str, Any], int]:
         },
         "meta": {
             "timestamp": "2025-02-26T...",
-            "macro_preferences_received": true/false,
-            "macro_preferences_applied": false
+            "filters_applied": true/false,
+            "macro_preferences_received": true/false
         }
     }
     """
@@ -370,8 +505,12 @@ def get_unified_home() -> tuple[Dict[str, Any], int]:
         # Parse request body (optional)
         request_data = request.get_json(silent=True) or {}
         macro_preferences = request_data.get("macro_preferences", {})
-        
-        log.info(f"HOME_UNIFIED_START | has_macro_prefs={bool(macro_preferences)}")
+        curated_filters = _parse_filters_from_dict(request_data)
+
+        log.info(
+            f"HOME_UNIFIED_START | has_macro_prefs={bool(macro_preferences)} | "
+            f"curated_filters={bool(curated_filters)}"
+        )
         
         # Track any errors for partial success reporting
         errors = {}
@@ -399,7 +538,7 @@ def get_unified_home() -> tuple[Dict[str, Any], int]:
             errors["best_selling"] = str(e)
         
         try:
-            curated = _get_curated_data()
+            curated = _get_curated_data(filters=curated_filters, limit=4)
         except Exception as e:
             log.error(f"HOME_UNIFIED_CURATED_ERROR | error={e}")
             curated = {"products": [], "section_title": "Curated For You", "has_more": False, "_error": str(e)}
@@ -432,8 +571,8 @@ def get_unified_home() -> tuple[Dict[str, Any], int]:
         # Build meta information
         meta = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
+            "filters_applied": bool(curated_filters),
             "macro_preferences_received": bool(macro_preferences),
-            "macro_preferences_applied": False,  # Not applied on home page
             "sections_count": 6,
             "errors_count": len(errors)
         }

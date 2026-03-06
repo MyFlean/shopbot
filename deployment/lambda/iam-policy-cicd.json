@@ -37,7 +37,11 @@
         "lambda:UpdateFunctionConfiguration",
         "lambda:AddPermission",
         "lambda:RemovePermission",
-        "lambda:GetPolicy"
+        "lambda:GetPolicy",
+        "lambda:ListVersionsByFunction",
+        "lambda:TagResource",
+        "lambda:UntagResource",
+        "lambda:ListTags"
       ],
       "Resource": "arn:aws:lambda:ap-south-1:637607366584:function:shopbot-service"
     },
@@ -70,7 +74,11 @@
         "apigateway:POST",
         "apigateway:PUT",
         "apigateway:PATCH",
-        "apigateway:DELETE"
+        "apigateway:DELETE",
+        "apigateway:TagResource",
+        "apigateway:UntagResource",
+        "apigateway:GetTags",
+        "apigateway:GetStages"
       ],
       "Resource": "arn:aws:apigateway:ap-south-1::/*"
     },

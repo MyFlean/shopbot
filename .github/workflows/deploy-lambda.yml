@@ -89,15 +89,20 @@ jobs:
         continue-on-error: true
         run: |
           echo "Attempting to import existing resources..."
-          terraform import aws_iam_role.lambda_role shopbot-service-lambda-role 2>/dev/null || echo "IAM role already in state or doesn't exist"
-          terraform import aws_cloudwatch_log_group.lambda_logs /aws/lambda/shopbot-service 2>/dev/null || echo "Lambda log group already in state or doesn't exist"
-          terraform import aws_cloudwatch_log_group.apigw_logs /aws/apigateway/shopbot-service 2>/dev/null || echo "API Gateway log group already in state or doesn't exist"
-          terraform import aws_lambda_function.shopbot shopbot-service 2>/dev/null || echo "Lambda function already in state or doesn't exist"
-          # Import API Gateway HTTP API if it exists
-          API_ID=$(aws apigatewayv2 get-apis --region ${{ env.AWS_REGION }} --query "Items[?Name=='shopbot-service-api'].ApiId" --output text 2>/dev/null || echo "")
+          for resource in "aws_iam_role.lambda_role:shopbot-service-lambda-role" \
+                         "aws_cloudwatch_log_group.lambda_logs:/aws/lambda/shopbot-service" \
+                         "aws_cloudwatch_log_group.apigw_logs:/aws/apigateway/shopbot-service" \
+                         "aws_lambda_function.shopbot:shopbot-service"; do
+            tf_resource="${resource%%:*}"
+            import_id="${resource#*:}"
+            echo "Importing $tf_resource..."
+            terraform import "$tf_resource" "$import_id" || true
+          done
+          API_ID=$(aws apigatewayv2 get-apis --region ${{ env.AWS_REGION }} --query "Items[?Name=='shopbot-service-api'].ApiId" --output text 2>/dev/null | head -1)
           if [ -n "$API_ID" ]; then
-            terraform import aws_apigatewayv2_api.shopbot "$API_ID" 2>/dev/null || echo "API Gateway API already in state or doesn't exist"
-            terraform import 'aws_apigatewayv2_stage.shopbot' "${API_ID}/\$default" 2>/dev/null || echo "API Gateway stage already in state or doesn't exist"
+            echo "Importing API Gateway $API_ID..."
+            terraform import aws_apigatewayv2_api.shopbot "$API_ID" || true
+            terraform import 'aws_apigatewayv2_stage.shopbot' "${API_ID}/\$default" || true
           fi
 
       - name: Validate Terraform configuration

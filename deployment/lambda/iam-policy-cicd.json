@@ -53,7 +53,10 @@
         "iam:AttachRolePolicy",
         "iam:DetachRolePolicy",
         "iam:ListAttachedRolePolicies",
-        "iam:ListRolePolicies"
+        "iam:ListRolePolicies",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:ListRoleTags"
       ],
       "Resource": "arn:aws:iam::637607366584:role/shopbot-service-lambda-role"
     },

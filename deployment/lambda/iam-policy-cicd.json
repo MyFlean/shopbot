@@ -21,7 +21,8 @@
         "route53:ListHostedZones",
         "route53:GetHostedZone",
         "route53:ChangeResourceRecordSets",
-        "route53:ListResourceRecordSets"
+        "route53:ListResourceRecordSets",
+        "route53:ListTagsForResource"
       ],
       "Resource": "*"
     },
@@ -47,6 +48,7 @@
         "iam:CreateRole",
         "iam:DeleteRole",
         "iam:GetRole",
+        "iam:GetRolePolicy",
         "iam:PassRole",
         "iam:PutRolePolicy",
         "iam:DeleteRolePolicy",
@@ -79,9 +81,11 @@
         "logs:CreateLogGroup",
         "logs:DeleteLogGroup",
         "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
         "logs:PutRetentionPolicy",
         "logs:TagLogGroup",
         "logs:TagResource",
+        "logs:ListTagsForResource",
         "logs:UntagLogGroup",
         "logs:UntagResource"
       ],

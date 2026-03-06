@@ -4,6 +4,7 @@ Product APIs for Flutter App
 ─────────────────────────────
 Endpoints:
   GET  /api/v1/product/<id>               → PDP (pre-parsed sectioned data)
+  POST /api/v1/products/pdp/batch         → Batch PDP for multiple IDs
   GET  /api/v1/product/<id>/alternatives  → 5 healthier alternatives (product cards)
   GET  /api/v1/product/<id>/recommended   → 8 recommended products for PDP (product cards)
   POST /api/v1/scanner                    → Top 3 product cards from image scan
@@ -103,6 +104,75 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
 
     except Exception as e:
         log.error(f"PDP_ERROR | id={product_id} | error={e}", exc_info=True)
+        return _error_response("INTERNAL_ERROR", "Failed to fetch product details", 500)
+
+
+# ============================================================================
+# Batch PDP API - Multiple product details in one request
+# ============================================================================
+
+@bp.route("/api/v1/products/pdp/batch", methods=["POST"])
+def get_product_details_batch() -> Tuple[Dict[str, Any], int]:
+    """
+    Batch PDP API: Returns pre-parsed PDP data for multiple product IDs.
+
+    Request Body:
+        { "ids": ["id1", "id2", "id3"] }
+
+    Response (200):
+        {
+            "success": true,
+            "data": {
+                "products": [ { ...pdp1... }, { ...pdp2... } ],
+                "not_found": ["id3"]
+            },
+            "meta": { "requested": 3, "returned": 2, "not_found_count": 1 }
+        }
+
+    Each product has the same structure as single PDP. Max 50 IDs per request.
+    """
+    try:
+        payload = request.get_json(silent=True) or {}
+        ids = payload.get("ids") or payload.get("product_ids") or []
+        if not isinstance(ids, list):
+            return _error_response("INVALID_REQUEST", "ids must be an array", 400)
+
+        ids = [str(x).strip() for x in ids if str(x).strip()]
+        if not ids:
+            return _error_response("INVALID_REQUEST", "At least one product ID is required", 400)
+
+        MAX_BATCH = 50
+        if len(ids) > MAX_BATCH:
+            return _error_response(
+                "INVALID_REQUEST",
+                f"Maximum {MAX_BATCH} product IDs per request",
+                400
+            )
+
+        fetcher = get_es_fetcher()
+        results = fetcher.mget_products_batch(ids)
+
+        products: List[Dict[str, Any]] = []
+        not_found: List[str] = []
+        for pid, raw_src in results:
+            if raw_src:
+                pdp_data = transform_to_pdp(raw_src)
+                products.append(pdp_data)
+            else:
+                not_found.append(pid)
+
+        log.info(f"PDP_BATCH_SUCCESS | requested={len(ids)} | returned={len(products)} | not_found={len(not_found)}")
+        return jsonify(_success_response(
+            {"products": products, "not_found": not_found},
+            meta={
+                "requested": len(ids),
+                "returned": len(products),
+                "not_found_count": len(not_found)
+            }
+        )), 200
+
+    except Exception as e:
+        log.error(f"PDP_BATCH_ERROR | error={e}", exc_info=True)
         return _error_response("INTERNAL_ERROR", "Failed to fetch product details", 500)
 
 

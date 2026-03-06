@@ -15,7 +15,7 @@ import asyncio
 from logging import log
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import json
 
 import requests
@@ -2320,6 +2320,47 @@ class ElasticsearchProductsFetcher:
         except Exception as exc:
             print(f"DEBUG: ES mget failed: {exc}")
             return []
+
+    def mget_products_batch(
+        self, ids: List[str]
+    ) -> List[Tuple[str, Optional[Dict[str, Any]]]]:
+        """Fetch products by IDs, returning (id, raw_source or None) in request order.
+
+        Preserves order and indicates which IDs were not found (None).
+        Used by batch PDP API.
+        """
+        ordered_ids = [str(x).strip() for x in ids if str(x).strip()]
+        if not ordered_ids:
+            return []
+        try:
+            body = {"ids": ordered_ids}
+            response = requests.post(
+                self.mget_endpoint,
+                headers=self.headers,
+                json=body,
+                timeout=TIMEOUT
+            )
+            response.raise_for_status()
+            data = response.json() or {}
+            docs = data.get("docs", []) or []
+            out: List[Tuple[str, Optional[Dict[str, Any]]]] = []
+            for i, d in enumerate(docs):
+                pid = ordered_ids[i] if i < len(ordered_ids) else ""
+                src = d.get("_source") if d.get("found", True) else None
+                if src:
+                    out.append((pid, src))
+                else:
+                    out.append((pid, None))
+            if all(src is None for _, src in out):
+                fallback = self.search_by_ids(ordered_ids)
+                id_to_src = {str(s.get("id", "")).strip(): s for s in fallback if s}
+                out = [(pid, id_to_src.get(pid)) for pid in ordered_ids]
+            return out
+        except requests.exceptions.Timeout:
+            return [(pid, None) for pid in ordered_ids]
+        except Exception as exc:
+            print(f"DEBUG: ES mget_batch failed: {exc}")
+            return [(pid, None) for pid in ordered_ids]
 
     def suggest_brand(self, brand_hint: str, category_group: Optional[str] = None) -> Optional[str]:
         """Suggest a canonical brand value from ES given a noisy hint.

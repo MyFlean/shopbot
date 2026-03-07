@@ -126,6 +126,12 @@ variable "es_api_key" {
   sensitive   = true
 }
 
+variable "enable_api_gateway_access_logs" {
+  description = "Enable API Gateway access logging to CloudWatch. Set false for CI to avoid logs:CreateLogDelivery permission."
+  type        = bool
+  default     = true
+}
+
 
 
 

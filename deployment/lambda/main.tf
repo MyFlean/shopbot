@@ -176,18 +176,21 @@ resource "aws_apigatewayv2_stage" "shopbot" {
     throttling_rate_limit    = var.throttling_rate_limit
   }
 
-  access_log_settings {
-    destination_arn = aws_cloudwatch_log_group.apigw_logs.arn
-    format = jsonencode({
-      requestId      = "$context.requestId"
-      ip             = "$context.identity.sourceIp"
-      requestTime    = "$context.requestTime"
-      httpMethod     = "$context.httpMethod"
-      routeKey       = "$context.routeKey"
-      status         = "$context.status"
-      protocol       = "$context.protocol"
-      responseLength = "$context.responseLength"
-    })
+  dynamic "access_log_settings" {
+    for_each = var.enable_api_gateway_access_logs ? [1] : []
+    content {
+      destination_arn = aws_cloudwatch_log_group.apigw_logs.arn
+      format = jsonencode({
+        requestId      = "$context.requestId"
+        ip             = "$context.identity.sourceIp"
+        requestTime    = "$context.requestTime"
+        httpMethod     = "$context.httpMethod"
+        routeKey       = "$context.routeKey"
+        status         = "$context.status"
+        protocol       = "$context.protocol"
+        responseLength = "$context.responseLength"
+      })
+    }
   }
 
   tags = {

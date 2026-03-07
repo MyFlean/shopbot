@@ -34,6 +34,7 @@
         "iam:DeleteRole",
         "iam:GetRole",
         "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
         "iam:PassRole",
         "iam:PutRolePolicy",
         "iam:DeleteRolePolicy",

@@ -374,10 +374,11 @@ def _extract_product_from_image(media_type: str, b64_data: str) -> Dict[str, Any
     if not bearer_token:
         raise RuntimeError("AWS_BEARER_TOKEN_BEDROCK not configured")
 
+    scanner_model = getattr(Cfg, "BEDROCK_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0")
     client = BedrockClient(
         bearer_token=bearer_token,
         region=getattr(Cfg, "BEDROCK_REGION", "ap-south-1"),
-        model_id=getattr(Cfg, "BEDROCK_MODEL_ID", "us.anthropic.claude-3-5-sonnet-20241022-v2:0")
+        model_id=scanner_model,
     )
     prompt = (
         "Analyze this product image and extract the following information. "
@@ -392,7 +393,7 @@ def _extract_product_from_image(media_type: str, b64_data: str) -> Dict[str, Any
     )
 
     resp = client.converse(
-        model=getattr(Cfg, "LLM_MODEL", "us.anthropic.claude-3-5-sonnet-20241022-v2:0"),
+        model=scanner_model,
         messages=[{
             "role": "user",
             "content": [

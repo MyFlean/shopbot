@@ -30,7 +30,7 @@ class BaseConfig:
         return os.getenv("AWS_BEARER_TOKEN_BEDROCK", "")
     
     BEDROCK_REGION: str = os.getenv("BEDROCK_REGION", "ap-south-1")
-    BEDROCK_MODEL_ID: str = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-3-5-sonnet-20241022-v2:0")
+    BEDROCK_MODEL_ID: str = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0")
 
     # ─────────────────────────────────────────────────────────────
     # Anthropic Direct API (DEPRECATED - kept for backwards compatibility)

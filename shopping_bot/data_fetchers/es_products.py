@@ -2133,6 +2133,12 @@ class ElasticsearchProductsFetcher:
             else:
                 query_body = _build_enhanced_es_query(p)
             
+            # Inject pagination offset when page is provided
+            page = int(p.get("page", 0))
+            size = int(query_body.get("size", p.get("size", 20)))
+            if page > 0:
+                query_body["from"] = page * size
+            
             # Debug logging
             print(f"DEBUG: Enhanced ES Query Structure:")
             print(f"  - Query: {params.get('q', '')}")
@@ -2168,6 +2174,10 @@ class ElasticsearchProductsFetcher:
             # Pass skip_rerank flag to preserve ES sort order when explicit sort is applied
             result = _transform_results(raw_data, skip_rerank=skip_rerank)
             
+            # Attach pagination context so route handlers can build catalogue-style meta
+            result["meta"]["page"] = page
+            result["meta"]["size"] = size
+            
             print("="*80)
             print("✅✅✅ ELASTICSEARCH REQUEST SUCCESSFUL ✅✅✅")
             print(f"🔗 ENDPOINT: {self.endpoint}")
@@ -2178,10 +2188,6 @@ class ElasticsearchProductsFetcher:
             if sort_by:
                 print(f"🔀 SORT_BY: {sort_by}")
             print("="*80)
-            
-            # No brand-specific fallback; brand handling is disabled (see note above)
-            
-            # Suppressed: verbose top results logging
             
             return result
             

@@ -1,0 +1,464 @@
+{
+  "info": {
+    "_postman_id": "884be553-9b16-451b-94a7-6aa44b24825a",
+    "name": "Ecom Service",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "32906081",
+    "_collection_link": "https://go.postman.co/collection/32906081-884be553-9b16-451b-94a7-6aa44b24825a?source=collection_link"
+  },
+  "item": [
+    {
+      "name": "Get Product",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "801cac36-fd67-46ca-9a1a-bdd558c78d00",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"product_ids\": [\n      \"01K1B1BNXCR8A93V1F7YV5QKHW\"\n    ]\n  }",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{localhost}}/ecom/api/v1/products/batch",
+          "host": [
+            "{{localhost}}"
+          ],
+          "path": [
+            "ecom",
+            "api",
+            "v1",
+            "products",
+            "batch"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Add item to cart",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "801cac36-fd67-46ca-9a1a-bdd558c78d00",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"items\": [\n      {\n        \"product_id\": \"01K1B1BNXCR8A93V1F7YV5QKHW\",\n        \"quantity\": 2\n      }\n    ]\n  }",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{localhost}}/ecom/api/v1/carts/user-cart",
+          "host": [
+            "{{localhost}}"
+          ],
+          "path": [
+            "ecom",
+            "api",
+            "v1",
+            "carts",
+            "user-cart"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Get Cart",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "801cac36-fd67-46ca-9a1a-bdd558c78d00",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{localhost}}/ecom/api/v1/carts/persistent",
+          "host": [
+            "{{localhost}}"
+          ],
+          "path": [
+            "ecom",
+            "api",
+            "v1",
+            "carts",
+            "persistent"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Update quantity",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "801cac36-fd67-46ca-9a1a-bdd558c78d00",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{ \"quantity\": 1}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{localhost}}/ecom/api/v1/carts/user-cart/items/01K1B1BNXCR8A93V1F7YV5QKHW",
+          "host": [
+            "{{localhost}}"
+          ],
+          "path": [
+            "ecom",
+            "api",
+            "v1",
+            "carts",
+            "user-cart",
+            "items",
+            "01K1B1BNXCR8A93V1F7YV5QKHW"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Remove Item from cart",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "801cac36-fd67-46ca-9a1a-bdd558c78d00",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{localhost}}/ecom/api/v1/carts/037d8aac-6774-467c-a5d2-759776c01a2e/items/01K1B1BNXCR8A93V1F7YV5QKHW",
+          "host": [
+            "{{localhost}}"
+          ],
+          "path": [
+            "ecom",
+            "api",
+            "v1",
+            "carts",
+            "037d8aac-6774-467c-a5d2-759776c01a2e",
+            "items",
+            "01K1B1BNXCR8A93V1F7YV5QKHW"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create order",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "801cac36-fd67-46ca-9a1a-bdd558c78d00",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"address\": {\n    \"name\": \"Rakshit Gupta \",\n    \"in_pin_code\": \"201305\",\n    \"phone_number\": \"7398580865\",\n    \"address\": \"Ganesh Ganj \",\n    \"city\": \"Lucknow \",\n    \"landmark_area\": \"Park\",\n    \"state\": \"Uttar Pradesh \",\n    \"floor_number\": \"1\",\n    \"tower_number\": \"2\"\n  }\n}\n",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{localhost}}/ecom/api/v1/orders",
+          "host": [
+            "{{localhost}}"
+          ],
+          "path": [
+            "ecom",
+            "api",
+            "v1",
+            "orders"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Get order history",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "801cac36-fd67-46ca-9a1a-bdd558c78d00",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{localhost}}/ecom/api/v1/orders/user",
+          "host": [
+            "{{localhost}}"
+          ],
+          "path": [
+            "ecom",
+            "api",
+            "v1",
+            "orders",
+            "user"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Get order by id",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "801cac36-fd67-46ca-9a1a-bdd558c78d00",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{localhost}}/api/v1/orders/e0c84cf1-af68-41d6-8cc8-e8c10f9e94b9",
+          "host": [
+            "{{localhost}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "orders",
+            "e0c84cf1-af68-41d6-8cc8-e8c10f9e94b9"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Cancel order",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "801cac36-fd67-46ca-9a1a-bdd558c78d00",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": ""
+        },
+        "url": {
+          "raw": "{{localhost}}/ecom/api/v1/orders/e0c84cf1-af68-41d6-8cc8-e8c10f9e94b9/cancel",
+          "host": [
+            "{{localhost}}"
+          ],
+          "path": [
+            "ecom",
+            "api",
+            "v1",
+            "orders",
+            "e0c84cf1-af68-41d6-8cc8-e8c10f9e94b9",
+            "cancel"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:5002/ecom/api/v1/health",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "5002",
+          "path": [
+            "ecom",
+            "api",
+            "v1",
+            "health"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create Razorpay Order",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-API-KEY",
+            "value": "ecom-api-key-2024"
+          }
+        ],
+        "url": {
+          "raw": "{{prod}}/ecom/api/v1/payments/027e288f-57ab-4f12-9ff2-dfcc98b662bd/razorpay-order",
+          "host": [
+            "{{prod}}"
+          ],
+          "path": [
+            "ecom",
+            "api",
+            "v1",
+            "payments",
+            "027e288f-57ab-4f12-9ff2-dfcc98b662bd",
+            "razorpay-order"
+          ]
+        }
+      },
+      "response": []
+    }
+  ],
+  "auth": {
+    "type": "bearer"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "packages": {},
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "packages": {},
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "localhost",
+      "value": ""
+    },
+    {
+      "key": "prod",
+      "value": ""
+    }
+  ]
+}

@@ -1,0 +1,4002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flean API Documentation</title>
+    <meta name="description" content="Complete REST API documentation for the Flean Flutter mobile application">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <!-- Prism.js for syntax highlighting -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        :root {
+            --bg-primary: #0a0a0b;
+            --bg-secondary: #111113;
+            --bg-tertiary: #18181b;
+            --bg-elevated: #1f1f23;
+            --bg-hover: #27272a;
+            
+            --text-primary: #fafafa;
+            --text-secondary: #a1a1aa;
+            --text-muted: #71717a;
+            
+            --border: #27272a;
+            --border-subtle: #1f1f23;
+            
+            --accent: #22c55e;
+            --accent-hover: #16a34a;
+            --accent-muted: rgba(34, 197, 94, 0.1);
+            
+            --blue: #3b82f6;
+            --blue-muted: rgba(59, 130, 246, 0.1);
+            
+            --orange: #f97316;
+            --orange-muted: rgba(249, 115, 22, 0.1);
+            
+            --red: #ef4444;
+            --red-muted: rgba(239, 68, 68, 0.1);
+            
+            --purple: #a855f7;
+            --purple-muted: rgba(168, 85, 247, 0.1);
+            
+            --yellow: #eab308;
+            --yellow-muted: rgba(234, 179, 8, 0.1);
+            
+            --sidebar-width: 280px;
+            --header-height: 64px;
+            
+            --radius-sm: 6px;
+            --radius-md: 8px;
+            --radius-lg: 12px;
+            --radius-xl: 16px;
+            
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+            
+            --transition-fast: 150ms ease;
+            --transition-normal: 200ms ease;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+            scroll-padding-top: calc(var(--header-height) + 24px);
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            font-size: 14px;
+            overflow-x: hidden;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+
+        /* Header */
+        .header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: var(--header-height);
+            background: rgba(10, 10, 11, 0.8);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            padding: 0 24px;
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: var(--text-primary);
+        }
+
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--accent) 0%, #10b981 100%);
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+
+        .logo-text {
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .logo-badge {
+            font-size: 11px;
+            font-weight: 500;
+            padding: 4px 8px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            color: var(--text-secondary);
+        }
+
+        /* Search */
+        .search-container {
+            flex: 1;
+            max-width: 480px;
+            margin: 0 48px;
+        }
+
+        .search-box {
+            position: relative;
+            width: 100%;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 10px 16px 10px 44px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: inherit;
+            outline: none;
+            transition: all var(--transition-fast);
+        }
+
+        .search-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .search-input:focus {
+            border-color: var(--accent);
+            background: var(--bg-secondary);
+            box-shadow: 0 0 0 3px var(--accent-muted);
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            pointer-events: none;
+        }
+
+        .search-shortcut {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            gap: 4px;
+        }
+
+        .kbd {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            padding: 2px 6px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-muted);
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 500;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+        .header-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        /* Layout */
+        .layout {
+            display: flex;
+            padding-top: var(--header-height);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            top: var(--header-height);
+            left: 0;
+            width: var(--sidebar-width);
+            height: calc(100vh - var(--header-height));
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            overflow-y: auto;
+            padding: 16px 0;
+            z-index: 50;
+        }
+
+        .nav-group {
+            margin-bottom: 8px;
+        }
+
+        .nav-group-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 20px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .nav-group-title:hover {
+            color: var(--text-secondary);
+        }
+
+        .nav-group-title .chevron {
+            transition: transform var(--transition-fast);
+        }
+
+        .nav-group.collapsed .chevron {
+            transform: rotate(-90deg);
+        }
+
+        .nav-group.collapsed .nav-items {
+            display: none;
+        }
+
+        .nav-items {
+            padding: 0 8px;
+        }
+
+        .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            margin: 2px 0;
+            border-radius: var(--radius-md);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            transition: all var(--transition-fast);
+        }
+
+        .nav-link:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .nav-link.active {
+            background: var(--accent-muted);
+            color: var(--accent);
+        }
+
+        .method-tag {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 6px;
+            border-radius: 4px;
+            text-transform: uppercase;
+        }
+
+        .method-tag.get {
+            background: var(--accent-muted);
+            color: var(--accent);
+        }
+
+        .method-tag.post {
+            background: var(--blue-muted);
+            color: var(--blue);
+        }
+
+        .method-tag.put {
+            background: var(--orange-muted);
+            color: var(--orange);
+        }
+
+        .method-tag.delete {
+            background: var(--red-muted);
+            color: var(--red);
+        }
+
+        /* Main Content */
+        .main {
+            flex: 1;
+            margin-left: var(--sidebar-width);
+            min-height: calc(100vh - var(--header-height));
+        }
+
+        .content {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 48px 64px;
+        }
+
+        /* Hero Section */
+        .hero {
+            text-align: center;
+            padding: 64px 0 80px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 64px;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            background: var(--accent-muted);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            border-radius: 20px;
+            color: var(--accent);
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 24px;
+        }
+
+        .hero h1 {
+            font-size: 56px;
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero-desc {
+            font-size: 18px;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto 32px;
+            line-height: 1.7;
+        }
+
+        .hero-actions {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            border-radius: var(--radius-md);
+            font-size: 14px;
+            font-weight: 500;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            border: none;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: var(--bg-primary);
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-hover);
+            border-color: var(--text-muted);
+        }
+
+        /* Base URL Card */
+        .base-url-card {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            padding: 16px 24px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            margin-top: 32px;
+        }
+
+        .base-url-label {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        .base-url-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 15px;
+            color: var(--accent);
+        }
+
+        .copy-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+        .copy-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .copy-btn.copied {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        /* Sections */
+        .section {
+            margin-bottom: 80px;
+            scroll-margin-top: calc(var(--header-height) + 32px);
+        }
+
+        .section-header {
+            margin-bottom: 32px;
+        }
+
+        .section-title {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .section-title-icon {
+            width: 40px;
+            height: 40px;
+            background: var(--accent-muted);
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--accent);
+        }
+
+        .section-desc {
+            font-size: 16px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+        }
+
+        /* Endpoint Card */
+        .endpoint-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xl);
+            margin-bottom: 24px;
+            overflow: hidden;
+            transition: all var(--transition-fast);
+        }
+
+        .endpoint-card:hover {
+            border-color: var(--text-muted);
+        }
+
+        .endpoint-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 20px 24px;
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .endpoint-method {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 6px 12px;
+            border-radius: var(--radius-md);
+            text-transform: uppercase;
+        }
+
+        .endpoint-method.get {
+            background: var(--accent);
+            color: var(--bg-primary);
+        }
+
+        .endpoint-method.post {
+            background: var(--blue);
+            color: white;
+        }
+
+        .endpoint-method.put {
+            background: var(--orange);
+            color: white;
+        }
+
+        .endpoint-method.delete {
+            background: var(--red);
+            color: white;
+        }
+
+        .endpoint-path {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            color: var(--text-primary);
+            flex: 1;
+        }
+
+        .endpoint-path .param {
+            color: var(--orange);
+        }
+
+        .endpoint-tags {
+            display: flex;
+            gap: 8px;
+        }
+
+        .tag {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 20px;
+        }
+
+        .tag-recommended {
+            background: var(--accent-muted);
+            color: var(--accent);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+
+        .tag-legacy {
+            background: var(--yellow-muted);
+            color: var(--yellow);
+            border: 1px solid rgba(234, 179, 8, 0.3);
+        }
+
+        .tag-new {
+            background: var(--purple-muted);
+            color: var(--purple);
+            border: 1px solid rgba(168, 85, 247, 0.3);
+        }
+
+        .endpoint-toggle {
+            color: var(--text-muted);
+            transition: transform var(--transition-fast);
+        }
+
+        .endpoint-card.expanded .endpoint-toggle {
+            transform: rotate(180deg);
+        }
+
+        .endpoint-body {
+            padding: 24px;
+            display: none;
+        }
+
+        .endpoint-card.expanded .endpoint-body {
+            display: block;
+        }
+
+        .endpoint-desc {
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+            line-height: 1.7;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            padding: 4px;
+            background: var(--bg-tertiary);
+            border-radius: var(--radius-md);
+            margin-bottom: 16px;
+            width: fit-content;
+        }
+
+        .tab {
+            padding: 8px 16px;
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+        .tab:hover {
+            color: var(--text-primary);
+        }
+
+        .tab.active {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Tables */
+        .table-container {
+            overflow-x: auto;
+            margin: 16px 0;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        th {
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-secondary);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 12px 16px;
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover td {
+            background: var(--bg-tertiary);
+        }
+
+        .param-name {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            color: var(--accent);
+        }
+
+        .param-type {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--purple);
+        }
+
+        .required-badge {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: var(--red-muted);
+            color: var(--red);
+        }
+
+        .optional-badge {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: var(--bg-tertiary);
+            color: var(--text-muted);
+        }
+
+        /* Code Blocks */
+        .code-block {
+            margin: 16px 0;
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+
+        .code-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 16px;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .code-lang {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+
+        .code-lang-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .code-lang-dot.bash { background: var(--accent); }
+        .code-lang-dot.json { background: var(--yellow); }
+        .code-lang-dot.javascript { background: var(--yellow); }
+
+        .code-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .code-btn {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+        .code-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .code-btn.copied {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        pre[class*="language-"] {
+            margin: 0;
+            padding: 20px;
+            background: var(--bg-primary) !important;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            overflow-x: auto;
+        }
+
+        code[class*="language-"] {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Inline Code */
+        code:not([class*="language-"]) {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            padding: 2px 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            color: var(--accent);
+        }
+
+        /* Callouts */
+        .callout {
+            display: flex;
+            gap: 16px;
+            padding: 16px 20px;
+            border-radius: var(--radius-lg);
+            margin: 20px 0;
+            border: 1px solid;
+        }
+
+        .callout-icon {
+            flex-shrink: 0;
+            width: 24px;
+            height: 24px;
+        }
+
+        .callout-content {
+            flex: 1;
+        }
+
+        .callout-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .callout-text {
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+
+        .callout.info {
+            background: var(--blue-muted);
+            border-color: rgba(59, 130, 246, 0.3);
+        }
+
+        .callout.info .callout-icon { color: var(--blue); }
+        .callout.info .callout-title { color: var(--blue); }
+
+        .callout.success {
+            background: var(--accent-muted);
+            border-color: rgba(34, 197, 94, 0.3);
+        }
+
+        .callout.success .callout-icon { color: var(--accent); }
+        .callout.success .callout-title { color: var(--accent); }
+
+        .callout.warning {
+            background: var(--yellow-muted);
+            border-color: rgba(234, 179, 8, 0.3);
+        }
+
+        .callout.warning .callout-icon { color: var(--yellow); }
+        .callout.warning .callout-title { color: var(--yellow); }
+
+        /* Subsections */
+        h3 {
+            font-size: 18px;
+            font-weight: 600;
+            margin: 32px 0 16px;
+            color: var(--text-primary);
+        }
+
+        h4 {
+            font-size: 14px;
+            font-weight: 600;
+            margin: 24px 0 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        p {
+            margin-bottom: 16px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+        }
+
+        ul, ol {
+            margin: 16px 0;
+            padding-left: 24px;
+            color: var(--text-secondary);
+        }
+
+        li {
+            margin-bottom: 8px;
+            line-height: 1.6;
+        }
+
+        /* Flow Diagram */
+        .flow-diagram {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 24px;
+            margin: 24px 0;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 2;
+            white-space: pre;
+            overflow-x: auto;
+            color: var(--text-secondary);
+        }
+
+        .flow-diagram .highlight {
+            color: var(--accent);
+        }
+
+        .flow-diagram .method-get {
+            color: var(--accent);
+        }
+
+        .flow-diagram .method-post {
+            color: var(--blue);
+        }
+
+        /* Search Results Modal */
+        .search-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(4px);
+            z-index: 200;
+            padding: 120px 24px 24px;
+        }
+
+        .search-modal.active {
+            display: block;
+        }
+
+        .search-results {
+            max-width: 640px;
+            max-height: calc(100vh - 160px);
+            margin: 0 auto;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xl);
+            overflow: hidden;
+        }
+
+        .search-results-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .search-results-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            font-size: 16px;
+            outline: none;
+        }
+
+        .search-results-input:focus {
+            border-color: var(--accent);
+        }
+
+        .search-results-list {
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .search-result-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+        .search-result-item:hover {
+            background: var(--bg-hover);
+        }
+
+        .search-result-item.selected {
+            background: var(--accent-muted);
+        }
+
+        .search-result-title {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .search-result-path {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        /* Mobile Menu Toggle */
+        .mobile-menu-btn {
+            display: none;
+            width: 40px;
+            height: 40px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            cursor: pointer;
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .search-container {
+                display: none;
+            }
+
+            .sidebar {
+                transform: translateX(-100%);
+                transition: transform var(--transition-normal);
+            }
+
+            .sidebar.open {
+                transform: translateX(0);
+            }
+
+            .main {
+                margin-left: 0;
+            }
+
+            .content {
+                padding: 32px 24px;
+            }
+
+            .mobile-menu-btn {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .hero h1 {
+                font-size: 36px;
+            }
+
+            .hero-actions {
+                flex-direction: column;
+            }
+
+            .base-url-card {
+                flex-direction: column;
+                gap: 12px;
+            }
+
+            .endpoint-header {
+                flex-wrap: wrap;
+                gap: 12px;
+            }
+
+            .section-title {
+                font-size: 24px;
+            }
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .section {
+            animation: fadeIn 0.4s ease;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 48px 24px;
+            border-top: 1px solid var(--border);
+            margin-top: 80px;
+        }
+
+        .footer-text {
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            margin-top: 16px;
+        }
+
+        .footer-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            transition: color var(--transition-fast);
+        }
+
+        .footer-link:hover {
+            color: var(--accent);
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <a href="#" class="logo">
+                <div class="logo-icon">
+                    <i data-lucide="leaf" style="width: 20px; height: 20px;"></i>
+                </div>
+                <span class="logo-text">Flean API</span>
+                <span class="logo-badge">v1.0</span>
+            </a>
+
+            <div class="search-container">
+                <div class="search-box">
+                    <i data-lucide="search" class="search-icon" style="width: 18px; height: 18px;"></i>
+                    <input type="text" class="search-input" placeholder="Search endpoints..." id="searchInput">
+                    <div class="search-shortcut">
+                        <span class="kbd">⌘</span>
+                        <span class="kbd">K</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="header-actions">
+                <a href="https://github.com/flean" class="header-btn" target="_blank">
+                    <i data-lucide="github" style="width: 16px; height: 16px;"></i>
+                    GitHub
+                </a>
+                <button class="mobile-menu-btn" id="mobileMenuBtn">
+                    <i data-lucide="menu" style="width: 20px; height: 20px;"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Search Modal -->
+    <div class="search-modal" id="searchModal">
+        <div class="search-results">
+            <div class="search-results-header">
+                <input type="text" class="search-results-input" placeholder="Search documentation..." id="modalSearchInput">
+            </div>
+            <div class="search-results-list" id="searchResultsList">
+            </div>
+        </div>
+    </div>
+
+    <div class="layout">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="nav-group">
+                <div class="nav-group-title">
+                    Getting Started
+                    <i data-lucide="chevron-down" class="chevron" style="width: 14px; height: 14px;"></i>
+                </div>
+                <div class="nav-items">
+                    <a href="#overview" class="nav-link active">
+                        <i data-lucide="book-open" style="width: 16px; height: 16px;"></i>
+                        Overview
+                    </a>
+                    <a href="#authentication" class="nav-link">
+                        <i data-lucide="key" style="width: 16px; height: 16px;"></i>
+                        Authentication
+                    </a>
+                    <a href="#response-format" class="nav-link">
+                        <i data-lucide="file-json" style="width: 16px; height: 16px;"></i>
+                        Response Format
+                    </a>
+                </div>
+            </div>
+
+            <div class="nav-group">
+                <div class="nav-group-title">
+                    Home Screen
+                    <i data-lucide="chevron-down" class="chevron" style="width: 14px; height: 14px;"></i>
+                </div>
+                <div class="nav-items">
+                    <a href="#banners" class="nav-link">
+                        <span class="method-tag get">GET</span>
+                        Banners
+                    </a>
+                    <a href="#categories" class="nav-link">
+                        <span class="method-tag get">GET</span>
+                        Categories
+                    </a>
+                    <a href="#best-selling" class="nav-link">
+                        <span class="method-tag get">GET</span>
+                        Best Selling
+                    </a>
+                    <a href="#curated" class="nav-link">
+                        <span class="method-tag get">GET</span>
+                        Curated
+                    </a>
+                    <a href="#why-flean" class="nav-link">
+                        <span class="method-tag get">GET</span>
+                        Why Flean
+                    </a>
+                    <a href="#collaborations" class="nav-link">
+                        <span class="method-tag get">GET</span>
+                        Collaborations
+                    </a>
+                </div>
+            </div>
+
+            <div class="nav-group">
+                <div class="nav-group-title">
+                    Products
+                    <i data-lucide="chevron-down" class="chevron" style="width: 14px; height: 14px;"></i>
+                </div>
+                <div class="nav-items">
+                    <a href="#unified-products" class="nav-link">
+                        <span class="method-tag get">GET</span><span class="method-tag post" style="margin-left:2px;">POST</span>
+                        Unified Products
+                    </a>
+                    <a href="#search" class="nav-link">
+                        <span class="method-tag get">GET</span><span class="method-tag post" style="margin-left:2px;">POST</span>
+                        Product Search
+                    </a>
+                    <a href="#catalogue" class="nav-link">
+                        <span class="method-tag get">GET</span>
+                        Catalogue
+                    </a>
+                    <a href="#catalogue-mapping" class="nav-link">
+                        <span class="method-tag get">GET</span>
+                        Catalogue Mapping
+                    </a>
+                </div>
+            </div>
+
+            <div class="nav-group">
+                <div class="nav-group-title">
+                    Product Details
+                    <i data-lucide="chevron-down" class="chevron" style="width: 14px; height: 14px;"></i>
+                </div>
+                <div class="nav-items">
+                    <a href="#pdp" class="nav-link">
+                        <span class="method-tag get">GET</span>
+                        Product Detail
+                    </a>
+                    <a href="#pdp-batch" class="nav-link">
+                        <span class="method-tag post">POST</span>
+                        PDP Batch
+                    </a>
+                    <a href="#alternatives" class="nav-link">
+                        <span class="method-tag get">GET</span>
+                        Alternatives
+                    </a>
+                    <a href="#recommended" class="nav-link">
+                        <span class="method-tag get">GET</span>
+                        Recommended
+                    </a>
+                </div>
+            </div>
+
+            <div class="nav-group">
+                <div class="nav-group-title">
+                    Scanner
+                    <i data-lucide="chevron-down" class="chevron" style="width: 14px; height: 14px;"></i>
+                </div>
+                <div class="nav-items">
+                    <a href="#scanner" class="nav-link">
+                        <span class="method-tag post">POST</span>
+                        Scan Image
+                    </a>
+                </div>
+            </div>
+
+            <div class="nav-group">
+                <div class="nav-group-title">
+                    Ecom Service
+                    <i data-lucide="chevron-down" class="chevron" style="width: 14px; height: 14px;"></i>
+                </div>
+                <div class="nav-items">
+                    <a href="#ecom-overview" class="nav-link">
+                        <i data-lucide="shopping-bag" style="width: 16px; height: 16px;"></i>
+                        Overview
+                    </a>
+                    <a href="#ecom-products" class="nav-link">
+                        <span class="method-tag post">POST</span>
+                        Products Batch
+                    </a>
+                    <a href="#ecom-cart" class="nav-link">
+                        <i data-lucide="shopping-cart" style="width: 16px; height: 16px;"></i>
+                        Cart
+                    </a>
+                    <a href="#ecom-orders" class="nav-link">
+                        <i data-lucide="receipt" style="width: 16px; height: 16px;"></i>
+                        Orders
+                    </a>
+                    <a href="#ecom-payments" class="nav-link">
+                        <span class="method-tag post">POST</span>
+                        Payments
+                    </a>
+                </div>
+            </div>
+
+            <div class="nav-group">
+                <div class="nav-group-title">
+                    Reference
+                    <i data-lucide="chevron-down" class="chevron" style="width: 14px; height: 14px;"></i>
+                </div>
+                <div class="nav-items">
+                    <a href="#product-card" class="nav-link">
+                        <i data-lucide="box" style="width: 16px; height: 16px;"></i>
+                        Product Card Model
+                    </a>
+                    <a href="#errors" class="nav-link">
+                        <i data-lucide="alert-circle" style="width: 16px; height: 16px;"></i>
+                        Error Handling
+                    </a>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main">
+            <div class="content">
+                <!-- Hero -->
+                <section class="hero">
+                    <div class="hero-badge">
+                        <i data-lucide="zap" style="width: 14px; height: 14px;"></i>
+                        REST API for Flutter App
+                    </div>
+                    <h1>Flean API Documentation</h1>
+                    <p class="hero-desc">
+                        Complete REST API documentation for the Flean mobile application. 
+                        Search healthy products, browse categories, scan product labels, manage cart, and place orders.
+                    </p>
+                    <div class="hero-actions">
+                        <a href="#unified-products" class="btn btn-primary">
+                            <i data-lucide="play" style="width: 16px; height: 16px;"></i>
+                            Get Started
+                        </a>
+                        <a href="#product-card" class="btn btn-secondary">
+                            <i data-lucide="file-code" style="width: 16px; height: 16px;"></i>
+                            View Models
+                        </a>
+                    </div>
+                    <div class="base-url-card">
+                        <span class="base-url-label">Base URL</span>
+                        <code class="base-url-value">https://api.flean.ai/rs</code>
+                        <button class="copy-btn" onclick="copyToClipboard('https://api.flean.ai/rs', this)">
+                            <i data-lucide="copy" style="width: 16px; height: 16px;"></i>
+                        </button>
+                    </div>
+                </section>
+
+                <!-- Overview -->
+                <section id="overview" class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <div class="section-title-icon">
+                                <i data-lucide="book-open" style="width: 20px; height: 20px;"></i>
+                            </div>
+                            Overview
+                        </h2>
+                        <p class="section-desc">
+                            The Flean API provides endpoints for product discovery, search, and health analysis 
+                            for the Flutter mobile app. All responses are JSON formatted.
+                        </p>
+                    </div>
+
+                    <h3>API Flow</h3>
+                    <div class="flow-diagram"><span class="highlight">HOME SCREEN</span>
+├── Banners      → <span class="method-get">GET</span> /api/v1/home/banners
+├── Categories   → <span class="method-get">GET</span> /api/v1/home/categories
+├── Best Selling → <span class="method-get">GET</span> /api/v1/home/best-selling     → [Product Cards]
+├── Curated      → <span class="method-get">GET</span> /api/v1/home/curated          → [Product Cards]
+├── Why Flean    → <span class="method-get">GET</span> /api/v1/home/why-flean
+└── Collabs      → <span class="method-get">GET</span> /api/v1/home/collaborations
+
+<span class="highlight">SEARCH / CATALOGUE</span> (Unified - Recommended)
+└── <span class="method-post">POST</span> /api/v1/products                            → [Product Cards]
+    (supports query, subcategory, filters, pagination, sorting)
+
+<span class="highlight">[Product Card] tapped</span>
+├── <span class="method-get">GET</span> /api/v1/product/{id}                         → Full PDP
+└── <span class="method-get">GET</span> /api/v1/product/{id}/recommended             → [Product Cards]
+
+<span class="highlight">SCANNER</span>
+├── <span class="method-post">POST</span> /api/v1/scanner                             → Top 3 [Product Cards]
+├── User selects one → <span class="method-get">GET</span> /api/v1/product/{id}      → Full PDP
+└── <span class="method-get">GET</span> /api/v1/product/{id}/alternatives            → 5 [Product Cards]</div>
+                </section>
+
+                <!-- Authentication -->
+                <section id="authentication" class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <div class="section-title-icon">
+                                <i data-lucide="key" style="width: 20px; height: 20px;"></i>
+                            </div>
+                            Authentication
+                        </h2>
+                    </div>
+
+                    <div class="callout info">
+                        <i data-lucide="info" class="callout-icon"></i>
+                        <div class="callout-content">
+                            <div class="callout-title">No Authentication Required</div>
+                            <p class="callout-text">The Flean API currently does not require authentication. All endpoints are publicly accessible.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Response Format -->
+                <section id="response-format" class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <div class="section-title-icon">
+                                <i data-lucide="file-json" style="width: 20px; height: 20px;"></i>
+                            </div>
+                            Response Format
+                        </h2>
+                        <p class="section-desc">All API responses follow a consistent JSON structure.</p>
+                    </div>
+
+                    <h4>Success Response</h4>
+                    <div class="code-block">
+                        <div class="code-header">
+                            <div class="code-lang">
+                                <span class="code-lang-dot json"></span>
+                                JSON
+                            </div>
+                            <div class="code-actions">
+                                <button class="code-btn" onclick="copyCodeBlock(this)">
+                                    <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                    Copy
+                                </button>
+                            </div>
+                        </div>
+                        <pre><code class="language-json">{
+  "success": true,
+  "data": {
+    // Response data here
+  },
+  "meta": {
+    // Pagination, timestamps, etc.
+  }
+}</code></pre>
+                    </div>
+
+                    <h4>Error Response</h4>
+                    <div class="code-block">
+                        <div class="code-header">
+                            <div class="code-lang">
+                                <span class="code-lang-dot json"></span>
+                                JSON
+                            </div>
+                            <div class="code-actions">
+                                <button class="code-btn" onclick="copyCodeBlock(this)">
+                                    <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                    Copy
+                                </button>
+                            </div>
+                        </div>
+                        <pre><code class="language-json">{
+  "success": false,
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human-readable description"
+  }
+}</code></pre>
+                    </div>
+                </section>
+
+                <!-- Banners -->
+                <section id="banners" class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <div class="section-title-icon">
+                                <i data-lucide="home" style="width: 20px; height: 20px;"></i>
+                            </div>
+                            Home Screen APIs
+                        </h2>
+                        <p class="section-desc">Endpoints for home screen sections.</p>
+                    </div>
+
+                    <div class="endpoint-card expanded" data-endpoint="banners">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/api/v1/home/banners</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Returns promotional banners for the home screen carousel.</p>
+
+                            <div class="tabs">
+                                <button class="tab active" onclick="switchTab(this, 'banners-request')">Request</button>
+                                <button class="tab" onclick="switchTab(this, 'banners-response')">Response</button>
+                            </div>
+
+                            <div id="banners-request" class="tab-content active">
+                                <div class="code-block">
+                                    <div class="code-header">
+                                        <div class="code-lang">
+                                            <span class="code-lang-dot bash"></span>
+                                            cURL
+                                        </div>
+                                        <div class="code-actions">
+                                            <button class="code-btn" onclick="copyCodeBlock(this)">
+                                                <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <pre><code class="language-bash">curl -X GET "https://api.flean.ai/rs/api/v1/home/banners" \
+  -H "Content-Type: application/json"</code></pre>
+                                </div>
+                            </div>
+
+                            <div id="banners-response" class="tab-content">
+                                <div class="code-block">
+                                    <div class="code-header">
+                                        <div class="code-lang">
+                                            <span class="code-lang-dot json"></span>
+                                            JSON
+                                        </div>
+                                        <div class="code-actions">
+                                            <button class="code-btn" onclick="copyCodeBlock(this)">
+                                                <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <pre><code class="language-json">{
+  "success": true,
+  "data": {
+    "banners": [
+      {
+        "id": "banner_1",
+        "main_heading": "Eat Clean, Live Lean",
+        "sub_heading": "Discover healthier alternatives",
+        "button_text": "Explore Now",
+        "image_url": "https://cdn.flean.ai/banners/banner1.jpg",
+        "deep_link": "flean://category/snacks"
+      }
+    ]
+  }
+}</code></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Categories -->
+                <section id="categories" class="section">
+                    <div class="endpoint-card" data-endpoint="categories">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/api/v1/home/categories</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Returns category grid for the home screen. By default returns 4 categories; use <code>?all=true</code> for all categories.</p>
+
+                            <h4>Query Parameters</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Required</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">all</span></td>
+                                            <td><span class="param-type">boolean</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Set to <code>true</code> to return all categories</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X GET "https://api.flean.ai/rs/api/v1/home/categories?all=true"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Best Selling -->
+                <section id="best-selling" class="section">
+                    <div class="endpoint-card" data-endpoint="best-selling">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/api/v1/home/best-selling</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Returns 4 random best-selling products as product cards. Results are randomized on each request.</p>
+
+                            <h4>Query Parameters</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Required</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">count</span></td>
+                                            <td><span class="param-type">integer</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Number of products (1-10, default: 4)</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X GET "https://api.flean.ai/rs/api/v1/home/best-selling"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Curated -->
+                <section id="curated" class="section">
+                    <div class="endpoint-card" data-endpoint="curated">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/api/v1/home/curated</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Returns 4 random curated products. Use <code>/curated/all</code> for all curated products.</p>
+
+                            <h4>Available Endpoints</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Endpoint</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><code>/api/v1/home/curated</code></td>
+                                            <td>4 random curated products</td>
+                                        </tr>
+                                        <tr>
+                                            <td><code>/api/v1/home/curated/all</code></td>
+                                            <td>All curated products</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Why Flean -->
+                <section id="why-flean" class="section">
+                    <div class="endpoint-card" data-endpoint="why-flean">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/api/v1/home/why-flean</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Returns value proposition cards explaining Flean's benefits.</p>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X GET "https://api.flean.ai/rs/api/v1/home/why-flean"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Collaborations -->
+                <section id="collaborations" class="section">
+                    <div class="endpoint-card" data-endpoint="collaborations">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/api/v1/home/collaborations</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Returns brand partnership information for the collaborations section.</p>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X GET "https://api.flean.ai/rs/api/v1/home/collaborations"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Unified Products -->
+                <section id="unified-products" class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <div class="section-title-icon">
+                                <i data-lucide="package" style="width: 20px; height: 20px;"></i>
+                            </div>
+                            Unified Products API
+                        </h2>
+                        <p class="section-desc">The recommended endpoint for both Search and Catalogue screens with full pagination and filter support.</p>
+                    </div>
+
+                    <div class="endpoint-card expanded" data-endpoint="unified-products">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-method post" style="margin-left: 4px;">POST</span>
+                            <span class="endpoint-path">/api/v1/products</span>
+                            <div class="endpoint-tags">
+                                <span class="tag tag-recommended">Recommended</span>
+                            </div>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">
+                                Unified product search with text query, subcategory filtering, pagination, and filters. 
+                                Supports both <strong>GET</strong> (query parameters) and <strong>POST</strong> (JSON body).
+                                Use this for both Search Screen and Catalogue Screen for consistent behavior.
+                            </p>
+
+                            <div class="callout success">
+                                <i data-lucide="check-circle" class="callout-icon"></i>
+                                <div class="callout-content">
+                                    <div class="callout-title">Why use this endpoint?</div>
+                                    <p class="callout-text">Combines the capabilities of <code>/search</code> (filters) and <code>/catalogue</code> (pagination) into a single, consistent API.</p>
+                                </div>
+                            </div>
+
+                            <h4>GET Query Parameters</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Required</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">query</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional*</span></td>
+                                            <td>Text search query (e.g., "protein bars")</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">subcategory</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional*</span></td>
+                                            <td>ES category path (e.g., "f_and_b/food/light_bites/chips")</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">page</span></td>
+                                            <td><span class="param-type">integer</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Page number, 0-indexed (default: 0)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">size</span></td>
+                                            <td><span class="param-type">integer</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Items per page, 1-100 (default: 20)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">sort_by</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Sort option (see below)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">price_range</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Price filter (see Filter Options)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">flean_score</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Flean score filter (see Filter Options)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">preferences</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Comma-separated preference filters (e.g., "no_palm_oil,no_added_sugar")</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">dietary</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Comma-separated dietary filters (e.g., "gluten_free,dairy_free")</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>POST Request Body (JSON)</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Required</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">query</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional*</span></td>
+                                            <td>Text search query</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">subcategory</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional*</span></td>
+                                            <td>ES category path</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">page</span></td>
+                                            <td><span class="param-type">integer</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Page number, 0-indexed (default: 0)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">size</span></td>
+                                            <td><span class="param-type">integer</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Items per page, 1-100 (default: 20)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">sort_by</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Sort option (see below)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">filters</span></td>
+                                            <td><span class="param-type">object</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Filter options object (see below)</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <p><em>* At least one of <code>query</code> or <code>subcategory</code> must be provided.</em></p>
+
+                            <h4>Sort Options</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Value</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr><td><code>relevance</code></td><td>Default - ES relevance score</td></tr>
+                                        <tr><td><code>price_asc</code></td><td>Price: Low to High</td></tr>
+                                        <tr><td><code>price_desc</code></td><td>Price: High to Low</td></tr>
+                                        <tr><td><code>protein_desc</code></td><td>Protein: High to Low</td></tr>
+                                        <tr><td><code>fiber_desc</code></td><td>Fiber: High to Low</td></tr>
+                                        <tr><td><code>fat_asc</code></td><td>Fat: Low to High</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Filter Options</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Filter</th>
+                                            <th>Type</th>
+                                            <th>Values</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><code>price_range</code></td>
+                                            <td>string</td>
+                                            <td><code>below_99</code>, <code>100_249</code>, <code>250_499</code>, <code>above_500</code></td>
+                                        </tr>
+                                        <tr>
+                                            <td><code>flean_score</code></td>
+                                            <td>string</td>
+                                            <td><code>10</code>, <code>9_plus</code>, <code>8_plus</code>, <code>7_plus</code></td>
+                                        </tr>
+                                        <tr>
+                                            <td><code>preferences</code></td>
+                                            <td>array</td>
+                                            <td><code>no_palm_oil</code>, <code>no_added_sugar</code>, <code>no_additives</code></td>
+                                        </tr>
+                                        <tr>
+                                            <td><code>dietary</code></td>
+                                            <td>array</td>
+                                            <td><code>dairy_free</code>, <code>gluten_free</code></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div class="tabs">
+                                <button class="tab active" onclick="switchTab(this, 'unified-get-search')">GET Search</button>
+                                <button class="tab" onclick="switchTab(this, 'unified-get-browse')">GET Browse</button>
+                                <button class="tab" onclick="switchTab(this, 'unified-get-filters')">GET With Filters</button>
+                                <button class="tab" onclick="switchTab(this, 'unified-post')">POST</button>
+                                <button class="tab" onclick="switchTab(this, 'unified-post-filters')">POST With Filters</button>
+                                <button class="tab" onclick="switchTab(this, 'unified-response')">Response</button>
+                            </div>
+
+                            <div id="unified-get-search" class="tab-content active">
+                                <div class="code-block">
+                                    <div class="code-header">
+                                        <div class="code-lang">
+                                            <span class="code-lang-dot bash"></span>
+                                            cURL &mdash; GET Search
+                                        </div>
+                                        <div class="code-actions">
+                                            <button class="code-btn" onclick="copyCodeBlock(this)">
+                                                <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <pre><code class="language-bash"># Simple text search
+curl "https://api.flean.ai/rs/api/v1/products?query=protein+bars"
+
+# With pagination
+curl "https://api.flean.ai/rs/api/v1/products?query=protein+bars&page=1&size=10"</code></pre>
+                                </div>
+                            </div>
+
+                            <div id="unified-get-browse" class="tab-content">
+                                <div class="code-block">
+                                    <div class="code-header">
+                                        <div class="code-lang">
+                                            <span class="code-lang-dot bash"></span>
+                                            cURL &mdash; GET Browse Category
+                                        </div>
+                                        <div class="code-actions">
+                                            <button class="code-btn" onclick="copyCodeBlock(this)">
+                                                <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <pre><code class="language-bash">curl "https://api.flean.ai/rs/api/v1/products?subcategory=f_and_b/food/light_bites/chips_and_crisps&page=0&size=20"</code></pre>
+                                </div>
+                            </div>
+
+                            <div id="unified-get-filters" class="tab-content">
+                                <div class="code-block">
+                                    <div class="code-header">
+                                        <div class="code-lang">
+                                            <span class="code-lang-dot bash"></span>
+                                            cURL &mdash; GET With Filters
+                                        </div>
+                                        <div class="code-actions">
+                                            <button class="code-btn" onclick="copyCodeBlock(this)">
+                                                <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <pre><code class="language-bash"># Price + Flean score filters
+curl "https://api.flean.ai/rs/api/v1/products?query=chips&sort_by=price_asc&price_range=below_99&flean_score=8_plus"
+
+# Preference + dietary filters (comma-separated)
+curl "https://api.flean.ai/rs/api/v1/products?query=snacks&preferences=no_palm_oil,no_added_sugar&dietary=gluten_free"</code></pre>
+                                </div>
+                            </div>
+
+                            <div id="unified-post" class="tab-content">
+                                <div class="code-block">
+                                    <div class="code-header">
+                                        <div class="code-lang">
+                                            <span class="code-lang-dot bash"></span>
+                                            cURL &mdash; POST Search
+                                        </div>
+                                        <div class="code-actions">
+                                            <button class="code-btn" onclick="copyCodeBlock(this)">
+                                                <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <pre><code class="language-bash">curl -X POST "https://api.flean.ai/rs/api/v1/products" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "protein bars",
+    "page": 0,
+    "size": 20
+  }'</code></pre>
+                                </div>
+                            </div>
+
+                            <div id="unified-post-filters" class="tab-content">
+                                <div class="code-block">
+                                    <div class="code-header">
+                                        <div class="code-lang">
+                                            <span class="code-lang-dot bash"></span>
+                                            cURL &mdash; POST With Filters
+                                        </div>
+                                        <div class="code-actions">
+                                            <button class="code-btn" onclick="copyCodeBlock(this)">
+                                                <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <pre><code class="language-bash">curl -X POST "https://api.flean.ai/rs/api/v1/products" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "chips",
+    "sort_by": "price_asc",
+    "filters": {
+      "price_range": "below_99",
+      "flean_score": "8_plus",
+      "preferences": ["no_palm_oil"],
+      "dietary": ["gluten_free"]
+    }
+  }'</code></pre>
+                                </div>
+                            </div>
+
+                            <div id="unified-response" class="tab-content">
+                                <div class="code-block">
+                                    <div class="code-header">
+                                        <div class="code-lang">
+                                            <span class="code-lang-dot json"></span>
+                                            JSON Response
+                                        </div>
+                                        <div class="code-actions">
+                                            <button class="code-btn" onclick="copyCodeBlock(this)">
+                                                <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <pre><code class="language-json">{
+  "success": true,
+  "data": {
+    "products": [
+      // Array of Product Cards (see Product Card Model)
+    ]
+  },
+  "meta": {
+    "total": 245,
+    "page": 0,
+    "size": 20,
+    "total_pages": 13,
+    "has_next": true,
+    "has_prev": false,
+    "query": "chips",
+    "subcategory": null,
+    "sort_by": "price_asc",
+    "filters_applied": {
+      "price_range": "below_99",
+      "flean_score": "8_plus"
+    }
+  }
+}</code></pre>
+                                </div>
+                            </div>
+
+                            <h4>Standardized Pagination Meta</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Field</th>
+                                            <th>Type</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr><td><code>total</code></td><td><span class="param-type">integer</span></td><td>Total matching products</td></tr>
+                                        <tr><td><code>page</code></td><td><span class="param-type">integer</span></td><td>Current page (0-indexed)</td></tr>
+                                        <tr><td><code>size</code></td><td><span class="param-type">integer</span></td><td>Items per page</td></tr>
+                                        <tr><td><code>total_pages</code></td><td><span class="param-type">integer</span></td><td>Ceiling of total / size</td></tr>
+                                        <tr><td><code>has_next</code></td><td><span class="param-type">boolean</span></td><td>More pages available</td></tr>
+                                        <tr><td><code>has_prev</code></td><td><span class="param-type">boolean</span></td><td>Previous pages exist</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="callout info">
+                                <i data-lucide="info" class="callout-icon"></i>
+                                <div class="callout-content">
+                                    <div class="callout-title">Infinite Scroll</div>
+                                    <p class="callout-text">Use <code>has_next</code> to drive infinite scroll / "Load More" in Flutter. Increment <code>page</code> with each request.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Product Search -->
+                <section id="search" class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <div class="section-title-icon">
+                                <i data-lucide="search" style="width: 20px; height: 20px;"></i>
+                            </div>
+                            Product Search API
+                        </h2>
+                        <p class="section-desc">Dedicated search endpoint with advanced filters, pagination, and nutritional search capabilities.</p>
+                    </div>
+
+                    <div class="endpoint-card expanded" data-endpoint="search">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-method post" style="margin-left: 4px;">POST</span>
+                            <span class="endpoint-path">/api/v1/products/search</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">
+                                Advanced product search with text query, category filtering, brand/dietary/ingredient filters, and full pagination.
+                                Supports both <strong>GET</strong> (query parameters) and <strong>POST</strong> (JSON body).
+                            </p>
+
+                            <h4>GET Query Parameters</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Required</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">query</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="required-badge">Required</span></td>
+                                            <td>Text search query (alias: <code>q</code>)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">category_group</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Category group filter (alias: <code>category</code>)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">page</span></td>
+                                            <td><span class="param-type">integer</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Page number, 0-indexed (default: 0)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">size</span></td>
+                                            <td><span class="param-type">integer</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Items per page, 1-100 (default: 20, alias: <code>limit</code>)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">sort_by</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Sort option (alias: <code>sort</code>)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">price_min</span></td>
+                                            <td><span class="param-type">number</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Minimum price filter (alias: <code>min_price</code>)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">price_max</span></td>
+                                            <td><span class="param-type">number</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Maximum price filter (alias: <code>max_price</code>)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">dietary_terms</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Comma-separated dietary filters (alias: <code>dietary</code>)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">avoid_ingredients</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Comma-separated ingredients to avoid (alias: <code>avoid</code>)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">brands</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Comma-separated brand filter (alias: <code>brand</code>)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">healthy_only</span></td>
+                                            <td><span class="param-type">boolean</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Filter to high flean score products only</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">min_flean_percentile</span></td>
+                                            <td><span class="param-type">number</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Minimum flean percentile threshold</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div class="tabs">
+                                <button class="tab active" onclick="switchTab(this, 'search-get')">GET Request</button>
+                                <button class="tab" onclick="switchTab(this, 'search-post')">POST Request</button>
+                                <button class="tab" onclick="switchTab(this, 'search-response')">Response</button>
+                            </div>
+
+                            <div id="search-get" class="tab-content active">
+                                <div class="code-block">
+                                    <div class="code-header">
+                                        <div class="code-lang">
+                                            <span class="code-lang-dot bash"></span>
+                                            cURL &mdash; GET
+                                        </div>
+                                        <div class="code-actions">
+                                            <button class="code-btn" onclick="copyCodeBlock(this)">
+                                                <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <pre><code class="language-bash"># Simple search with pagination
+curl "https://api.flean.ai/rs/api/v1/products/search?query=protein+bars&page=0&size=20"
+
+# With sort and price filter
+curl "https://api.flean.ai/rs/api/v1/products/search?query=chips&page=1&size=10&sort_by=price_asc&price_min=50&price_max=200"
+
+# With dietary and brand filters
+curl "https://api.flean.ai/rs/api/v1/products/search?query=snacks&dietary_terms=gluten_free,dairy_free&brands=Yoga+Bar"</code></pre>
+                                </div>
+                            </div>
+
+                            <div id="search-post" class="tab-content">
+                                <div class="code-block">
+                                    <div class="code-header">
+                                        <div class="code-lang">
+                                            <span class="code-lang-dot bash"></span>
+                                            cURL &mdash; POST
+                                        </div>
+                                        <div class="code-actions">
+                                            <button class="code-btn" onclick="copyCodeBlock(this)">
+                                                <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <pre><code class="language-bash">curl -X POST "https://api.flean.ai/rs/api/v1/products/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "protein bars",
+    "size": 20,
+    "page": 0,
+    "sort_by": "protein_desc",
+    "dietary_terms": ["gluten_free"],
+    "brands": ["Yoga Bar"],
+    "healthy_only": true
+  }'</code></pre>
+                                </div>
+                            </div>
+
+                            <div id="search-response" class="tab-content">
+                                <div class="code-block">
+                                    <div class="code-header">
+                                        <div class="code-lang">
+                                            <span class="code-lang-dot json"></span>
+                                            JSON Response
+                                        </div>
+                                        <div class="code-actions">
+                                            <button class="code-btn" onclick="copyCodeBlock(this)">
+                                                <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <pre><code class="language-json">{
+  "success": true,
+  "data": {
+    "products": [
+      // Array of Product Cards (see Product Card Model)
+    ]
+  },
+  "meta": {
+    "total": 87,
+    "page": 0,
+    "size": 20,
+    "total_pages": 5,
+    "has_next": true,
+    "has_prev": false,
+    "query": "protein bars",
+    "sort_by": "protein_desc",
+    "filters_applied": {
+      "dietary_terms": ["gluten_free"],
+      "brands": ["Yoga Bar"],
+      "healthy_only": true
+    }
+  }
+}</code></pre>
+                                </div>
+                            </div>
+
+                            <div class="callout info">
+                                <i data-lucide="info" class="callout-icon"></i>
+                                <div class="callout-content">
+                                    <div class="callout-title">Same Pagination Meta</div>
+                                    <p class="callout-text">This endpoint returns the same standardized <code>meta</code> object as the Unified Products API (total, page, size, total_pages, has_next, has_prev).</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Catalogue -->
+                <section id="catalogue" class="section">
+                    <div class="endpoint-card" data-endpoint="catalogue">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/api/v1/catalogue</span>
+                            <div class="endpoint-tags">
+                                <span class="tag tag-legacy">Legacy</span>
+                            </div>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Legacy catalogue endpoint. Supports pagination but <strong>no filters</strong>.</p>
+
+                            <h4>Query Parameters</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Required</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">subcategory</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="required-badge">Required</span></td>
+                                            <td>ES path from catalogue mapping</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">page</span></td>
+                                            <td><span class="param-type">integer</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Page number (default: 0)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">size</span></td>
+                                            <td><span class="param-type">integer</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Items per page (default: 20)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">sort</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td><code>flean_score</code> or <code>price</code></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X GET "https://api.flean.ai/rs/api/v1/catalogue?subcategory=f_and_b/food/light_bites/energy_bars&page=0&size=20"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Catalogue Mapping -->
+                <section id="catalogue-mapping" class="section">
+                    <div class="endpoint-card" data-endpoint="catalogue-mapping">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/api/v1/catalogue/mapping</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Returns the full category mapping with display names and ES paths.</p>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X GET "https://api.flean.ai/rs/api/v1/catalogue/mapping"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- PDP -->
+                <section id="pdp" class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <div class="section-title-icon">
+                                <i data-lucide="file-text" style="width: 20px; height: 20px;"></i>
+                            </div>
+                            Product Detail Page (PDP)
+                        </h2>
+                        <p class="section-desc">Full product information optimized for Flutter widget mapping.</p>
+                    </div>
+
+                    <div class="endpoint-card expanded" data-endpoint="pdp">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/api/v1/product/<span class="param">{product_id}</span></span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Returns pre-parsed, sectioned product data ready for direct Flutter widget mapping.</p>
+
+                            <h4>Path Parameters</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">product_id</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td>Product ID (e.g., "01K1B1BPGN2WAXFB5DNSGXX4W3")</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X GET "https://api.flean.ai/rs/api/v1/product/01K1B1BPGN2WAXFB5DNSGXX4W3"</code></pre>
+                            </div>
+
+                            <h4>Score Card Status Colors</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Status</th>
+                                            <th>Color</th>
+                                            <th>Condition</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr><td><code>good</code></td><td style="color: var(--accent);">Green</td><td>percentile >= 70</td></tr>
+                                        <tr><td><code>caution</code></td><td style="color: var(--yellow);">Yellow</td><td>percentile 40-69</td></tr>
+                                        <tr><td><code>warning</code></td><td style="color: var(--red);">Red</td><td>percentile < 40</td></tr>
+                                        <tr><td><code>neutral</code></td><td style="color: var(--text-muted);">Gray</td><td>Informational</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- PDP Batch -->
+                <section id="pdp-batch" class="section">
+                    <div class="endpoint-card" data-endpoint="pdp-batch">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method post">POST</span>
+                            <span class="endpoint-path">/api/v1/products/pdp/batch</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Fetch full PDP data for multiple products in a single request. Max 50 IDs per request.</p>
+
+                            <h4>Request Body</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Required</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">ids</span></td>
+                                            <td><span class="param-type">array</span></td>
+                                            <td><span class="required-badge">Required</span></td>
+                                            <td>Array of product IDs (max 50). Also accepts <code>product_ids</code>.</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div class="tabs">
+                                <button class="tab active" onclick="switchTab(this, 'pdp-batch-request')">Request</button>
+                                <button class="tab" onclick="switchTab(this, 'pdp-batch-response')">Response</button>
+                            </div>
+
+                            <div id="pdp-batch-request" class="tab-content active">
+                                <div class="code-block">
+                                    <div class="code-header">
+                                        <div class="code-lang">
+                                            <span class="code-lang-dot bash"></span>
+                                            cURL
+                                        </div>
+                                        <div class="code-actions">
+                                            <button class="code-btn" onclick="copyCodeBlock(this)">
+                                                <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <pre><code class="language-bash">curl -X POST "https://api.flean.ai/rs/api/v1/products/pdp/batch" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ids": [
+      "01K1B1BPGN2WAXFB5DNSGXX4W3",
+      "01K1B1BPD07T3A1V4S6YGDD0EN"
+    ]
+  }'</code></pre>
+                                </div>
+                            </div>
+
+                            <div id="pdp-batch-response" class="tab-content">
+                                <div class="code-block">
+                                    <div class="code-header">
+                                        <div class="code-lang">
+                                            <span class="code-lang-dot json"></span>
+                                            JSON Response
+                                        </div>
+                                        <div class="code-actions">
+                                            <button class="code-btn" onclick="copyCodeBlock(this)">
+                                                <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <pre><code class="language-json">{
+  "success": true,
+  "data": {
+    "products": [
+      { /* Full PDP object (same structure as single PDP) */ },
+      { /* Full PDP object */ }
+    ],
+    "not_found": ["id_that_was_not_found"]
+  },
+  "meta": {
+    "requested": 3,
+    "returned": 2,
+    "not_found_count": 1
+  }
+}</code></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Alternatives -->
+                <section id="alternatives" class="section">
+                    <div class="endpoint-card" data-endpoint="alternatives">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/api/v1/product/<span class="param">{product_id}</span>/alternatives</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Returns up to 5 healthier alternatives in the same subcategory, sorted by Flean percentile (healthiest first).</p>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X GET "https://api.flean.ai/rs/api/v1/product/01K1B1BPGN2WAXFB5DNSGXX4W3/alternatives"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Recommended -->
+                <section id="recommended" class="section">
+                    <div class="endpoint-card" data-endpoint="recommended">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/api/v1/product/<span class="param">{product_id}</span>/recommended</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Returns recommended products for the PDP "You May Also Like" section.</p>
+
+                            <h4>Query Parameters</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Required</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">limit</span></td>
+                                            <td><span class="param-type">integer</span></td>
+                                            <td><span class="optional-badge">Optional</span></td>
+                                            <td>Number of products (1-10, default: 8)</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X GET "https://api.flean.ai/rs/api/v1/product/01K1B1BPGN2WAXFB5DNSGXX4W3/recommended?limit=6"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Scanner -->
+                <section id="scanner" class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <div class="section-title-icon">
+                                <i data-lucide="scan" style="width: 20px; height: 20px;"></i>
+                            </div>
+                            Scanner API
+                        </h2>
+                        <p class="section-desc">Scan product images to identify and find healthier alternatives.</p>
+                    </div>
+
+                    <div class="endpoint-card expanded" data-endpoint="scanner">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method post">POST</span>
+                            <span class="endpoint-path">/api/v1/scanner</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Scan a product image to identify it and return top 3 matching product cards. Uses Claude Vision for OCR.</p>
+
+                            <h4>Scanner Flow</h4>
+                            <div class="flow-diagram">Step 1: <span class="method-post">POST</span> /api/v1/scanner           → Top 3 product cards
+Step 2: User selects a product
+Step 3: <span class="method-get">GET</span> /api/v1/product/{id}        → Full PDP
+Step 4: <span class="method-get">GET</span> /api/v1/product/{id}/alternatives → 5 healthier options</div>
+
+                            <h4>Request Body</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Required</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">image</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td><span class="required-badge">Required</span></td>
+                                            <td>Base64-encoded image or data URL (max 5MB)</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Supported Formats</h4>
+                            <ul>
+                                <li>JPEG / JPG</li>
+                                <li>PNG</li>
+                                <li>GIF</li>
+                                <li>WebP</li>
+                            </ul>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X POST "https://api.flean.ai/rs/api/v1/scanner" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image": "data:image/jpeg;base64,/9j/4AAQSkZJRg..."
+  }'</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ==================== ECOM SERVICE ==================== -->
+
+                <!-- Ecom Overview -->
+                <section id="ecom-overview" class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <div class="section-title-icon">
+                                <i data-lucide="shopping-bag" style="width: 20px; height: 20px;"></i>
+                            </div>
+                            Ecom Service
+                        </h2>
+                        <p class="section-desc">Separate ecommerce microservice for cart management, order placement, and payments.</p>
+                    </div>
+
+                    <div class="callout warning">
+                        <i data-lucide="alert-triangle" class="callout-icon"></i>
+                        <div class="callout-content">
+                            <div class="callout-title">Separate Service</div>
+                            <p class="callout-text">
+                                The Ecom Service runs independently (port 5002) with base path <code>/ecom/api/v1</code>. 
+                                Most endpoints require <strong>Bearer token</strong> authentication.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="base-url-card">
+                        <span class="base-url-label">Ecom Base URL</span>
+                        <code class="base-url-value">https://api.flean.ai/ecom/api/v1</code>
+                        <button class="copy-btn" onclick="copyToClipboard('https://api.flean.ai/ecom/api/v1', this)">
+                            <i data-lucide="copy" style="width: 16px; height: 16px;"></i>
+                        </button>
+                    </div>
+
+                    <h4 style="margin-top: 24px;">Authentication</h4>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Method</th>
+                                    <th>Header</th>
+                                    <th>Used By</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><strong>Bearer Token</strong></td>
+                                    <td><code>Authorization: Bearer &lt;token&gt;</code></td>
+                                    <td>Products, Cart, Orders</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>API Key</strong></td>
+                                    <td><code>X-API-KEY: &lt;key&gt;</code></td>
+                                    <td>Payments (Razorpay)</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>None</strong></td>
+                                    <td>&mdash;</td>
+                                    <td>Health Check</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <h4 style="margin-top: 24px;">Endpoints Overview</h4>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Method</th>
+                                    <th>Endpoint</th>
+                                    <th>Description</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td><span class="method-tag post">POST</span></td><td><code>/products/batch</code></td><td>Get products by IDs</td></tr>
+                                <tr><td><span class="method-tag post">POST</span></td><td><code>/carts/user-cart</code></td><td>Add items to cart</td></tr>
+                                <tr><td><span class="method-tag get">GET</span></td><td><code>/carts/persistent</code></td><td>Get current cart</td></tr>
+                                <tr><td><span class="method-tag put">PUT</span></td><td><code>/carts/user-cart/items/{product_id}</code></td><td>Update item quantity</td></tr>
+                                <tr><td><span class="method-tag delete">DEL</span></td><td><code>/carts/{cart_id}/items/{product_id}</code></td><td>Remove item from cart</td></tr>
+                                <tr><td><span class="method-tag post">POST</span></td><td><code>/orders</code></td><td>Create order</td></tr>
+                                <tr><td><span class="method-tag get">GET</span></td><td><code>/orders/user</code></td><td>Get order history</td></tr>
+                                <tr><td><span class="method-tag get">GET</span></td><td><code>/orders/{order_id}</code></td><td>Get order by ID</td></tr>
+                                <tr><td><span class="method-tag put">PUT</span></td><td><code>/orders/{order_id}/cancel</code></td><td>Cancel order</td></tr>
+                                <tr><td><span class="method-tag post">POST</span></td><td><code>/payments/{order_id}/razorpay-order</code></td><td>Create Razorpay order</td></tr>
+                                <tr><td><span class="method-tag get">GET</span></td><td><code>/health</code></td><td>Health check</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Ecom Products -->
+                <section id="ecom-products" class="section">
+                    <div class="endpoint-card" data-endpoint="ecom-products">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method post">POST</span>
+                            <span class="endpoint-path">/ecom/api/v1/products/batch</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Fetch product details by IDs from the ecom service. Requires Bearer token.</p>
+
+                            <h4>Request Body</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Required</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">product_ids</span></td>
+                                            <td><span class="param-type">array</span></td>
+                                            <td><span class="required-badge">Required</span></td>
+                                            <td>Array of product IDs to fetch</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X POST "https://api.flean.ai/ecom/api/v1/products/batch" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer &lt;token&gt;" \
+  -d '{
+    "product_ids": [
+      "01K1B1BNXCR8A93V1F7YV5QKHW"
+    ]
+  }'</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Ecom Cart -->
+                <section id="ecom-cart" class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <div class="section-title-icon">
+                                <i data-lucide="shopping-cart" style="width: 20px; height: 20px;"></i>
+                            </div>
+                            Cart
+                        </h2>
+                        <p class="section-desc">Cart management -- add items, view cart, update quantities, and remove items.</p>
+                    </div>
+
+                    <!-- Add to Cart -->
+                    <div class="endpoint-card" data-endpoint="ecom-add-cart">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method post">POST</span>
+                            <span class="endpoint-path">/ecom/api/v1/carts/user-cart</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Add one or more items to the user's cart. Requires Bearer token.</p>
+
+                            <h4>Request Body</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Required</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">items</span></td>
+                                            <td><span class="param-type">array</span></td>
+                                            <td><span class="required-badge">Required</span></td>
+                                            <td>Array of <code>{ product_id, quantity }</code> objects</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X POST "https://api.flean.ai/ecom/api/v1/carts/user-cart" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer &lt;token&gt;" \
+  -d '{
+    "items": [
+      {
+        "product_id": "01K1B1BNXCR8A93V1F7YV5QKHW",
+        "quantity": 2
+      }
+    ]
+  }'</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Get Cart -->
+                    <div class="endpoint-card" data-endpoint="ecom-get-cart">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/ecom/api/v1/carts/persistent</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Retrieve the user's persistent cart. Requires Bearer token.</p>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl "https://api.flean.ai/ecom/api/v1/carts/persistent" \
+  -H "Authorization: Bearer &lt;token&gt;"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Update Quantity -->
+                    <div class="endpoint-card" data-endpoint="ecom-update-cart">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method put">PUT</span>
+                            <span class="endpoint-path">/ecom/api/v1/carts/user-cart/items/<span class="param">{product_id}</span></span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Update the quantity of a specific item in the cart. Requires Bearer token.</p>
+
+                            <h4>Path Parameters</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">product_id</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td>Product ID to update</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Request Body</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Required</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">quantity</span></td>
+                                            <td><span class="param-type">integer</span></td>
+                                            <td><span class="required-badge">Required</span></td>
+                                            <td>New quantity for the item</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X PUT "https://api.flean.ai/ecom/api/v1/carts/user-cart/items/01K1B1BNXCR8A93V1F7YV5QKHW" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer &lt;token&gt;" \
+  -d '{ "quantity": 1 }'</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Remove Item -->
+                    <div class="endpoint-card" data-endpoint="ecom-remove-cart">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method delete">DELETE</span>
+                            <span class="endpoint-path">/ecom/api/v1/carts/<span class="param">{cart_id}</span>/items/<span class="param">{product_id}</span></span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Remove a specific item from the cart. Requires Bearer token.</p>
+
+                            <h4>Path Parameters</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">cart_id</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td>Cart UUID</td>
+                                        </tr>
+                                        <tr>
+                                            <td><span class="param-name">product_id</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td>Product ID to remove</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X DELETE "https://api.flean.ai/ecom/api/v1/carts/037d8aac-6774-467c-a5d2-759776c01a2e/items/01K1B1BNXCR8A93V1F7YV5QKHW" \
+  -H "Authorization: Bearer &lt;token&gt;"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Ecom Orders -->
+                <section id="ecom-orders" class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <div class="section-title-icon">
+                                <i data-lucide="receipt" style="width: 20px; height: 20px;"></i>
+                            </div>
+                            Orders
+                        </h2>
+                        <p class="section-desc">Create orders, view order history, get order details, and cancel orders.</p>
+                    </div>
+
+                    <!-- Create Order -->
+                    <div class="endpoint-card" data-endpoint="ecom-create-order">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method post">POST</span>
+                            <span class="endpoint-path">/ecom/api/v1/orders</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Create a new order from the user's cart with a delivery address. Requires Bearer token.</p>
+
+                            <h4>Request Body &mdash; Address Object</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Field</th>
+                                            <th>Type</th>
+                                            <th>Required</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr><td><span class="param-name">name</span></td><td><span class="param-type">string</span></td><td><span class="required-badge">Required</span></td><td>Recipient name</td></tr>
+                                        <tr><td><span class="param-name">phone_number</span></td><td><span class="param-type">string</span></td><td><span class="required-badge">Required</span></td><td>Contact phone number</td></tr>
+                                        <tr><td><span class="param-name">address</span></td><td><span class="param-type">string</span></td><td><span class="required-badge">Required</span></td><td>Street address</td></tr>
+                                        <tr><td><span class="param-name">city</span></td><td><span class="param-type">string</span></td><td><span class="required-badge">Required</span></td><td>City name</td></tr>
+                                        <tr><td><span class="param-name">state</span></td><td><span class="param-type">string</span></td><td><span class="required-badge">Required</span></td><td>State name</td></tr>
+                                        <tr><td><span class="param-name">in_pin_code</span></td><td><span class="param-type">string</span></td><td><span class="required-badge">Required</span></td><td>PIN code</td></tr>
+                                        <tr><td><span class="param-name">landmark_area</span></td><td><span class="param-type">string</span></td><td><span class="optional-badge">Optional</span></td><td>Landmark or area</td></tr>
+                                        <tr><td><span class="param-name">floor_number</span></td><td><span class="param-type">string</span></td><td><span class="optional-badge">Optional</span></td><td>Floor number</td></tr>
+                                        <tr><td><span class="param-name">tower_number</span></td><td><span class="param-type">string</span></td><td><span class="optional-badge">Optional</span></td><td>Tower/building number</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X POST "https://api.flean.ai/ecom/api/v1/orders" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer &lt;token&gt;" \
+  -d '{
+    "address": {
+      "name": "Rakshit Gupta",
+      "in_pin_code": "201305",
+      "phone_number": "7398580865",
+      "address": "Ganesh Ganj",
+      "city": "Lucknow",
+      "landmark_area": "Park",
+      "state": "Uttar Pradesh",
+      "floor_number": "1",
+      "tower_number": "2"
+    }
+  }'</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Get Order History -->
+                    <div class="endpoint-card" data-endpoint="ecom-order-history">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/ecom/api/v1/orders/user</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Retrieve the authenticated user's order history. Requires Bearer token.</p>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl "https://api.flean.ai/ecom/api/v1/orders/user" \
+  -H "Authorization: Bearer &lt;token&gt;"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Get Order by ID -->
+                    <div class="endpoint-card" data-endpoint="ecom-order-detail">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/ecom/api/v1/orders/<span class="param">{order_id}</span></span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Retrieve details for a specific order by its ID. Requires Bearer token.</p>
+
+                            <h4>Path Parameters</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">order_id</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td>Order UUID</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl "https://api.flean.ai/ecom/api/v1/orders/e0c84cf1-af68-41d6-8cc8-e8c10f9e94b9" \
+  -H "Authorization: Bearer &lt;token&gt;"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Cancel Order -->
+                    <div class="endpoint-card" data-endpoint="ecom-cancel-order">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method put">PUT</span>
+                            <span class="endpoint-path">/ecom/api/v1/orders/<span class="param">{order_id}</span>/cancel</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Cancel an existing order. Requires Bearer token.</p>
+
+                            <h4>Path Parameters</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">order_id</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td>Order UUID to cancel</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X PUT "https://api.flean.ai/ecom/api/v1/orders/e0c84cf1-af68-41d6-8cc8-e8c10f9e94b9/cancel" \
+  -H "Authorization: Bearer &lt;token&gt;"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Ecom Payments -->
+                <section id="ecom-payments" class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <div class="section-title-icon">
+                                <i data-lucide="credit-card" style="width: 20px; height: 20px;"></i>
+                            </div>
+                            Payments
+                        </h2>
+                        <p class="section-desc">Payment integration via Razorpay.</p>
+                    </div>
+
+                    <div class="endpoint-card" data-endpoint="ecom-razorpay">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method post">POST</span>
+                            <span class="endpoint-path">/ecom/api/v1/payments/<span class="param">{order_id}</span>/razorpay-order</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Create a Razorpay payment order for a given order. Uses <strong>X-API-KEY</strong> authentication instead of Bearer token.</p>
+
+                            <h4>Path Parameters</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Parameter</th>
+                                            <th>Type</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><span class="param-name">order_id</span></td>
+                                            <td><span class="param-type">string</span></td>
+                                            <td>Order UUID to create payment for</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl -X POST "https://api.flean.ai/ecom/api/v1/payments/027e288f-57ab-4f12-9ff2-dfcc98b662bd/razorpay-order" \
+  -H "X-API-KEY: &lt;api-key&gt;"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Health Check -->
+                    <div class="endpoint-card" data-endpoint="ecom-health">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="endpoint-method get">GET</span>
+                            <span class="endpoint-path">/ecom/api/v1/health</span>
+                            <i data-lucide="chevron-down" class="endpoint-toggle" style="width: 20px; height: 20px;"></i>
+                        </div>
+                        <div class="endpoint-body">
+                            <p class="endpoint-desc">Health check endpoint for the ecom service. No authentication required.</p>
+
+                            <h4>Example Request</h4>
+                            <div class="code-block">
+                                <div class="code-header">
+                                    <div class="code-lang">
+                                        <span class="code-lang-dot bash"></span>
+                                        cURL
+                                    </div>
+                                    <div class="code-actions">
+                                        <button class="code-btn" onclick="copyCodeBlock(this)">
+                                            <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre><code class="language-bash">curl "https://api.flean.ai/ecom/api/v1/health"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Product Card Model -->
+                <section id="product-card" class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <div class="section-title-icon">
+                                <i data-lucide="box" style="width: 20px; height: 20px;"></i>
+                            </div>
+                            Product Card Model
+                        </h2>
+                        <p class="section-desc">Standardized product card returned by all listing APIs.</p>
+                    </div>
+
+                    <div class="callout info">
+                        <i data-lucide="info" class="callout-icon"></i>
+                        <div class="callout-content">
+                            <div class="callout-title">Consistent Across All APIs</div>
+                            <p class="callout-text">This structure is returned by: Search, Catalogue, Scanner, Best Selling, Curated, Alternatives, and Recommended endpoints.</p>
+                        </div>
+                    </div>
+
+                    <div class="code-block">
+                        <div class="code-header">
+                            <div class="code-lang">
+                                <span class="code-lang-dot json"></span>
+                                Product Card Schema
+                            </div>
+                            <div class="code-actions">
+                                <button class="code-btn" onclick="copyCodeBlock(this)">
+                                    <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                    Copy
+                                </button>
+                            </div>
+                        </div>
+                        <pre><code class="language-json">{
+  "id": "01K1B1BPGN2WAXFB5DNSGXX4W3",
+  "name": "Yoga Bar 20g Protein Bar",
+  "brand": "Yoga Bar",
+  "price": 100.0,
+  "mrp": 120.0,
+  "currency": "INR",
+  "qty": "60 g",
+  "image_url": "https://cdn.flean.ai/products/yogabar.jpg",
+  "macro_tags": [
+    {
+      "label": "20 gms of Protein",
+      "nutrient": "protein",
+      "value": 20,
+      "unit": "g"
+    },
+    {
+      "label": "225 Calories",
+      "nutrient": "calories",
+      "value": 225,
+      "unit": "kcal"
+    }
+  ],
+  "nutrition": {
+    "protein_g": 20.0,
+    "carbs_g": 28.0,
+    "fat_g": 8.0,
+    "fiber_g": 3.0,
+    "calories": 225.0
+  },
+  "flean_score": 2.5,
+  "flean_percentile": 85.2,
+  "in_stock": true
+}</code></pre>
+                    </div>
+
+                    <h4>Field Descriptions</h4>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Field</th>
+                                    <th>Type</th>
+                                    <th>Description</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td><code>id</code></td><td><span class="param-type">string</span></td><td>Unique product identifier</td></tr>
+                                <tr><td><code>name</code></td><td><span class="param-type">string</span></td><td>Product display name</td></tr>
+                                <tr><td><code>brand</code></td><td><span class="param-type">string</span></td><td>Brand name</td></tr>
+                                <tr><td><code>price</code></td><td><span class="param-type">number</span></td><td>Selling price in INR</td></tr>
+                                <tr><td><code>mrp</code></td><td><span class="param-type">number</span></td><td>Maximum retail price</td></tr>
+                                <tr><td><code>qty</code></td><td><span class="param-type">string</span></td><td>Package quantity</td></tr>
+                                <tr><td><code>image_url</code></td><td><span class="param-type">string</span></td><td>Product image URL</td></tr>
+                                <tr><td><code>macro_tags</code></td><td><span class="param-type">array</span></td><td>Top 2 nutritional highlights</td></tr>
+                                <tr><td><code>nutrition</code></td><td><span class="param-type">object</span></td><td>Detailed nutritional values</td></tr>
+                                <tr><td><code>flean_score</code></td><td><span class="param-type">number</span></td><td>Flean health score (0-10)</td></tr>
+                                <tr><td><code>flean_percentile</code></td><td><span class="param-type">number</span></td><td>Percentile ranking (0-100)</td></tr>
+                                <tr><td><code>in_stock</code></td><td><span class="param-type">boolean</span></td><td>Stock availability</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Errors -->
+                <section id="errors" class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <div class="section-title-icon">
+                                <i data-lucide="alert-circle" style="width: 20px; height: 20px;"></i>
+                            </div>
+                            Error Handling
+                        </h2>
+                        <p class="section-desc">Standard error codes and their meanings.</p>
+                    </div>
+
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Code</th>
+                                    <th>HTTP</th>
+                                    <th>Description</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><code>MISSING_IMAGE</code></td>
+                                    <td><span class="required-badge">400</span></td>
+                                    <td>Scanner: No image provided</td>
+                                </tr>
+                                <tr>
+                                    <td><code>INVALID_IMAGE</code></td>
+                                    <td><span class="required-badge">400</span></td>
+                                    <td>Scanner: Invalid format or exceeds 5MB</td>
+                                </tr>
+                                <tr>
+                                    <td><code>MISSING_PARAMETER</code></td>
+                                    <td><span class="required-badge">400</span></td>
+                                    <td>Products: Neither query nor subcategory provided</td>
+                                </tr>
+                                <tr>
+                                    <td><code>INVALID_FILTERS</code></td>
+                                    <td><span class="required-badge">400</span></td>
+                                    <td>Invalid filter values</td>
+                                </tr>
+                                <tr>
+                                    <td><code>PRODUCT_NOT_FOUND</code></td>
+                                    <td><span class="required-badge">404</span></td>
+                                    <td>Product ID not found</td>
+                                </tr>
+                                <tr>
+                                    <td><code>INTERNAL_ERROR</code></td>
+                                    <td><span class="required-badge">500</span></td>
+                                    <td>Internal server error</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <h4>Error Response Example</h4>
+                    <div class="code-block">
+                        <div class="code-header">
+                            <div class="code-lang">
+                                <span class="code-lang-dot json"></span>
+                                JSON
+                            </div>
+                            <div class="code-actions">
+                                <button class="code-btn" onclick="copyCodeBlock(this)">
+                                    <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                                    Copy
+                                </button>
+                            </div>
+                        </div>
+                        <pre><code class="language-json">{
+  "success": false,
+  "error": {
+    "code": "PRODUCT_NOT_FOUND",
+    "message": "Product with ID 'invalid_id' not found"
+  }
+}</code></pre>
+                    </div>
+                </section>
+
+                <!-- Footer -->
+                <footer class="footer">
+                    <p class="footer-text">Flean API Documentation &bull; Last updated: March 2026</p>
+                    <div class="footer-links">
+                        <a href="https://github.com/flean" class="footer-link">GitHub</a>
+                        <a href="#" class="footer-link">Support</a>
+                        <a href="#" class="footer-link">Status</a>
+                    </div>
+                </footer>
+            </div>
+        </main>
+    </div>
+
+    <!-- Prism.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+
+        // Toggle endpoint card
+        function toggleEndpoint(header) {
+            const card = header.closest('.endpoint-card');
+            card.classList.toggle('expanded');
+        }
+
+        // Switch tabs
+        function switchTab(button, targetId) {
+            const container = button.closest('.endpoint-body');
+            
+            // Update tab buttons
+            container.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            button.classList.add('active');
+            
+            // Update tab content
+            container.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.getElementById(targetId).classList.add('active');
+        }
+
+        // Copy to clipboard
+        function copyToClipboard(text, button) {
+            navigator.clipboard.writeText(text).then(() => {
+                button.classList.add('copied');
+                const icon = button.querySelector('[data-lucide]');
+                if (icon) {
+                    icon.setAttribute('data-lucide', 'check');
+                    lucide.createIcons();
+                }
+                
+                setTimeout(() => {
+                    button.classList.remove('copied');
+                    if (icon) {
+                        icon.setAttribute('data-lucide', 'copy');
+                        lucide.createIcons();
+                    }
+                }, 2000);
+            });
+        }
+
+        // Copy code block
+        function copyCodeBlock(button) {
+            const codeBlock = button.closest('.code-block').querySelector('code');
+            const text = codeBlock.textContent;
+            
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = button.innerHTML;
+                button.classList.add('copied');
+                button.innerHTML = '<i data-lucide="check" style="width: 14px; height: 14px;"></i> Copied!';
+                lucide.createIcons();
+                
+                setTimeout(() => {
+                    button.classList.remove('copied');
+                    button.innerHTML = originalText;
+                    lucide.createIcons();
+                }, 2000);
+            });
+        }
+
+        // Active navigation highlighting
+        const sections = document.querySelectorAll('.section');
+        const navLinks = document.querySelectorAll('.nav-link');
+
+        const observerOptions = {
+            rootMargin: '-20% 0px -80% 0px'
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const id = entry.target.id;
+                    navLinks.forEach(link => {
+                        link.classList.remove('active');
+                        if (link.getAttribute('href') === `#${id}`) {
+                            link.classList.add('active');
+                        }
+                    });
+                }
+            });
+        }, observerOptions);
+
+        sections.forEach(section => {
+            if (section.id) {
+                observer.observe(section);
+            }
+        });
+
+        // Toggle nav groups
+        document.querySelectorAll('.nav-group-title').forEach(title => {
+            title.addEventListener('click', () => {
+                title.closest('.nav-group').classList.toggle('collapsed');
+            });
+        });
+
+        // Mobile menu toggle
+        const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+        const sidebar = document.getElementById('sidebar');
+
+        mobileMenuBtn?.addEventListener('click', () => {
+            sidebar.classList.toggle('open');
+        });
+
+        // Close sidebar when clicking a link on mobile
+        navLinks.forEach(link => {
+            link.addEventListener('click', () => {
+                if (window.innerWidth <= 1024) {
+                    sidebar.classList.remove('open');
+                }
+            });
+        });
+
+        // Search functionality
+        const searchInput = document.getElementById('searchInput');
+        const searchModal = document.getElementById('searchModal');
+        const modalSearchInput = document.getElementById('modalSearchInput');
+        const searchResultsList = document.getElementById('searchResultsList');
+
+        const searchableItems = [
+            { title: 'Banners', path: '/api/v1/home/banners', method: 'GET', section: 'banners' },
+            { title: 'Categories', path: '/api/v1/home/categories', method: 'GET', section: 'categories' },
+            { title: 'Best Selling', path: '/api/v1/home/best-selling', method: 'GET', section: 'best-selling' },
+            { title: 'Curated', path: '/api/v1/home/curated', method: 'GET', section: 'curated' },
+            { title: 'Why Flean', path: '/api/v1/home/why-flean', method: 'GET', section: 'why-flean' },
+            { title: 'Collaborations', path: '/api/v1/home/collaborations', method: 'GET', section: 'collaborations' },
+            { title: 'Unified Products', path: '/api/v1/products', method: 'GET/POST', section: 'unified-products' },
+            { title: 'Product Search', path: '/api/v1/products/search', method: 'GET/POST', section: 'search' },
+            { title: 'Catalogue', path: '/api/v1/catalogue', method: 'GET', section: 'catalogue' },
+            { title: 'Catalogue Mapping', path: '/api/v1/catalogue/mapping', method: 'GET', section: 'catalogue-mapping' },
+            { title: 'Product Detail', path: '/api/v1/product/{id}', method: 'GET', section: 'pdp' },
+            { title: 'PDP Batch', path: '/api/v1/products/pdp/batch', method: 'POST', section: 'pdp-batch' },
+            { title: 'Alternatives', path: '/api/v1/product/{id}/alternatives', method: 'GET', section: 'alternatives' },
+            { title: 'Recommended', path: '/api/v1/product/{id}/recommended', method: 'GET', section: 'recommended' },
+            { title: 'Scanner', path: '/api/v1/scanner', method: 'POST', section: 'scanner' },
+            { title: 'Ecom Overview', path: '/ecom/api/v1', method: '', section: 'ecom-overview' },
+            { title: 'Ecom Products Batch', path: '/ecom/api/v1/products/batch', method: 'POST', section: 'ecom-products' },
+            { title: 'Add to Cart', path: '/ecom/api/v1/carts/user-cart', method: 'POST', section: 'ecom-cart' },
+            { title: 'Get Cart', path: '/ecom/api/v1/carts/persistent', method: 'GET', section: 'ecom-cart' },
+            { title: 'Update Cart Item', path: '/ecom/api/v1/carts/user-cart/items/{id}', method: 'PUT', section: 'ecom-cart' },
+            { title: 'Remove Cart Item', path: '/ecom/api/v1/carts/{id}/items/{id}', method: 'DELETE', section: 'ecom-cart' },
+            { title: 'Create Order', path: '/ecom/api/v1/orders', method: 'POST', section: 'ecom-orders' },
+            { title: 'Order History', path: '/ecom/api/v1/orders/user', method: 'GET', section: 'ecom-orders' },
+            { title: 'Order Detail', path: '/ecom/api/v1/orders/{id}', method: 'GET', section: 'ecom-orders' },
+            { title: 'Cancel Order', path: '/ecom/api/v1/orders/{id}/cancel', method: 'PUT', section: 'ecom-orders' },
+            { title: 'Razorpay Payment', path: '/ecom/api/v1/payments/{id}/razorpay-order', method: 'POST', section: 'ecom-payments' },
+            { title: 'Ecom Health Check', path: '/ecom/api/v1/health', method: 'GET', section: 'ecom-payments' },
+            { title: 'Product Card Model', path: 'Data Model', method: '', section: 'product-card' },
+            { title: 'Error Handling', path: 'Reference', method: '', section: 'errors' },
+        ];
+
+        function renderSearchResults(query) {
+            const filtered = searchableItems.filter(item => 
+                item.title.toLowerCase().includes(query.toLowerCase()) ||
+                item.path.toLowerCase().includes(query.toLowerCase())
+            );
+
+            searchResultsList.innerHTML = filtered.map((item, index) => `
+                <div class="search-result-item ${index === 0 ? 'selected' : ''}" data-section="${item.section}">
+                    ${item.method ? item.method.split('/').map(m => `<span class="method-tag ${m.trim().toLowerCase()}">${m.trim()}</span>`).join(' ') : ''}
+                    <div>
+                        <div class="search-result-title">${item.title}</div>
+                        <div class="search-result-path">${item.path}</div>
+                    </div>
+                </div>
+            `).join('');
+
+            // Add click handlers
+            searchResultsList.querySelectorAll('.search-result-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const section = item.dataset.section;
+                    document.getElementById(section)?.scrollIntoView({ behavior: 'smooth' });
+                    closeSearchModal();
+                });
+            });
+        }
+
+        function openSearchModal() {
+            searchModal.classList.add('active');
+            modalSearchInput.focus();
+            renderSearchResults('');
+        }
+
+        function closeSearchModal() {
+            searchModal.classList.remove('active');
+            modalSearchInput.value = '';
+        }
+
+        searchInput?.addEventListener('focus', openSearchModal);
+
+        modalSearchInput?.addEventListener('input', (e) => {
+            renderSearchResults(e.target.value);
+        });
+
+        searchModal?.addEventListener('click', (e) => {
+            if (e.target === searchModal) {
+                closeSearchModal();
+            }
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Cmd/Ctrl + K to open search
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                e.preventDefault();
+                openSearchModal();
+            }
+            
+            // Escape to close search
+            if (e.key === 'Escape') {
+                closeSearchModal();
+            }
+        });
+    </script>
+</body>
+</html>

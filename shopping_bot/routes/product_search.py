@@ -46,7 +46,7 @@ VALID_DIETARY_TERMS = {
 
 # Default values
 DEFAULT_SIZE = 20
-MAX_SIZE = 50
+MAX_SIZE = 100
 MIN_SIZE = 1
 DEFAULT_MIN_FLEAN_PERCENTILE = 0  # No quality filter by default
 
@@ -185,7 +185,18 @@ def _validate_request(data: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[st
         except (TypeError, ValueError):
             errors.append("'min_flean_percentile' must be a valid number")
     
-    # 9. Size/limit (optional)
+    # 9. Page (optional, 0-indexed)
+    page = data.get("page")
+    if page is not None:
+        try:
+            page = max(0, int(page))
+            params["page"] = page
+        except (TypeError, ValueError):
+            params["page"] = 0
+    else:
+        params["page"] = 0
+    
+    # 10. Size/limit (optional)
     size = data.get("size") or data.get("limit") or data.get("count")
     if size is not None:
         try:
@@ -200,7 +211,7 @@ def _validate_request(data: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[st
     else:
         params["size"] = DEFAULT_SIZE
     
-    # 10. Sort by (optional - for future use)
+    # 11. Sort by (optional)
     sort_by = data.get("sort_by") or data.get("sort")
     if sort_by:
         valid_sorts = {"relevance", "price_asc", "price_desc", "quality", "rating"}
@@ -306,7 +317,7 @@ def _build_response(
     fallback_used: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Build the final API response.
+    Build the final API response with catalogue-consistent meta format.
     """
     formatted_products = []
     for product in products:
@@ -317,25 +328,38 @@ def _build_response(
             log.warning(f"PRODUCT_FORMAT_ERROR | id={product.get('id')} | error={e}")
             continue
     
+    total = meta.get("total_hits", 0)
+    page = filters_applied.get("page", meta.get("page", 0))
+    size = filters_applied.get("size", DEFAULT_SIZE)
+    total_pages = (total + size - 1) // size if size > 0 else 0
+    offset = page * size
+
+    non_pagination_keys = {"q", "size", "page"}
+    applied = {k: v for k, v in filters_applied.items() if v is not None and k not in non_pagination_keys}
+
+    response_meta: Dict[str, Any] = {
+        "total": total,
+        "page": page,
+        "size": size,
+        "total_pages": total_pages,
+        "has_next": offset + len(formatted_products) < total,
+        "has_prev": page > 0,
+        "query": filters_applied.get("q"),
+        "sort_by": filters_applied.get("sort_by", "relevance"),
+        "filters_applied": applied if applied else None,
+    }
+
+    if fallback_used:
+        response_meta["fallback_used"] = fallback_used
+        response_meta["note"] = "Original query returned no results; filters were relaxed"
+
     response = {
         "success": True,
         "data": {
             "products": formatted_products,
-            "pagination": {
-                "total_hits": meta.get("total_hits", 0),
-                "returned": len(formatted_products),
-                "size": filters_applied.get("size", DEFAULT_SIZE),
-            },
         },
-        "meta": {
-            "took_ms": meta.get("took_ms", 0),
-            "filters_applied": {k: v for k, v in filters_applied.items() if v is not None and k != "size"},
-        }
+        "meta": response_meta,
     }
-    
-    if fallback_used:
-        response["meta"]["fallback_used"] = fallback_used
-        response["meta"]["note"] = "Original query returned no results; filters were relaxed"
     
     return response
 
@@ -344,104 +368,60 @@ def _build_response(
 # API Endpoint
 # ============================================================================
 
-@bp.route("/api/v1/products/search", methods=["POST"])
+@bp.route("/api/v1/products/search", methods=["GET", "POST"])
 def product_search() -> tuple[Dict[str, Any], int]:
     """
-    Product Search API
-    
-    Search for products with comprehensive filtering support.
-    
-    ---
-    Request Body (JSON):
-    {
-        "query": "chips",                              // Required: Search keyword
-        "category_group": "f_and_b",                   // Optional: "f_and_b" or "personal_care"
-        "category_paths": ["f_and_b/food/snacks"],     // Optional: Category hierarchy
-        "price_min": 50,                               // Optional: Minimum price (INR)
-        "price_max": 200,                              // Optional: Maximum price (INR)
-        "dietary_terms": ["GLUTEN FREE", "ORGANIC"],   // Optional: Dietary filters
-        "avoid_ingredients": ["palm oil", "maida"],    // Optional: Ingredients to exclude
-        "brands": ["Lays", "Pringles"],                // Optional: Brand filter
-        "healthy_only": true,                          // Optional: Only show healthy products (flean >= 70)
-        "min_flean_percentile": 60,                    // Optional: Custom quality threshold (0-100)
-        "size": 20                                     // Optional: Number of results (1-50, default: 20)
-    }
-    
-    ---
-    Response (JSON):
+    Product Search API -- supports both GET (query params) and POST (JSON body).
+
+    GET  /api/v1/products/search?query=chips&page=0&size=20&sort_by=price_asc
+    POST /api/v1/products/search  { "query": "chips", "page": 0, "size": 20 }
+
+    Response:
     {
         "success": true,
-        "data": {
-            "products": [
-                {
-                    "id": "prod_123",
-                    "name": "Organic Potato Chips",
-                    "brand": "Healthy Crunch",
-                    "price": 75.0,
-                    "mrp": 100.0,
-                    "currency": "INR",
-                    "image_url": "https://...",
-                    "description": "Made with organic potatoes...",
-                    "category": "f_and_b",
-                    "flean_score": 78.5,
-                    "flean_percentile": 85.2,
-                    "quality_tier": "excellent",
-                    "nutrition": {
-                        "protein_g": 2.5,
-                        "carbs_g": 15.0,
-                        "fat_g": 8.0,
-                        "calories": 120
-                    },
-                    "dietary_labels": ["ORGANIC", "GLUTEN FREE"],
-                    "health_claims": ["organic", "gluten free"],
-                    "rating": {
-                        "average": 4.2,
-                        "total_reviews": 156
-                    },
-                    "in_stock": true
-                }
-            ],
-            "pagination": {
-                "total_hits": 1250,
-                "returned": 20,
-                "size": 20
-            }
-        },
+        "data": { "products": [...] },
         "meta": {
-            "took_ms": 45,
-            "filters_applied": {
-                "query": "chips",
-                "category_group": "f_and_b",
-                "price_max": 200,
-                "dietary_terms": ["ORGANIC"]
-            }
-        }
-    }
-    
-    ---
-    Error Response:
-    {
-        "success": false,
-        "error": {
-            "code": "VALIDATION_ERROR",
-            "message": "'query' is required and must be a non-empty string"
+            "total": 245, "page": 0, "size": 20,
+            "total_pages": 13, "has_next": true, "has_prev": false,
+            "query": "chips", "sort_by": "relevance",
+            "filters_applied": { ... }
         }
     }
     """
     try:
-        # Parse request body
-        try:
-            data = request.get_json(force=True) or {}
-        except Exception:
-            data = {}
-        
-        # Handle query params as fallback
-        if not data:
-            data = {
-                "query": request.args.get("query") or request.args.get("q"),
-                "category_group": request.args.get("category_group"),
-                "size": request.args.get("size"),
-            }
+        if request.method == "GET":
+            data: Dict[str, Any] = {}
+            for key in ("query", "q", "category_group", "category",
+                        "price_min", "price_max", "min_price", "max_price",
+                        "healthy_only", "min_flean_percentile",
+                        "size", "limit", "page", "sort_by", "sort"):
+                val = request.args.get(key)
+                if val is not None:
+                    data[key] = val
+            brands_raw = request.args.get("brands") or request.args.get("brand")
+            if brands_raw:
+                data["brands"] = [b.strip() for b in brands_raw.split(",") if b.strip()]
+            dietary_raw = request.args.get("dietary_terms") or request.args.get("dietary")
+            if dietary_raw:
+                data["dietary_terms"] = [d.strip() for d in dietary_raw.split(",") if d.strip()]
+            avoid_raw = request.args.get("avoid_ingredients") or request.args.get("avoid")
+            if avoid_raw:
+                data["avoid_ingredients"] = [a.strip() for a in avoid_raw.split(",") if a.strip()]
+            category_paths_raw = request.args.get("category_paths") or request.args.get("categories")
+            if category_paths_raw:
+                data["category_paths"] = [c.strip() for c in category_paths_raw.split(",") if c.strip()]
+        else:
+            try:
+                data = request.get_json(force=True) or {}
+            except Exception:
+                data = {}
+            if not data:
+                data = {
+                    "query": request.args.get("query") or request.args.get("q"),
+                    "category_group": request.args.get("category_group"),
+                    "size": request.args.get("size"),
+                    "page": request.args.get("page"),
+                }
         
         log.info(f"PRODUCT_SEARCH_REQUEST | raw_data={data}")
         

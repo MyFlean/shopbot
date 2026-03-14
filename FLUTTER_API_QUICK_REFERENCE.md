@@ -18,7 +18,8 @@
 | Home - Why Flean | `GET` | `/rs/api/v1/home/why-flean` | Value proposition cards |
 | Home - Collaborations | `GET` | `/rs/api/v1/home/collaborations` | Partner brands |
 | Refresh Cache | `POST` | `/rs/api/v1/home/refresh` | Clear cached data |
-| **Unified Products** | `POST` | `/rs/api/v1/products` | **Search + Catalogue + Pagination + Filters** |
+| **Unified Products** | `GET`/`POST` | `/rs/api/v1/products` | **Search + Catalogue + Pagination + Filters** |
+| **Product Search** | `GET`/`POST` | `/rs/api/v1/products/search` | Search + Filters + Pagination |
 | Search (legacy) | `POST` | `/rs/search` | Search + Sort + Filter (no pagination) |
 | Catalogue (legacy) | `GET` | `/rs/api/v1/catalogue?subcategory=X` | Products by category |
 | Catalogue Mapping | `GET` | `/rs/api/v1/catalogue/mapping` | Category-to-ES-path map |
@@ -153,14 +154,36 @@ GET /rs/api/v1/home/collaborations
 
 ## SEARCH & CATALOGUE (UNIFIED PRODUCTS API)
 
-Use `POST /rs/api/v1/products` for **both** Search Screen and Catalogue Screen.
+Use `/rs/api/v1/products` for **both** Search Screen and Catalogue Screen.
+Supports **GET** (query params) and **POST** (JSON body).
+
+### GET Request (recommended for pagination)
+
+```
+GET /rs/api/v1/products?query=protein+bars&page=0&size=20&sort_by=relevance
+GET /rs/api/v1/products?subcategory=f_and_b/food/light_bites&page=0&size=20
+GET /rs/api/v1/products?query=chips&price_range=below_99&flean_score=8_plus
+GET /rs/api/v1/products?query=snacks&preferences=no_palm_oil,no_added_sugar&dietary=gluten_free
+```
+
+| Query Parameter | Type | Description |
+|-----------------|------|-------------|
+| `query` | string | Text search (optional) |
+| `subcategory` | string | ES category path (optional) |
+| `page` | int | 0-indexed page number (default 0) |
+| `size` | int | Items per page, 1-100 (default 20) |
+| `sort_by` | string | Sort option (default "relevance") |
+| `price_range` | string | Price filter |
+| `flean_score` | string | Flean score filter |
+| `preferences` | string | Comma-separated preference filters |
+| `dietary` | string | Comma-separated dietary filters |
+
+### POST Request
 
 ```
 POST /rs/api/v1/products
 Content-Type: application/json
 ```
-
-### Request Schema
 
 ```json
 {
@@ -229,6 +252,21 @@ Content-Type: application/json
   }
 }
 ```
+
+### Standardized Pagination Meta
+
+All paginated endpoints (Unified Products, Catalogue, Product Search) return the **same meta shape**:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total` | int | Total matching products |
+| `page` | int | Current page (0-indexed) |
+| `size` | int | Items per page |
+| `total_pages` | int | Ceiling of total/size |
+| `has_next` | bool | More pages available? |
+| `has_prev` | bool | Previous pages exist? |
+
+Use `has_next` to drive infinite scroll / "Load More" in Flutter.
 
 ---
 
@@ -500,6 +538,14 @@ curl -X POST "$BASE/rs/api/v1/home/curated" \
   -d '{"ingredient_preferences":["no_palm_oil","no_added_sugar"],"daily_macros":{"protein":15,"carbs":0,"fat":0},"dietary_restrictions":["dairy_free"]}'
 
 # ─── UNIFIED PRODUCTS (Search + Catalogue) ────────────────
+# GET (recommended for pagination)
+curl "$BASE/rs/api/v1/products?query=protein+bars"
+curl "$BASE/rs/api/v1/products?query=protein+bars&page=1&size=10"
+curl "$BASE/rs/api/v1/products?subcategory=f_and_b/food/light_bites/chips_and_crisps&page=0&size=20"
+curl "$BASE/rs/api/v1/products?query=chips&sort_by=price_asc&price_range=below_99&flean_score=8_plus"
+curl "$BASE/rs/api/v1/products?query=snacks&preferences=no_palm_oil,no_added_sugar&dietary=gluten_free"
+
+# POST (also supported)
 curl -X POST "$BASE/rs/api/v1/products" -H "Content-Type: application/json" \
   -d '{"query": "protein bars"}'
 
@@ -509,8 +555,9 @@ curl -X POST "$BASE/rs/api/v1/products" -H "Content-Type: application/json" \
 curl -X POST "$BASE/rs/api/v1/products" -H "Content-Type: application/json" \
   -d '{"query": "chips", "sort_by": "price_asc", "filters": {"price_range": "below_99", "flean_score": "8_plus"}}'
 
-curl -X POST "$BASE/rs/api/v1/products" -H "Content-Type: application/json" \
-  -d '{"query": "chips", "page": 1, "size": 10}'
+# ─── PRODUCT SEARCH (with pagination) ────────────────────
+curl "$BASE/rs/api/v1/products/search?query=protein+bars&page=0&size=20"
+curl "$BASE/rs/api/v1/products/search?query=chips&page=1&size=10&sort_by=price_asc"
 
 # ─── SEARCH (Legacy - no pagination) ─────────────────────
 curl -X POST "$BASE/rs/search" -H "Content-Type: application/json" \
@@ -563,7 +610,7 @@ CUSTOMIZE YOUR FEED (bottom sheet)
   |-- Save & Refresh Feed -> POST /home/curated        -> [Product Cards] (random, preferences accepted)
 
 SEARCH / CATALOGUE (use Unified Products API)
-  |-- POST /api/v1/products                            -> [Product Cards] with pagination & filters
+  |-- GET or POST /api/v1/products                     -> [Product Cards] with pagination & filters
 
 [Product Card] tapped
   |-- GET /product/{id}                                -> Full PDP
@@ -577,4 +624,4 @@ SCANNER
 
 ---
 
-*Last updated: Mar 2026*
+*Last updated: 14 Mar 2026*

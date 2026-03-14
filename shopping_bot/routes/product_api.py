@@ -653,16 +653,18 @@ def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[
     return validated if validated else None, None
 
 
-@bp.route("/api/v1/products", methods=["POST"])
+@bp.route("/api/v1/products", methods=["GET", "POST"])
 def get_products_unified() -> Tuple[Dict[str, Any], int]:
     """
     Unified Products API: Search and/or browse products with pagination and filters.
 
-    This endpoint combines the capabilities of:
-    - POST /search: Text search with filters
-    - GET /api/v1/catalogue: Category browsing with pagination
+    Supports both GET (query params) and POST (JSON body).
 
-    Request Body:
+    GET Query Parameters:
+        query, subcategory, page, size, sort_by,
+        price_range, flean_score, preferences (comma-separated), dietary (comma-separated)
+
+    POST Request Body:
         {
             "query": "protein bars",              // optional - text search
             "subcategory": "f_and_b/food/...",    // optional - ES category path
@@ -707,21 +709,60 @@ def get_products_unified() -> Tuple[Dict[str, Any], int]:
         }
     """
     try:
-        body = request.get_json(force=True, silent=True) or {}
+        if request.method == "GET":
+            query = request.args.get("query", "").strip() or None
+            subcategory = request.args.get("subcategory", "").strip() or None
 
-        # Extract and validate query
-        query = body.get("query")
-        if query is not None:
-            if not isinstance(query, str):
-                return _error_response("INVALID_QUERY", "'query' must be a string", 400)
-            query = query.strip() if query else None
+            try:
+                page = max(0, int(request.args.get("page", 0)))
+            except (TypeError, ValueError):
+                page = 0
+            try:
+                size = max(1, min(int(request.args.get("size", 20)), 100))
+            except (TypeError, ValueError):
+                size = 20
 
-        # Extract and validate subcategory
-        subcategory = body.get("subcategory")
-        if subcategory is not None:
-            if not isinstance(subcategory, str):
-                return _error_response("INVALID_SUBCATEGORY", "'subcategory' must be a string", 400)
-            subcategory = subcategory.strip() if subcategory else None
+            sort_by = request.args.get("sort_by", "relevance")
+
+            raw_filters: Dict[str, Any] = {}
+            if request.args.get("price_range"):
+                raw_filters["price_range"] = request.args["price_range"]
+            if request.args.get("flean_score"):
+                raw_filters["flean_score"] = request.args["flean_score"]
+            if request.args.get("preferences"):
+                raw_filters["preferences"] = [
+                    p.strip() for p in request.args["preferences"].split(",") if p.strip()
+                ]
+            if request.args.get("dietary"):
+                raw_filters["dietary"] = [
+                    d.strip() for d in request.args["dietary"].split(",") if d.strip()
+                ]
+        else:
+            body = request.get_json(force=True, silent=True) or {}
+
+            query = body.get("query")
+            if query is not None:
+                if not isinstance(query, str):
+                    return _error_response("INVALID_QUERY", "'query' must be a string", 400)
+                query = query.strip() if query else None
+
+            subcategory = body.get("subcategory")
+            if subcategory is not None:
+                if not isinstance(subcategory, str):
+                    return _error_response("INVALID_SUBCATEGORY", "'subcategory' must be a string", 400)
+                subcategory = subcategory.strip() if subcategory else None
+
+            try:
+                page = max(0, int(body.get("page", 0)))
+            except (TypeError, ValueError):
+                page = 0
+            try:
+                size = max(1, min(int(body.get("size", 20)), 100))
+            except (TypeError, ValueError):
+                size = 20
+
+            sort_by = body.get("sort_by", "relevance")
+            raw_filters = body.get("filters") or {}
 
         # Require at least one of query or subcategory
         if not query and not subcategory:
@@ -731,18 +772,6 @@ def get_products_unified() -> Tuple[Dict[str, Any], int]:
                 400
             )
 
-        # Parse pagination
-        try:
-            page = max(0, int(body.get("page", 0)))
-        except (TypeError, ValueError):
-            page = 0
-        try:
-            size = max(1, min(int(body.get("size", 20)), 100))
-        except (TypeError, ValueError):
-            size = 20
-
-        # Validate sort_by
-        sort_by = body.get("sort_by", "relevance")
         if sort_by and sort_by not in VALID_SORT_OPTIONS:
             return _error_response(
                 "INVALID_SORT",
@@ -751,8 +780,7 @@ def get_products_unified() -> Tuple[Dict[str, Any], int]:
             )
 
         # Validate filters
-        raw_filters = body.get("filters")
-        validated_filters, filter_error = _validate_filters(raw_filters)
+        validated_filters, filter_error = _validate_filters(raw_filters if raw_filters else None)
         if filter_error:
             return _error_response("INVALID_FILTERS", filter_error, 400)
 

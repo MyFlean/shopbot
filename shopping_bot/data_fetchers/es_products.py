@@ -320,16 +320,14 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     else:
         level_text, level = "Not Rated", "unknown"
 
-    # Calculate display score (0-10 scale from percentile)
+    # Pass raw adjusted_score from ES as-is
     if flean_score is not None:
-        score_int = round(flean_score) if flean_score <= 10 else round(flean_score / 10)
-        score_display = f"{score_int}/10"
+        score_display = str(round(flean_score, 2))
     else:
-        score_int = None
         score_display = "N/A"
 
     flean_badge = {
-        "score": score_int,
+        "score": flean_score,
         "score_display": score_display,
         "level": level,
         "level_text": level_text,

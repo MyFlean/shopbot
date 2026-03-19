@@ -865,7 +865,6 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
         },
         "query": {"bool": {"filter": [], "should": [], "minimum_should_match": 0}},
         "sort": sort_config,
-        "min_score": 0.5,  # Add minimum score threshold
     }
 
     bq = body["query"]["bool"]
@@ -1432,6 +1431,10 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 shoulds.append({"term": {"package_claims.marketing_keywords": {"value": tv, "boost": 1.15}}})
     except Exception:
         pass
+
+    # Add min_score threshold only for text queries (not browse mode)
+    if q_text:
+        body["min_score"] = 0.5
 
     return body
 

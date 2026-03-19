@@ -67,12 +67,16 @@ def _validate_request(data: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[st
     errors = []
     params = {}
     
-    # 1. Query (required)
+    # 1. Query (required unless category context is provided)
     query = data.get("query") or data.get("q")
-    if not query or not isinstance(query, str) or not query.strip():
-        errors.append("'query' is required and must be a non-empty string")
-    else:
+    has_category = bool(
+        data.get("category_paths") or data.get("categories") or
+        data.get("category_group") or data.get("category")
+    )
+    if query and isinstance(query, str) and query.strip():
         params["q"] = query.strip()
+    elif not has_category:
+        errors.append("'query' or a category filter (category_paths / category_group) is required")
     
     # 2. Category group (optional)
     category_group = data.get("category_group") or data.get("category")

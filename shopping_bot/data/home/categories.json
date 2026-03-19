@@ -9,12 +9,28 @@
       "display_order": 1
     },
     {
+      "id": "packaged_meals",
+      "name": "Packaged Meals",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Packaged+Meals.png",
+      "deep_link": "flean://category/packaged-meals",
+      "category_path": "f_and_b/food/packaged_meals",
+      "display_order": 2
+    },
+    {
       "id": "dairy_bakery",
       "name": "Dairy & Bakery",
       "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Dairy+%26+Bakery.png",
       "deep_link": "flean://category/dairy-bakery",
       "category_path": "f_and_b/food/dairy_and_bakery",
-      "display_order": 2
+      "display_order": 3
+    },
+    {
+      "id": "frozen_treats",
+      "name": "Frozen Treats",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Frozen+Treats.png",
+      "deep_link": "flean://category/frozen-treats",
+      "category_path": "f_and_b/food/frozen_treats",
+      "display_order": 4
     },
     {
       "id": "power_breakfast",
@@ -22,7 +38,15 @@
       "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Power+Breakfast.png",
       "deep_link": "flean://category/power-breakfast",
       "category_path": "f_and_b/food/breakfast_essentials",
-      "display_order": 3
+      "display_order": 5
+    },
+    {
+      "id": "noodles_vermicelli",
+      "name": "Noodles & Vermicelli",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Noodles+Vermicelli.png",
+      "deep_link": "flean://category/noodles-vermicelli",
+      "category_path": "f_and_b/food/noodles_and_vermicelli",
+      "display_order": 6
     },
     {
       "id": "sweet_treats",
@@ -30,39 +54,47 @@
       "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Sweet+Treats.webp",
       "deep_link": "flean://category/sweet-treats",
       "category_path": "f_and_b/food/sweet_treats",
-      "display_order": 4
+      "display_order": 7
     },
     {
-      "id": "beverages",
-      "name": "Beverages",
-      "icon_url": "https://example.com/icons/beverages.png",
-      "deep_link": "flean://category/beverages",
-      "category_path": "f_and_b/beverages",
-      "display_order": 5
+      "id": "biscuits_crackers",
+      "name": "Biscuits & Crackers",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Biscuits+Crackers.png",
+      "deep_link": "flean://category/biscuits-crackers",
+      "category_path": "f_and_b/food/biscuits_and_crackers",
+      "display_order": 8
     },
     {
-      "id": "personal_care",
-      "name": "Personal Care",
-      "icon_url": "https://example.com/icons/personal-care.png",
-      "deep_link": "flean://category/personal-care",
-      "category_path": "personal_care",
-      "display_order": 6
+      "id": "spreads_condiments",
+      "name": "Spreads & Condiments",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Spreads+Condiments.png",
+      "deep_link": "flean://category/spreads-condiments",
+      "category_path": "f_and_b/food/spreads_and_condiments",
+      "display_order": 9
     },
     {
       "id": "frozen_foods",
       "name": "Frozen Foods",
-      "icon_url": "https://example.com/icons/frozen-foods.png",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Frozen+Foods.png",
       "deep_link": "flean://category/frozen-foods",
       "category_path": "f_and_b/food/frozen_foods",
-      "display_order": 7
+      "display_order": 10
     },
     {
-      "id": "pantry_staples",
-      "name": "Pantry Staples",
-      "icon_url": "https://example.com/icons/pantry-staples.png",
-      "deep_link": "flean://category/pantry-staples",
-      "category_path": "f_and_b/food/packaged_meals",
-      "display_order": 8
+      "id": "cold_drinks_juices",
+      "name": "Cold Drinks & Juices",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Cold+Drinks+Juices.png",
+      "deep_link": "flean://category/cold-drinks-juices",
+      "category_path": "f_and_b/beverages/sodas_juices_and_more",
+      "display_order": 11
+    },
+    {
+      "id": "tea_coffee",
+      "name": "Tea, Coffee & More",
+      "icon_url": "https://flean-product-images.s3.ap-south-1.amazonaws.com/product-images/Tea+Coffee.png",
+      "deep_link": "flean://category/tea-coffee",
+      "category_path": "f_and_b/beverages/tea_coffee_and_more",
+      "display_order": 12
     }
   ]
 }

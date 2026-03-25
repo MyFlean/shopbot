@@ -981,6 +981,15 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 "bool": {"should": should_cat, "minimum_should_match": 1}
             })
 
+    # Food type filter (veg / nonveg) — uses description markers
+    food_type = p.get("food_type")
+    if isinstance(food_type, str) and food_type.strip():
+        ft = food_type.strip().lower()
+        if ft == "veg":
+            bq.setdefault("must_not", []).append({"match_phrase": {"description": "Non Veg"}})
+        elif ft == "nonveg":
+            musts.append({"match_phrase": {"description": "Non Veg"}})
+
     # Price range filter
     price_min = p.get("price_min")
     price_max = p.get("price_max")

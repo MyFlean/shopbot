@@ -37,6 +37,7 @@ VALID_PRICE_RANGES = {"below_99", "100_249", "250_499", "above_500"}
 VALID_FLEAN_SCORES = {"10", "9_plus", "8_plus", "7_plus"}
 VALID_PREFERENCES = {"no_palm_oil", "no_added_sugar", "no_additives"}
 VALID_DIETARY = {"dairy_free", "gluten_free"}
+VALID_FOOD_TYPES = {"veg", "nonveg"}
 
 
 def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -78,6 +79,12 @@ def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[
             return None, f"Invalid dietary: {invalid}. Valid: {sorted(VALID_DIETARY)}"
         validated["dietary"] = dietary
 
+    food_type = filters.get("food_type")
+    if food_type:
+        if food_type not in VALID_FOOD_TYPES:
+            return None, f"Invalid food_type: '{food_type}'. Valid: {sorted(VALID_FOOD_TYPES)}"
+        validated["food_type"] = food_type
+
     return validated if validated else None, None
 
 
@@ -118,6 +125,10 @@ def simple_search() -> tuple[Dict[str, Any], int]:
 
         log.info(f"SIMPLE_SEARCH_REQUEST | query='{query}' | sort_by='{sort_by}' | filters={validated_filters}")
 
+        food_type = data.get("food_type")
+        if not food_type and validated_filters:
+            food_type = validated_filters.get("food_type")
+
         fetcher = get_es_fetcher()
         params: Dict[str, Any] = {
             "q": query,
@@ -125,6 +136,8 @@ def simple_search() -> tuple[Dict[str, Any], int]:
             "sort_by": sort_by if sort_by != "relevance" else None,
             "filters": validated_filters,
         }
+        if food_type and food_type in ("veg", "nonveg"):
+            params["food_type"] = food_type
         result = fetcher.search(params)
 
         raw_products = result.get("products", [])

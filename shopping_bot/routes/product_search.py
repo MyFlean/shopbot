@@ -215,7 +215,19 @@ def _validate_request(data: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[st
     else:
         params["size"] = DEFAULT_SIZE
     
-    # 11. Sort by (optional)
+    # 11. Food type (optional) — veg / nonveg
+    food_type = data.get("food_type") or data.get("diet_type")
+    if food_type:
+        if isinstance(food_type, str):
+            food_type = food_type.strip().lower()
+            if food_type in ("veg", "nonveg"):
+                params["food_type"] = food_type
+            else:
+                errors.append("'food_type' must be 'veg' or 'nonveg'")
+        else:
+            errors.append("'food_type' must be a string")
+
+    # 12. Sort by (optional)
     sort_by = data.get("sort_by") or data.get("sort")
     if sort_by:
         valid_sorts = {"relevance", "price_asc", "price_desc", "quality", "rating"}
@@ -398,6 +410,7 @@ def product_search() -> tuple[Dict[str, Any], int]:
             for key in ("query", "q", "category_group", "category",
                         "price_min", "price_max", "min_price", "max_price",
                         "healthy_only", "min_flean_percentile",
+                        "food_type", "diet_type",
                         "size", "limit", "page", "sort_by", "sort"):
                 val = request.args.get(key)
                 if val is not None:

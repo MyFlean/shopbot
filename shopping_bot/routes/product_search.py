@@ -227,13 +227,24 @@ def _validate_request(data: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[st
         else:
             errors.append("'food_type' must be a string")
 
-    # 12. Sort by (optional)
+    # 12. Flean score tier (optional) — friendly quality filter
+    flean_tier = data.get("flean_score") or data.get("score_tier")
+    if flean_tier:
+        valid_tiers = {"10", "9_plus", "8_plus", "7_plus"}
+        if isinstance(flean_tier, str) and flean_tier.strip() in valid_tiers:
+            params["flean_score"] = flean_tier.strip()
+        else:
+            errors.append(f"'flean_score' must be one of: {', '.join(sorted(valid_tiers))}")
+
+    # 13. Sort by (optional)
     sort_by = data.get("sort_by") or data.get("sort")
     if sort_by:
-        valid_sorts = {"relevance", "price_asc", "price_desc", "quality", "rating"}
+        valid_sorts = {"relevance", "price_asc", "price_desc", "quality", "rating",
+                       "protein_desc", "fiber_desc", "fat_asc"}
         if isinstance(sort_by, str) and sort_by.lower() in valid_sorts:
             params["sort_by"] = sort_by.lower()
-        # Silently ignore invalid sort values (use default)
+        else:
+            errors.append(f"'sort_by' must be one of: {', '.join(sorted(valid_sorts))}")
     
     # Return result
     if errors:
@@ -411,6 +422,7 @@ def product_search() -> tuple[Dict[str, Any], int]:
                         "price_min", "price_max", "min_price", "max_price",
                         "healthy_only", "min_flean_percentile",
                         "food_type", "diet_type",
+                        "flean_score", "score_tier",
                         "size", "limit", "page", "sort_by", "sort"):
                 val = request.args.get(key)
                 if val is not None:

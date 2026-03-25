@@ -1014,6 +1014,15 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             pass
 
+    # Flean score tier filter (e.g. "9_plus" → 80th percentile)
+    flean_tier = p.get("flean_score")
+    if isinstance(flean_tier, str) and flean_tier in FLEAN_SCORE_FILTERS:
+        filters.append({
+            "range": {
+                "stats.adjusted_score_percentiles.subcategory_percentile": FLEAN_SCORE_FILTERS[flean_tier]
+            }
+        })
+
     # 2) Domain-specific filters (skin/personal care)
     # Apply skin-specific params when category_group indicates personal care
     try:

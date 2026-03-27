@@ -160,16 +160,16 @@ def _extract_nutrition_from_source(src: Dict[str, Any]) -> Dict[str, Optional[fl
 def _generate_macro_tags(nutrition: Dict[str, Optional[float]], max_tags: int = 2) -> List[Dict[str, Any]]:
     """Generate top N macro tags sorted by value descending."""
     macro_config = [
-        ("protein_g", "protein", "g", "{v} gms of Protein"),
-        ("carbs_g", "carbs", "g", "{v} gms of Carbs"),
-        ("fat_g", "fat", "g", "{v} gms of Fat"),
-        ("calories", "calories", "kcal", "{v} Calories"),
+        ("protein_g", "protein", "g", "{v} g Protein"),
+        ("carbs_g", "carbs", "g", "{v} g Carbs"),
+        ("fat_g", "fat", "g", "{v} g Fat"),
+        ("calories", "calories", "kcal", "{v} kcal"),
     ]
     available = []
     for field, nutrient, unit, fmt in macro_config:
         val = nutrition.get(field)
         if val is not None and val > 0:
-            display_val = int(val) if val == int(val) else round(val, 1)
+            display_val = round(val)
             available.append({
                 "label": fmt.format(v=display_val),
                 "nutrient": nutrient,
@@ -243,14 +243,30 @@ def transform_to_product_card(src: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _get_score_status(percentile: float) -> str:
-    """Derive score card status from percentile for UI color coding."""
-    if percentile >= 70:
-        return "good"
-    elif percentile >= 40:
-        return "caution"
-    else:
-        return "warning"
+SCORE_TIERS: List[Dict[str, Any]] = [
+    {"min": 90, "status": "elite",   "label": "Best in Class",  "color": "#046A38"},
+    {"min": 75, "status": "top",     "label": "Top Tier",       "color": "#22C55E"},
+    {"min": 50, "status": "average", "label": "Average Choice",  "color": "#6B7280"},
+    {"min": 25, "status": "subpar",  "label": "Sub-Par",        "color": "#F59E0B"},
+    {"min": 0,  "status": "villain", "label": "The Villain Zone","color": "#EF4444"},
+]
+
+SCORE_CARD_ICONS: Dict[str, str] = {
+    "flean_rank": "https://img.flean.ai/assets/Pdp-Icons/01.svg",
+    "protein":    "https://img.flean.ai/assets/Pdp-Icons/02.svg",
+    "fiber":      "https://img.flean.ai/assets/Pdp-Icons/03.svg",
+    "sweeteners": "https://img.flean.ai/assets/Pdp-Icons/04.svg",
+    "oils":       "https://img.flean.ai/assets/Pdp-Icons/05.svg",
+    "calories":   "https://img.flean.ai/assets/Pdp-Icons/06.svg",
+}
+
+
+def _get_score_tier(percentile: float) -> Dict[str, str]:
+    """Return status, label, and hex color for a given percentile (5-tier system)."""
+    for tier in SCORE_TIERS:
+        if percentile >= tier["min"]:
+            return {"status": tier["status"], "label": tier["label"], "color": tier["color"]}
+    return SCORE_TIERS[-1]
 
 
 def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
@@ -309,18 +325,15 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     if stats.get("adjusted_score_percentiles"):
         flean_percentile = stats["adjusted_score_percentiles"].get("subcategory_percentile")
 
-    # Derive level from percentile
+    # Derive level from percentile (5-tier)
     if flean_percentile is not None:
-        if flean_percentile >= 70:
-            level_text, level = "100% Safe", "safe"
-        elif flean_percentile >= 40:
-            level_text, level = "Use with Caution", "caution"
-        else:
-            level_text, level = "Not Recommended", "warning"
+        _tier = _get_score_tier(flean_percentile)
+        level = _tier["status"]
+        level_text = _tier["label"]
+        level_color = _tier["color"]
     else:
-        level_text, level = "Not Rated", "unknown"
+        level, level_text, level_color = "unknown", "Not Rated", "#6B7280"
 
-    # Pass raw adjusted_score from ES as-is
     if flean_score is not None:
         score_display = str(round(flean_score, 2))
     else:
@@ -331,6 +344,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "score_display": score_display,
         "level": level,
         "level_text": level_text,
+        "color": level_color,
     }
 
     # ── score_cards (named object with direct access) ──
@@ -339,72 +353,95 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     # Flean Rank card
     if flean_percentile is not None:
         rank_pct = round(100 - flean_percentile, 1)
+        _tier = _get_score_tier(flean_percentile)
         score_cards["flean_rank"] = {
             "title": "Flean Rank",
             "value": f"Top {rank_pct}%",
             "subtitle": subcategory_label,
             "percentile": round(flean_percentile, 1),
-            "status": _get_score_status(flean_percentile),
+            "status": _tier["status"],
+            "status_label": _tier["label"],
+            "color": _tier["color"],
+            "icon_url": SCORE_CARD_ICONS["flean_rank"],
         }
 
     # Protein card
     protein_pctile = (stats.get("protein_percentiles") or {}).get("subcategory_percentile")
     if protein_pctile is not None:
         prot_rank = round(100 - protein_pctile, 1)
+        _tier = _get_score_tier(protein_pctile)
         score_cards["protein"] = {
             "title": "Protein",
             "value": f"Top {prot_rank}%",
             "subtitle": "Efficiency",
             "percentile": round(protein_pctile, 1),
-            "status": _get_score_status(protein_pctile),
+            "status": _tier["status"],
+            "status_label": _tier["label"],
+            "color": _tier["color"],
+            "icon_url": SCORE_CARD_ICONS["protein"],
         }
 
     # Fiber card
     fiber_pctile = (stats.get("fiber_percentiles") or {}).get("subcategory_percentile")
     if fiber_pctile is not None:
         fib_rank = round(100 - fiber_pctile, 1)
+        _tier = _get_score_tier(fiber_pctile)
         score_cards["fiber"] = {
             "title": "Fiber",
             "value": f"Top {fib_rank}%",
             "subtitle": "Efficiency",
             "percentile": round(fiber_pctile, 1),
-            "status": _get_score_status(fiber_pctile),
+            "status": _tier["status"],
+            "status_label": _tier["label"],
+            "color": _tier["color"],
+            "icon_url": SCORE_CARD_ICONS["fiber"],
         }
 
     # Sweeteners card
     sweetener_pctile = (stats.get("sweetener_penalty_percentiles") or {}).get("subcategory_percentile")
     if sweetener_pctile is not None:
         sw_level = "Low" if sweetener_pctile >= 70 else ("Medium" if sweetener_pctile >= 40 else "High")
+        _tier = _get_score_tier(sweetener_pctile)
         score_cards["sweeteners"] = {
             "title": "Sweeteners",
             "value": sw_level,
             "subtitle": f"Percentile: {round(sweetener_pctile)}",
             "percentile": round(sweetener_pctile, 1),
-            "status": _get_score_status(sweetener_pctile),
+            "status": _tier["status"],
+            "status_label": _tier["label"],
+            "color": _tier["color"],
+            "icon_url": SCORE_CARD_ICONS["sweeteners"],
         }
 
     # Oils card
     oil_pctile = (stats.get("oil_penalty_percentiles") or {}).get("subcategory_percentile")
     if oil_pctile is not None:
         oil_level = "Low" if oil_pctile >= 70 else ("Medium" if oil_pctile >= 40 else "High")
+        _tier = _get_score_tier(oil_pctile)
         score_cards["oils"] = {
             "title": "Oils",
             "value": oil_level,
             "subtitle": f"Percentile: {round(oil_pctile)}",
             "percentile": round(oil_pctile, 1),
-            "status": _get_score_status(oil_pctile),
+            "status": _tier["status"],
+            "status_label": _tier["label"],
+            "color": _tier["color"],
+            "icon_url": SCORE_CARD_ICONS["oils"],
         }
 
     # Watch-outs card (always include, visible flag indicates if should be shown)
     empty_food_pctile = (stats.get("empty_food_penalty_percentiles") or {}).get("subcategory_percentile")
     if empty_food_pctile is not None:
         is_ultra_processed = empty_food_pctile < 40
+        _tier = _get_score_tier(empty_food_pctile)
         score_cards["watch_outs"] = {
             "title": "Watch-outs",
             "value": "Ultra-Processed" if is_ultra_processed else "None",
             "subtitle": "Caution" if is_ultra_processed else "Good",
             "percentile": round(empty_food_pctile, 1),
-            "status": "warning" if is_ultra_processed else "good",
+            "status": _tier["status"],
+            "status_label": _tier["label"],
+            "color": _tier["color"],
             "visible": is_ultra_processed,
         }
 
@@ -413,12 +450,20 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         cal_val = round(nutrition["calories"])
         cal_basis = nutritional_data.get("qty", "100 g")
         calories_pctile = (stats.get("calories_penalty_percentiles") or {}).get("subcategory_percentile")
+        if calories_pctile is not None:
+            _tier = _get_score_tier(calories_pctile)
+            _cal_status, _cal_label, _cal_color = _tier["status"], _tier["label"], _tier["color"]
+        else:
+            _cal_status, _cal_label, _cal_color = "average", "Average Choice", "#6B7280"
         score_cards["calories"] = {
             "title": "Calories",
             "value": f"{cal_val} kcal",
             "subtitle": cal_basis,
             "percentile": round(calories_pctile, 1) if calories_pctile else None,
-            "status": "neutral",
+            "status": _cal_status,
+            "status_label": _cal_label,
+            "color": _cal_color,
+            "icon_url": SCORE_CARD_ICONS["calories"],
         }
 
     # ── notes (static display notes for UI) ──
@@ -794,7 +839,6 @@ def _build_filter_clauses(filters: Optional[Dict[str, Any]]) -> List[Dict[str, A
         for diet_filter in dietary:
             if diet_filter in DIETARY_FILTERS:
                 diet_terms = DIETARY_FILTERS[diet_filter]
-                # Each dietary restriction must be matched (AND logic between restrictions)
                 filter_clauses.append({
                     "bool": {
                         "should": [
@@ -816,7 +860,24 @@ def _build_filter_clauses(filters: Optional[Dict[str, Any]]) -> List[Dict[str, A
                         "minimum_should_match": 1
                     }
                 })
-    
+
+    # 5. Nutrition Slider Filters (protein >= X, carbs <= X, fat <= X)
+    _NUTRITION_ES_FIELDS = {
+        "protein": "category_data.nutritional.nutri_breakdown_updated.protein g",
+        "carbs":   "category_data.nutritional.nutri_breakdown_updated.carbohydrate g",
+        "fat":     "category_data.nutritional.nutri_breakdown_updated.total fat g",
+    }
+    nutrition = filters.get("nutrition")
+    if isinstance(nutrition, dict):
+        for key, value in nutrition.items():
+            es_field = _NUTRITION_ES_FIELDS.get(key)
+            if not es_field or not isinstance(value, (int, float)) or value <= 0:
+                continue
+            if key == "protein":
+                filter_clauses.append({"range": {es_field: {"gte": value}}})
+            else:
+                filter_clauses.append({"range": {es_field: {"lte": value}}})
+
     return filter_clauses
 
 

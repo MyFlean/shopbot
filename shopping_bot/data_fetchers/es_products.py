@@ -181,9 +181,12 @@ def _generate_macro_tags(nutrition: Dict[str, Optional[float]], max_tags: int = 
     return [{k: v for k, v in tag.items() if k != "_sort"} for tag in available[:max_tags]]
 
 
-def transform_to_product_card(src: Dict[str, Any]) -> Dict[str, Any]:
+def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Shared transformer: any product dict → standardized product card.
+
+    Returns ``None`` for products whose visibility is in HIDDEN_VISIBILITY
+    (e.g. "hardstop"), so callers must filter out None values.
 
     Handles **two input formats**:
       1. Raw ES ``_source`` (from search_by_ids, search_by_subcategory, get_product_by_id)
@@ -195,6 +198,10 @@ def transform_to_product_card(src: Dict[str, Any]) -> Dict[str, Any]:
     so that the Flutter developer always receives the same JSON shape for
     product listings / grids.
     """
+    vis = src.get("visibility", "visible")
+    if vis in HIDDEN_VISIBILITY:
+        return None
+
     # Detect format: raw _source has 'category_data'; pre-transformed does not.
     is_raw_source = "category_data" in src
 
@@ -772,6 +779,9 @@ DIETARY_FILTERS = {
     "pcos_friendly": ["PCOS FRIENDLY", "LOW GI"],
 }
 
+VISIBILITY_FILTER = {"term": {"visibility": "visible"}}
+HIDDEN_VISIBILITY = {"hardstop"}
+
 
 def _build_filter_clauses(filters: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
@@ -953,6 +963,8 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
     filters: List[Dict[str, Any]] = bq["filter"]
     shoulds: List[Dict[str, Any]] = bq["should"]
     musts: List[Dict[str, Any]] = bq.setdefault("must", [])
+
+    filters.append(VISIBILITY_FILTER)
 
     # Apply filters from simple search API (price_range, flean_score, preferences, dietary)
     simple_search_filters = p.get("filters")
@@ -1658,7 +1670,7 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
         },
         "query": {
             "function_score": {
-                "query": {"bool": {"filter": [], "must": [], "should": [], "must_not": [], "minimum_should_match": 0}},
+                "query": {"bool": {"filter": [VISIBILITY_FILTER], "must": [], "should": [], "must_not": [], "minimum_should_match": 0}},
                 "functions": [
                     {
                         "field_value_factor": {
@@ -2617,6 +2629,7 @@ class ElasticsearchProductsFetcher:
                 "query": {
                     "bool": {
                         "filter": [
+                            VISIBILITY_FILTER,
                             {"bool": {
                                 "should": [
                                     {"term": {"category_paths.keyword": subcat}},
@@ -2713,6 +2726,7 @@ class ElasticsearchProductsFetcher:
                 "query": {
                     "bool": {
                         "filter": [
+                            VISIBILITY_FILTER,
                             {"bool": {
                                 "should": [
                                     {"term": {"category_paths.keyword": subcat}},
@@ -2803,7 +2817,7 @@ class ElasticsearchProductsFetcher:
                 "query": {
                     "bool": {
                         "filter": [
-                            # Hard filter on category_paths
+                            VISIBILITY_FILTER,
                             {
                                 "bool": {
                                     "should": [
@@ -2914,7 +2928,7 @@ class ElasticsearchProductsFetcher:
             sort_config = _build_sort_config(sort_by if sort_by != "relevance" else None)
             
             # Build filter clauses from filters object
-            filter_clauses: List[Dict[str, Any]] = []
+            filter_clauses: List[Dict[str, Any]] = [VISIBILITY_FILTER]
             if filters:
                 filter_clauses.extend(_build_filter_clauses(filters))
             

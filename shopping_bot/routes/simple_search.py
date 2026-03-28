@@ -171,7 +171,8 @@ def simple_search() -> tuple[Dict[str, Any], int]:
         for raw in raw_products:
             try:
                 card = transform_to_product_card(raw)
-                product_cards.append(card)
+                if card is not None:
+                    product_cards.append(card)
             except Exception as e:
                 log.warning(f"PRODUCT_CARD_ERROR | id={raw.get('id', '?')} | error={e}")
                 continue

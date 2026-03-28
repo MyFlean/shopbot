@@ -212,7 +212,7 @@ def get_healthier_alternatives(product_id: str) -> Tuple[Dict[str, Any], int]:
             return _error_response("PRODUCT_NOT_FOUND", f"Product '{pid}' not found", 404)
 
         source_card = transform_to_product_card(result["source_product"])
-        alt_cards = [transform_to_product_card(a) for a in result.get("alternatives", []) if a]
+        alt_cards = [c for c in (transform_to_product_card(a) for a in result.get("alternatives", []) if a) if c is not None]
 
         log.info(f"ALTERNATIVES_SUCCESS | id={pid} | found={len(alt_cards)}")
 
@@ -279,7 +279,7 @@ def get_recommended_products(product_id: str) -> Tuple[Dict[str, Any], int]:
             if not result.get("products"):
                 return _error_response("PRODUCT_NOT_FOUND", f"Product '{pid}' not found or has no category", 404)
 
-        product_cards = [transform_to_product_card(p) for p in result.get("products", []) if p]
+        product_cards = [c for c in (transform_to_product_card(p) for p in result.get("products", []) if p) if c is not None]
 
         log.info(f"RECOMMENDED_SUCCESS | id={pid} | found={len(product_cards)}")
 
@@ -492,7 +492,7 @@ def scanner_lookup() -> Tuple[Dict[str, Any], int]:
 
         raw_products = result.get("products", [])
         # Transform to standardized product cards
-        product_cards = [transform_to_product_card(p) for p in raw_products if p]
+        product_cards = [c for c in (transform_to_product_card(p) for p in raw_products if p) if c is not None]
 
         log.info(f"SCANNER_COMPLETE | query={search_query} | found={len(product_cards)}")
 
@@ -548,7 +548,7 @@ def get_catalogue() -> Tuple[Dict[str, Any], int]:
         result = fetcher.search_by_subcategory(subcategory=subcategory, page=page, size=size, sort_by=sort_by)
 
         raw_products = result.get("products", [])
-        product_cards = [transform_to_product_card(p) for p in raw_products if p]
+        product_cards = [c for c in (transform_to_product_card(p) for p in raw_products if p) if c is not None]
         meta = result.get("meta", {})
 
         log.info(f"CATALOGUE_COMPLETE | subcategory={subcategory} | total={meta.get('total', 0)} | returned={len(product_cards)}")
@@ -853,7 +853,7 @@ def get_products_unified() -> Tuple[Dict[str, Any], int]:
 
         # Transform products to standardized product cards
         raw_products = result.get("products", [])
-        product_cards = [transform_to_product_card(p) for p in raw_products if p]
+        product_cards = [c for c in (transform_to_product_card(p) for p in raw_products if p) if c is not None]
 
         log.info(
             f"PRODUCTS_UNIFIED_COMPLETE | query={query} | subcategory={subcategory} | "

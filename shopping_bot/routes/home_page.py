@@ -111,7 +111,7 @@ def _fetch_products_by_ids(product_ids: List[str]) -> List[Dict[str, Any]]:
     try:
         fetcher = get_es_fetcher()
         es_products = fetcher.search_by_ids(product_ids)
-        cards = [transform_to_product_card(src) for src in es_products if src]
+        cards = [c for c in (transform_to_product_card(src) for src in es_products if src) if c is not None]
         log.debug(f"ES_FETCH | requested={len(product_ids)} | returned={len(cards)}")
         return cards
     except Exception as e:

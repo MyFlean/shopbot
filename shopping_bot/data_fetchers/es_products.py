@@ -234,6 +234,8 @@ def transform_to_product_card(src: Dict[str, Any]) -> Dict[str, Any]:
         "mrp": src.get("mrp"),
         "currency": "INR",
         "qty": qty,
+        "size": src.get("size", ""),
+        "visibility": src.get("visibility", "visible"),
         "image_url": image_url,
         "macro_tags": macro_tags,
         "nutrition": nutrition_clean if nutrition_clean else None,
@@ -313,6 +315,8 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "image_url": _get_best_image(hero_image) or "",
         "image_urls": {k: v for k, v in (hero_image if isinstance(hero_image, dict) else {}).items() if isinstance(v, str) and v.startswith("http")},
         "qty": nutritional_data.get("qty", ""),
+        "size": src.get("size", ""),
+        "visibility": src.get("visibility", "visible"),
         "description": _clean_text(src.get("description", "")) or "",
         "in_stock": in_stock,
         "category": category_label,
@@ -938,6 +942,7 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 "category_data.nutritional.nutri_breakdown_updated.*",
                 "category_data.nutritional.qty",
                 "category_data.nutritional.raw_text",
+                "size", "visibility",
             ]
         },
         "query": {"bool": {"filter": [], "should": [], "minimum_should_match": 0}},
@@ -1648,6 +1653,7 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 "efficacy.aspect_name", "efficacy.sentiment_score", "efficacy.mention_count",
                 "side_effects.effect_name", "side_effects.severity_score", "side_effects.sentiment_score",
                 "package_claims.health_claims", "package_claims.dietary_labels",
+                "size", "visibility",
             ]
         },
         "query": {
@@ -2097,6 +2103,8 @@ def _transform_results(raw_response: Dict[str, Any], skip_rerank: bool = False) 
             
             # Quantity/weight info
             "qty": nutritional_data.get("qty", ""),
+            "size": src.get("size", ""),
+            "visibility": src.get("visibility", "visible"),
             
             # Ingredients
             "ingredients": _clean_text(src.get("ingredients", {}).get("raw_text", "")),
@@ -2467,7 +2475,8 @@ class ElasticsearchProductsFetcher:
                         "id", "name", "brand", "price", "mrp", "description", "use",
                         "hero_image.*", "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "ingredients.*", "tags_and_sentiments.*",
-                        "flean_score.*", "stats.*", "availability.*", "cons_list"
+                        "flean_score.*", "stats.*", "availability.*", "cons_list",
+                        "size", "visibility",
                     ]
                 },
                 "query": {
@@ -2602,6 +2611,7 @@ class ElasticsearchProductsFetcher:
                         "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "flean_score.*", "stats.*",
                         "ingredients.*", "description", "availability.*", "cons_list",
+                        "size", "visibility",
                     ]
                 },
                 "query": {
@@ -2697,6 +2707,7 @@ class ElasticsearchProductsFetcher:
                         "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "flean_score.*", "stats.*",
                         "ingredients.*", "description", "availability.*", "cons_list",
+                        "size", "visibility",
                     ]
                 },
                 "query": {
@@ -2979,6 +2990,7 @@ class ElasticsearchProductsFetcher:
                         "category_data.nutritional.nutri_breakdown_updated.*",
                         "category_data.nutritional.qty",
                         "category_data.nutritional.raw_text",
+                        "size", "visibility",
                     ]
                 },
                 "query": query_body,

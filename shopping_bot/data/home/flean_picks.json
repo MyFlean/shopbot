@@ -1,0 +1,56 @@
+{
+  "collections": [
+    {
+      "key": "high_protein_snacks",
+      "name": "High Protein Snacks",
+      "product_ids": [
+        "01K1B1BPJ87WGAKBJ9DMKWHCDK",
+        "01K1B1BQG3TKQ4GYZ2ZE1G9H2Z",
+        "01K1B1BP3QDY8M4C8E2VZZ9A27",
+        "01K1B1BQ66YJJ5BZNQVNMNHKDG",
+        "01K1B1BQYXMX4GJBFVG44HDRB6",
+        "01K1B1BPPJK2TXFEP86V0V7VAG",
+        "01K1B1BQW8DJBZMQ1CX8YV6G47"
+      ]
+    },
+    {
+      "key": "no_guilt_spreads",
+      "name": "No Guilt Spreads",
+      "product_ids": [
+        "01K1B1BR43FPQT5N33GSJ74JP1",
+        "01K1B1BQ9WZF8XPT096MNMSY9B",
+        "01K1B1BP32PWCCV3V5GTV4ZAYA",
+        "01K1B1BQ61ASVNRZ87JWRSDP45",
+        "01K1B1BPT9RPZ56FQFNCM7GHQ1",
+        "01K1B1BQRZW4Y4EQ81Z7PNQESV",
+        "01K1B1BR479WXN0AJDR10TYPF4"
+      ]
+    },
+    {
+      "key": "powerpacked_breakfast",
+      "name": "Powerpacked Breakfast",
+      "product_ids": [
+        "01K1B1BPS1GE9X8XTGYP1VF7MY",
+        "01K1B1BPM6DFKM3WASD72T1ET4",
+        "01K1B1BPSVA03X1XZWS2GHAC8E",
+        "01K1B1BQW4FKRCBY24HRPG98W6",
+        "01K1B1BPBE2GR8WY2C6JPBJ0ZN",
+        "01K1B1BP0RRYE7MQQ8V25TY7GN",
+        "01K1B1BPAQX7JAHG8M1YPX0AGM"
+      ]
+    },
+    {
+      "key": "no_guilt_munchies",
+      "name": "No Guilt Munchies",
+      "product_ids": [
+        "01K1B1BPXQJK3T22C1CA6PV1M8",
+        "01K1B1BNXCR8A93V1F7YV5QKHW",
+        "01K1B1BR13EM9XHD59H54NYT1B",
+        "01K1B1BQ6XXTVKWYJC783NQM2P",
+        "01K1B1BPD4VNRH0R73PFVAN0H7",
+        "01K1B1BR0E9BW2JYZ5A50YWHJB",
+        "01K1B1BR8X68E28H5FTEZWHF60"
+      ]
+    }
+  ]
+}

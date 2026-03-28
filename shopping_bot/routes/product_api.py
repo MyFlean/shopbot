@@ -607,10 +607,12 @@ VALID_SORT_OPTIONS = {
 
 VALID_PRICE_RANGES = {"below_99", "100_249", "250_499", "above_500"}
 VALID_FLEAN_SCORES = {"10", "9_plus", "8_plus", "7_plus"}
-VALID_PREFERENCES = {"no_palm_oil", "no_added_sugar", "no_additives"}
-VALID_DIETARY = {"dairy_free", "gluten_free"}
+VALID_PREFERENCES = {"no_palm_oil", "no_added_sugar", "no_harmful_additives", "preservative_free"}
+VALID_DIETARY = {"dairy_free", "gluten_free", "nut_free", "pcos_friendly"}
+VALID_FOOD_TYPES = {"veg", "nonveg"}
 VALID_NUTRITION_KEYS = {"protein", "carbs", "fat"}
-VALID_NUTRITION_VALUES = {0, 10, 20, 30, 40}
+NUTRITION_MAX = {"protein": 40, "carbs": 100, "fat": 100}
+NUTRITION_STEP = {"protein": 10, "carbs": 20, "fat": 20}
 
 
 def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -652,6 +654,12 @@ def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[
             return None, f"Invalid dietary: {invalid}. Valid: {sorted(VALID_DIETARY)}"
         validated["dietary"] = dietary
 
+    food_type = filters.get("food_type")
+    if food_type:
+        if food_type not in VALID_FOOD_TYPES:
+            return None, f"Invalid food_type: '{food_type}'. Valid: {sorted(VALID_FOOD_TYPES)}"
+        validated["food_type"] = food_type
+
     nutrition = filters.get("nutrition")
     if nutrition and isinstance(nutrition, dict):
         validated_nutrition: Dict[str, int] = {}
@@ -662,8 +670,11 @@ def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[
                     val = int(val)
                 except (TypeError, ValueError):
                     return None, f"nutrition.{key} must be an integer"
-                if val not in VALID_NUTRITION_VALUES:
-                    return None, f"nutrition.{key} must be one of {sorted(VALID_NUTRITION_VALUES)}"
+                max_val = NUTRITION_MAX[key]
+                step = NUTRITION_STEP[key]
+                allowed = set(range(0, max_val + 1, step))
+                if val not in allowed:
+                    return None, f"nutrition.{key} must be one of {sorted(allowed)}"
                 if val > 0:
                     validated_nutrition[key] = val
         if validated_nutrition:
@@ -693,12 +704,13 @@ def get_products_unified() -> Tuple[Dict[str, Any], int]:
             "filters": {                          // optional - all filter types
                 "price_range": "below_99",
                 "flean_score": "9_plus",
-                "preferences": ["no_palm_oil"],
-                "dietary": ["gluten_free"],
+                "preferences": ["no_palm_oil", "no_harmful_additives", "preservative_free"],
+                "dietary": ["gluten_free", "nut_free", "pcos_friendly"],
+                "food_type": "veg",               // optional - "veg" or "nonveg"
                 "nutrition": {                    // optional - slider thresholds (0 = no filter)
-                    "protein": 20,                // "more than 20 g" (gte)
-                    "carbs": 30,                  // "less than 30 g" (lte)
-                    "fat": 10                     // "less than 10 g" (lte)
+                    "protein": 20,                // "more than 20 g" (gte), max 40, step 10
+                    "carbs": 60,                  // "less than 60 g" (lte), max 100, step 20
+                    "fat": 40                     // "less than 40 g" (lte), max 100, step 20
                 }
             }
         }
@@ -707,7 +719,8 @@ def get_products_unified() -> Tuple[Dict[str, Any], int]:
         - query only: Full-text search with filters
         - subcategory only: Browse category products with filters
         - both: Search within specific category
-        - neither: Returns 400 error
+        - filters only: Browse all products matching filters
+        - none: Returns 400 error
 
     Sort Options:
         - relevance (default)
@@ -761,6 +774,8 @@ def get_products_unified() -> Tuple[Dict[str, Any], int]:
                 raw_filters["dietary"] = [
                     d.strip() for d in request.args["dietary"].split(",") if d.strip()
                 ]
+            if request.args.get("food_type"):
+                raw_filters["food_type"] = request.args["food_type"]
             nutrition_params: Dict[str, Any] = {}
             for key in ("protein", "carbs", "fat"):
                 v = request.args.get(key)
@@ -795,11 +810,10 @@ def get_products_unified() -> Tuple[Dict[str, Any], int]:
             sort_by = body.get("sort_by", "relevance")
             raw_filters = body.get("filters") or {}
 
-        # Require at least one of query or subcategory
-        if not query and not subcategory:
+        if not query and not subcategory and not raw_filters:
             return _error_response(
                 "MISSING_PARAMETER",
-                "At least one of 'query' or 'subcategory' must be provided",
+                "At least one of 'query', 'subcategory', or 'filters' must be provided",
                 400
             )
 

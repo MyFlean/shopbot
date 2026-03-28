@@ -35,9 +35,11 @@ VALID_SORT_OPTIONS = {
 
 VALID_PRICE_RANGES = {"below_99", "100_249", "250_499", "above_500"}
 VALID_FLEAN_SCORES = {"10", "9_plus", "8_plus", "7_plus"}
-VALID_PREFERENCES = {"no_palm_oil", "no_added_sugar", "no_additives"}
-VALID_DIETARY = {"dairy_free", "gluten_free"}
+VALID_PREFERENCES = {"no_palm_oil", "no_added_sugar", "no_harmful_additives", "preservative_free"}
+VALID_DIETARY = {"dairy_free", "gluten_free", "nut_free", "pcos_friendly"}
 VALID_FOOD_TYPES = {"veg", "nonveg"}
+NUTRITION_MAX = {"protein": 40, "carbs": 100, "fat": 100}
+NUTRITION_STEP = {"protein": 10, "carbs": 20, "fat": 20}
 
 
 def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -84,6 +86,26 @@ def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[
         if food_type not in VALID_FOOD_TYPES:
             return None, f"Invalid food_type: '{food_type}'. Valid: {sorted(VALID_FOOD_TYPES)}"
         validated["food_type"] = food_type
+
+    nutrition = filters.get("nutrition")
+    if nutrition and isinstance(nutrition, dict):
+        validated_nutrition: Dict[str, int] = {}
+        for key in ("protein", "carbs", "fat"):
+            val = nutrition.get(key)
+            if val is not None:
+                try:
+                    val = int(val)
+                except (TypeError, ValueError):
+                    return None, f"nutrition.{key} must be an integer"
+                max_val = NUTRITION_MAX[key]
+                step = NUTRITION_STEP[key]
+                allowed = set(range(0, max_val + 1, step))
+                if val not in allowed:
+                    return None, f"nutrition.{key} must be one of {sorted(allowed)}"
+                if val > 0:
+                    validated_nutrition[key] = val
+        if validated_nutrition:
+            validated["nutrition"] = validated_nutrition
 
     return validated if validated else None, None
 

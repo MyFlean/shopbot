@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
-import random
+
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional
 from flask import Blueprint, jsonify, request
 
 from ..data_fetchers.es_products import get_es_fetcher, transform_to_product_card
+from .product_api import _validate_filters
 
 log = logging.getLogger(__name__)
 bp = Blueprint("home_page", __name__)
@@ -162,19 +163,17 @@ def _get_best_selling_data() -> Dict[str, Any]:
     return {"products": products, "section_title": "Best Selling"}
 
 
-def _get_curated_data(limit: Optional[int] = 4) -> Dict[str, Any]:
+def _get_curated_data(use_top_4: bool = True) -> Dict[str, Any]:
     """
-    Fetch curated products (randomized).
-
-    Always returns random products from the curated pool.
-    The "Customize Your Feed" preferences are accepted by the endpoint
-    but do not affect which products are returned.
+    Fetch hand-curated products.
 
     Args:
-        limit: Max products to return. 4 for home, None for "all".
+        use_top_4: If True return the 4 top-tier picks (home page).
+                   If False return all 25 curated products (See All).
     """
-    data = _get_json_data("curated_products.json", {"product_ids": []})
+    data = _get_json_data("curated_products.json", {"product_ids": [], "top_4": []})
     all_product_ids = data.get("product_ids", [])
+    top_4_ids = data.get("top_4", [])
 
     if not all_product_ids:
         return {
@@ -184,19 +183,57 @@ def _get_curated_data(limit: Optional[int] = 4) -> Dict[str, Any]:
             "total_in_pool": 0,
         }
 
-    if limit is not None:
-        count = min(limit, len(all_product_ids))
-        selected_ids = random.sample(all_product_ids, count)
-    else:
-        selected_ids = all_product_ids
-
+    selected_ids = top_4_ids if use_top_4 else all_product_ids
     products = _fetch_products_by_ids(selected_ids)
 
     return {
         "products": products,
         "section_title": "Curated For You",
-        "has_more": len(all_product_ids) > (limit or len(all_product_ids)),
+        "has_more": len(all_product_ids) > len(selected_ids),
         "total_in_pool": len(all_product_ids),
+    }
+
+
+def _get_flean_picks_data() -> Dict[str, Any]:
+    """Load Flean Picks collections metadata and product IDs."""
+    return _get_json_data("flean_picks.json", {"collections": []})
+
+
+def _extract_curate_filters() -> Optional[Dict[str, Any]]:
+    """Parse and validate personalization filters from a POST body."""
+    if request.method != "POST":
+        return None
+    body = request.get_json(force=True, silent=True) or {}
+    raw_filters = body.get("filters")
+    if not raw_filters:
+        return None
+    validated, error = _validate_filters(raw_filters)
+    if error:
+        log.warning(f"CURATE_FILTER_VALIDATION | error={error}")
+        return None
+    return validated
+
+
+def _search_curated_with_filters(filters: Dict[str, Any], size: int = 4) -> Dict[str, Any]:
+    """Use search_products_unified with filters to produce curated results."""
+    fetcher = get_es_fetcher()
+    result = fetcher.search_products_unified(
+        query=None,
+        subcategory=None,
+        page=0,
+        size=size,
+        sort_by="relevance",
+        filters=filters,
+    )
+    products = result.get("products", [])
+    cards = [transform_to_product_card(p) for p in products]
+    cards = [c for c in cards if c is not None]
+    total = result.get("meta", {}).get("total", len(cards))
+    return {
+        "products": cards,
+        "section_title": "Curated For You",
+        "has_more": total > size,
+        "total_in_pool": total,
     }
 
 
@@ -264,24 +301,31 @@ def get_best_selling() -> tuple[Dict[str, Any], int]:
 @bp.route("/api/v1/home/curated", methods=["GET", "POST"])
 def get_curated_home() -> tuple[Dict[str, Any], int]:
     """
-    Get 4 random curated products for the home page.
+    Get 4 curated products for the home page.
 
-    Accepts both GET and POST. POST is used by the "Customize Your Feed"
-    bottom sheet ("Save & Refresh Feed" button). The preferences body is
-    accepted but does NOT filter products -- always returns random curated.
+    GET:  Returns the hand-picked top 4 products.
+    POST: When filters are provided, returns 4 filtered products via search.
+          When no filters, returns the hand-picked top 4.
 
-    POST body (accepted, not applied):
+    POST body (optional):
         {
-            "ingredient_preferences": ["no_palm_oil", "no_added_sugar"],
-            "daily_macros": {"protein": 15, "carbs": 0, "fat": 0},
-            "dietary_restrictions": ["dairy_free", "nut_free"]
+            "filters": {
+                "preferences": ["no_palm_oil"],
+                "dietary": ["gluten_free"],
+                "food_type": "veg",
+                "nutrition": {"protein": 20, "carbs": 60, "fat": 40}
+            }
         }
     """
     try:
-        result = _get_curated_data(limit=4)
+        filters = _extract_curate_filters()
+        if filters:
+            result = _search_curated_with_filters(filters, size=4)
+        else:
+            result = _get_curated_data(use_top_4=True)
         log.info(
             f"HOME_CURATED | pool_size={result.get('total_in_pool', 0)} | "
-            f"returned={len(result.get('products', []))}"
+            f"returned={len(result.get('products', []))} | filtered={bool(filters)}"
         )
         return jsonify(_build_success_response(result)), 200
     except Exception as e:
@@ -294,11 +338,16 @@ def get_curated_all() -> tuple[Dict[str, Any], int]:
     """
     Get all curated products (for "See All" page).
 
-    Same as /curated but returns the entire pool instead of 4.
-    POST body accepted (same as /curated) but not applied.
+    GET:  Returns all 25 hand-picked curated products.
+    POST: When filters are provided, returns up to 25 filtered products via search.
+          When no filters, returns all 25 hand-picked products.
     """
     try:
-        result = _get_curated_data(limit=None)
+        filters = _extract_curate_filters()
+        if filters:
+            result = _search_curated_with_filters(filters, size=25)
+        else:
+            result = _get_curated_data(use_top_4=False)
         response_data = {
             "products": result["products"],
             "section_title": "Curated For You",
@@ -306,12 +355,76 @@ def get_curated_all() -> tuple[Dict[str, Any], int]:
         }
         log.info(
             f"HOME_CURATED_ALL | total={result['total_in_pool']} | "
-            f"returned={len(result['products'])}"
+            f"returned={len(result['products'])} | filtered={bool(filters)}"
         )
         return jsonify(_build_success_response(response_data)), 200
     except Exception as e:
         log.error(f"HOME_CURATED_ALL_ERROR | error={e}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load curated products")), 500
+
+
+# ============================================================================
+# Flean Picks API - Curated subcollections
+# ============================================================================
+
+@bp.route("/api/v1/home/flean-picks", methods=["GET"])
+def get_flean_picks() -> tuple[Dict[str, Any], int]:
+    """
+    Get Flean Picks collection list (metadata only, no products).
+
+    Response: { collections: [{ key, name }, ...] }
+    """
+    try:
+        data = _get_flean_picks_data()
+        collections = [
+            {"key": c["key"], "name": c["name"]}
+            for c in data.get("collections", [])
+        ]
+        log.info(f"FLEAN_PICKS_LIST | count={len(collections)}")
+        return jsonify(_build_success_response({"collections": collections})), 200
+    except Exception as e:
+        log.error(f"FLEAN_PICKS_LIST_ERROR | error={e}", exc_info=True)
+        return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load Flean Picks")), 500
+
+
+@bp.route("/api/v1/home/flean-picks/<collection_key>", methods=["GET"])
+def get_flean_picks_collection(collection_key: str) -> tuple[Dict[str, Any], int]:
+    """
+    Get products for a specific Flean Picks collection.
+
+    Path Parameters:
+        collection_key: One of high_protein_snacks, no_guilt_spreads,
+                        powerpacked_breakfast, no_guilt_munchies
+
+    Response: { key, name, products: [... 7 product cards ...] }
+    """
+    try:
+        data = _get_flean_picks_data()
+        collection = None
+        for c in data.get("collections", []):
+            if c.get("key") == collection_key:
+                collection = c
+                break
+
+        if not collection:
+            valid_keys = [c["key"] for c in data.get("collections", [])]
+            return jsonify(_build_error_response(
+                "COLLECTION_NOT_FOUND",
+                f"Unknown collection '{collection_key}'. Valid: {valid_keys}"
+            )), 404
+
+        product_ids = collection.get("product_ids", [])
+        products = _fetch_products_by_ids(product_ids)
+
+        log.info(f"FLEAN_PICKS_COLLECTION | key={collection_key} | returned={len(products)}")
+        return jsonify(_build_success_response({
+            "key": collection["key"],
+            "name": collection["name"],
+            "products": products,
+        })), 200
+    except Exception as e:
+        log.error(f"FLEAN_PICKS_COLLECTION_ERROR | key={collection_key} | error={e}", exc_info=True)
+        return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load collection")), 500
 
 
 @bp.route("/api/v1/home/why-flean", methods=["GET"])
@@ -384,7 +497,7 @@ def get_unified_home() -> tuple[Dict[str, Any], int]:
             errors["best_selling"] = str(e)
 
         try:
-            curated = _get_curated_data(limit=4)
+            curated = _get_curated_data(use_top_4=True)
         except Exception as e:
             log.error(f"HOME_UNIFIED_CURATED_ERROR | error={e}")
             curated = {"products": [], "section_title": "Curated For You", "has_more": False, "_error": str(e)}

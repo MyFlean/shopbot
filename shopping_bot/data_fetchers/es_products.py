@@ -756,13 +756,16 @@ FLEAN_SCORE_FILTERS = {
 PREFERENCE_FILTERS = {
     "no_palm_oil": ["PALM OIL FREE"],
     "no_added_sugar": ["NO ADDED SUGAR", "SUGAR FREE"],
-    "no_additives": ["NO PRESERVATIVES", "NO ARTIFICIAL COLORS"],
+    "no_harmful_additives": ["NO ARTIFICIAL COLORS", "NO ARTIFICIAL FLAVORS", "NO HARMFUL ADDITIVES"],
+    "preservative_free": ["NO PRESERVATIVES"],
 }
 
 # Dietary restriction filters - map to dietary_labels values
 DIETARY_FILTERS = {
     "dairy_free": ["DAIRY FREE"],
     "gluten_free": ["GLUTEN FREE"],
+    "nut_free": ["NUT FREE"],
+    "pcos_friendly": ["PCOS FRIENDLY", "LOW GI"],
 }
 
 
@@ -774,8 +777,10 @@ def _build_filter_clauses(filters: Optional[Dict[str, Any]]) -> List[Dict[str, A
         filters: Dict containing filter options:
             - price_range: One of 'below_99', '100_249', '250_499', 'above_500'
             - flean_score: One of '10', '9_plus', '8_plus', '7_plus'
-            - preferences: List of 'no_palm_oil', 'no_added_sugar', 'no_additives'
-            - dietary: List of 'dairy_free', 'gluten_free'
+            - preferences: List from PREFERENCE_FILTERS keys
+            - dietary: List from DIETARY_FILTERS keys
+            - food_type: 'veg' or 'nonveg'
+            - nutrition: {protein: int, carbs: int, fat: int}
     
     Returns:
         List of ES filter clauses to be added to bool.filter
@@ -861,7 +866,18 @@ def _build_filter_clauses(filters: Optional[Dict[str, Any]]) -> List[Dict[str, A
                     }
                 })
 
-    # 5. Nutrition Slider Filters (protein >= X, carbs <= X, fat <= X)
+    # 5. Food type filter (veg / nonveg)
+    food_type = filters.get("food_type")
+    if isinstance(food_type, str) and food_type.strip():
+        ft = food_type.strip().lower()
+        if ft == "veg":
+            filter_clauses.append({
+                "bool": {"must_not": [{"match_phrase": {"description": "Non Veg"}}]}
+            })
+        elif ft == "nonveg":
+            filter_clauses.append({"match_phrase": {"description": "Non Veg"}})
+
+    # 6. Nutrition Slider Filters (protein >= X, carbs <= X, fat <= X)
     _NUTRITION_ES_FIELDS = {
         "protein": "category_data.nutritional.nutri_breakdown_updated.protein g",
         "carbs":   "category_data.nutritional.nutri_breakdown_updated.carbohydrate g",
@@ -2859,20 +2875,20 @@ class ElasticsearchProductsFetcher:
             Dict with 'products' list and 'meta' pagination/query info
             
         Raises:
-            ValueError: If neither query nor subcategory is provided
+            ValueError: If no query, subcategory, or filters are provided
         """
-        # Validate: at least one of query or subcategory must be provided
         has_query = query and isinstance(query, str) and query.strip()
         has_subcategory = subcategory and isinstance(subcategory, str) and subcategory.strip()
+        has_filters = bool(filters)
         
-        if not has_query and not has_subcategory:
+        if not has_query and not has_subcategory and not has_filters:
             return {
                 "products": [],
                 "meta": {
                     "total": 0,
                     "page": page,
                     "size": size,
-                    "error": "Either 'query' or 'subcategory' must be provided"
+                    "error": "At least one of 'query', 'subcategory', or 'filters' must be provided"
                 }
             }
         

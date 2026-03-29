@@ -321,9 +321,9 @@ def _fetch_subcategory_products(
     )
     for src in raw:
         card = transform_to_product_card(src)
-        if card and card["product_id"] not in collected_ids:
+        if card and card["id"] not in collected_ids:
             collected.append(card)
-            collected_ids.append(card["product_id"])
+            collected_ids.append(card["id"])
         if len(collected) >= needed:
             return collected[:needed]
 
@@ -335,9 +335,9 @@ def _fetch_subcategory_products(
     )
     for src in raw:
         card = transform_to_product_card(src)
-        if card and card["product_id"] not in collected_ids:
+        if card and card["id"] not in collected_ids:
             collected.append(card)
-            collected_ids.append(card["product_id"])
+            collected_ids.append(card["id"])
         if len(collected) >= needed:
             return collected[:needed]
 
@@ -349,9 +349,9 @@ def _fetch_subcategory_products(
     )
     for src in raw:
         card = transform_to_product_card(src)
-        if card and card["product_id"] not in collected_ids:
+        if card and card["id"] not in collected_ids:
             collected.append(card)
-            collected_ids.append(card["product_id"])
+            collected_ids.append(card["id"])
         if len(collected) >= needed:
             break
 

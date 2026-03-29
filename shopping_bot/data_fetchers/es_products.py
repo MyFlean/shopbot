@@ -3075,6 +3075,72 @@ class ElasticsearchProductsFetcher:
                 }
             }
 
+    def search_by_category_paths(
+        self,
+        paths: List[str],
+        filters: Optional[Dict[str, Any]] = None,
+        size: int = 6,
+        exclude_ids: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Query ES for products matching any of the given category paths, with optional filters.
+
+        Returns raw _source dicts (ready for transform_to_product_card).
+        Sorted by flean percentile descending.
+        """
+        try:
+            filter_clauses: List[Dict[str, Any]] = [VISIBILITY_FILTER]
+
+            path_should = []
+            for p in paths:
+                path_should.extend([
+                    {"term": {"category_paths.keyword": p}},
+                    {"wildcard": {"category_paths": {"value": f"*{p}*"}}},
+                ])
+            filter_clauses.append({
+                "bool": {"should": path_should, "minimum_should_match": 1}
+            })
+
+            if filters:
+                filter_clauses.extend(_build_filter_clauses(filters))
+
+            if exclude_ids:
+                filter_clauses.append({
+                    "bool": {"must_not": [{"terms": {"id": exclude_ids}}]}
+                })
+
+            body: Dict[str, Any] = {
+                "size": size,
+                "track_total_hits": False,
+                "_source": {
+                    "includes": [
+                        "id", "name", "brand", "price", "mrp", "hero_image.*",
+                        "package_claims.*", "category_group", "category_paths",
+                        "category_data.*", "flean_score.*", "stats.*",
+                        "size", "visibility",
+                    ]
+                },
+                "query": {
+                    "bool": {
+                        "must": [{"match_all": {}}],
+                        "filter": filter_clauses,
+                    }
+                },
+                "sort": [
+                    {"stats.adjusted_score_percentiles.subcategory_percentile": {"order": "desc", "missing": "_last"}},
+                    {"_score": "desc"},
+                ],
+            }
+
+            endpoint = f"{self.base_url}/{self.index}/_search"
+            resp = requests.post(endpoint, headers=self.headers, json=body, timeout=TIMEOUT)
+            resp.raise_for_status()
+            hits = (resp.json().get("hits", {}) or {}).get("hits", []) or []
+            return [h["_source"] for h in hits if h.get("_source")]
+
+        except Exception as exc:
+            print(f"DEBUG: search_by_category_paths failed | paths={paths} | error={exc}")
+            return []
+
 
 # Parameter extraction and normalization
 def _extract_defaults_from_context(ctx) -> Dict[str, Any]:

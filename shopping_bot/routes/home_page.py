@@ -36,6 +36,45 @@ log = logging.getLogger(__name__)
 bp = Blueprint("home_page", __name__)
 
 # ============================================================================
+# Flean Picks – subcategory-to-ES-path mapping and base filters
+# ============================================================================
+
+FLEAN_PICKS_CATEGORIES = {
+    "high_protein_snacks": {
+        "name": "High Protein Snacks",
+        "es_paths": [
+            "f_and_b/food/light_bites/energy_bars",
+            "f_and_b/food/light_bites/dry_fruit_and_nut_snacks",
+        ],
+    },
+    "no_guilt_spreads": {
+        "name": "No Guilt Spreads",
+        "es_paths": [
+            "f_and_b/food/spreads_and_condiments/peanut_butter",
+            "f_and_b/food/spreads_and_condiments/honey_and_spreads",
+        ],
+    },
+    "powerpacked_breakfast": {
+        "name": "Powerpacked Breakfast",
+        "es_paths": [
+            "f_and_b/food/breakfast_essentials/muesli_and_oats",
+            "f_and_b/food/breakfast_essentials/dates_and_seeds",
+        ],
+    },
+    "no_guilt_munchies": {
+        "name": "No Guilt Munchies",
+        "es_paths": [
+            "f_and_b/food/light_bites/chips_and_crisps",
+            "f_and_b/food/light_bites/savory_namkeen",
+        ],
+    },
+}
+
+BASE_PERSONALIZATION_FILTERS: Dict[str, Any] = {
+    "preferences": ["no_palm_oil"],
+}
+
+# ============================================================================
 # Data Loading & Caching
 # ============================================================================
 
@@ -237,6 +276,88 @@ def _search_curated_with_filters(filters: Dict[str, Any], size: int = 4) -> Dict
     }
 
 
+def _merge_filters(base: Dict[str, Any], user: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge base filters with user personalization filters.
+
+    User filters override base filters on a per-key basis. Lists are merged
+    (union) so that base preferences are always applied alongside user ones.
+    """
+    if not user:
+        return dict(base)
+    merged: Dict[str, Any] = {}
+    for key in {*base, *user}:
+        bv = base.get(key)
+        uv = user.get(key)
+        if isinstance(bv, list) and isinstance(uv, list):
+            seen: set = set()
+            merged[key] = [x for x in (bv + uv) if not (x in seen or seen.add(x))]
+        elif uv is not None:
+            merged[key] = uv
+        else:
+            merged[key] = bv
+    return merged
+
+
+def _fetch_subcategory_products(
+    es_paths: List[str],
+    user_filters: Optional[Dict[str, Any]],
+    needed: int = 6,
+) -> List[Dict[str, Any]]:
+    """Fetch *needed* products for a subcategory using the 3-tier fallback.
+
+    Tier 1: user filters + base filters
+    Tier 2: base filters only (exclude already-fetched IDs)
+    Tier 3: no filters at all (exclude already-fetched IDs)
+    """
+    fetcher = get_es_fetcher()
+    collected: List[Dict[str, Any]] = []
+    collected_ids: List[str] = []
+
+    effective_filters = _merge_filters(BASE_PERSONALIZATION_FILTERS, user_filters)
+
+    # --- Tier 1: full filters ---
+    raw = fetcher.search_by_category_paths(
+        paths=es_paths, filters=effective_filters, size=needed, exclude_ids=None,
+    )
+    for src in raw:
+        card = transform_to_product_card(src)
+        if card and card["product_id"] not in collected_ids:
+            collected.append(card)
+            collected_ids.append(card["product_id"])
+        if len(collected) >= needed:
+            return collected[:needed]
+
+    # --- Tier 2: base filters only ---
+    remaining = needed - len(collected)
+    raw = fetcher.search_by_category_paths(
+        paths=es_paths, filters=BASE_PERSONALIZATION_FILTERS,
+        size=remaining + 4, exclude_ids=collected_ids,
+    )
+    for src in raw:
+        card = transform_to_product_card(src)
+        if card and card["product_id"] not in collected_ids:
+            collected.append(card)
+            collected_ids.append(card["product_id"])
+        if len(collected) >= needed:
+            return collected[:needed]
+
+    # --- Tier 3: no filters ---
+    remaining = needed - len(collected)
+    raw = fetcher.search_by_category_paths(
+        paths=es_paths, filters=None, size=remaining + 4,
+        exclude_ids=collected_ids,
+    )
+    for src in raw:
+        card = transform_to_product_card(src)
+        if card and card["product_id"] not in collected_ids:
+            collected.append(card)
+            collected_ids.append(card["product_id"])
+        if len(collected) >= needed:
+            break
+
+    return collected[:needed]
+
+
 def _get_why_flean_data() -> Dict[str, Any]:
     """Fetch Why Flean cards data for unified response."""
     data = _get_json_data("why_flean.json", {"cards": []})
@@ -300,34 +421,18 @@ def get_best_selling() -> tuple[Dict[str, Any], int]:
 
 @bp.route("/api/v1/home/curated", methods=["GET", "POST"])
 def get_curated_home() -> tuple[Dict[str, Any], int]:
-    """
-    Get 4 curated products for the home page.
-
-    GET:  Returns the hand-picked top 4 products.
-    POST: When filters are provided, returns 4 filtered products via search.
-          When no filters, returns the hand-picked top 4.
-
-    POST body (optional):
-        {
-            "filters": {
-                "preferences": ["no_palm_oil"],
-                "dietary": ["gluten_free"],
-                "food_type": "veg",
-                "nutrition": {"protein": 20, "carbs": 60, "fat": 40}
-            }
-        }
-    """
+    """Legacy: 4 curated products for home. Now delegates to unified flean picks."""
     try:
         filters = _extract_curate_filters()
-        if filters:
-            result = _search_curated_with_filters(filters, size=4)
-        else:
-            result = _get_curated_data(use_top_4=True)
-        log.info(
-            f"HOME_CURATED | pool_size={result.get('total_in_pool', 0)} | "
-            f"returned={len(result.get('products', []))} | filtered={bool(filters)}"
-        )
-        return jsonify(_build_success_response(result)), 200
+        result = _unified_flean_picks_logic("home", filters)
+        wrapped = {
+            "products": result.get("products", []),
+            "section_title": "Curated For You",
+            "has_more": True,
+            "total_in_pool": 4,
+        }
+        log.info(f"HOME_CURATED_LEGACY | returned={len(wrapped['products'])}")
+        return jsonify(_build_success_response(wrapped)), 200
     except Exception as e:
         log.error(f"HOME_CURATED_ERROR | error={e}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load curated products")), 500
@@ -335,95 +440,149 @@ def get_curated_home() -> tuple[Dict[str, Any], int]:
 
 @bp.route("/api/v1/home/curated/all", methods=["GET", "POST"])
 def get_curated_all() -> tuple[Dict[str, Any], int]:
-    """
-    Get all curated products (for "See All" page).
-
-    GET:  Returns all 25 hand-picked curated products.
-    POST: When filters are provided, returns up to 25 filtered products via search.
-          When no filters, returns all 25 hand-picked products.
-    """
+    """Legacy: all curated products (See All). Now delegates to unified flean picks see_all."""
     try:
         filters = _extract_curate_filters()
-        if filters:
-            result = _search_curated_with_filters(filters, size=25)
-        else:
-            result = _get_curated_data(use_top_4=False)
-        response_data = {
-            "products": result["products"],
+        result = _unified_flean_picks_logic("see_all", filters)
+        all_products: List[Dict[str, Any]] = []
+        for coll in result.get("collections", []):
+            all_products.extend(coll.get("products", []))
+        wrapped = {
+            "products": all_products,
             "section_title": "Curated For You",
-            "total_count": result["total_in_pool"],
+            "total_count": len(all_products),
         }
-        log.info(
-            f"HOME_CURATED_ALL | total={result['total_in_pool']} | "
-            f"returned={len(result['products'])} | filtered={bool(filters)}"
-        )
-        return jsonify(_build_success_response(response_data)), 200
+        log.info(f"HOME_CURATED_ALL_LEGACY | returned={len(all_products)}")
+        return jsonify(_build_success_response(wrapped)), 200
     except Exception as e:
         log.error(f"HOME_CURATED_ALL_ERROR | error={e}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load curated products")), 500
 
 
 # ============================================================================
-# Flean Picks API - Curated subcollections
+# Unified Flean Picks API  (replaces curated + flean-picks endpoints)
 # ============================================================================
 
-@bp.route("/api/v1/home/flean-picks", methods=["GET"])
-def get_flean_picks() -> tuple[Dict[str, Any], int]:
-    """
-    Get Flean Picks collection list (metadata only, no products).
+def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Core logic shared by the new unified endpoint and legacy wrappers.
 
-    Response: { collections: [{ key, name }, ...] }
+    source == "home"  -> 4 products (1 per subcategory, best flean score)
+    source != "home"  -> 4 subcategories × 6 products each
+    """
+    filters_applied = _merge_filters(BASE_PERSONALIZATION_FILTERS, user_filters)
+
+    if source == "home":
+        products: List[Dict[str, Any]] = []
+        for key, cfg in FLEAN_PICKS_CATEGORIES.items():
+            sub_products = _fetch_subcategory_products(
+                es_paths=cfg["es_paths"],
+                user_filters=user_filters,
+                needed=1,
+            )
+            products.extend(sub_products)
+        return {
+            "source": "home",
+            "products": products,
+            "filters_applied": filters_applied,
+        }
+
+    # --- see_all ---
+    collections: List[Dict[str, Any]] = []
+    for key, cfg in FLEAN_PICKS_CATEGORIES.items():
+        sub_products = _fetch_subcategory_products(
+            es_paths=cfg["es_paths"],
+            user_filters=user_filters,
+            needed=6,
+        )
+        collections.append({
+            "key": key,
+            "name": cfg["name"],
+            "products": sub_products,
+        })
+    return {
+        "source": "see_all",
+        "collections": collections,
+        "filters_applied": filters_applied,
+    }
+
+
+@bp.route("/api/v1/home/flean-picks", methods=["POST", "GET"])
+def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
+    """
+    Unified Flean Picks endpoint.
+
+    GET  -> equivalent to source=home with base filters only.
+    POST ->
+        {
+          "source": "home" | "see_all",   // default "see_all"
+          "filters": { ... }              // optional personalization
+        }
+
+    source = "home":
+        Returns 4 products (1 best per subcategory).
+    source = anything else / omitted:
+        Returns 4 subcategories with 6 products each.
+
+    Personalization filters always applied (base filter used as fallback).
+    Three-tier fallback guarantees product count per subcategory.
     """
     try:
-        data = _get_flean_picks_data()
-        collections = [
-            {"key": c["key"], "name": c["name"]}
-            for c in data.get("collections", [])
-        ]
-        log.info(f"FLEAN_PICKS_LIST | count={len(collections)}")
-        return jsonify(_build_success_response({"collections": collections})), 200
-    except Exception as e:
-        log.error(f"FLEAN_PICKS_LIST_ERROR | error={e}", exc_info=True)
+        if request.method == "GET":
+            source = request.args.get("source", "home")
+            user_filters = None
+        else:
+            body = request.get_json(force=True, silent=True) or {}
+            source = body.get("source", "see_all")
+            raw_filters = body.get("filters")
+            if raw_filters:
+                validated, err = _validate_filters(raw_filters)
+                if err:
+                    log.warning(f"FLEAN_PICKS_FILTER_ERR | {err}")
+                    user_filters = None
+                else:
+                    user_filters = validated
+            else:
+                user_filters = None
+
+        result = _unified_flean_picks_logic(source, user_filters)
+
+        if source == "home":
+            log.info(f"FLEAN_PICKS_UNIFIED | source=home | products={len(result.get('products', []))}")
+        else:
+            total = sum(len(c["products"]) for c in result.get("collections", []))
+            log.info(f"FLEAN_PICKS_UNIFIED | source=see_all | collections={len(result.get('collections', []))} | total_products={total}")
+
+        return jsonify(_build_success_response(result)), 200
+
+    except Exception as exc:
+        log.error(f"FLEAN_PICKS_UNIFIED_ERROR | error={exc}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load Flean Picks")), 500
 
 
+# Legacy endpoints – thin wrappers around the unified logic
+
 @bp.route("/api/v1/home/flean-picks/<collection_key>", methods=["GET"])
 def get_flean_picks_collection(collection_key: str) -> tuple[Dict[str, Any], int]:
-    """
-    Get products for a specific Flean Picks collection.
-
-    Path Parameters:
-        collection_key: One of high_protein_snacks, no_guilt_spreads,
-                        powerpacked_breakfast, no_guilt_munchies
-
-    Response: { key, name, products: [... 7 product cards ...] }
-    """
+    """Legacy: return products for a single subcategory."""
     try:
-        data = _get_flean_picks_data()
-        collection = None
-        for c in data.get("collections", []):
-            if c.get("key") == collection_key:
-                collection = c
-                break
-
-        if not collection:
-            valid_keys = [c["key"] for c in data.get("collections", [])]
+        if collection_key not in FLEAN_PICKS_CATEGORIES:
+            valid = list(FLEAN_PICKS_CATEGORIES.keys())
             return jsonify(_build_error_response(
                 "COLLECTION_NOT_FOUND",
-                f"Unknown collection '{collection_key}'. Valid: {valid_keys}"
+                f"Unknown collection '{collection_key}'. Valid: {valid}",
             )), 404
 
-        product_ids = collection.get("product_ids", [])
-        products = _fetch_products_by_ids(product_ids)
+        cfg = FLEAN_PICKS_CATEGORIES[collection_key]
+        products = _fetch_subcategory_products(cfg["es_paths"], user_filters=None, needed=6)
 
-        log.info(f"FLEAN_PICKS_COLLECTION | key={collection_key} | returned={len(products)}")
+        log.info(f"FLEAN_PICKS_LEGACY | key={collection_key} | returned={len(products)}")
         return jsonify(_build_success_response({
-            "key": collection["key"],
-            "name": collection["name"],
+            "key": collection_key,
+            "name": cfg["name"],
             "products": products,
         })), 200
-    except Exception as e:
-        log.error(f"FLEAN_PICKS_COLLECTION_ERROR | key={collection_key} | error={e}", exc_info=True)
+    except Exception as exc:
+        log.error(f"FLEAN_PICKS_LEGACY_ERROR | key={collection_key} | error={exc}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load collection")), 500
 
 

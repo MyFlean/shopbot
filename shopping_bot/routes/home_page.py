@@ -435,9 +435,8 @@ def get_curated_home() -> tuple[Dict[str, Any], int]:
         log.info(f"HOME_CURATED_LEGACY | returned={len(wrapped['products'])}")
         return jsonify(_build_success_response(wrapped)), 200
     except Exception as e:
-        tb = traceback.format_exc()
-        log.error(f"HOME_CURATED_ERROR | error={e}\n{tb}")
-        return jsonify({"success": False, "error": str(e), "traceback": tb}), 500
+        log.error(f"HOME_CURATED_ERROR | error={e}", exc_info=True)
+        return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load curated products")), 500
 
 
 @bp.route("/api/v1/home/curated/all", methods=["GET", "POST"])
@@ -557,9 +556,8 @@ def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
         return jsonify(_build_success_response(result)), 200
 
     except Exception as exc:
-        tb = traceback.format_exc()
-        log.error(f"FLEAN_PICKS_UNIFIED_ERROR | error={exc}\n{tb}")
-        return jsonify({"success": False, "error": str(exc), "traceback": tb}), 500
+        log.error(f"FLEAN_PICKS_UNIFIED_ERROR | error={exc}", exc_info=True)
+        return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load Flean Picks")), 500
 
 
 # Legacy endpoints – thin wrappers around the unified logic

@@ -209,7 +209,8 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         nutritional_data = src.get("category_data", {}).get("nutritional", {})
         nutrition = _extract_nutrition_from_source(src)
         qty = nutritional_data.get("qty", "")
-        image_url = _get_best_image(src.get("hero_image", {})) or ""
+        images = src.get("images")
+        image_url = images[0] if isinstance(images, list) and images else ""
         flean_score_data = src.get("flean_score", {})
         flean_score = flean_score_data.get("adjusted_score") if isinstance(flean_score_data, dict) else flean_score_data
         stats = src.get("stats", {})
@@ -289,7 +290,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     - Status fields for color coding
     """
     # ── Extract raw data ──
-    hero_image = src.get("hero_image", {})
+    images = src.get("images")
     nutritional_data = src.get("category_data", {}).get("nutritional", {})
     nutrition = _extract_nutrition_from_source(src)
     stats = src.get("stats", {})
@@ -319,8 +320,8 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "price": src.get("price"),
         "mrp": src.get("mrp"),
         "currency": "INR",
-        "image_url": _get_best_image(hero_image) or "",
-        "image_urls": {k: v for k, v in (hero_image if isinstance(hero_image, dict) else {}).items() if isinstance(v, str) and v.startswith("http")},
+        "image_url": images[0] if isinstance(images, list) and images else "",
+        "image_urls": images[1:] if isinstance(images, list) and len(images) > 1 else [],
         "qty": nutritional_data.get("qty", ""),
         "size": src.get("size", ""),
         "visibility": src.get("visibility", "visible"),
@@ -2111,7 +2112,7 @@ def _transform_results(raw_response: Dict[str, Any], skip_rerank: bool = False) 
             "penalty_percentiles": {k: v for k, v in penalty_percentiles.items() if v is not None},
             
             # Image
-            "image": _get_best_image(src.get("hero_image", {})),
+            "image": src.get("images", [])[0] if isinstance(src.get("images"), list) and src.get("images") else "",
             
             # Quantity/weight info
             "qty": nutritional_data.get("qty", ""),

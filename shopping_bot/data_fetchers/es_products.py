@@ -932,7 +932,7 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
         "track_total_hits": True,
         "_source": {
             "includes": [
-                "id", "name", "brand", "price", "mrp", "hero_image.*",
+                "id", "name", "brand", "price", "mrp", "hero_image.*", "images",
                 "package_claims.*", "category_group", "category_paths", 
                 "description", "use", "flean_score.*",
                 "stats.adjusted_score_percentiles.*",
@@ -2486,7 +2486,7 @@ class ElasticsearchProductsFetcher:
                 "_source": {
                     "includes": [
                         "id", "name", "brand", "price", "mrp", "description", "use",
-                        "hero_image.*", "package_claims.*", "category_group", "category_paths",
+                        "hero_image.*", "images", "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "ingredients.*", "tags_and_sentiments.*",
                         "flean_score.*", "stats.*", "availability.*", "cons_list",
                         "size", "visibility",
@@ -2620,7 +2620,7 @@ class ElasticsearchProductsFetcher:
                 "track_total_hits": False,
                 "_source": {
                     "includes": [
-                        "id", "name", "brand", "price", "mrp", "hero_image.*",
+                        "id", "name", "brand", "price", "mrp", "hero_image.*","images",
                         "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "flean_score.*", "stats.*",
                         "ingredients.*", "description", "availability.*", "cons_list",
@@ -2717,7 +2717,7 @@ class ElasticsearchProductsFetcher:
                 "track_total_hits": True,
                 "_source": {
                     "includes": [
-                        "id", "name", "brand", "price", "mrp", "hero_image.*",
+                        "id", "name", "brand", "price", "mrp", "hero_image.*","images",
                         "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "flean_score.*", "stats.*",
                         "ingredients.*", "description", "availability.*", "cons_list",
@@ -2985,7 +2985,7 @@ class ElasticsearchProductsFetcher:
                 "track_total_hits": True,
                 "_source": {
                     "includes": [
-                        "id", "name", "brand", "price", "mrp", "hero_image.*",
+                        "id", "name", "brand", "price", "mrp", "hero_image.*","images",
                         "package_claims.*", "category_group", "category_paths",
                         "description", "use", "flean_score.*",
                         "stats.adjusted_score_percentiles.*",
@@ -3114,7 +3114,7 @@ class ElasticsearchProductsFetcher:
                 "track_total_hits": False,
                 "_source": {
                     "includes": [
-                        "id", "name", "brand", "price", "mrp", "hero_image.*",
+                        "id", "name", "brand", "price", "mrp", "hero_image.*","images",
                         "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "flean_score.*", "stats.*",
                         "size", "visibility",

@@ -44,6 +44,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
 
       - name: Build Lambda package with Docker
         run: |
@@ -95,7 +96,11 @@ jobs:
           TF_VAR_es_url: ${{ secrets.ES_URL }}
           TF_VAR_es_api_key: ${{ secrets.ES_API_KEY }}
         run: |
-          echo "Attempting to import existing resources..."
+          # CI has no persisted .tfstate (gitignored). Re-import real AWS resources each run
+          # so Terraform does not recreate API Gateway / duplicate Lambda permissions (409).
+          set +e
+          REGION="${AWS_REGION}"
+          echo "Importing core resources..."
           for resource in "aws_iam_role.lambda_role:shopbot-service-lambda-role" \
                          "aws_cloudwatch_log_group.lambda_logs:/aws/lambda/shopbot-service" \
                          "aws_cloudwatch_log_group.apigw_logs:/aws/apigateway/shopbot-service" \
@@ -105,12 +110,40 @@ jobs:
             echo "Importing $tf_resource..."
             terraform import "$tf_resource" "$import_id" || true
           done
-          API_ID=$(aws apigatewayv2 get-apis --region ${{ env.AWS_REGION }} --query "Items[?Name=='shopbot-service-api'].ApiId" --output text 2>/dev/null | head -1)
-          if [ -n "$API_ID" ]; then
-            echo "Importing API Gateway $API_ID..."
+
+          echo "Importing IAM policy resources..."
+          terraform import aws_iam_role_policy_attachment.lambda_basic \
+            "shopbot-service-lambda-role/arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" || true
+          terraform import aws_iam_role_policy.lambda_secrets \
+            "shopbot-service-lambda-role:shopbot-lambda-secrets" || true
+
+          echo "Resolving API Gateway (oldest shopbot-service-api if duplicates exist)..."
+          API_ID=$(aws apigatewayv2 get-apis --region "$REGION" --output json 2>/dev/null | \
+            jq -r '[.Items[] | select(.Name=="shopbot-service-api")] | sort_by(.CreatedDate) | .[0].ApiId // empty')
+
+          if [ -n "$API_ID" ] && [ "$API_ID" != "null" ]; then
+            echo "Importing API $API_ID, stage, integration, route..."
             terraform import aws_apigatewayv2_api.shopbot "$API_ID" || true
-            terraform import 'aws_apigatewayv2_stage.shopbot' "${API_ID}/\$default" || true
+            terraform import aws_apigatewayv2_stage.shopbot "${API_ID}/\$default" || true
+
+            INT_ID=$(aws apigatewayv2 get-integrations --api-id "$API_ID" --region "$REGION" --output json | jq -r '.Items[0].IntegrationId // empty')
+            if [ -n "$INT_ID" ] && [ "$INT_ID" != "null" ]; then
+              terraform import aws_apigatewayv2_integration.shopbot "${API_ID}/${INT_ID}" || true
+            fi
+
+            ROUTE_ID=$(aws apigatewayv2 get-routes --api-id "$API_ID" --region "$REGION" --output json | \
+              jq -r --arg rk '$default' '.Items[] | select(.RouteKey == $rk) | .RouteId' | head -1)
+            if [ -n "$ROUTE_ID" ] && [ "$ROUTE_ID" != "null" ]; then
+              terraform import aws_apigatewayv2_route.shopbot "${API_ID}/${ROUTE_ID}" || true
+            fi
+          else
+            echo "::warning::No API named shopbot-service-api found; first-time deploy or name mismatch"
           fi
+
+          echo "Importing Lambda invoke permission (prevents AllowAPIGatewayInvoke 409)..."
+          terraform import aws_lambda_permission.apigw "shopbot-service/AllowAPIGatewayInvoke" || true
+          set -e
+          echo "Import pass complete."
 
       - name: Validate Terraform configuration
         working-directory: deployment/lambda

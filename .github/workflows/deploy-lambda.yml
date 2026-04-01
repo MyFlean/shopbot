@@ -154,7 +154,7 @@ jobs:
       - name: Terraform Plan
         working-directory: deployment/lambda
         run: |
-          terraform plan -out=tfplan -input=false
+          terraform plan -input=false
         env:
           TF_VAR_enable_custom_domain: "false"
           # CI user (shopbot-cicd-user) lacks logs:CreateLogDelivery; matches Import step
@@ -165,10 +165,15 @@ jobs:
           TF_VAR_es_url: ${{ secrets.ES_URL }}
           TF_VAR_es_api_key: ${{ secrets.ES_API_KEY }}
 
+      # Apply only the Lambda zip update. shopbot-cicd-user cannot call logs:CreateLogDelivery;
+      # a full apply would still try to reconcile aws_apigatewayv2_stage and fail. -target is
+      # not allowed with a saved plan file, so we apply directly (same vars as Plan).
       - name: Terraform Apply
         working-directory: deployment/lambda
         run: |
-          terraform apply -auto-approve tfplan
+          terraform apply -auto-approve -input=false \
+            -var-file=terraform.tfvars \
+            -target=aws_lambda_function.shopbot
         env:
           TF_LOG: INFO
           TF_VAR_enable_custom_domain: "false"

@@ -123,6 +123,8 @@ jobs:
           terraform plan -out=tfplan -input=false
         env:
           TF_VAR_enable_custom_domain: "false"
+          # CI user (shopbot-cicd-user) lacks logs:CreateLogDelivery; matches Import step
+          TF_VAR_enable_api_gateway_access_logs: "false"
           TF_VAR_secrets_manager_secret_arn: ${{ secrets.SHOPBOT_SECRETS_ARN }}
           TF_VAR_secrets_manager_secret_name: "flean-services/shopbot"
           TF_VAR_es_url: ${{ secrets.ES_URL }}
@@ -134,6 +136,8 @@ jobs:
           terraform apply -auto-approve tfplan
         env:
           TF_LOG: INFO
+          TF_VAR_enable_custom_domain: "false"
+          TF_VAR_enable_api_gateway_access_logs: "false"
           TF_VAR_secrets_manager_secret_arn: ${{ secrets.SHOPBOT_SECRETS_ARN }}
           TF_VAR_secrets_manager_secret_name: "flean-services/shopbot"
           TF_VAR_es_url: ${{ secrets.ES_URL }}

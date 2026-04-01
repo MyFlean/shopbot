@@ -132,6 +132,17 @@ variable "enable_api_gateway_access_logs" {
   default     = true
 }
 
+variable "api_gateway_execution_log_level" {
+  description = "HTTP API stage default_route_settings.logging_level (OFF, ERROR, or INFO). INFO triggers CloudWatch log delivery and requires logs:CreateLogDelivery; use OFF for restricted CI IAM users."
+  type        = string
+  default     = "INFO"
+
+  validation {
+    condition     = contains(["OFF", "ERROR", "INFO"], var.api_gateway_execution_log_level)
+    error_message = "api_gateway_execution_log_level must be OFF, ERROR, or INFO."
+  }
+}
+
 
 
 

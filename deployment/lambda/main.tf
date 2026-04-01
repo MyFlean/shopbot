@@ -171,7 +171,7 @@ resource "aws_apigatewayv2_stage" "shopbot" {
 
   default_route_settings {
     detailed_metrics_enabled = true
-    logging_level            = "INFO"  # API Gateway: ERROR, INFO, or OFF (DEBUG not available)
+    logging_level            = var.api_gateway_execution_log_level
     throttling_burst_limit   = var.throttling_burst_limit
     throttling_rate_limit    = var.throttling_rate_limit
   }

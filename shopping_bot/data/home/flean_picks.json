@@ -3,6 +3,7 @@
     {
       "key": "high_protein_snacks",
       "name": "High Protein Snacks",
+      "image_url": "https://img.flean.ai/assets/Categories-Subcategories/Flean-Picks/High%20Protein%20Snacks.png?w=100",
       "product_ids": [
         "01K1B1BPJ87WGAKBJ9DMKWHCDK",
         "01K1B1BQG3TKQ4GYZ2ZE1G9H2Z",
@@ -16,6 +17,7 @@
     {
       "key": "no_guilt_spreads",
       "name": "No Guilt Spreads",
+      "image_url": "https://img.flean.ai/assets/Categories-Subcategories/Flean-Picks/No%20Guilt%20Spreads.png?w=100",
       "product_ids": [
         "01K1B1BR43FPQT5N33GSJ74JP1",
         "01K1B1BQ9WZF8XPT096MNMSY9B",
@@ -29,6 +31,7 @@
     {
       "key": "powerpacked_breakfast",
       "name": "Powerpacked Breakfast",
+      "image_url": "https://img.flean.ai/assets/Categories-Subcategories/Flean-Picks/Power-packed%20Breakfast.png?w=100",
       "product_ids": [
         "01K1B1BPS1GE9X8XTGYP1VF7MY",
         "01K1B1BPM6DFKM3WASD72T1ET4",
@@ -42,6 +45,7 @@
     {
       "key": "no_guilt_munchies",
       "name": "No Guilt Munchies",
+      "image_url": "https://img.flean.ai/assets/Categories-Subcategories/Flean-Picks/No%20Guilt%20Munchies.png?w=100",
       "product_ids": [
         "01K1B1BPXQJK3T22C1CA6PV1M8",
         "01K1B1BNXCR8A93V1F7YV5QKHW",

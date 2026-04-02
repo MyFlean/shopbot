@@ -83,7 +83,7 @@ resource "aws_lambda_function" "shopbot" {
       # These are also loaded from secrets, but need to be available when modules are imported
       ES_URL                = local.es_url
       ES_API_KEY            = local.es_api_key
-      ELASTIC_INDEX         = "products-v2"
+      ELASTIC_INDEX         = "products-v3"
       ELASTIC_TIMEOUT_SECONDS = "10"
       # AWS SDK retry configuration to prevent retry storms
       AWS_MAX_ATTEMPTS = "3"

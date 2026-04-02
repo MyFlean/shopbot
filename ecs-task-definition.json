@@ -64,7 +64,7 @@
         },
         {
           "name": "ELASTIC_INDEX",
-          "value": "products-v3"
+          "value": "products_v3"
         },
         {
           "name": "ELASTIC_TIMEOUT_SECONDS",

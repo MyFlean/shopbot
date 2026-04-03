@@ -253,6 +253,19 @@
 					]
 				},
 				{
+					"name": "Get Best Selling V2",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{base_url}}/rs/api/v1/home/best-selling-v2",
+							"host": ["{{base_url}}"],
+							"path": ["rs", "api", "v1", "home", "best-selling-v2"]
+						},
+						"description": "## Get Best Selling Products (V2)\n\nExperimental endpoint for rollout validation. Fetches products from fixed category paths and ranks within category by `flean_score.adjusted_score`.\n\n### Selection Logic\n- 3 fixed category paths\n- Top 2 per category (by adjusted score)\n- Backfill across categories to return up to 6\n\n### Response Fields\n- `products[]` - Array of product objects with full details\n- `section_title` - Section heading text"
+					},
+					"response": []
+				},
+				{
 					"name": "Get Curated (Home)",
 					"request": {
 						"method": "GET",

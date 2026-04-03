@@ -12,7 +12,8 @@
 | Home - Banners | `GET` | `/rs/api/v1/home/banners` | Promotional carousel |
 | Home - Categories | `GET` | `/rs/api/v1/home/categories` | Category grid (4 items) |
 | Home - Categories All | `GET` | `/rs/api/v1/home/categories?all=true` | All categories |
-| Home - Best Selling | `GET` | `/rs/api/v1/home/best-selling` | Featured products (4) |
+| Home - Best Selling (Legacy) | `GET` | `/rs/api/v1/home/best-selling` | JSON ID-based best-selling list |
+| Home - Best Selling V2 | `GET` | `/rs/api/v1/home/best-selling-v2` | Category-path based scoring trial |
 | Home - Curated | `GET`/`POST` | `/rs/api/v1/home/curated` | 4 random curated products |
 | Home - Curated All | `GET`/`POST` | `/rs/api/v1/home/curated/all` | All curated products |
 | Home - Why Flean | `GET` | `/rs/api/v1/home/why-flean` | Value proposition cards |
@@ -99,7 +100,8 @@ GET /rs/api/v1/home/categories?all=true  # all items
 ### [3] Best Selling
 
 ```
-GET /rs/api/v1/home/best-selling
+GET /rs/api/v1/home/best-selling      # legacy (JSON ID list)
+GET /rs/api/v1/home/best-selling-v2   # experimental category-path scoring
 ```
 
 ### [4] Curated (+ "Customize Your Feed")
@@ -601,7 +603,8 @@ curl -X POST "$BASE/rs/api/v1/home/refresh"
 HOME SCREEN
   |-- Banners      -> GET /home/banners
   |-- Categories   -> GET /home/categories
-  |-- Best Sell    -> GET /home/best-selling           -> [Product Cards]
+  |-- Best Sell    -> GET /home/best-selling           -> [Product Cards] (legacy)
+  |-- Best Sell V2 -> GET /home/best-selling-v2        -> [Product Cards] (trial)
   |-- Curated      -> GET or POST /home/curated        -> [Product Cards]
   |-- Why Flean    -> GET /home/why-flean
   |-- Collabs      -> GET /home/collaborations

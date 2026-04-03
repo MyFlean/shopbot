@@ -5,15 +5,16 @@ Home Page API - Flutter App Home Screen Endpoints
 This module provides API endpoints for the Flutter app's home page:
 1. GET /api/v1/home/banners - Promotional banners/ads carousel
 2. GET /api/v1/home/categories - Product categories (4 by default, all with ?all=true)
-3. GET /api/v1/home/best-selling - Best selling products (fetched from ES by IDs)
-4. GET /api/v1/home/curated - 4 random curated products for home (fetched from ES)
-5. GET /api/v1/home/curated/all - All curated products (fetched from ES)
-6. GET /api/v1/home/why-flean - Value proposition cards
-7. GET /api/v1/home/collaborations - Partner brand names
-8. POST /api/v1/home/refresh - Clear cache and reload data
-9. POST /api/v1/home/unified - Unified endpoint returning all sections in one response
+3. GET /api/v1/home/best-selling - Best selling products (legacy: fetched from ES by IDs)
+4. GET /api/v1/home/best-selling-v2 - Best selling products (category-path scoring experiment)
+5. GET /api/v1/home/curated - 4 random curated products for home (fetched from ES)
+6. GET /api/v1/home/curated/all - All curated products (fetched from ES)
+7. GET /api/v1/home/why-flean - Value proposition cards
+8. GET /api/v1/home/collaborations - Partner brand names
+9. POST /api/v1/home/refresh - Clear cache and reload data
+10. POST /api/v1/home/unified - Unified endpoint returning all sections in one response
 
-Products (curated, best-selling) are fetched from Elasticsearch using stored product IDs.
+Products are fetched from Elasticsearch (best-selling legacy by IDs; v2 by category paths).
 Other data is loaded from JSON files in shopping_bot/data/home/
 """
 
@@ -78,6 +79,15 @@ FLEAN_PICKS_CATEGORIES = {
 BASE_PERSONALIZATION_FILTERS: Dict[str, Any] = {
     "preferences": ["no_palm_oil"],
 }
+
+BEST_SELLING_CATEGORY_PATHS: List[str] = [
+    "f_and_b/food/dairy_and_bakery/bread_and_buns",
+    "f_and_b/food/biscuits_and_crackers",
+    "f_and_b/food/breakfast_essentials/muesli_and_oats",
+]
+BEST_SELLING_PER_CATEGORY = 2
+BEST_SELLING_TOTAL_PRODUCTS = 6
+BEST_SELLING_FETCH_BUFFER = 8
 
 # ============================================================================
 # Data Loading & Caching
@@ -195,16 +205,85 @@ def _get_categories_data(show_all: bool = False) -> Dict[str, Any]:
     }
 
 
+def _get_adjusted_score(product_src: Dict[str, Any]) -> float:
+    """Extract flean_score.adjusted_score from ES source safely."""
+    score_data = product_src.get("flean_score")
+    if isinstance(score_data, dict):
+        raw_score = score_data.get("adjusted_score")
+    else:
+        raw_score = score_data
+    try:
+        return float(raw_score)
+    except (TypeError, ValueError):
+        return -1.0
+
+
 def _get_best_selling_data() -> Dict[str, Any]:
-    """Fetch best-selling products data for unified response."""
+    """Legacy best-selling: fetch product IDs from JSON, hydrate from ES."""
     data = _get_json_data("best_selling_products.json", {"product_ids": []})
     product_ids = data.get("product_ids", [])
-    
+
     if not product_ids:
         return {"products": [], "section_title": "Best Selling"}
-    
+
     products = _fetch_products_by_ids(product_ids)
     return {"products": products, "section_title": "Best Selling"}
+
+
+def _get_best_selling_data_v2() -> Dict[str, Any]:
+    """Best-selling v2: fixed category paths ranked by flean_score.adjusted_score."""
+    fetcher = get_es_fetcher()
+    selected_products: List[Dict[str, Any]] = []
+    selected_ids: set[str] = set()
+    backfill_candidates: List[tuple[float, Dict[str, Any]]] = []
+
+    for path in BEST_SELLING_CATEGORY_PATHS:
+        raw_products = fetcher.search_by_category_paths(
+            paths=[path],
+            filters=None,
+            size=BEST_SELLING_PER_CATEGORY + BEST_SELLING_FETCH_BUFFER,
+            exclude_ids=None,
+        )
+
+        scored_cards: List[tuple[float, Dict[str, Any]]] = []
+        for src in raw_products:
+            card = transform_to_product_card(src)
+            if not card:
+                continue
+            product_id = card.get("id")
+            if not product_id:
+                continue
+            scored_cards.append((_get_adjusted_score(src), card))
+
+        scored_cards.sort(key=lambda item: item[0], reverse=True)
+
+        category_count = 0
+        for score, card in scored_cards:
+            product_id = card["id"]
+            if product_id in selected_ids:
+                continue
+            if category_count < BEST_SELLING_PER_CATEGORY:
+                selected_products.append(card)
+                selected_ids.add(product_id)
+                category_count += 1
+            else:
+                backfill_candidates.append((score, card))
+
+    if len(selected_products) < BEST_SELLING_TOTAL_PRODUCTS:
+        backfill_candidates.sort(key=lambda item: item[0], reverse=True)
+        for _, card in backfill_candidates:
+            product_id = card["id"]
+            if product_id in selected_ids:
+                continue
+            selected_products.append(card)
+            selected_ids.add(product_id)
+            if len(selected_products) >= BEST_SELLING_TOTAL_PRODUCTS:
+                break
+
+    return {
+        "products": selected_products[:BEST_SELLING_TOTAL_PRODUCTS],
+        "section_title": "Best Selling",
+    }
 
 
 def _get_curated_data(use_top_4: bool = True) -> Dict[str, Any]:
@@ -410,10 +489,8 @@ def get_categories() -> tuple[Dict[str, Any], int]:
 @bp.route("/api/v1/home/best-selling", methods=["GET"])
 def get_best_selling() -> tuple[Dict[str, Any], int]:
     """
-    Get best-selling products for the home page.
-    
-    Fetches products from Elasticsearch using stored product IDs.
-    Returns exactly the products specified in the JSON (no randomization).
+    Legacy best-selling products endpoint for the home page.
+    Returns products using JSON-configured IDs hydrated from Elasticsearch.
     """
     try:
         result = _get_best_selling_data()
@@ -422,6 +499,23 @@ def get_best_selling() -> tuple[Dict[str, Any], int]:
     except Exception as e:
         log.error(f"HOME_BEST_SELLING_ERROR | error={e}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load best-selling products")), 500
+
+
+@bp.route("/api/v1/home/best-selling-v2", methods=["GET"])
+def get_best_selling_v2() -> tuple[Dict[str, Any], int]:
+    """
+    Experimental best-selling endpoint for rollout validation.
+
+    Fetches products from fixed category paths in Elasticsearch, picks top 2
+    per category by flean_score.adjusted_score, and backfills to return up to 6.
+    """
+    try:
+        result = _get_best_selling_data_v2()
+        log.info(f"HOME_BEST_SELLING_V2 | returned={len(result.get('products', []))}")
+        return jsonify(_build_success_response(result)), 200
+    except Exception as e:
+        log.error(f"HOME_BEST_SELLING_V2_ERROR | error={e}", exc_info=True)
+        return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load best-selling products v2")), 500
 
 
 @bp.route("/api/v1/home/curated", methods=["GET", "POST"])

@@ -497,7 +497,7 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
         sub_products = _fetch_subcategory_products(
             es_paths=cfg["es_paths"],
             user_filters=user_filters,
-            needed=6,
+            needed=12,
         )
         collections.append({
             "key": key,

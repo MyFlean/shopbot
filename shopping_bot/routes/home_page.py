@@ -6,8 +6,8 @@ This module provides API endpoints for the Flutter app's home page:
 1. GET /api/v1/home/banners - Promotional banners/ads carousel
 2. GET /api/v1/home/categories - Product categories (4 by default, all with ?all=true)
 3. GET /api/v1/home/best-selling - Best selling products (category-path score based)
-4. GET /api/v1/home/curated - 4 random curated products for home (fetched from ES)
-5. GET /api/v1/home/curated/all - All curated products (fetched from ES)
+4. GET /api/v1/home/curated - Legacy home curated strip (unified flean picks home; up to 8 from ES)
+5. GET /api/v1/home/curated/all - Legacy See All (unified flean picks collections; up to 12 per bucket from ES)
 6. GET /api/v1/home/why-flean - Value proposition cards
 7. GET /api/v1/home/collaborations - Partner brand names
 8. POST /api/v1/home/refresh - Clear cache and reload data
@@ -492,7 +492,7 @@ def get_best_selling() -> tuple[Dict[str, Any], int]:
 
 @bp.route("/api/v1/home/curated", methods=["GET", "POST"])
 def get_curated_home() -> tuple[Dict[str, Any], int]:
-    """Legacy: 4 curated products for home. Now delegates to unified flean picks."""
+    """Legacy: home curated strip. Delegates to unified flean picks (``source=home``, up to 8 products)."""
     try:
         filters = _extract_curate_filters()
         result = _unified_flean_picks_logic("home", filters)
@@ -511,7 +511,7 @@ def get_curated_home() -> tuple[Dict[str, Any], int]:
 
 @bp.route("/api/v1/home/curated/all", methods=["GET", "POST"])
 def get_curated_all() -> tuple[Dict[str, Any], int]:
-    """Legacy: all curated products (See All). Now delegates to unified flean picks see_all."""
+    """Legacy: See All curated products. Delegates to unified flean picks (``see_all``: 4 collections × up to 12)."""
     try:
         filters = _extract_curate_filters()
         result = _unified_flean_picks_logic("see_all", filters)
@@ -537,8 +537,12 @@ def get_curated_all() -> tuple[Dict[str, Any], int]:
 def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Core logic shared by the new unified endpoint and legacy wrappers.
 
-    source == "home"  -> 4 products (1 per subcategory, best flean score)
-    source != "home"  -> 4 subcategories × 6 products each
+    source == "home":
+        Flat ``products`` list: up to 8 items (2 per Flean Picks subcategory),
+        each bucket ordered by flean percentile descending in the ES query.
+    source != "home" (e.g. ``see_all``):
+        ``collections`` with 4 subcategories, up to 12 products each.
+    Actual counts can be lower if Elasticsearch returns fewer matches after 3-tier fallback.
     """
     filters_applied = _merge_filters(BASE_PERSONALIZATION_FILTERS, user_filters)
 
@@ -548,7 +552,7 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
             sub_products = _fetch_subcategory_products(
                 es_paths=cfg["es_paths"],
                 user_filters=user_filters,
-                needed=1,
+                needed=2,
             )
             products.extend(sub_products)
         return {
@@ -583,20 +587,23 @@ def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
     """
     Unified Flean Picks endpoint.
 
-    GET  -> equivalent to source=home with base filters only.
-    POST ->
-        {
-          "source": "home" | "see_all",   // default "see_all"
-          "filters": { ... }              // optional personalization
-        }
+    GET:
+        Query param ``source`` (default ``home``). No JSON body; ``user_filters`` are not used.
+        Use ``?source=see_all`` for the collections shape (same as POST see_all).
+    POST:
+        JSON body: ``source`` (default ``see_all``), optional ``filters`` for personalization
+        (validated; invalid ``filters`` are ignored and only base filters apply).
 
-    source = "home":
-        Returns 4 products (1 best per subcategory).
-    source = anything else / omitted:
-        Returns 4 subcategories with 6 products each.
+    Mode selection uses strict equality: only ``source == "home"`` selects home mode.
 
-    Personalization filters always applied (base filter used as fallback).
-    Three-tier fallback guarantees product count per subcategory.
+    ``source == "home"``:
+        Response data includes flat ``products`` (up to 8: 2 top picks per subcategory).
+    Any other ``source`` (including omitted on POST, or ``see_all`` on GET):
+        Response data includes ``collections`` (4 subcategories, up to 12 products each).
+
+    Base personalization filters are merged with validated user filters (see ``_merge_filters``).
+    Per-subcategory fetch uses a 3-tier fallback (merged filters → base only → no filters)
+    to improve fill rate; it does not guarantee a full count if the index has too few hits.
     """
     try:
         if request.method == "GET":
@@ -635,7 +642,7 @@ def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
 
 @bp.route("/api/v1/home/flean-picks/<collection_key>", methods=["GET"])
 def get_flean_picks_collection(collection_key: str) -> tuple[Dict[str, Any], int]:
-    """Legacy: return products for a single subcategory."""
+    """Legacy: one Flean Picks subcategory; up to 6 products (``needed=6``), independent of unified counts."""
     try:
         if collection_key not in FLEAN_PICKS_CATEGORIES:
             valid = list(FLEAN_PICKS_CATEGORIES.keys())

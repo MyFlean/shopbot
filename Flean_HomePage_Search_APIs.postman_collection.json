@@ -241,7 +241,7 @@
 							"host": ["{{base_url}}"],
 							"path": ["rs", "api", "v1", "home", "best-selling"]
 						},
-						"description": "## Get Best Selling Products\n\nFetch best-selling products for the home page. Products are fetched from Elasticsearch using pre-configured IDs.\n\n### Use Case\n- \"Best Selling\" section on home page\n- Featured products display\n\n### Response Fields\n- `products[]` - Array of product objects with full details\n- `section_title` - Section heading text"
+						"description": "## Get Best Selling Products\n\nFetch best-selling products for the home page using fixed category paths from Elasticsearch.\n\n### Selection Logic\n- 3 fixed category paths\n- Top 2 per category by `flean_score.adjusted_score`\n- Backfill across categories to return up to 6 products\n\n### Use Case\n- \"Best Selling\" section on home page\n- Featured products display\n\n### Response Fields\n- `products[]` - Array of product objects with full details\n- `section_title` - Section heading text"
 					},
 					"response": [
 						{
@@ -251,19 +251,6 @@
 							"body": "{\n    \"success\": true,\n    \"data\": {\n        \"products\": [\n            {\n                \"id\": \"01K1B1BPGN2WAXFB5DNSGXX4W3\",\n                \"name\": \"Yoga Bar Protein Bar\",\n                \"brand\": \"Yoga Bar\",\n                \"price\": 100.0,\n                \"mrp\": 120.0,\n                \"currency\": \"INR\",\n                \"image_url\": \"https://cdn.flean.ai/...\",\n                \"macro_tags\": [\n                    {\"label\": \"20 gms of Protein\", \"nutrient\": \"protein\", \"value\": 20, \"unit\": \"g\"}\n                ],\n                \"flean_score\": 2.5,\n                \"flean_percentile\": 85.2,\n                \"in_stock\": true\n            }\n        ],\n        \"section_title\": \"Best Selling\"\n    }\n}"
 						}
 					]
-				},
-				{
-					"name": "Get Best Selling V2",
-					"request": {
-						"method": "GET",
-						"url": {
-							"raw": "{{base_url}}/rs/api/v1/home/best-selling-v2",
-							"host": ["{{base_url}}"],
-							"path": ["rs", "api", "v1", "home", "best-selling-v2"]
-						},
-						"description": "## Get Best Selling Products (V2)\n\nExperimental endpoint for rollout validation. Fetches products from fixed category paths and ranks within category by `flean_score.adjusted_score`.\n\n### Selection Logic\n- 3 fixed category paths\n- Top 2 per category (by adjusted score)\n- Backfill across categories to return up to 6\n\n### Response Fields\n- `products[]` - Array of product objects with full details\n- `section_title` - Section heading text"
-					},
-					"response": []
 				},
 				{
 					"name": "Get Curated (Home)",

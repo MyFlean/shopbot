@@ -332,6 +332,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     # ── flean_badge ──
+    flean_score = flean_score_data.get("adjusted_score") if isinstance(flean_score_data, dict) else flean_score_data
     flean_percentile = None
     if stats.get("adjusted_score_percentiles"):
         flean_percentile = stats["adjusted_score_percentiles"].get("subcategory_percentile")
@@ -345,26 +346,13 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     else:
         level, level_text, level_color = "unknown", "Not Rated", "#6B7280"
 
-    adjusted_label = None
-    if isinstance(flean_score_data, dict):
-        _lbl = flean_score_data.get("adjusted_score_label")
-        if _lbl is not None and str(_lbl).strip():
-            adjusted_label = str(_lbl).strip()
-
-    if adjusted_label is not None:
-        badge_score = adjusted_label
-        score_display = adjusted_label
+    if flean_score is not None:
+        score_display = str(round(flean_score, 2))
     else:
-        flean_score = flean_score_data.get("adjusted_score") if isinstance(flean_score_data, dict) else flean_score_data
-        if flean_score is not None:
-            badge_score = flean_score / 10
-            score_display = str(round(flean_score, 2))
-        else:
-            badge_score = None
-            score_display = "N/A"
+        score_display = "N/A"
 
     flean_badge = {
-        "score": badge_score,
+        "score": flean_score,
         "score_display": score_display,
         "level": level,
         "level_text": level_text,

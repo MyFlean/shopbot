@@ -370,21 +370,29 @@ def _merge_filters(base: Dict[str, Any], user: Optional[Dict[str, Any]]) -> Dict
 
 
 def _build_flean_hybrid_tier_filters(user_filters: Optional[Dict[str, Any]]) -> List[tuple[str, Optional[Dict[str, Any]]]]:
-    """Build tiered filters for Flean Picks hybrid fallback."""
+    """Build 3-tier filters for Flean Picks macro relaxation fallback."""
     tier1 = _merge_filters(BASE_PERSONALIZATION_FILTERS, user_filters)
 
-    tier2: Optional[Dict[str, Any]] = None
-    if user_filters:
-        nutrition = user_filters.get("nutrition")
-        if isinstance(nutrition, dict) and nutrition:
-            tier2 = _merge_filters(BASE_PERSONALIZATION_FILTERS, {"nutrition": dict(nutrition)})
+    tier2 = dict(tier1)
+    tier2_nutrition = dict(tier2.get("nutrition", {})) if isinstance(tier2.get("nutrition"), dict) else {}
+    tier2_nutrition.pop("carbs", None)
+    if tier2_nutrition:
+        tier2["nutrition"] = tier2_nutrition
+    else:
+        tier2.pop("nutrition", None)
 
-    tier3 = dict(BASE_PERSONALIZATION_FILTERS)
+    tier3 = dict(tier2)
+    tier3_nutrition = dict(tier3.get("nutrition", {})) if isinstance(tier3.get("nutrition"), dict) else {}
+    tier3_nutrition.pop("fat", None)
+    if tier3_nutrition:
+        tier3["nutrition"] = tier3_nutrition
+    else:
+        tier3.pop("nutrition", None)
+
     return [
         ("tier1", tier1),
         ("tier2", tier2),
         ("tier3", tier3),
-        ("tier4", None),
     ]
 
 
@@ -393,17 +401,16 @@ def _fetch_subcategory_products(
     user_filters: Optional[Dict[str, Any]],
     needed: int = 6,
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """Fetch *needed* products for a subcategory using hybrid fallback.
+    """Fetch *needed* products for a subcategory using 3-tier macro relaxation.
 
     Tier 1: user filters + base filters
-    Tier 2: base filters + user nutrition
-    Tier 3: base filters only
-    Tier 4: no filters
+    Tier 2: remove carbs
+    Tier 3: remove fat (carbs already removed)
     """
     fetcher = get_es_fetcher()
     collected: List[Dict[str, Any]] = []
     collected_ids: List[str] = []
-    tier_counts: Dict[str, int] = {"tier1": 0, "tier2": 0, "tier3": 0, "tier4": 0}
+    tier_counts: Dict[str, int] = {"tier1": 0, "tier2": 0, "tier3": 0}
 
     tiers = _build_flean_hybrid_tier_filters(user_filters)
     used_filters: List[Optional[Dict[str, Any]]] = []
@@ -433,7 +440,7 @@ def _fetch_subcategory_products(
                 break
 
     collected = collected[:needed]
-    fallback_used_count = tier_counts["tier2"] + tier_counts["tier3"] + tier_counts["tier4"]
+    fallback_used_count = tier_counts["tier2"] + tier_counts["tier3"]
     stats = {
         "requested_count": needed,
         "collected_count": len(collected),
@@ -559,14 +566,15 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
     source != "home" (e.g. ``see_all``):
         ``collections`` with 4 subcategories, up to 12 products each.
     Actual counts can be lower if Elasticsearch returns fewer matches after
-    hybrid fallback (tier1 merged filters -> tier2 nutrition only -> tier3 base -> tier4 none).
+    3-tier fallback (tier1 all filters -> tier2 remove carbs -> tier3 remove fat).
     """
     filters_applied = _merge_filters(BASE_PERSONALIZATION_FILTERS, user_filters)
+    no_match_message = "No products matched your selected filters. Try relaxing your filters."
 
     if source == "home":
         products: List[Dict[str, Any]] = []
         per_subcategory: Dict[str, Any] = {}
-        total_tier_counts = {"tier1": 0, "tier2": 0, "tier3": 0, "tier4": 0}
+        total_tier_counts = {"tier1": 0, "tier2": 0, "tier3": 0}
         requested_total = len(FLEAN_PICKS_CATEGORIES) * 2
         for key, cfg in FLEAN_PICKS_CATEGORIES.items():
             sub_products, stats = _fetch_subcategory_products(
@@ -584,8 +592,8 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
             for tier_name, count in stats["tier_counts"].items():
                 total_tier_counts[tier_name] += int(count)
 
-        fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"] + total_tier_counts["tier4"]
-        return {
+        fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
+        response_data: Dict[str, Any] = {
             "source": "home",
             "products": products,
             "filters_applied": filters_applied,
@@ -600,11 +608,17 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
                 "fallback_used": fallback_used_count > 0,
             },
         }
+        if len(products) == 0:
+            response_data["message"] = no_match_message
+        return response_data
 
     # --- see_all ---
     collections: List[Dict[str, Any]] = []
+    per_subcategory: Dict[str, Any] = {}
+    total_tier_counts = {"tier1": 0, "tier2": 0, "tier3": 0}
+    requested_total = len(FLEAN_PICKS_CATEGORIES) * 12
     for key, cfg in FLEAN_PICKS_CATEGORIES.items():
-        sub_products, _stats = _fetch_subcategory_products(
+        sub_products, stats = _fetch_subcategory_products(
             es_paths=cfg["es_paths"],
             user_filters=user_filters,
             needed=12,
@@ -615,11 +629,35 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
             "image_url": cfg["image_url"],
             "products": sub_products,
         })
-    return {
+        per_subcategory[key] = {
+            "requested_count": stats["requested_count"],
+            "collected_count": stats["collected_count"],
+            "tier_counts": stats["tier_counts"],
+            "used_fallback": stats["used_fallback"],
+        }
+        for tier_name, count in stats["tier_counts"].items():
+            total_tier_counts[tier_name] += int(count)
+
+    returned_total = sum(len(c["products"]) for c in collections)
+    fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
+    response_data = {
         "source": "see_all",
         "collections": collections,
         "filters_applied": filters_applied,
+        "fallback_meta": {
+            "requested_products": requested_total,
+            "returned_products": returned_total,
+            "user_filters_supplied": bool(user_filters),
+            "per_subcategory": per_subcategory,
+            "total_tier_counts": total_tier_counts,
+            "matched_with_user_filters_count": total_tier_counts["tier1"] if bool(user_filters) else 0,
+            "fallback_used_count": fallback_used_count,
+            "fallback_used": fallback_used_count > 0,
+        },
     }
+    if returned_total == 0:
+        response_data["message"] = no_match_message
+    return response_data
 
 
 @bp.route("/api/v1/home/flean-picks", methods=["POST", "GET"])
@@ -642,9 +680,10 @@ def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
         Response data includes ``collections`` (4 subcategories, up to 12 products each).
 
     Base personalization filters are merged with validated user filters (see ``_merge_filters``).
-    Per-subcategory fetch uses hybrid 4-tier fallback:
-      merged filters -> base + user nutrition -> base only -> no filters.
+    Per-subcategory fetch uses 3-tier macro relaxation:
+      tier1 all filters -> tier2 remove carbs -> tier3 remove fat.
     Response includes ``fallback_meta`` with per-tier counts.
+    If no products match after tier3, response remains HTTP 200 and includes ``message``.
     """
     try:
         if request.method == "GET":
@@ -677,7 +716,14 @@ def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
             )
         else:
             total = sum(len(c["products"]) for c in result.get("collections", []))
-            log.info(f"FLEAN_PICKS_UNIFIED | source=see_all | collections={len(result.get('collections', []))} | total_products={total}")
+            fallback_meta = result.get("fallback_meta", {})
+            tier_counts = fallback_meta.get("total_tier_counts", {})
+            log.info(
+                "FLEAN_PICKS_UNIFIED | source=see_all | "
+                f"collections={len(result.get('collections', []))} | "
+                f"total_products={total} | tier_counts={tier_counts} | "
+                f"fallback_used={fallback_meta.get('fallback_used', False)}"
+            )
 
         return jsonify(_build_success_response(result)), 200
 

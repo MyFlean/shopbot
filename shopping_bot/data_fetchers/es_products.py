@@ -764,20 +764,20 @@ FLEAN_SCORE_FILTERS = {
     "7_plus": {"gte": 60},  # Top 40% (60th percentile and above)
 }
 
-# Preference filters - map to dietary_labels values
+# Preference filters - map request keys to ingredient_tags values
 PREFERENCE_FILTERS = {
-    "no_palm_oil": ["PALM OIL FREE"],
-    "no_added_sugar": ["NO ADDED SUGAR", "SUGAR FREE"],
-    "no_harmful_additives": ["NO ARTIFICIAL COLORS", "NO ARTIFICIAL FLAVORS", "NO HARMFUL ADDITIVES"],
-    "preservative_free": ["NO PRESERVATIVES"],
+    "no_palm_oil": "no_palm_oil",
+    "no_added_sugar": "no_added_sugar",
+    "no_harmful_additives": "no_harmful_additives",
+    "preservative_free": "preservative_free",
 }
 
-# Dietary restriction filters - map to dietary_labels values
+# Dietary restriction filters - map request keys to dietary_tags values
 DIETARY_FILTERS = {
-    "dairy_free": ["DAIRY FREE"],
-    "gluten_free": ["GLUTEN FREE"],
-    "nut_free": ["NUT FREE"],
-    "pcos_friendly": ["PCOS FRIENDLY", "LOW GI"],
+    "dairy_free": "dairy_free",
+    "gluten_free": "gluten_free",
+    "nut_free": "nut_free",
+    "pcos_friendly": "pcos_friendly",
 }
 
 VISIBILITY_FILTER = {"term": {"visibility": "visible"}}
@@ -820,64 +820,39 @@ def _build_filter_clauses(filters: Optional[Dict[str, Any]]) -> List[Dict[str, A
             "range": {"stats.adjusted_score_percentiles.subcategory_percentile": FLEAN_SCORE_FILTERS[flean_score]}
         })
     
-    # 3. Preference Filters (multiple allowed, combined with OR within category)
-    # Search across name, description, and claims for flexible matching
+    # 3. Preference Filters (multiple allowed, combined with AND)
+    # Exact tag matching against category_data.tags.ingredient_tags array.
     preferences = filters.get("preferences", [])
     if isinstance(preferences, list) and preferences:
-        preference_terms: List[str] = []
         for pref in preferences:
-            if pref in PREFERENCE_FILTERS:
-                preference_terms.extend(PREFERENCE_FILTERS[pref])
-        
-        if preference_terms:
-            # Use multi_match across multiple fields for comprehensive coverage
-            filter_clauses.append({
-                "bool": {
-                    "should": [
-                        {
-                            "multi_match": {
-                                "query": term,
-                                "fields": [
-                                    "name^2",
-                                    "package_claims.dietary_labels^3",
-                                    "package_claims.health_claims^3",
-                                    "description"
-                                ],
-                                "type": "best_fields",
-                                "operator": "and"
-                            }
-                        }
-                        for term in preference_terms
-                    ],
-                    "minimum_should_match": 1
-                }
-            })
-    
-    # 4. Dietary Restriction Filters (multiple allowed, combined with AND)
-    dietary = filters.get("dietary", [])
-    if isinstance(dietary, list) and dietary:
-        for diet_filter in dietary:
-            if diet_filter in DIETARY_FILTERS:
-                diet_terms = DIETARY_FILTERS[diet_filter]
+            tag_value = PREFERENCE_FILTERS.get(pref)
+            if tag_value:
+                # Include .keyword variant to support both text/keyword mappings.
                 filter_clauses.append({
                     "bool": {
                         "should": [
-                            {
-                                "multi_match": {
-                                    "query": term,
-                                    "fields": [
-                                        "name^2",
-                                        "package_claims.dietary_labels^3",
-                                        "package_claims.health_claims^3",
-                                        "description"
-                                    ],
-                                    "type": "best_fields",
-                                    "operator": "and"
-                                }
-                            }
-                            for term in diet_terms
+                            {"term": {"category_data.tags.ingredient_tags": tag_value}},
+                            {"term": {"category_data.tags.ingredient_tags.keyword": tag_value}},
                         ],
-                        "minimum_should_match": 1
+                        "minimum_should_match": 1,
+                    }
+                })
+
+    # 4. Dietary Restriction Filters (multiple allowed, combined with AND)
+    # Exact tag matching against category_data.tags.dietary_tags array.
+    dietary = filters.get("dietary", [])
+    if isinstance(dietary, list) and dietary:
+        for diet_filter in dietary:
+            tag_value = DIETARY_FILTERS.get(diet_filter)
+            if tag_value:
+                # Include .keyword variant to support both text/keyword mappings.
+                filter_clauses.append({
+                    "bool": {
+                        "should": [
+                            {"term": {"category_data.tags.dietary_tags": tag_value}},
+                            {"term": {"category_data.tags.dietary_tags.keyword": tag_value}},
+                        ],
+                        "minimum_should_match": 1,
                     }
                 })
 
@@ -887,7 +862,9 @@ def _build_filter_clauses(filters: Optional[Dict[str, Any]]) -> List[Dict[str, A
         ft = food_type.strip().lower()
         if ft == "veg":
             filter_clauses.append({
-                "bool": {"must_not": [{"match_phrase": {"description": "Non Veg"}}]}
+                "bool": {
+                    "must_not": [{"match_phrase": {"description": "Non Veg"}}]
+                }
             })
         elif ft == "nonveg":
             filter_clauses.append({"match_phrase": {"description": "Non Veg"}})

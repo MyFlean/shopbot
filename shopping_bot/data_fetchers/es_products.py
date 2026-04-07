@@ -377,13 +377,13 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         level, level_text, level_color = "unknown", "Not Rated", "#6B7280"
 
     badge_score_double: Optional[float] = None
-    badge_display_double: Optional[float] = None
+    badge_display_str: Optional[str] = None
     if isinstance(flean_score_data, dict):
         badge_score_double = _parse_flean_badge_score_double(
             flean_score_data.get("adjusted_score_label")
         )
     if badge_score_double is not None:
-        badge_display_double = badge_score_double
+        badge_display_str = str(round(badge_score_double, 2))
     else:
         adj = (
             flean_score_data.get("adjusted_score")
@@ -392,13 +392,15 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         )
         adj_val = _parse_flean_badge_score_double(adj)
         if adj_val is not None:
-            # Fallback: scaled score (0–10 style) vs full adjusted score, both floats
+            # Fallback: numeric score (scaled) vs string display of full adjusted score
             badge_score_double = round(adj_val / 10.0, 2)
-            badge_display_double = adj_val
+            badge_display_str = str(round(adj_val, 2))
+        else:
+            badge_display_str = "N/A"
 
     flean_badge = {
         "score": badge_score_double,
-        "score_display": badge_display_double,
+        "score_display": badge_display_str,
         "level": level,
         "level_text": level_text,
         "color": level_color,

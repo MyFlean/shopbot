@@ -894,9 +894,9 @@ def _build_filter_clauses(filters: Optional[Dict[str, Any]]) -> List[Dict[str, A
 
     # 6. Nutrition Slider Filters (protein >= X, carbs <= X, fat <= X)
     _NUTRITION_ES_FIELDS = {
-        "protein": "category_data.nutritional.nutri_breakdown_updated.protein g",
-        "carbs":   "category_data.nutritional.nutri_breakdown_updated.carbohydrate g",
-        "fat":     "category_data.nutritional.nutri_breakdown_updated.total fat g",
+        "protein": "category_data.nutritional.nutri_breakdown.protein g",
+        "carbs":   "category_data.nutritional.nutri_breakdown.carbohydrate g",
+        "fat":     "category_data.nutritional.nutri_breakdown.total fat g",
     }
     nutrition = filters.get("nutrition")
     if isinstance(nutrition, dict):

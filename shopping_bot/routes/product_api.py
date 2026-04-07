@@ -612,7 +612,7 @@ VALID_DIETARY = {"dairy_free", "gluten_free", "nut_free", "pcos_friendly"}
 VALID_FOOD_TYPES = {"veg", "nonveg"}
 VALID_NUTRITION_KEYS = {"protein", "carbs", "fat"}
 NUTRITION_MAX = {"protein": 40, "carbs": 100, "fat": 100}
-NUTRITION_STEP = {"protein": 10, "carbs": 20, "fat": 20}
+NUTRITION_STEP = {"protein": 10, "carbs": 25, "fat": 25}
 
 
 def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -636,7 +636,7 @@ def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[
             return None, f"Invalid flean_score: '{flean_score}'. Valid: {sorted(VALID_FLEAN_SCORES)}"
         validated["flean_score"] = flean_score
 
-    preferences = filters.get("preferences", [])
+    preferences = filters.get("ingredient_preferences", [])
     if preferences:
         if not isinstance(preferences, list):
             return None, "preferences must be an array"
@@ -645,7 +645,7 @@ def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[
             return None, f"Invalid preferences: {invalid}. Valid: {sorted(VALID_PREFERENCES)}"
         validated["preferences"] = preferences
 
-    dietary = filters.get("dietary", [])
+    dietary = filters.get("dietary_preferences", [])
     if dietary:
         if not isinstance(dietary, list):
             return None, "dietary must be an array"

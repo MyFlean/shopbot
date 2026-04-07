@@ -893,21 +893,37 @@ def _build_filter_clauses(filters: Optional[Dict[str, Any]]) -> List[Dict[str, A
             filter_clauses.append({"match_phrase": {"description": "Non Veg"}})
 
     # 6. Nutrition Slider Filters (protein >= X, carbs <= X, fat <= X)
+    # Support both nutri_breakdown and nutri_breakdown_updated plus key variants.
     _NUTRITION_ES_FIELDS = {
-        "protein": "category_data.nutritional.nutri_breakdown.protein g",
-        "carbs":   "category_data.nutritional.nutri_breakdown.carbohydrate g",
-        "fat":     "category_data.nutritional.nutri_breakdown.total fat g",
+        "protein": [
+            "category_data.nutritional.nutri_breakdown.protein g",
+            "category_data.nutritional.nutri_breakdown_updated.protein g",
+        ],
+        "carbs": [
+            "category_data.nutritional.nutri_breakdown.carbohydrate g",
+            "category_data.nutritional.nutri_breakdown.carbohydrates g",
+            "category_data.nutritional.nutri_breakdown_updated.carbohydrate g",
+            "category_data.nutritional.nutri_breakdown_updated.carbohydrates g",
+        ],
+        "fat": [
+            "category_data.nutritional.nutri_breakdown.total fat g",
+            "category_data.nutritional.nutri_breakdown_updated.total fat g",
+        ],
     }
     nutrition = filters.get("nutrition")
     if isinstance(nutrition, dict):
         for key, value in nutrition.items():
-            es_field = _NUTRITION_ES_FIELDS.get(key)
-            if not es_field or not isinstance(value, (int, float)) or value <= 0:
+            es_fields = _NUTRITION_ES_FIELDS.get(key) or []
+            if not es_fields or not isinstance(value, (int, float)) or value <= 0:
                 continue
-            if key == "protein":
-                filter_clauses.append({"range": {es_field: {"gte": value}}})
-            else:
-                filter_clauses.append({"range": {es_field: {"lte": value}}})
+            op = "gte" if key == "protein" else "lte"
+            should_ranges = [{"range": {field: {op: value}}} for field in es_fields]
+            filter_clauses.append({
+                "bool": {
+                    "should": should_ranges,
+                    "minimum_should_match": 1,
+                }
+            })
 
     return filter_clauses
 

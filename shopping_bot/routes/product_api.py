@@ -68,7 +68,8 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
 
     Sections returned:
       - product_info: id, name, brand, price, mrp, currency, image_url, image_urls, qty, description
-      - flean_badge: score (int), score_display ("4/10"), level, level_text
+      - flean_badge: score (float|null), score_display (float|null), level, level_text
+        (fallback from adjusted_score: score is adjusted_score/10, score_display is full adjusted_score)
       - score_cards: named object with keys {flean_rank, protein, fiber, sweeteners, oils, watch_outs, calories}
                      each containing {title, value, subtitle, percentile, status}
       - notes: {criteria_note, ranking_note}

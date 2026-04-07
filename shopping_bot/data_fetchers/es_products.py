@@ -279,6 +279,37 @@ def _get_score_tier(percentile: float) -> Dict[str, str]:
     return SCORE_TIERS[-1]
 
 
+_BADGE_SCORE_DENY = {"", "na", "n/a", "null", "-", "not detected"}
+
+
+def _numeric_chars_for_float(s: str) -> str:
+    return "".join(
+        ch for ch in s if ("0" <= ch <= "9") or ch in ".+-eE"
+    )
+
+
+def _parse_flean_badge_score_double(val: Any) -> Optional[float]:
+    """Parse ES label or numeric into a rounded float for PDP badge keys."""
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        return None
+    if isinstance(val, (int, float)):
+        return round(float(val), 2)
+    if isinstance(val, str):
+        s = val.strip().lower()
+        if s in _BADGE_SCORE_DENY:
+            return None
+        s = _numeric_chars_for_float(s)
+        if not s:
+            return None
+        try:
+            return round(float(s), 2)
+        except (ValueError, OverflowError):
+            return None
+    return None
+
+
 def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     """
     Full PDP transformer: raw ES _source → optimized key-value PDP data.
@@ -332,7 +363,6 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     # ── flean_badge ──
-    flean_score = flean_score_data.get("adjusted_score") if isinstance(flean_score_data, dict) else flean_score_data
     flean_percentile = None
     if stats.get("adjusted_score_percentiles"):
         flean_percentile = stats["adjusted_score_percentiles"].get("subcategory_percentile")
@@ -346,14 +376,29 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     else:
         level, level_text, level_color = "unknown", "Not Rated", "#6B7280"
 
-    if flean_score is not None:
-        score_display = str(round(flean_score, 2))
+    badge_score_double: Optional[float] = None
+    badge_display_double: Optional[float] = None
+    if isinstance(flean_score_data, dict):
+        badge_score_double = _parse_flean_badge_score_double(
+            flean_score_data.get("adjusted_score_label")
+        )
+    if badge_score_double is not None:
+        badge_display_double = badge_score_double
     else:
-        score_display = "N/A"
+        adj = (
+            flean_score_data.get("adjusted_score")
+            if isinstance(flean_score_data, dict)
+            else flean_score_data
+        )
+        adj_val = _parse_flean_badge_score_double(adj)
+        if adj_val is not None:
+            # Fallback: scaled score (0–10 style) vs full adjusted score, both floats
+            badge_score_double = round(adj_val / 10.0, 2)
+            badge_display_double = adj_val
 
     flean_badge = {
-        "score": flean_score,
-        "score_display": score_display,
+        "score": badge_score_double,
+        "score_display": badge_display_double,
         "level": level,
         "level_text": level_text,
         "color": level_color,

@@ -43,7 +43,7 @@ bp = Blueprint("home_page", __name__)
 FLEAN_PICKS_CATEGORIES = {
     "high_protein_snacks": {
         "name": "High Protein Snacks",
-        "image_url": "https://img.flean.ai/assets/Categories-Subcategories/Flean-Picks/High%20Protein%20Snacks.png?w=100",
+        "image_url": "https://img.flean.ai/assets/Categories-Subcategories/Flean-Picks/High%20Protein%20Snacks.png",
         "es_paths": [
             "f_and_b/food/light_bites/energy_bars",
             "f_and_b/food/light_bites/dry_fruit_and_nut_snacks",
@@ -51,7 +51,7 @@ FLEAN_PICKS_CATEGORIES = {
     },
     "no_guilt_spreads": {
         "name": "No Guilt Spreads",
-        "image_url": "https://img.flean.ai/assets/Categories-Subcategories/Flean-Picks/No%20Guilt%20Spreads.png?w=100",
+        "image_url": "https://img.flean.ai/assets/Categories-Subcategories/Flean-Picks/No%20Guilt%20Spreads.png",
         "es_paths": [
             "f_and_b/food/spreads_and_condiments/peanut_butter",
             "f_and_b/food/spreads_and_condiments/honey_and_spreads",
@@ -59,7 +59,7 @@ FLEAN_PICKS_CATEGORIES = {
     },
     "powerpacked_breakfast": {
         "name": "Powerpacked Breakfast",
-        "image_url": "https://img.flean.ai/assets/Categories-Subcategories/Flean-Picks/Power-packed%20Breakfast.png?w=100",
+        "image_url": "https://img.flean.ai/assets/Categories-Subcategories/Flean-Picks/Power-packed%20Breakfast.png",
         "es_paths": [
             "f_and_b/food/breakfast_essentials/muesli_and_oats",
             "f_and_b/food/breakfast_essentials/dates_and_seeds",
@@ -67,7 +67,7 @@ FLEAN_PICKS_CATEGORIES = {
     },
     "no_guilt_munchies": {
         "name": "No Guilt Munchies",
-        "image_url": "https://img.flean.ai/assets/Categories-Subcategories/Flean-Picks/No%20Guilt%20Munchies.png?w=100",
+        "image_url": "https://img.flean.ai/assets/Categories-Subcategories/Flean-Picks/No%20Guilt%20Munchies.png",
         "es_paths": [
             "f_and_b/food/light_bites/chips_and_crisps",
             "f_and_b/food/light_bites/savory_namkeen",

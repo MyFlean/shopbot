@@ -1,5 +1,7 @@
 name: Deploy Lambda Function
 
+# AWS CI principal: IAM user shopbot-github-deploy (replaces legacy shopbot-cicd-user).
+#   Credentials: repository secrets AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
 # Triggers on push when Lambda paths change
 on:
   push:
@@ -157,7 +159,7 @@ jobs:
           terraform plan -input=false
         env:
           TF_VAR_enable_custom_domain: "false"
-          # CI user (shopbot-cicd-user) lacks logs:CreateLogDelivery; matches Import step
+          # CI user (shopbot-github-deploy) lacks logs:CreateLogDelivery; matches Import step
           TF_VAR_enable_api_gateway_access_logs: "false"
           TF_VAR_api_gateway_execution_log_level: "OFF"
           TF_VAR_secrets_manager_secret_arn: ${{ secrets.SHOPBOT_SECRETS_ARN }}
@@ -165,7 +167,7 @@ jobs:
           TF_VAR_es_url: ${{ secrets.ES_URL }}
           TF_VAR_es_api_key: ${{ secrets.ES_API_KEY }}
 
-      # Apply only the Lambda zip update. shopbot-cicd-user cannot call logs:CreateLogDelivery;
+      # Apply only the Lambda zip update. shopbot-github-deploy cannot call logs:CreateLogDelivery;
       # a full apply would still try to reconcile aws_apigatewayv2_stage and fail. -target is
       # not allowed with a saved plan file, so we apply directly (same vars as Plan).
       - name: Terraform Apply

@@ -212,7 +212,17 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         images = src.get("images")
         image_url = images[0] if isinstance(images, list) and images else ""
         flean_score_data = src.get("flean_score", {})
-        flean_score = flean_score_data.get("adjusted_score") if isinstance(flean_score_data, dict) else flean_score_data
+        # Match PDP badge scoring semantics:
+        # - prefer adjusted_score_label (numeric) when present
+        # - else fall back to adjusted_score scaled to a 0–10 score (divide by 10)
+        flean_score = None
+        if isinstance(flean_score_data, dict):
+            flean_score = _parse_flean_badge_score_double(flean_score_data.get("adjusted_score_label"))
+        if flean_score is None:
+            _adj = flean_score_data.get("adjusted_score") if isinstance(flean_score_data, dict) else flean_score_data
+            _adj_val = _parse_flean_badge_score_double(_adj)
+            if _adj_val is not None:
+                flean_score = round(_adj_val / 10.0, 2)
         stats = src.get("stats", {})
         flean_percentile = None
         if stats.get("adjusted_score_percentiles"):
@@ -228,7 +238,12 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         }
         qty = src.get("qty", "")
         image_url = src.get("image", "") or ""
-        flean_score = src.get("flean_score")
+        # Pre-transformed cards usually carry numeric flean_score; normalize to 0–10
+        _fs = _parse_flean_badge_score_double(src.get("flean_score"))
+        if _fs is not None and _fs > 10.0:
+            flean_score = round(_fs / 10.0, 2)
+        else:
+            flean_score = _fs
         flean_percentile = src.get("flean_percentile")
 
     macro_tags = _generate_macro_tags(nutrition)

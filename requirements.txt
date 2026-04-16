@@ -29,4 +29,5 @@ boto3>=1.34.0             # AWS SDK for Secrets Manager access
 
 cryptography
 requests
+requests-aws4auth>=1.2.3  # SigV4 signing for OpenSearch Serverless (AOSS)
 aiohttp>=3.8.0

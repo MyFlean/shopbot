@@ -17,6 +17,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 import json
+from urllib.parse import urlparse
 
 import requests
 
@@ -46,6 +47,29 @@ def _normalize_es_base(raw_url: Optional[str], index: Optional[str]) -> str:
     if not (s.startswith("http://") or s.startswith("https://")):
         s = f"https://{s}"
     return s
+
+
+def _is_truthy_env(var_name: str) -> bool:
+    return os.getenv(var_name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_aoss_url(url: Optional[str]) -> bool:
+    return "aoss.amazonaws.com" in str(url or "").lower()
+
+
+def _resolve_aws_region(base_url: str) -> str:
+    env_region = (os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "").strip()
+    if env_region:
+        return env_region
+    try:
+        parsed = urlparse(base_url if str(base_url).startswith("http") else f"https://{base_url}")
+        host = (parsed.hostname or "").lower()
+        m = re.search(r"\.([a-z0-9-]+)\.aoss\.amazonaws\.com$", host)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    return "ap-south-1"
 
 # 🎯 ELASTICSEARCH ENVIRONMENT VARIABLES 🎯
 ES_URL_ENV = os.getenv("ES_URL")
@@ -2213,18 +2237,23 @@ class ElasticsearchProductsFetcher:
         self.index = index or ELASTIC_INDEX
         self.api_key = (api_key or ELASTIC_API_KEY)
         self._has_category_paths_keyword: Optional[bool] = None
+        self.use_iam_auth = (
+            _is_truthy_env("AOSS_ENABLED")
+            or _is_truthy_env("ES_USE_IAM")
+            or _is_aoss_url(self.base_url)
+        )
+        self.aws_region = _resolve_aws_region(self.base_url) if self.use_iam_auth else None
         
         if not self.base_url:
             raise RuntimeError("ES_URL or ELASTIC_BASE is required for Elasticsearch access")
-        if not self.api_key:
+        if not self.use_iam_auth and not self.api_key:
             raise RuntimeError("ELASTIC_API_KEY (or ES_API_KEY) is required for Elasticsearch access")
             
         self.endpoint = f"{self.base_url}/{self.index}/_search"
         self.mget_endpoint = f"{self.base_url}/{self.index}/_mget"
-        self.headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"ApiKey {self.api_key}"
-        } if self.api_key else {}
+        self.headers = {"Content-Type": "application/json"}
+        if not self.use_iam_auth and self.api_key:
+            self.headers["Authorization"] = f"ApiKey {self.api_key}"
         
         # Debug output with emojis
         print("="*80)
@@ -2234,7 +2263,43 @@ class ElasticsearchProductsFetcher:
         print(f"🔗 SEARCH_ENDPOINT: {self.endpoint}")
         print(f"🔗 MGET_ENDPOINT: {self.mget_endpoint}")
         print(f"🔑 API_KEY: {'***SET***' if self.api_key else 'NOT SET'}")
+        print(f"🛡️ IAM_AUTH: {'ENABLED' if self.use_iam_auth else 'DISABLED'}")
+        if self.use_iam_auth:
+            print(f"🌍 AWS_REGION: {self.aws_region}")
         print("="*80)
+
+    def _build_aws_auth(self):
+        """Build SigV4 auth object for OpenSearch Serverless (AOSS)."""
+        try:
+            import boto3
+            from requests_aws4auth import AWS4Auth
+        except ImportError as exc:
+            raise RuntimeError(
+                "AOSS IAM auth requires boto3 and requests-aws4auth. "
+                "Install dependencies from requirements.txt."
+            ) from exc
+
+        session = boto3.Session(region_name=self.aws_region)
+        creds = session.get_credentials()
+        if creds is None:
+            raise RuntimeError(
+                "AWS credentials are required for OpenSearch Serverless IAM auth. "
+                "Configure AWS_PROFILE or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY."
+            )
+        frozen = creds.get_frozen_credentials()
+        return AWS4Auth(
+            frozen.access_key,
+            frozen.secret_key,
+            self.aws_region,
+            "aoss",
+            session_token=frozen.token,
+        )
+
+    def _request_kwargs(self) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {"headers": self.headers}
+        if self.use_iam_auth:
+            kwargs["auth"] = self._build_aws_auth()
+        return kwargs
     
     def _ensure_mapping_hints(self) -> None:
         """Lazy-load index mapping to detect availability of 'category_paths.keyword'."""
@@ -2243,7 +2308,7 @@ class ElasticsearchProductsFetcher:
         try:
             mapping_endpoint = f"{self.base_url}/{self.index}/_mapping"
             print(f"DEBUG: ES_MAPPING_REQUEST | endpoint={mapping_endpoint} | method=GET | timeout={TIMEOUT}s")
-            resp = requests.get(mapping_endpoint, headers=self.headers, timeout=TIMEOUT)
+            resp = requests.get(mapping_endpoint, timeout=TIMEOUT, **self._request_kwargs())
             resp.raise_for_status()
             data = resp.json() or {}
             # Traverse to detect 'category_paths.keyword'
@@ -2321,9 +2386,9 @@ class ElasticsearchProductsFetcher:
             
             response = requests.post(
                 self.endpoint,
-                headers=self.headers,
                 json=query_body,
-                timeout=TIMEOUT
+                timeout=TIMEOUT,
+                **self._request_kwargs(),
             )
             response.raise_for_status()
             
@@ -2390,9 +2455,9 @@ class ElasticsearchProductsFetcher:
             print(f"DEBUG: ES_MGET_REQUEST | endpoint={self.mget_endpoint} | method=POST | timeout={TIMEOUT}s")
             response = requests.post(
                 self.mget_endpoint,
-                headers=self.headers,
                 json=body,
-                timeout=TIMEOUT
+                timeout=TIMEOUT,
+                **self._request_kwargs(),
             )
             try:
                 print(f"DEBUG: ES mget response | status={response.status_code}")
@@ -2435,9 +2500,9 @@ class ElasticsearchProductsFetcher:
             body = {"ids": ordered_ids}
             response = requests.post(
                 self.mget_endpoint,
-                headers=self.headers,
                 json=body,
-                timeout=TIMEOUT
+                timeout=TIMEOUT,
+                **self._request_kwargs(),
             )
             response.raise_for_status()
             data = response.json() or {}
@@ -2497,9 +2562,9 @@ class ElasticsearchProductsFetcher:
             print(f"DEBUG: ES_BRAND_SUGGEST_REQUEST | endpoint={self.endpoint} | method=POST | timeout={TIMEOUT}s")
             response = requests.post(
                 self.endpoint,
-                headers=self.headers,
                 json=body,
-                timeout=TIMEOUT
+                timeout=TIMEOUT,
+                **self._request_kwargs(),
             )
             response.raise_for_status()
             data = response.json() or {}
@@ -2541,9 +2606,9 @@ class ElasticsearchProductsFetcher:
             print(f"DEBUG: ES_SEARCH_REQUEST | endpoint={search_endpoint} | method=POST | timeout={TIMEOUT}s")
             response = requests.post(
                 search_endpoint,
-                headers=self.headers,
                 json=body,
-                timeout=TIMEOUT
+                timeout=TIMEOUT,
+                **self._request_kwargs(),
             )
             print(f"DEBUG: ES ids-search response | status={response.status_code}")
             response.raise_for_status()
@@ -2596,9 +2661,9 @@ class ElasticsearchProductsFetcher:
             
             response = requests.post(
                 search_endpoint,
-                headers=self.headers,
                 json=body,
-                timeout=TIMEOUT
+                timeout=TIMEOUT,
+                **self._request_kwargs(),
             )
             response.raise_for_status()
             data = response.json() or {}
@@ -2692,7 +2757,7 @@ class ElasticsearchProductsFetcher:
 
             endpoint = f"{self.base_url}/{self.index}/_search"
             print(f"DEBUG: ES healthier_alternatives | subcat={subcat} | exclude={product_id}")
-            resp = requests.post(endpoint, headers=self.headers, json=body, timeout=TIMEOUT)
+            resp = requests.post(endpoint, json=body, timeout=TIMEOUT, **self._request_kwargs())
             resp.raise_for_status()
             data = resp.json() or {}
             hits = (data.get("hits", {}) or {}).get("hits", []) or []
@@ -2789,7 +2854,7 @@ class ElasticsearchProductsFetcher:
 
             endpoint = f"{self.base_url}/{self.index}/_search"
             print(f"DEBUG: ES recommended_products | subcat={subcat} | exclude={product_id}")
-            resp = requests.post(endpoint, headers=self.headers, json=body, timeout=TIMEOUT)
+            resp = requests.post(endpoint, json=body, timeout=TIMEOUT, **self._request_kwargs())
             resp.raise_for_status()
             data = resp.json() or {}
             
@@ -2879,9 +2944,9 @@ class ElasticsearchProductsFetcher:
             
             response = requests.post(
                 search_endpoint,
-                headers=self.headers,
                 json=body,
-                timeout=TIMEOUT
+                timeout=TIMEOUT,
+                **self._request_kwargs(),
             )
             response.raise_for_status()
             data = response.json() or {}
@@ -3061,9 +3126,9 @@ class ElasticsearchProductsFetcher:
             
             response = requests.post(
                 search_endpoint,
-                headers=self.headers,
                 json=body,
-                timeout=TIMEOUT
+                timeout=TIMEOUT,
+                **self._request_kwargs(),
             )
             response.raise_for_status()
             data = response.json() or {}
@@ -3173,7 +3238,7 @@ class ElasticsearchProductsFetcher:
             }
 
             endpoint = f"{self.base_url}/{self.index}/_search"
-            resp = requests.post(endpoint, headers=self.headers, json=body, timeout=TIMEOUT)
+            resp = requests.post(endpoint, json=body, timeout=TIMEOUT, **self._request_kwargs())
             resp.raise_for_status()
             hits = (resp.json().get("hits", {}) or {}).get("hits", []) or []
             return [h["_source"] for h in hits if h.get("_source")]

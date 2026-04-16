@@ -67,6 +67,18 @@
           "value": "products_v3"
         },
         {
+          "name": "AOSS_ENABLED",
+          "value": "true"
+        },
+        {
+          "name": "ES_USE_IAM",
+          "value": "true"
+        },
+        {
+          "name": "SEARCH_AWS_REGION",
+          "value": "ap-south-1"
+        },
+        {
           "name": "ELASTIC_TIMEOUT_SECONDS",
           "value": "10"
         },
@@ -123,10 +135,6 @@
         {
           "name": "REDIS_PORT",
           "valueFrom": "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/redis-port"
-        },
-        {
-          "name": "ES_API_KEY",
-          "valueFrom": "arn:aws:secretsmanager:ap-south-1:637607366584:secret:shopping-bot/es-api-key"
         },
         {
           "name": "ES_URL",

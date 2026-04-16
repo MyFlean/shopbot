@@ -56,11 +56,20 @@ class BaseConfig:
     # Streaming (SSE/WebSocket) feature gate
     ENABLE_STREAMING: bool = os.getenv("ENABLE_STREAMING", "false").lower() in {"1", "true", "yes", "on"}
     
-    # Elasticsearch (if used)
-    # Prefer ES_URL; fallback to legacy ELASTIC_BASE; normalize leading '@' and whitespace
+    # Search backend
+    # Prefer ES_URL; fallback to legacy ELASTIC_BASE; normalize leading '@' and whitespace.
+    # In AOSS mode, ES_URL points at the Serverless collection endpoint and auth is SigV4/IAM.
     _RAW_ES = os.getenv("ES_URL") or os.getenv("ELASTIC_BASE", "")
     ELASTIC_BASE: str = (_RAW_ES.strip().lstrip("@").strip())
     ELASTIC_INDEX: str = os.getenv("ELASTIC_INDEX", "products_v3")
+    AOSS_ENABLED: bool = os.getenv("AOSS_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+    ES_USE_IAM: bool = os.getenv("ES_USE_IAM", "false").lower() in {"1", "true", "yes", "on"}
+    SEARCH_AWS_REGION: str = (
+        os.getenv("SEARCH_AWS_REGION")
+        or os.getenv("AWS_REGION")
+        or os.getenv("AWS_DEFAULT_REGION")
+        or "ap-south-1"
+    )
     ELASTIC_API_KEY: str = os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")
     ELASTIC_TIMEOUT_SECONDS: int = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
     ELASTIC_MAX_RESULTS: int = int(os.getenv("ELASTIC_MAX_RESULTS", "50"))

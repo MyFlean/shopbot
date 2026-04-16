@@ -58,7 +58,12 @@ def _is_aoss_url(url: Optional[str]) -> bool:
 
 
 def _resolve_aws_region(base_url: str) -> str:
-    env_region = (os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "").strip()
+    env_region = (
+        os.getenv("SEARCH_AWS_REGION")
+        or os.getenv("AWS_REGION")
+        or os.getenv("AWS_DEFAULT_REGION")
+        or ""
+    ).strip()
     if env_region:
         return env_region
     try:
@@ -71,22 +76,28 @@ def _resolve_aws_region(base_url: str) -> str:
         pass
     return "ap-south-1"
 
-# 🎯 ELASTICSEARCH ENVIRONMENT VARIABLES 🎯
+# 🎯 SEARCH ENVIRONMENT VARIABLES 🎯
 ES_URL_ENV = os.getenv("ES_URL")
 ELASTIC_BASE_ENV = os.getenv("ELASTIC_BASE")
 ELASTIC_INDEX_ENV = os.getenv("ELASTIC_INDEX")
 ES_API_KEY_ENV = os.getenv("ES_API_KEY")
 ELASTIC_API_KEY_ENV = os.getenv("ELASTIC_API_KEY")
 ELASTIC_TIMEOUT_ENV = os.getenv("ELASTIC_TIMEOUT_SECONDS")
+AOSS_ENABLED_ENV = os.getenv("AOSS_ENABLED")
+ES_USE_IAM_ENV = os.getenv("ES_USE_IAM")
+SEARCH_AWS_REGION_ENV = os.getenv("SEARCH_AWS_REGION") or os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")
 
 print("="*80)
-print("🔍🔍🔍 ELASTICSEARCH ENV VARIABLES FETCHED 🔍🔍🔍")
+print("🔍🔍🔍 SEARCH ENV VARIABLES FETCHED 🔍🔍🔍")
 print(f"🌐 ES_URL: {ES_URL_ENV}")
 print(f"🌐 ELASTIC_BASE: {ELASTIC_BASE_ENV}")
 print(f"📇 ELASTIC_INDEX: {ELASTIC_INDEX_ENV}")
 print(f"🔑 ES_API_KEY: {'***SET***' if ES_API_KEY_ENV else 'NOT SET'}")
 print(f"🔑 ELASTIC_API_KEY: {'***SET***' if ELASTIC_API_KEY_ENV else 'NOT SET'}")
 print(f"⏱️  ELASTIC_TIMEOUT_SECONDS: {ELASTIC_TIMEOUT_ENV}")
+print(f"🛡️ AOSS_ENABLED: {AOSS_ENABLED_ENV}")
+print(f"🛡️ ES_USE_IAM: {ES_USE_IAM_ENV}")
+print(f"🌍 SEARCH_AWS_REGION: {SEARCH_AWS_REGION_ENV}")
 print("="*80)
 
 ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "products_v3")
@@ -95,9 +106,9 @@ ELASTIC_BASE = _normalize_es_base(_RAW_ES_URL, ELASTIC_INDEX)
 ELASTIC_API_KEY = (os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")).strip().strip("'\"")
 TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
 
-# Debug ES config on module load
+# Debug search config on module load
 print("="*80)
-print("✅✅✅ ELASTICSEARCH CONFIGURATION FINALIZED ✅✅✅")
+print("✅✅✅ SEARCH CONFIGURATION FINALIZED ✅✅✅")
 print(f"📍 RAW_ES_URL: {_RAW_ES_URL}")
 print(f"📍 ELASTIC_BASE (normalized): {ELASTIC_BASE}")
 print(f"📍 ELASTIC_INDEX: {ELASTIC_INDEX}")
@@ -2245,7 +2256,7 @@ def _transform_results(raw_response: Dict[str, Any], skip_rerank: bool = False) 
     }
 
 class ElasticsearchProductsFetcher:
-    """Elasticsearch fetcher with enhanced query capabilities."""
+    """Search fetcher supporting Elastic API key auth and AOSS SigV4 auth."""
     
     def __init__(self, base_url: str = None, index: str = None, api_key: str = None):
         self.base_url = (base_url or ELASTIC_BASE)
@@ -2262,7 +2273,7 @@ class ElasticsearchProductsFetcher:
         if not self.base_url:
             raise RuntimeError("ES_URL or ELASTIC_BASE is required for Elasticsearch access")
         if not self.use_iam_auth and not self.api_key:
-            raise RuntimeError("ELASTIC_API_KEY (or ES_API_KEY) is required for Elasticsearch access")
+            raise RuntimeError("ELASTIC_API_KEY (or ES_API_KEY) is required unless AOSS/IAM auth is enabled")
             
         self.endpoint = f"{self.base_url}/{self.index}/_search"
         self.mget_endpoint = f"{self.base_url}/{self.index}/_mget"

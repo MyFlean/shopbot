@@ -35,26 +35,19 @@ data "aws_secretsmanager_secret_version" "es_url" {
   secret_id = data.aws_secretsmanager_secret.es_url[0].id
 }
 
-# Get ES_API_KEY from shopbot secret (skipped when es_api_key var is provided for CI)
-data "aws_secretsmanager_secret_version" "shopbot_secrets" {
-  count     = var.es_api_key != "" ? 0 : 1
-  secret_id = var.secrets_manager_secret_arn
-}
-
 locals {
-  es_url     = var.es_url != "" ? var.es_url : data.aws_secretsmanager_secret_version.es_url[0].secret_string
-  es_api_key = var.es_api_key != "" ? var.es_api_key : jsondecode(data.aws_secretsmanager_secret_version.shopbot_secrets[0].secret_string)["ES_API_KEY"]
+  es_url = var.es_url != "" ? var.es_url : data.aws_secretsmanager_secret_version.es_url[0].secret_string
 }
 
 # Lambda function
 resource "aws_lambda_function" "shopbot" {
-  filename         = "${path.module}/../../shopbot.zip"
-  function_name    = "${var.project_name}-service"
-  role            = aws_iam_role.lambda_role.arn
-  handler         = "lambda_handler.lambda_handler"
-  runtime         = "python3.12"
-  timeout         = var.lambda_timeout
-  memory_size     = var.lambda_memory_size
+  filename      = "${path.module}/../../shopbot.zip"
+  function_name = "${var.project_name}-service"
+  role          = aws_iam_role.lambda_role.arn
+  handler       = "lambda_handler.lambda_handler"
+  runtime       = "python3.12"
+  timeout       = var.lambda_timeout
+  memory_size   = var.lambda_memory_size
 
   source_code_hash = filebase64sha256("${path.module}/../../shopbot.zip")
 
@@ -69,27 +62,28 @@ resource "aws_lambda_function" "shopbot" {
 
   environment {
     variables = {
-      FLASK_ENV              = "lambda"
-      APP_ENV                = "lambda"
+      FLASK_ENV = "lambda"
+      APP_ENV   = "lambda"
       # AWS_REGION is automatically available in Lambda, don't set it
       # REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_DB are now loaded from Secrets Manager
       # Do not set REDIS_HOST here - it will override secrets from Secrets Manager
-      LOG_LEVEL             = var.log_level
-      BOT_LOG_LEVEL         = var.log_level  # Smart logger system uses BOT_LOG_LEVEL
+      LOG_LEVEL     = var.log_level
+      BOT_LOG_LEVEL = var.log_level # Smart logger system uses BOT_LOG_LEVEL
       # Secrets retrieved via Secrets Manager in code
       SECRETS_MANAGER_SECRET = var.secrets_manager_secret_name
-      REDIS_SECRET_NAME     = "flean-services/redis"
-      # Elasticsearch - set as environment variables for module import time
-      # These are also loaded from secrets, but need to be available when modules are imported
-      ES_URL                = local.es_url
-      ES_API_KEY            = local.es_api_key
-      ELASTIC_INDEX         = "products_v3"
+      REDIS_SECRET_NAME      = "flean-services/redis"
+      # Search backend - use AOSS with SigV4/IAM auth at module import time
+      ES_URL                  = local.es_url
+      ELASTIC_INDEX           = "products_v3"
+      AOSS_ENABLED            = "true"
+      ES_USE_IAM              = "true"
+      SEARCH_AWS_REGION       = var.aws_region
       ELASTIC_TIMEOUT_SECONDS = "10"
       # AWS SDK retry configuration to prevent retry storms
       AWS_MAX_ATTEMPTS = "3"
-      AWS_RETRY_MODE = "standard"
+      AWS_RETRY_MODE   = "standard"
       # HTTP client timeout configuration for external APIs
-      HTTP_TIMEOUT = "30"  # 30 seconds timeout for external HTTP calls
+      HTTP_TIMEOUT     = "30" # 30 seconds timeout for external HTTP calls
       HTTP_MAX_RETRIES = "2"  # Limit retries to prevent NAT traffic amplification
     }
   }
@@ -255,6 +249,25 @@ resource "aws_iam_role_policy" "lambda_secrets" {
         ["arn:aws:secretsmanager:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:secret:flean-services/redis-*"]
       )
     }]
+  })
+}
+
+resource "aws_iam_role_policy" "lambda_aoss" {
+  name = "${var.project_name}-lambda-aoss"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "aoss:APIAccessAll",
+          "aoss:DashboardsAccessAll"
+        ]
+        Resource = "*"
+      }
+    ]
   })
 }
 

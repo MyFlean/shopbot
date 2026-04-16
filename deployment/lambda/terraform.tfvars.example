@@ -22,10 +22,14 @@ redis_security_group_ids = [
 # Secrets Manager
 # Create this secret in AWS Secrets Manager with the following keys:
 # - ANTHROPIC_API_KEY
-# - ES_API_KEY (or ELASTIC_API_KEY)
 # - REDIS_PASSWORD (if required)
 secrets_manager_secret_name = "flean-services/shopbot"
 secrets_manager_secret_arn = "arn:aws:secretsmanager:ap-south-1:637607366584:secret:flean-services/shopbot-XXXXX"
+
+# Search backend
+# Set this to the AOSS collection endpoint if you want CI/manual applies to bypass
+# the shopping-bot/es-url secret lookup.
+# es_url = "https://<collection-id>.ap-south-1.aoss.amazonaws.com"
 
 # CORS Configuration
 cors_origins = [
@@ -43,12 +47,3 @@ lambda_memory_size = 512
 # API Gateway Throttling
 throttling_burst_limit = 5000
 throttling_rate_limit = 2000
-
-
-
-
-
-
-
-
-

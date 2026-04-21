@@ -598,12 +598,13 @@ def get_catalogue_mapping() -> Tuple[Dict[str, Any], int]:
 
 # Sort & Filter Constants (shared with simple_search)
 VALID_SORT_OPTIONS = {
-    "relevance",      # Default: ES score
-    "price_asc",      # Price Low to High
-    "price_desc",     # Price High to Low
-    "protein_desc",   # Protein High to Low
-    "fiber_desc",     # Fibre High to Low
-    "fat_asc",        # Fat Low to High
+    "relevance",          # Default: ES score
+    "price_asc",          # Price Low to High
+    "price_desc",         # Price High to Low
+    "protein_desc",       # Protein High to Low
+    "fiber_desc",         # Fibre High to Low
+    "fat_asc",            # Fat Low to High
+    "flean_score_desc",   # Flean percentile High to Low (catalogue-compat ordering)
 }
 
 VALID_PRICE_RANGES = {"below_99", "100_249", "250_499", "above_500"}

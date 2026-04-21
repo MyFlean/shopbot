@@ -404,6 +404,19 @@ def create_app(config_name: str = 'production') -> Flask:
                 extra={"error_type": type(e).__name__},
             )
 
+        # Register unified search endpoint (superset of /rs/search, /rs/api/v1/catalogue, /rs/api/v1/products)
+        try:
+            from .routes.unified_search import bp as unified_search_bp
+            app.register_blueprint(unified_search_bp, url_prefix='/rs')
+            log.info("REGISTER_ROUTES_SUCCESS | unified search registered (/rs/v1/search)")
+        except Exception as e:
+            log.error(
+                "REGISTER_ROUTES_ERROR | unified search failed: %s",
+                str(e),
+                exc_info=True,
+                extra={"error_type": type(e).__name__},
+            )
+
         routes_time = time.time() - routes_start
         # Log registered routes for debugging (helps diagnose 404s)
         registered_rules = [f"{r.rule} [{','.join(r.methods - {'HEAD', 'OPTIONS'})}]" for r in app.url_map.iter_rules() if not r.rule.startswith("/__")]

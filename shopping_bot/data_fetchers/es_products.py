@@ -811,6 +811,8 @@ def _build_sort_config(sort_by: Optional[str]) -> List[Dict[str, Any]]:
             - 'protein_desc': Protein High to Low
             - 'fiber_desc': Fibre High to Low
             - 'fat_asc': Fat Low to High
+            - 'flean_score_desc': Flean subcategory percentile High to Low
+              (matches catalogue's original default ordering)
     
     Returns:
         List of ES sort clauses
@@ -829,6 +831,10 @@ def _build_sort_config(sort_by: Optional[str]) -> List[Dict[str, Any]]:
         ],
         "fat_asc": [
             {"category_data.nutritional.nutri_breakdown_updated.total fat g": {"order": "asc", "missing": "_last"}},
+            {"_score": "desc"}
+        ],
+        "flean_score_desc": [
+            {"stats.adjusted_score_percentiles.subcategory_percentile": {"order": "desc", "missing": "_last"}},
             {"_score": "desc"}
         ],
     }

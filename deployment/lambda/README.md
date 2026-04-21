@@ -5,9 +5,10 @@ This directory contains Terraform configuration and build scripts for deploying 
 ## Prerequisites
 
 1. **AWS CLI** configured with appropriate credentials
-2. **Terraform** >= 1.5.0
-3. **Docker** (for building Lambda package)
+2. **Docker** (for building Lambda package)
+3. **Terraform** >= 1.5.0 (optional — only if you manage API Gateway / IAM with Terraform)
 4. **Python** 3.12 (for local development)
+5. **jq** (optional — for `update-lambda-env-aoss.sh`)
 
 ## Architecture
 
@@ -68,7 +69,35 @@ Get the ARN and update `terraform.tfvars`:
 aws secretsmanager describe-secret --secret-id flean-services/shopbot --query ARN --output text
 ```
 
-### 4. Deploy Infrastructure
+### 4. Deploy Lambda code (AWS CLI — default)
+
+Updates **only** the Lambda deployment package (`update-function-code`). No Terraform required for day-to-day code deploys.
+
+```bash
+cd /path/to/shopbot
+chmod +x deployment/lambda/deploy.sh
+./deployment/lambda/deploy.sh
+```
+
+Or step-by-step:
+
+```bash
+./deployment/lambda/build-docker.sh
+AWS_REGION=ap-south-1 LAMBDA_FUNCTION_NAME=shopbot-service ./deployment/lambda/deploy-lambda-aws-cli.sh
+```
+
+**OpenSearch Serverless env** (merges with existing Lambda env; preserves other variables):
+
+```bash
+ES_URL='https://<collection-id>.ap-south-1.aoss.amazonaws.com' \
+  ./deployment/lambda/update-lambda-env-aoss.sh
+```
+
+GitHub Actions (`.github/workflows/deploy-lambda.yml`) uses the same scripts: build → `deploy-lambda-aws-cli.sh` → optional `update-lambda-env-aoss.sh` when the `ES_URL` repository secret is set.
+
+### 5. Deploy / change infrastructure (Terraform, optional)
+
+Use Terraform when creating or changing API Gateway, IAM roles, or other resources — not required for uploading new `shopbot.zip` to an existing function.
 
 ```bash
 cd deployment/lambda
@@ -77,7 +106,7 @@ terraform plan
 terraform apply
 ```
 
-### 5. Get API Gateway URL
+### 6. Get API Gateway URL
 
 ```bash
 terraform output api_gateway_url
@@ -88,7 +117,7 @@ Example output:
 https://xxxxxxxxxx.execute-api.ap-south-1.amazonaws.com
 ```
 
-### 6. Test the Deployment
+### 7. Test the Deployment
 
 ```bash
 # Test health endpoint
@@ -107,14 +136,17 @@ curl -X POST https://xxxxxxxxxx.execute-api.ap-south-1.amazonaws.com/rs/chat \
 
 ```
 deployment/lambda/
-├── main.tf                  # Main Terraform configuration
-├── variables.tf             # Variable definitions
-├── outputs.tf               # Output values
-├── terraform.tfvars.example # Example variable values
-├── terraform.tfvars         # Your variable values (create this)
-├── Dockerfile.build         # Dockerfile for building Lambda package
-├── build-docker.sh          # Build script for Lambda package
-└── README.md                # This file
+├── main.tf                  # Terraform (optional — infra)
+├── variables.tf
+├── outputs.tf
+├── terraform.tfvars.example
+├── terraform.tfvars         # Local only (gitignored)
+├── Dockerfile.build
+├── build-docker.sh          # Build shopbot.zip
+├── deploy-lambda-aws-cli.sh # aws lambda update-function-code
+├── update-lambda-env-aoss.sh # Merge AOSS env vars (jq)
+├── deploy.sh                # build + deploy-lambda-aws-cli.sh
+└── README.md
 ```
 
 ## Configuration
@@ -186,10 +218,9 @@ Distributed tracing is enabled via AWS Lambda Powertools. Traces include:
 ### Update Lambda Code
 
 1. Make code changes
-2. Rebuild package: `./deployment/lambda/build-docker.sh`
-3. Apply Terraform: `terraform apply`
+2. Deploy: `./deployment/lambda/deploy.sh` (builds `shopbot.zip` and runs `aws lambda update-function-code`)
 
-Terraform will detect the new package hash and update the Lambda function.
+Or use Terraform only if you still manage the function that way: `terraform apply -target=aws_lambda_function.shopbot`.
 
 ### Update Configuration
 
@@ -267,6 +298,14 @@ After successful deployment:
 - [UI-Service Lambda Deployment](../UI-Service/deployment/lambda/README.md)
 - [AWS Lambda Best Practices](https://docs.aws.amazon.com/lambda/latest/dg/best-practices.html)
 - [Serverless WSGI Documentation](https://github.com/logandk/serverless-wsgi)
+
+
+
+
+
+
+
+
 
 
 

@@ -1,8 +1,8 @@
 name: Deploy Lambda Function
 
-# AWS CI principal: IAM user shopbot-github-deploy (replaces legacy shopbot-cicd-user).
+# AWS CI principal: IAM user shopbot-github-deploy.
 #   Credentials: repository secrets AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
-# Triggers on push when Lambda paths change
+# Lambda code deploy uses AWS CLI (no Terraform). Set ES_URL secret to OpenSearch Serverless HTTPS endpoint.
 on:
   push:
     branches:
@@ -14,20 +14,18 @@ on:
       - 'requirements.txt'
       - 'deployment/lambda/**'
       - '.github/workflows/deploy-lambda.yml'
-  workflow_dispatch: {}  # Allow manual triggering via gh workflow run
+  workflow_dispatch: {}
 
-# Search: set GitHub secret ES_URL to the OpenSearch Serverless collection HTTPS endpoint
-# (e.g. https://xxxx.ap-south-1.aoss.amazonaws.com). IAM auth is used; do not use *.elastic.cloud here.
 env:
   AWS_REGION: ap-south-1
-  TERRAFORM_VERSION: 1.5.0
+  LAMBDA_FUNCTION_NAME: shopbot-service
   PYTHON_VERSION: 3.12
 
 jobs:
   deploy:
     name: Build and Deploy Lambda
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -44,195 +42,70 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-          terraform_wrapper: false
-
       - name: Build Lambda package with Docker
         run: |
           echo "=== Building Lambda Deployment Package ==="
           chmod +x deployment/lambda/build-docker.sh
           ./deployment/lambda/build-docker.sh
-          
-          # Verify package was created
+
           if [ ! -f shopbot.zip ]; then
-            echo "❌ Error: shopbot.zip was not created"
+            echo "Error: shopbot.zip was not created"
             exit 1
           fi
-          
-          # Display package info
+
           ls -lh shopbot.zip
-          echo "✅ Package built successfully"
+          echo "Package built successfully"
 
-      - name: Prepare Terraform variables for CI
-        working-directory: deployment/lambda
-        env:
-          SHOPBOT_SECRETS_ARN: ${{ secrets.SHOPBOT_SECRETS_ARN }}
+      - name: Deploy Lambda function code (AWS CLI)
         run: |
-          # terraform.tfvars is untracked (contains secrets) - create from example for CI
-          if [ ! -f terraform.tfvars ]; then
-            echo "Creating terraform.tfvars from example for CI..."
-            cp terraform.tfvars.example terraform.tfvars
-            # Replace placeholder ARN with value from GitHub secret
-            if [ -n "$SHOPBOT_SECRETS_ARN" ]; then
-              sed -i "s|secrets_manager_secret_arn = \".*\"|secrets_manager_secret_arn = \"$SHOPBOT_SECRETS_ARN\"|" terraform.tfvars
-            else
-              echo "::warning::SHOPBOT_SECRETS_ARN not set - add it to GitHub secrets for CI deployment"
-              echo "Using placeholder from terraform.tfvars.example (plan may fail)"
-            fi
+          chmod +x deployment/lambda/deploy-lambda-aws-cli.sh
+          ./deployment/lambda/deploy-lambda-aws-cli.sh
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          LAMBDA_FUNCTION_NAME: ${{ env.LAMBDA_FUNCTION_NAME }}
+
+      - name: Update Lambda environment for AOSS (optional)
+        env:
+          ES_URL: ${{ secrets.ES_URL }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+          LAMBDA_FUNCTION_NAME: ${{ env.LAMBDA_FUNCTION_NAME }}
+          SEARCH_AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          if [ -z "${ES_URL:-}" ]; then
+            echo "Skipping env merge: ES_URL secret not set (Lambda keeps existing environment)."
+            exit 0
           fi
-          echo "Terraform variables prepared"
-
-      - name: Initialize Terraform
-        working-directory: deployment/lambda
-        run: |
-          terraform init -input=false
-
-      - name: Import existing resources (if needed)
-        working-directory: deployment/lambda
-        continue-on-error: true
-        env:
-          TF_VAR_enable_custom_domain: "false"
-          TF_VAR_enable_api_gateway_access_logs: "false"
-          TF_VAR_api_gateway_execution_log_level: "OFF"
-          TF_VAR_secrets_manager_secret_arn: ${{ secrets.SHOPBOT_SECRETS_ARN }}
-          TF_VAR_es_url: ${{ secrets.ES_URL }}
-          TF_VAR_es_api_key: ${{ secrets.ES_API_KEY }}
-        run: |
-          # CI has no persisted .tfstate (gitignored). Re-import real AWS resources each run
-          # so Terraform does not recreate API Gateway / duplicate Lambda permissions (409).
-          set +e
-          REGION="${AWS_REGION}"
-          echo "Importing core resources..."
-          for resource in "aws_iam_role.lambda_role:shopbot-service-lambda-role" \
-                         "aws_cloudwatch_log_group.lambda_logs:/aws/lambda/shopbot-service" \
-                         "aws_cloudwatch_log_group.apigw_logs:/aws/apigateway/shopbot-service" \
-                         "aws_lambda_function.shopbot:shopbot-service"; do
-            tf_resource="${resource%%:*}"
-            import_id="${resource#*:}"
-            echo "Importing $tf_resource..."
-            terraform import "$tf_resource" "$import_id" || true
-          done
-
-          echo "Importing IAM policy resources..."
-          terraform import aws_iam_role_policy_attachment.lambda_basic \
-            "shopbot-service-lambda-role/arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" || true
-          terraform import aws_iam_role_policy.lambda_secrets \
-            "shopbot-service-lambda-role:shopbot-lambda-secrets" || true
-
-          echo "Resolving API Gateway (oldest shopbot-service-api if duplicates exist)..."
-          API_ID=$(aws apigatewayv2 get-apis --region "$REGION" --output json 2>/dev/null | \
-            jq -r '[.Items[] | select(.Name=="shopbot-service-api")] | sort_by(.CreatedDate) | .[0].ApiId // empty')
-
-          if [ -n "$API_ID" ] && [ "$API_ID" != "null" ]; then
-            echo "Importing API $API_ID, stage, integration, route..."
-            terraform import aws_apigatewayv2_api.shopbot "$API_ID" || true
-            terraform import aws_apigatewayv2_stage.shopbot "${API_ID}/\$default" || true
-
-            INT_ID=$(aws apigatewayv2 get-integrations --api-id "$API_ID" --region "$REGION" --output json | jq -r '.Items[0].IntegrationId // empty')
-            if [ -n "$INT_ID" ] && [ "$INT_ID" != "null" ]; then
-              terraform import aws_apigatewayv2_integration.shopbot "${API_ID}/${INT_ID}" || true
-            fi
-
-            ROUTE_ID=$(aws apigatewayv2 get-routes --api-id "$API_ID" --region "$REGION" --output json | \
-              jq -r --arg rk '$default' '.Items[] | select(.RouteKey == $rk) | .RouteId' | head -1)
-            if [ -n "$ROUTE_ID" ] && [ "$ROUTE_ID" != "null" ]; then
-              terraform import aws_apigatewayv2_route.shopbot "${API_ID}/${ROUTE_ID}" || true
-            fi
-          else
-            echo "::warning::No API named shopbot-service-api found; first-time deploy or name mismatch"
-          fi
-
-          echo "Importing Lambda invoke permission (prevents AllowAPIGatewayInvoke 409)..."
-          terraform import aws_lambda_permission.apigw "shopbot-service/AllowAPIGatewayInvoke" || true
-          set -e
-          echo "Import pass complete."
-
-      - name: Validate Terraform configuration
-        working-directory: deployment/lambda
-        run: |
-          terraform validate
-
-      - name: Terraform Plan
-        working-directory: deployment/lambda
-        run: |
-          terraform plan -input=false
-        env:
-          TF_VAR_enable_custom_domain: "false"
-          # CI user (shopbot-github-deploy) lacks logs:CreateLogDelivery; matches Import step
-          TF_VAR_enable_api_gateway_access_logs: "false"
-          TF_VAR_api_gateway_execution_log_level: "OFF"
-          TF_VAR_secrets_manager_secret_arn: ${{ secrets.SHOPBOT_SECRETS_ARN }}
-          TF_VAR_secrets_manager_secret_name: "flean-services/shopbot"
-          TF_VAR_es_url: ${{ secrets.ES_URL }}
-          TF_VAR_es_api_key: ${{ secrets.ES_API_KEY }}
-
-      # Apply only the Lambda zip update. shopbot-github-deploy cannot call logs:CreateLogDelivery;
-      # a full apply would still try to reconcile aws_apigatewayv2_stage and fail. -target is
-      # not allowed with a saved plan file, so we apply directly (same vars as Plan).
-      - name: Terraform Apply
-        working-directory: deployment/lambda
-        run: |
-          terraform apply -auto-approve -input=false \
-            -var-file=terraform.tfvars \
-            -target=aws_lambda_function.shopbot
-        env:
-          TF_LOG: INFO
-          TF_VAR_enable_custom_domain: "false"
-          TF_VAR_enable_api_gateway_access_logs: "false"
-          TF_VAR_api_gateway_execution_log_level: "OFF"
-          TF_VAR_secrets_manager_secret_arn: ${{ secrets.SHOPBOT_SECRETS_ARN }}
-          TF_VAR_secrets_manager_secret_name: "flean-services/shopbot"
-          TF_VAR_es_url: ${{ secrets.ES_URL }}
-          TF_VAR_es_api_key: ${{ secrets.ES_API_KEY }}
+          chmod +x deployment/lambda/update-lambda-env-aoss.sh
+          ./deployment/lambda/update-lambda-env-aoss.sh
 
       - name: Verify Lambda deployment
         run: |
           echo "=== Verifying Lambda Function ==="
-          FUNCTION_NAME=$(cd deployment/lambda && terraform output -raw lambda_function_name)
-          
-          if [ -z "$FUNCTION_NAME" ]; then
-            echo "❌ Error: Could not get Lambda function name"
-            exit 1
-          fi
-          
-          echo "Lambda Function: $FUNCTION_NAME"
-          
-          # Get function configuration
           aws lambda get-function \
-            --function-name "$FUNCTION_NAME" \
-            --region ${{ env.AWS_REGION }} \
+            --function-name "${{ env.LAMBDA_FUNCTION_NAME }}" \
+            --region "${{ env.AWS_REGION }}" \
             --query 'Configuration.[FunctionName,LastModified,Runtime,MemorySize,Timeout]' \
             --output table
-          
-          echo "✅ Lambda function verified"
+          echo "Lambda function verified"
 
       - name: Test Lambda endpoint
         run: |
           echo "=== Testing Lambda Endpoint ==="
-          API_URL=$(cd deployment/lambda && terraform output -raw api_gateway_url 2>/dev/null || echo "")
-          
-          if [ -n "$API_URL" ]; then
+          API_URL=$(aws apigatewayv2 get-apis --region "${{ env.AWS_REGION }}" --output json | \
+            jq -r '[.Items[] | select(.Name=="shopbot-service-api")] | sort_by(.CreatedDate) | .[0].ApiEndpoint // empty')
+
+          if [ -n "$API_URL" ] && [ "$API_URL" != "null" ]; then
             echo "API Gateway URL: $API_URL"
-            echo "Testing health endpoint..."
-            
-            # Wait a few seconds for API Gateway to propagate
-            sleep 10
-            
-            # Test health endpoint
+            sleep 5
             RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${API_URL}/rs/health" || echo "000")
-            
             if [ "$RESPONSE" = "200" ]; then
-              echo "✅ Health endpoint returned 200 OK"
-              curl -s "${API_URL}/rs/health" | jq . || echo "Response received"
+              echo "Health endpoint returned 200 OK"
+              curl -s "${API_URL}/rs/health" | jq . || true
             else
-              echo "⚠️  Health endpoint returned: $RESPONSE"
-              echo "This might be normal if the endpoint requires authentication"
+              echo "Health endpoint returned: $RESPONSE"
             fi
           else
-            echo "⚠️  API Gateway URL not available (might be using custom domain)"
+            echo "API Gateway shopbot-service-api not found; skip HTTP test"
           fi
 
       - name: Upload Lambda package artifact
@@ -247,33 +120,14 @@ jobs:
       - name: Deployment summary
         if: always()
         run: |
-          echo "## 🚀 Lambda Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          API_URL=$(aws apigatewayv2 get-apis --region "${{ env.AWS_REGION }}" --output json 2>/dev/null | \
+            jq -r '[.Items[] | select(.Name=="shopbot-service-api")] | sort_by(.CreatedDate) | .[0].ApiEndpoint // "N/A"')
+          echo "## Lambda Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          FUNCTION_NAME=$(cd deployment/lambda && terraform output -raw lambda_function_name 2>/dev/null || echo "N/A")
-          API_URL=$(cd deployment/lambda && terraform output -raw api_gateway_url 2>/dev/null || echo "N/A")
-          
-          echo "**Lambda Function:** \`$FUNCTION_NAME\`" >> $GITHUB_STEP_SUMMARY
-          echo "**API Gateway URL:** $API_URL" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Lambda:** \`${{ env.LAMBDA_FUNCTION_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**API (HTTP API):** $API_URL" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Deploy method: **AWS CLI** (\`update-function-code\`). Terraform not used in CI." >> $GITHUB_STEP_SUMMARY

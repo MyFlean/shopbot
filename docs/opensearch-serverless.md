@@ -49,9 +49,10 @@ The Lambda execution role should allow OpenSearch Serverless API access (see `la
 
 ## GitHub Actions
 
-Repository secret **`ES_URL`** (passed as `TF_VAR_es_url`) should be the **same AOSS HTTPS URL** so CI Terraform applies set `ES_URL` on the Lambda without relying on the Secrets Manager data source.
+The workflow (`.github/workflows/deploy-lambda.yml`) deploys Lambda code with **AWS CLI** (`deploy-lambda-aws-cli.sh`), not Terraform.
 
-`ES_API_KEY` in the workflow is **not** used by Terraform variables in this repo; AOSS relies on IAM at runtime. You may leave that secret empty or remove it from the workflow when fully on AOSS.
+- Repository secret **`ES_URL`** (optional): if set, the workflow runs **`update-lambda-env-aoss.sh`** so the Lambda environment includes the AOSS endpoint and flags. If unset, only the zip is updated; existing env vars stay as in the console.
+- **`ES_API_KEY`** is not used by the AWS CLI deploy path.
 
 ## Verify
 

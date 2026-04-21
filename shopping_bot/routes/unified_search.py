@@ -36,7 +36,7 @@ Requires at least one of query/subcategory/filters (same as /api/v1/products).
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Blueprint, jsonify, request
 
@@ -216,7 +216,13 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             f"page={page} | size={size} | sort={resolved_sort} | filters={validated_filters}"
         )
 
-        fetcher = get_es_fetcher()
+        try:
+            fetcher = get_es_fetcher()
+        except RuntimeError as exc:
+            # Misconfiguration (e.g. Elastic Cloud URL with IAM, missing API key)
+            log.error(f"UNIFIED_SEARCH_CONFIG_ERROR | error={exc}", exc_info=True)
+            return _error_response("INTERNAL_ERROR", str(exc), 500)
+
         result = fetcher.search_products_unified(
             query=query,
             subcategory=subcategory,
@@ -235,11 +241,20 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         meta["sort_by"] = resolved_sort
 
         raw_products = result.get("products", [])
-        product_cards = [
-            c
-            for c in (transform_to_product_card(p) for p in raw_products if p)
-            if c is not None
-        ]
+        product_cards: List[Dict[str, Any]] = []
+        for raw in raw_products:
+            if not raw:
+                continue
+            try:
+                card = transform_to_product_card(raw)
+                if card is not None:
+                    product_cards.append(card)
+            except Exception as e:
+                log.warning(
+                    "UNIFIED_SEARCH_PRODUCT_CARD_ERROR | id=%s | error=%s",
+                    raw.get("id", "?"),
+                    e,
+                )
 
         log.info(
             f"UNIFIED_SEARCH_COMPLETE | query={query} | subcategory={subcategory} | "

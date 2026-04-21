@@ -16,6 +16,8 @@ on:
       - '.github/workflows/deploy-lambda.yml'
   workflow_dispatch: {}  # Allow manual triggering via gh workflow run
 
+# Search: set GitHub secret ES_URL to the OpenSearch Serverless collection HTTPS endpoint
+# (e.g. https://xxxx.ap-south-1.aoss.amazonaws.com). IAM auth is used; do not use *.elastic.cloud here.
 env:
   AWS_REGION: ap-south-1
   TERRAFORM_VERSION: 1.5.0

@@ -9,12 +9,12 @@ Add these secrets to your repository (Settings → Secrets and variables → Act
 | `AWS_ACCESS_KEY_ID` | AWS access key for shopbot-cicd-user |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key for shopbot-cicd-user |
 | `SHOPBOT_SECRETS_ARN` | Full ARN of the flean-services/shopbot secret (for Lambda IAM policy) |
-| `ES_URL` | Elasticsearch URL (from shopping-bot/es-url secret) |
-| `ES_API_KEY` | Elasticsearch API key (from flean-services/shopbot secret) |
+| `ES_URL` | **OpenSearch Serverless** collection HTTPS URL (`https://<id>.<region>.aoss.amazonaws.com`). Must not be Elastic Cloud (`*.elastic.cloud`) when Lambda uses IAM/AOSS. See [docs/opensearch-serverless.md](../../docs/opensearch-serverless.md). |
+| `ES_API_KEY` | Optional for AOSS (search uses IAM). Still passed as `TF_VAR_es_api_key` in workflow but Terraform has no `es_api_key` variable — safe to leave empty or remove from workflow later. |
 
 ## Why These Secrets?
 
-- `ES_URL` and `ES_API_KEY` are passed as Terraform variables, so CI skips Secrets Manager lookups entirely (no Secrets Manager permissions needed for CI user).
+- `ES_URL` is passed as `TF_VAR_es_url` so CI applies set Lambda `ES_URL` without reading Secrets Manager for that value. Use the **AOSS** endpoint from `flean/search` (`terraform output opensearch_products_v3_endpoint`) or your collection console.
 - `SHOPBOT_SECRETS_ARN` is used for the Lambda IAM policy so the function can read secrets at runtime.
 
 ## Alternative: IAM Permissions

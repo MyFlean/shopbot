@@ -1,0 +1,58 @@
+# Shopbot search: Amazon OpenSearch Serverless (AOSS)
+
+Production search uses **Amazon OpenSearch Serverless** with **AWS SigV4** (IAM). The app does **not** use `ELASTIC_API_KEY` for that path.
+
+## Required environment variables
+
+| Variable | Value |
+|----------|--------|
+| `ES_URL` | HTTPS collection endpoint: `https://<collection-id>.<region>.aoss.amazonaws.com` (no trailing path; index is appended in code). |
+| `ELASTIC_INDEX` | e.g. `products_v3` (must match the index on the collection). |
+| `AOSS_ENABLED` | `true` |
+| `ES_USE_IAM` | `true` |
+| `SEARCH_AWS_REGION` | Same region as the collection (e.g. `ap-south-1`). Falls back to `AWS_REGION` / `AWS_DEFAULT_REGION` if unset. |
+
+Do **not** set `ES_URL` to `*.elastic.cloud` when IAM/AOSS is enabled; SigV4 service `aoss` only works against Serverless endpoints.
+
+## Where the endpoint comes from
+
+Infrastructure for the `flean-products-v3` collection lives in the **`flean/search`** repo (`opensearch_products_v3.tf`). After apply:
+
+```bash
+cd /path/to/flean/search
+terraform output -raw opensearch_products_v3_endpoint
+```
+
+Use the printed value as `ES_URL` (ensure it starts with `https://`).
+
+## AWS Secrets Manager (Lambda / ECS)
+
+- **Lambda (Terraform):** If `var.es_url` is empty, `deployment/lambda/main.tf` reads secret **`shopping-bot/es-url`**. Store **only** the AOSS HTTPS URL string as the secret value.
+- **ECS:** `ecs-task-definition.json` injects `ES_URL` from a Secrets Manager ARN (`shopping-bot/es-url-*`). Update that secret’s value to the same AOSS URL.
+
+### Update the secret (CLI example)
+
+Replace `<SECRET_ID>` with `shopping-bot/es-url` or your ARN’s secret id, and use your real endpoint:
+
+```bash
+aws secretsmanager put-secret-value \
+  --region ap-south-1 \
+  --secret-id shopping-bot/es-url \
+  --secret-string "https://YOUR_COLLECTION_ID.ap-south-1.aoss.amazonaws.com"
+```
+
+Then **update Lambda** (new task revision for ECS, or redeploy Lambda / wait for next deploy) so processes pick up the new value.
+
+## IAM
+
+The Lambda execution role should allow OpenSearch Serverless API access (see `lambda_aoss` in `deployment/lambda/main.tf`: `aoss:APIAccessAll`, etc.). The collection **data access policy** must include the Lambda role ARN (and ECS task role if ECS runs Shopbot). This is provisioned in `flean/search` for `shopbot-service-lambda-role` and `flean-services-ecs-task-role`.
+
+## GitHub Actions
+
+Repository secret **`ES_URL`** (passed as `TF_VAR_es_url`) should be the **same AOSS HTTPS URL** so CI Terraform applies set `ES_URL` on the Lambda without relying on the Secrets Manager data source.
+
+`ES_API_KEY` in the workflow is **not** used by Terraform variables in this repo; AOSS relies on IAM at runtime. You may leave that secret empty or remove it from the workflow when fully on AOSS.
+
+## Verify
+
+After deploy, CloudWatch logs for the fetcher should show `IAM_AUTH: ENABLED` and `BASE_URL` host containing `aoss.amazonaws.com`. A wrong Elastic Cloud URL will fail fast with a clear `RuntimeError` from `ElasticsearchProductsFetcher`.

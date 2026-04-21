@@ -57,6 +57,11 @@ def _is_aoss_url(url: Optional[str]) -> bool:
     return "aoss.amazonaws.com" in str(url or "").lower()
 
 
+def _is_elastic_cloud_url(url: Optional[str]) -> bool:
+    """Hosted Elasticsearch on Elastic Cloud (*.elastic.cloud) — uses API keys, not SigV4 aoss."""
+    return "elastic.cloud" in str(url or "").lower()
+
+
 def _resolve_aws_region(base_url: str) -> str:
     env_region = (
         os.getenv("SEARCH_AWS_REGION")
@@ -2280,7 +2285,17 @@ class ElasticsearchProductsFetcher:
             raise RuntimeError("ES_URL or ELASTIC_BASE is required for Elasticsearch access")
         if not self.use_iam_auth and not self.api_key:
             raise RuntimeError("ELASTIC_API_KEY (or ES_API_KEY) is required unless AOSS/IAM auth is enabled")
-            
+
+        # IAM SigV4 uses service "aoss" — Elastic Cloud endpoints reject it with 401. Fail fast.
+        if self.use_iam_auth and _is_elastic_cloud_url(self.base_url):
+            raise RuntimeError(
+                "IAM/AOSS auth is enabled (AOSS_ENABLED, ES_USE_IAM, or ES_URL is an aoss.amazonaws.com host) "
+                "but ES_URL points at Elastic Cloud (*.elastic.cloud). AWS SigV4 for service 'aoss' only works "
+                "with Amazon OpenSearch Serverless (host must contain 'aoss.amazonaws.com'). "
+                "Set ES_URL to your Serverless collection endpoint, or turn off AOSS_ENABLED/ES_USE_IAM and use "
+                "ELASTIC_API_KEY / ES_API_KEY for Elastic Cloud."
+            )
+
         self.endpoint = f"{self.base_url}/{self.index}/_search"
         self.mget_endpoint = f"{self.base_url}/{self.index}/_mget"
         self.headers = {"Content-Type": "application/json"}

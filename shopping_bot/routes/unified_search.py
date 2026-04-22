@@ -16,7 +16,7 @@ Accepted params (GET query or POST JSON body):
   - query (string, optional)
   - subcategory (string, optional)         ES path
   - page (int, default 0)
-  - size (int, 1..100, default 20)
+  - size (int, 1..100, default 100)
   - sort_by or sort (alias)
       relevance (default), price_asc, price_desc,
       protein_desc, fiber_desc, fat_asc, flean_score_desc
@@ -121,7 +121,7 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             except (TypeError, ValueError):
                 page = 0
             try:
-                size = max(1, min(int(request.args.get("size", 20)), 100))
+                size = max(1, min(int(request.args.get("size", 100)), 100))
             except (TypeError, ValueError):
                 size = 20
 
@@ -172,7 +172,7 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             except (TypeError, ValueError):
                 page = 0
             try:
-                size = max(1, min(int(body.get("size", 20)), 100))
+                size = max(1, min(int(body.get("size", 100)), 100))
             except (TypeError, ValueError):
                 size = 20
 

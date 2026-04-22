@@ -262,7 +262,9 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             _adj = flean_score_data.get("adjusted_score") if isinstance(flean_score_data, dict) else flean_score_data
             _adj_val = _parse_flean_badge_score_double(_adj)
             if _adj_val is not None:
-                flean_score = round(_adj_val / 10.0, 2)
+                flean_score = _adj_val / 10.0
+        if flean_score is not None:
+            flean_score = _round_flean_score_whole(flean_score)
         stats = src.get("stats", {})
         flean_percentile = None
         if stats.get("adjusted_score_percentiles"):
@@ -281,9 +283,11 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # Pre-transformed cards usually carry numeric flean_score; normalize to 0–10
         _fs = _parse_flean_badge_score_double(src.get("flean_score"))
         if _fs is not None and _fs > 10.0:
-            flean_score = round(_fs / 10.0, 2)
+            flean_score = _fs / 10.0
         else:
             flean_score = _fs
+        if flean_score is not None:
+            flean_score = _round_flean_score_whole(flean_score)
         flean_percentile = src.get("flean_percentile")
 
     macro_tags = _generate_macro_tags(nutrition)
@@ -343,14 +347,19 @@ def _numeric_chars_for_float(s: str) -> str:
     )
 
 
+def _round_flean_score_whole(val: float) -> int:
+    """Round score to nearest whole number using half-up semantics."""
+    return int(val + 0.5) if val >= 0 else int(val - 0.5)
+
+
 def _parse_flean_badge_score_double(val: Any) -> Optional[float]:
-    """Parse ES label or numeric into a rounded float for PDP badge keys."""
+    """Parse ES label or numeric into a float for score normalization."""
     if val is None:
         return None
     if isinstance(val, bool):
         return None
     if isinstance(val, (int, float)):
-        return round(float(val), 2)
+        return float(val)
     if isinstance(val, str):
         s = val.strip().lower()
         if s in _BADGE_SCORE_DENY:
@@ -359,7 +368,7 @@ def _parse_flean_badge_score_double(val: Any) -> Optional[float]:
         if not s:
             return None
         try:
-            return round(float(s), 2)
+            return float(s)
         except (ValueError, OverflowError):
             return None
     return None
@@ -431,14 +440,16 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     else:
         level, level_text, level_color = "unknown", "Not Rated", "#6B7280"
 
-    badge_score_double: Optional[float] = None
+    badge_score_double: Optional[int] = None
     badge_display_str: Optional[str] = None
     if isinstance(flean_score_data, dict):
-        badge_score_double = _parse_flean_badge_score_double(
+        badge_score_raw = _parse_flean_badge_score_double(
             flean_score_data.get("adjusted_score_label")
         )
+        if badge_score_raw is not None:
+            badge_score_double = _round_flean_score_whole(badge_score_raw)
     if badge_score_double is not None:
-        badge_display_str = str(round(badge_score_double, 2))
+        badge_display_str = str(badge_score_double)
     else:
         adj = (
             flean_score_data.get("adjusted_score")
@@ -447,9 +458,9 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         )
         adj_val = _parse_flean_badge_score_double(adj)
         if adj_val is not None:
-            # Fallback: numeric score (scaled) vs string display of full adjusted score
-            badge_score_double = round(adj_val / 10.0, 2)
-            badge_display_str = str(round(adj_val, 2))
+            # Fallback: derive the same 0-10 rounded score for value + display.
+            badge_score_double = _round_flean_score_whole(adj_val / 10.0)
+            badge_display_str = str(badge_score_double)
         else:
             badge_display_str = "N/A"
 

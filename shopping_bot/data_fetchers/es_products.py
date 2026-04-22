@@ -3166,6 +3166,7 @@ class ElasticsearchProductsFetcher:
                         "stats.calories_penalty_percentiles.*",
                         "stats.empty_food_penalty_percentiles.*",
                         "category_data.nutritional.nutri_breakdown_updated.*",
+                        "category_data.nutritional.nutri_breakdown.*",
                         "category_data.nutritional.qty",
                         "category_data.nutritional.raw_text",
                         "size", "visibility",

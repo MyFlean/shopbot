@@ -66,8 +66,17 @@ def get_secrets():
             
             # Set environment variables for Flask app
             env_start = time.time()
+            lambda_es = (os.environ.get("ES_URL") or "").lower()
+            lambda_es_is_aoss = "aoss.amazonaws.com" in lambda_es
             for key, value in secret.items():
                 if value:
+                    if key == "ES_URL" and lambda_es_is_aoss:
+                        # Terraform / shopping-bot/es-url already set the Serverless URL; do not
+                        # let a stale ES_URL in this JSON (e.g. old *.elastic.cloud) override it.
+                        logger.info(
+                            "ES_URL from JSON secret skipped; keeping Lambda AOSS endpoint from Terraform/shopping-bot/es-url"
+                        )
+                        continue
                     # Map secret keys to environment variable names
                     env_key = key.upper()
                     # Handle special mappings
@@ -357,10 +366,10 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
             }
         
         # Determine if this endpoint requires secrets
-        # Critical endpoints: chat, search, product endpoints
+        # Critical endpoints: chat, search, product endpoints, scanner (uses Bedrock)
         request_path = event.get("requestContext", {}).get("http", {}).get("path", "")
         is_critical_endpoint = any(path in request_path for path in [
-            "/rs/chat", "/rs/search", "/rs/api/v1/products", "/rs/flow"
+            "/rs/chat", "/rs/search", "/rs/api/v1/products", "/rs/flow", "/rs/api/v1/scanner"
         ])
         
         # For critical endpoints, wait for secrets (with timeout)

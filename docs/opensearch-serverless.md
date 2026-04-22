@@ -27,8 +27,11 @@ Use the printed value as `ES_URL` (ensure it starts with `https://`).
 
 ## AWS Secrets Manager (Lambda / ECS)
 
-- **Lambda (Terraform):** If `var.es_url` is empty, `deployment/lambda/main.tf` reads secret **`shopping-bot/es-url`**. Store **only** the AOSS HTTPS URL string as the secret value.
-- **ECS:** `ecs-task-definition.json` injects `ES_URL` from a Secrets Manager ARN (`shopping-bot/es-url-*`). Update that secret’s value to the same AOSS URL.
+There are two relevant secrets; do not point either at Elastic Cloud once you are on AOSS+IAM.
+
+- **`shopping-bot/es-url` (string):** If `var.es_url` is empty, `deployment/lambda/main.tf` sets Lambda `ES_URL` from this secret. Store **only** the AOSS HTTPS URL string.
+- **`flean-services/shopbot` (JSON):** The handler loads this for API keys, Redis mapping, etc. The JSON may still contain an `ES_URL` key from older setups. **The Lambda `ES_URL` is set first** (Terraform or `shopping-bot/es-url`); the handler **does not overwrite** it when the value is already a Serverless URL (`*.aoss.amazonaws.com`), so a stale `*.elastic.cloud` value in the JSON cannot override AOSS. You can still remove or align `ES_URL` in the JSON to avoid confusion in the AWS console.
+- **ECS:** `ecs-task-definition.json` injects `ES_URL` from a Secrets Manager ARN (`shopping-bot/es-url-*`). Use the same AOSS URL.
 
 ### Update the secret (CLI example)
 

@@ -15,6 +15,7 @@ This module provides API endpoints for the Flutter app's home page:
 
 Products are fetched from Elasticsearch (best-selling by category paths, curated by configured strategy).
 Other data is loaded from JSON files in shopping_bot/data/home/
+
 """
 
 from __future__ import annotations

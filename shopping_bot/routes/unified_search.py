@@ -1,6 +1,7 @@
 # shopping_bot/routes/unified_search.py
 """
 Unified Search Endpoint
+
 -----------------------
 GET|POST /rs/v1/search
 

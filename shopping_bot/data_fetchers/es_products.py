@@ -1063,6 +1063,7 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 "stats.empty_food_penalty_percentiles.*",
                 # Nutritional data for macro-aware search
                 "category_data.nutritional.nutri_breakdown_updated.*",
+                "category_data.nutritional.nutri_breakdown.*",
                 "category_data.nutritional.qty",
                 "category_data.nutritional.raw_text",
                 "size", "visibility",

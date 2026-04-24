@@ -57,9 +57,27 @@ def _is_aoss_url(url: Optional[str]) -> bool:
     return "aoss.amazonaws.com" in str(url or "").lower()
 
 
+def _is_aws_opensearch_url(url: Optional[str]) -> bool:
+    raw = str(url or "").lower()
+    return "aoss.amazonaws.com" in raw or ".es.amazonaws.com" in raw
+
+
 def _is_elastic_cloud_url(url: Optional[str]) -> bool:
-    """Hosted Elasticsearch on Elastic Cloud (*.elastic.cloud) — uses API keys, not SigV4 aoss."""
+    """Hosted Elasticsearch on Elastic Cloud (*.elastic.cloud) — uses API keys, not AWS SigV4."""
     return "elastic.cloud" in str(url or "").lower()
+
+
+def _resolve_aws_sigv4_service(base_url: str) -> Optional[str]:
+    try:
+        parsed = urlparse(base_url if str(base_url).startswith("http") else f"https://{base_url}")
+        host = (parsed.hostname or "").lower()
+        if host.endswith(".aoss.amazonaws.com"):
+            return "aoss"
+        if host.endswith(".es.amazonaws.com"):
+            return "es"
+    except Exception:
+        pass
+    return None
 
 
 def _resolve_aws_region(base_url: str) -> str:
@@ -75,6 +93,9 @@ def _resolve_aws_region(base_url: str) -> str:
         parsed = urlparse(base_url if str(base_url).startswith("http") else f"https://{base_url}")
         host = (parsed.hostname or "").lower()
         m = re.search(r"\.([a-z0-9-]+)\.aoss\.amazonaws\.com$", host)
+        if m:
+            return m.group(1)
+        m = re.search(r"\.([a-z0-9-]+)\.es\.amazonaws\.com$", host)
         if m:
             return m.group(1)
     except Exception:
@@ -2279,7 +2300,7 @@ def _transform_results(raw_response: Dict[str, Any], skip_rerank: bool = False) 
     }
 
 class ElasticsearchProductsFetcher:
-    """Search fetcher supporting Elastic API key auth and AOSS SigV4 auth."""
+    """Search fetcher supporting Elastic API key auth and AWS SigV4 auth."""
     
     def __init__(self, base_url: str = None, index: str = None, api_key: str = None):
         self.base_url = (base_url or ELASTIC_BASE)
@@ -2289,22 +2310,29 @@ class ElasticsearchProductsFetcher:
         self.use_iam_auth = (
             _is_truthy_env("AOSS_ENABLED")
             or _is_truthy_env("ES_USE_IAM")
-            or _is_aoss_url(self.base_url)
+            or _is_aws_opensearch_url(self.base_url)
         )
         self.aws_region = _resolve_aws_region(self.base_url) if self.use_iam_auth else None
+        self.aws_service = None
+        if self.use_iam_auth:
+            self.aws_service = (
+                (os.getenv("ES_AWS_SERVICE") or "").strip().lower()
+                or _resolve_aws_sigv4_service(self.base_url)
+                or ("aoss" if _is_truthy_env("AOSS_ENABLED") else "es")
+            )
         
         if not self.base_url:
             raise RuntimeError("ES_URL or ELASTIC_BASE is required for Elasticsearch access")
         if not self.use_iam_auth and not self.api_key:
             raise RuntimeError("ELASTIC_API_KEY (or ES_API_KEY) is required unless AOSS/IAM auth is enabled")
 
-        # IAM SigV4 uses service "aoss" — Elastic Cloud endpoints reject it with 401. Fail fast.
+        # IAM SigV4 is only for AWS OpenSearch endpoints, never Elastic Cloud.
         if self.use_iam_auth and _is_elastic_cloud_url(self.base_url):
             raise RuntimeError(
-                "IAM/AOSS auth is enabled (AOSS_ENABLED, ES_USE_IAM, or ES_URL is an aoss.amazonaws.com host) "
-                "but ES_URL points at Elastic Cloud (*.elastic.cloud). AWS SigV4 for service 'aoss' only works "
-                "with Amazon OpenSearch Serverless (host must contain 'aoss.amazonaws.com'). "
-                "Set ES_URL to your Serverless collection endpoint, or turn off AOSS_ENABLED/ES_USE_IAM and use "
+                "IAM auth is enabled (AOSS_ENABLED, ES_USE_IAM, or ES_URL is an AWS OpenSearch host) "
+                "but ES_URL points at Elastic Cloud (*.elastic.cloud). AWS SigV4 only works with Amazon OpenSearch "
+                "(Serverless *.aoss.amazonaws.com or managed *.es.amazonaws.com). "
+                "Set ES_URL to an AWS OpenSearch endpoint, or turn off AOSS_ENABLED/ES_USE_IAM and use "
                 "ELASTIC_API_KEY / ES_API_KEY for Elastic Cloud."
             )
 
@@ -2325,16 +2353,17 @@ class ElasticsearchProductsFetcher:
         print(f"🛡️ IAM_AUTH: {'ENABLED' if self.use_iam_auth else 'DISABLED'}")
         if self.use_iam_auth:
             print(f"🌍 AWS_REGION: {self.aws_region}")
+            print(f"🧾 AWS_SIGV4_SERVICE: {self.aws_service}")
         print("="*80)
 
     def _build_aws_auth(self):
-        """Build SigV4 auth object for OpenSearch Serverless (AOSS)."""
+        """Build SigV4 auth object for AWS OpenSearch (Serverless or managed)."""
         try:
             import boto3
             from requests_aws4auth import AWS4Auth
         except ImportError as exc:
             raise RuntimeError(
-                "AOSS IAM auth requires boto3 and requests-aws4auth. "
+                "AWS IAM auth for OpenSearch requires boto3 and requests-aws4auth. "
                 "Install dependencies from requirements.txt."
             ) from exc
 
@@ -2342,7 +2371,7 @@ class ElasticsearchProductsFetcher:
         creds = session.get_credentials()
         if creds is None:
             raise RuntimeError(
-                "AWS credentials are required for OpenSearch Serverless IAM auth. "
+                "AWS credentials are required for OpenSearch IAM auth. "
                 "Configure AWS_PROFILE or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY."
             )
         frozen = creds.get_frozen_credentials()
@@ -2350,7 +2379,7 @@ class ElasticsearchProductsFetcher:
             frozen.access_key,
             frozen.secret_key,
             self.aws_region,
-            "aoss",
+            self.aws_service,
             session_token=frozen.token,
         )
 

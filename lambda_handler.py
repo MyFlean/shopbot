@@ -67,14 +67,16 @@ def get_secrets():
             # Set environment variables for Flask app
             env_start = time.time()
             lambda_es = (os.environ.get("ES_URL") or "").lower()
-            lambda_es_is_aoss = "aoss.amazonaws.com" in lambda_es
+            lambda_es_is_aws_opensearch = (
+                "aoss.amazonaws.com" in lambda_es or ".es.amazonaws.com" in lambda_es
+            )
             for key, value in secret.items():
                 if value:
-                    if key == "ES_URL" and lambda_es_is_aoss:
-                        # Terraform / shopping-bot/es-url already set the Serverless URL; do not
+                    if key == "ES_URL" and lambda_es_is_aws_opensearch:
+                        # Terraform / shopping-bot/es-url already set the AWS OpenSearch URL; do not
                         # let a stale ES_URL in this JSON (e.g. old *.elastic.cloud) override it.
                         logger.info(
-                            "ES_URL from JSON secret skipped; keeping Lambda AOSS endpoint from Terraform/shopping-bot/es-url"
+                            "ES_URL from JSON secret skipped; keeping Lambda AWS OpenSearch endpoint from Terraform/shopping-bot/es-url"
                         )
                         continue
                     # Map secret keys to environment variable names

@@ -126,7 +126,7 @@ print(f"🛡️ ES_USE_IAM: {ES_USE_IAM_ENV}")
 print(f"🌍 SEARCH_AWS_REGION: {SEARCH_AWS_REGION_ENV}")
 print("="*80)
 
-ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "products_v3")
+ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "products_master")
 _RAW_ES_URL = os.getenv("ES_URL") or os.getenv("ELASTIC_BASE", "")
 ELASTIC_BASE = _normalize_es_base(_RAW_ES_URL, ELASTIC_INDEX)
 ELASTIC_API_KEY = (os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")).strip().strip("'\"")

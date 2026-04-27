@@ -30,7 +30,7 @@ MERGED=$(echo "$CURRENT" | jq \
   --arg r "$SR" \
   '. + {
     ES_URL: $u,
-    ELASTIC_INDEX: "products_v3",
+    ELASTIC_INDEX: "products_master",
     AOSS_ENABLED: "true",
     ES_USE_IAM: "true",
     SEARCH_AWS_REGION: $r

@@ -7,7 +7,7 @@ Production search uses **Amazon OpenSearch Serverless** with **AWS SigV4** (IAM)
 | Variable | Value |
 |----------|--------|
 | `ES_URL` | HTTPS collection endpoint: `https://<collection-id>.<region>.aoss.amazonaws.com` (no trailing path; index is appended in code). |
-| `ELASTIC_INDEX` | e.g. `products_v3` (must match the index on the collection). |
+| `ELASTIC_INDEX` | e.g. `products_master` (must match the index on the collection). |
 | `AOSS_ENABLED` | `true` |
 | `ES_USE_IAM` | `true` |
 | `SEARCH_AWS_REGION` | Same region as the collection (e.g. `ap-south-1`). Falls back to `AWS_REGION` / `AWS_DEFAULT_REGION` if unset. |

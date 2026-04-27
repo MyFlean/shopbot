@@ -102,7 +102,7 @@ Create `.env` file in project root:
 ```bash
 # Elasticsearch Configuration
 ES_URL=https://your-elasticsearch-cluster.com:443
-ELASTIC_INDEX=products-v2
+ELASTIC_INDEX=products_master
 ES_API_KEY=your-elasticsearch-api-key
 
 # Optional: Redis for session management
@@ -606,7 +606,7 @@ services:
       - "8080:8080"
     environment:
       - ES_URL=https://your-es-cluster.com:443
-      - ELASTIC_INDEX=products-v2
+      - ELASTIC_INDEX=products_master
       - ES_API_KEY=your-api-key
       - REDIS_HOST=redis
     depends_on:
@@ -639,7 +639,7 @@ PORT=8080
 
 # Elasticsearch (production cluster)
 ES_URL=https://prod-es-cluster.company.com:443
-ELASTIC_INDEX=products-v2
+ELASTIC_INDEX=products_master
 ES_API_KEY=production-api-key
 
 # Redis (production instance)

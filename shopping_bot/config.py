@@ -61,7 +61,7 @@ class BaseConfig:
     # In AOSS mode, ES_URL points at the Serverless collection endpoint and auth is SigV4/IAM.
     _RAW_ES = os.getenv("ES_URL") or os.getenv("ELASTIC_BASE", "")
     ELASTIC_BASE: str = (_RAW_ES.strip().lstrip("@").strip())
-    ELASTIC_INDEX: str = os.getenv("ELASTIC_INDEX", "products_v3")
+    ELASTIC_INDEX: str = os.getenv("ELASTIC_INDEX", "products_master")
     AOSS_ENABLED: bool = os.getenv("AOSS_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
     ES_USE_IAM: bool = os.getenv("ES_USE_IAM", "false").lower() in {"1", "true", "yes", "on"}
     SEARCH_AWS_REGION: str = (

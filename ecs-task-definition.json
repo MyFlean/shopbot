@@ -64,7 +64,7 @@
         },
         {
           "name": "ELASTIC_INDEX",
-          "value": "products_v3"
+          "value": "products_master"
         },
         {
           "name": "AOSS_ENABLED",

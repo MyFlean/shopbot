@@ -74,7 +74,7 @@ resource "aws_lambda_function" "shopbot" {
       REDIS_SECRET_NAME      = "flean-services/redis"
       # Search backend - use AOSS with SigV4/IAM auth at module import time
       ES_URL                  = local.es_url
-      ELASTIC_INDEX           = "products_v3"
+      ELASTIC_INDEX           = "products_master"
       AOSS_ENABLED            = "true"
       ES_USE_IAM              = "true"
       SEARCH_AWS_REGION       = var.aws_region

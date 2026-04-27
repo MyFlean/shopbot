@@ -1,8 +1,8 @@
-# Elasticsearch Index Migration: v4 → v5
+# Elasticsearch Index Migration: v4 → products_master
 
 ## ✅ Migration Complete
 
-All Elasticsearch index references have been updated from `flean-v4` to `flean-v5`.
+All Elasticsearch index references have been updated from `flean-v4` to `products_master`.
 
 ---
 
@@ -14,7 +14,7 @@ All Elasticsearch index references have been updated from `flean-v4` to `flean-v
 ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v4")
 
 # After
-ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v5")
+ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "products_master")
 ```
 
 ### 2. **shopping_bot/config.py**
@@ -23,7 +23,7 @@ ELASTIC_INDEX = os.getenv("ELASTIC_INDEX", "flean-v5")
 ELASTIC_INDEX: str = os.getenv("ELASTIC_INDEX", "flean-v4")
 
 # After
-ELASTIC_INDEX: str = os.getenv("ELASTIC_INDEX", "flean-v5")
+ELASTIC_INDEX: str = os.getenv("ELASTIC_INDEX", "products_master")
 ```
 
 ### 3. **ecs-task-definition.json**
@@ -37,7 +37,7 @@ ELASTIC_INDEX: str = os.getenv("ELASTIC_INDEX", "flean-v5")
 // After
 {
   "name": "ELASTIC_INDEX",
-  "value": "flean-v5"
+  "value": "products_master"
 }
 ```
 
@@ -47,7 +47,7 @@ ELASTIC_INDEX: str = os.getenv("ELASTIC_INDEX", "flean-v5")
 ELASTIC_INDEX = "flean-v4"
 
 # After
-ELASTIC_INDEX = "flean-v5"
+ELASTIC_INDEX = "products_master"
 ```
 
 ---
@@ -56,7 +56,7 @@ ELASTIC_INDEX = "flean-v5"
 
 ✅ No remaining `flean-v4` references in code  
 ✅ All 4 files updated successfully  
-✅ Default index now `flean-v5`  
+✅ Default index now `products_master`  
 ℹ️ One reference in `PERSONAL_CARE_STRICT_MATCHING_RCA.md` (documentation - left as historical reference)
 
 ---
@@ -68,14 +68,14 @@ If you're using environment variables, ensure `ELASTIC_INDEX` is set correctly:
 
 ```bash
 # .env or environment
-ELASTIC_INDEX=flean-v5
+ELASTIC_INDEX=products_master
 ```
 
 ### Docker/ECS
-The `ecs-task-definition.json` has been updated with the new index name. When you deploy, the container will automatically use `flean-v5`.
+The `ecs-task-definition.json` has been updated with the new index name. When you deploy, the container will automatically use `products_master`.
 
 ### Local Development
-No additional changes needed. The code now defaults to `flean-v5` if no environment variable is set.
+No additional changes needed. The code now defaults to `products_master` if no environment variable is set.
 
 ---
 
@@ -83,7 +83,7 @@ No additional changes needed. The code now defaults to `flean-v5` if no environm
 
 Before deploying to production:
 
-- [ ] Verify `flean-v5` index exists in Elasticsearch
+- [ ] Verify `products_master` index exists in Elasticsearch
 - [ ] Confirm index mapping matches expected schema (with `nutri_breakdown_updated`)
 - [ ] Test a simple product search query
 - [ ] Test macro filtering queries (if applicable)
@@ -93,7 +93,7 @@ Before deploying to production:
 
 ## 📊 Index Schema Verification
 
-The `flean-v5` index should have the new nutritional structure:
+The `products_master` index should have the new nutritional structure:
 
 ```json
 {
@@ -132,5 +132,5 @@ export ELASTIC_INDEX=flean-v4
 
 **Migration Date**: January 10, 2025  
 **Status**: ✅ COMPLETE  
-**Impact**: All product searches will now use `flean-v5` index
+**Impact**: All product searches will now use `products_master` index
 

@@ -3,7 +3,7 @@
 # Elasticsearch Search Curl Command
 # Replace these variables with your actual values:
 ES_BASE_URL="${ES_URL:-${ELASTIC_BASE}}"
-ES_INDEX="${ELASTIC_INDEX:-products-v2}"
+ES_INDEX="${ELASTIC_INDEX:-products_master}"
 ES_API_KEY="${ES_API_KEY:-${ELASTIC_API_KEY}}"
 PRODUCT_KEYWORD="${1:-chips}"
 
@@ -40,7 +40,7 @@ curl -X POST "${ES_BASE_URL}/${ES_INDEX}/_search" \
 # ./elasticsearch_curl_example.sh chips
 # Or set environment variables:
 # export ES_URL="https://your-es-cluster.es.amazonaws.com"
-# export ELASTIC_INDEX="products-v2"
+# export ELASTIC_INDEX="products_master"
 # export ES_API_KEY="your-api-key"
 # ./elasticsearch_curl_example.sh "protein powder"
 

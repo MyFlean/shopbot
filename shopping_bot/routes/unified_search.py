@@ -19,7 +19,7 @@ Accepted params (GET query or POST JSON body):
   - page (int, default 0)
   - size (int, 1..100, default 100)
   - sort_by or sort (alias)
-      relevance (default), price_asc, price_desc,
+      flean_score_desc (default), relevance, price_asc, price_desc,
       protein_desc, fiber_desc, fat_asc, flean_score_desc
       Catalogue aliases: sort=flean_score -> flean_score_desc,
                          sort=price       -> price_asc
@@ -66,7 +66,7 @@ SORT_ALIASES = {
 def _resolve_sort(raw: Optional[str]) -> str:
     """Normalize sort input: catalogue aliases -> canonical unified values."""
     if not raw:
-        return "relevance"
+        return "flean_score_desc"
     raw = str(raw).strip().lower()
     return SORT_ALIASES.get(raw, raw)
 

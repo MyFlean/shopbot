@@ -854,22 +854,92 @@ def _build_sort_config(sort_by: Optional[str]) -> List[Dict[str, Any]]:
     Returns:
         List of ES sort clauses
     """
+    def _build_nutrition_script_sort(order: str, fields: List[str]) -> List[Dict[str, Any]]:
+        """
+        Build a resilient numeric sort for nutrition values using _source traversal.
+        This avoids hard failures when index mappings differ across environments.
+        """
+        missing_value = "Double.POSITIVE_INFINITY" if order == "asc" else "Double.NEGATIVE_INFINITY"
+        script_source = f"""
+            def src = params['_source'];
+            if (!(src instanceof Map)) {{
+              return {missing_value};
+            }}
+            for (field in params.fields) {{
+              def current = src;
+              boolean found = true;
+              for (part in field.splitOnToken('.')) {{
+                if (current instanceof Map && current.containsKey(part)) {{
+                  current = current[part];
+                }} else {{
+                  found = false;
+                  break;
+                }}
+              }}
+              if (found && current != null) {{
+                if (current instanceof Number) {{
+                  return ((Number) current).doubleValue();
+                }}
+                if (current instanceof String) {{
+                  try {{
+                    return Double.parseDouble(current);
+                  }} catch (Exception ignored) {{}}
+                }}
+              }}
+            }}
+            return {missing_value};
+        """
+        return [
+            {
+                "_script": {
+                    "type": "number",
+                    "order": order,
+                    "script": {
+                        "lang": "painless",
+                        "source": script_source,
+                        "params": {"fields": fields},
+                    },
+                }
+            },
+            {"_score": "desc"},
+        ]
+
     # Mapping of sort options to ES field paths and order
     SORT_MAPPINGS = {
         "price_asc": [{"price": {"order": "asc", "missing": "_last"}}],
         "price_desc": [{"price": {"order": "desc", "missing": "_last"}}],
-        "protein_desc": [
-            {"category_data.nutritional.nutri_breakdown_updated.protein g": {"order": "desc", "missing": "_last"}},
-            {"_score": "desc"}  # Secondary sort by relevance
-        ],
-        "fiber_desc": [
-            {"category_data.nutritional.nutri_breakdown_updated.fiber g": {"order": "desc", "missing": "_last"}},
-            {"_score": "desc"}
-        ],
-        "fat_asc": [
-            {"category_data.nutritional.nutri_breakdown_updated.total fat g": {"order": "asc", "missing": "_last"}},
-            {"_score": "desc"}
-        ],
+        "protein_desc": _build_nutrition_script_sort(
+            "desc",
+            [
+                "category_data.nutritional.nutri_breakdown_updated.protein g",
+                "category_data.nutritional.nutri_breakdown_updated.protein_g",
+                "category_data.nutritional.nutri_breakdown.protein g",
+                "category_data.nutritional.nutri_breakdown.protein_g",
+                "protein_g",
+            ],
+        ),
+        "fiber_desc": _build_nutrition_script_sort(
+            "desc",
+            [
+                "category_data.nutritional.nutri_breakdown_updated.fiber g",
+                "category_data.nutritional.nutri_breakdown_updated.fiber_g",
+                "category_data.nutritional.nutri_breakdown.fiber g",
+                "category_data.nutritional.nutri_breakdown.fiber_g",
+                "fiber_g",
+            ],
+        ),
+        "fat_asc": _build_nutrition_script_sort(
+            "asc",
+            [
+                "category_data.nutritional.nutri_breakdown_updated.total fat g",
+                "category_data.nutritional.nutri_breakdown_updated.fat g",
+                "category_data.nutritional.nutri_breakdown_updated.fat_g",
+                "category_data.nutritional.nutri_breakdown.total fat g",
+                "category_data.nutritional.nutri_breakdown.fat g",
+                "category_data.nutritional.nutri_breakdown.fat_g",
+                "fat_g",
+            ],
+        ),
         "flean_score_desc": [
             {"stats.adjusted_score_percentiles.subcategory_percentile": {"order": "desc", "missing": "_last"}},
             {"_score": "desc"}
@@ -898,10 +968,16 @@ PRICE_RANGE_FILTERS = {
 # Flean score filter mappings (based on flean_percentile, 0-100 scale)
 # Maps user-friendly names to percentile thresholds
 FLEAN_SCORE_FILTERS = {
-    "10": {"gte": 90},      # Top 10% (90th percentile and above)
-    "9_plus": {"gte": 80},  # Top 20% (80th percentile and above)
-    "8_plus": {"gte": 70},  # Top 30% (70th percentile and above)
-    "7_plus": {"gte": 60},  # Top 40% (60th percentile and above)
+    "10": {"gte": 100},     # Score 10 equivalent (100th percentile)
+    "9_plus": {"gte": 90},  # Score 9+ equivalent (90th percentile and above)
+    "8_plus": {"gte": 80},  # Score 8+ equivalent (80th percentile and above)
+    "7_plus": {"gte": 70},  # Score 7+ equivalent (70th percentile and above)
+}
+FLEAN_SCORE_MIN_BADGE = {
+    "10": 10.0,
+    "9_plus": 9.0,
+    "8_plus": 8.0,
+    "7_plus": 7.0,
 }
 
 # Preference filters - map request keys to ingredient_tags values
@@ -953,11 +1029,60 @@ def _build_filter_clauses(filters: Optional[Dict[str, Any]]) -> List[Dict[str, A
         })
     
     # 2. Flean Score Filter (mutually exclusive - only one allowed)
-    # Uses subcategory_percentile (0-100 scale) for better user experience
+    # Score-only filtering (no percentile fallback).
     flean_score = filters.get("flean_score")
     if flean_score and flean_score in FLEAN_SCORE_FILTERS:
+        min_badge = FLEAN_SCORE_MIN_BADGE.get(flean_score, 0.0)
         filter_clauses.append({
-            "range": {"stats.adjusted_score_percentiles.subcategory_percentile": FLEAN_SCORE_FILTERS[flean_score]}
+            "script": {
+                "script": {
+                    "lang": "painless",
+                    "source": """
+                        // Primary: badge score shown in app (0-10)
+                        if (doc.containsKey('flean_score.adjusted_score_label')
+                            && !doc['flean_score.adjusted_score_label'].empty) {
+                            def rawBadge = doc['flean_score.adjusted_score_label'].value;
+                            double badge = -1.0;
+                            if (rawBadge instanceof Number) {
+                                badge = ((Number) rawBadge).doubleValue();
+                            } else {
+                                try {
+                                    badge = Double.parseDouble(rawBadge.toString());
+                                } catch (Exception ignored) {}
+                            }
+                            if (badge >= 0) {
+                                // Align filter semantics with API display score rounding.
+                                double roundedBadge = badge >= 0 ? Math.floor(badge + 0.5) : Math.ceil(badge - 0.5);
+                                return roundedBadge >= params.min_badge;
+                            }
+                        }
+
+                        // Fallback: adjusted_score (0-100), normalized to 0-10
+                        if (doc.containsKey('flean_score.adjusted_score')
+                            && !doc['flean_score.adjusted_score'].empty) {
+                            def rawAdjusted = doc['flean_score.adjusted_score'].value;
+                            double adjusted = -1.0;
+                            if (rawAdjusted instanceof Number) {
+                                adjusted = ((Number) rawAdjusted).doubleValue();
+                            } else {
+                                try {
+                                    adjusted = Double.parseDouble(rawAdjusted.toString());
+                                } catch (Exception ignored) {}
+                            }
+                            if (adjusted >= 0) {
+                                double score10 = adjusted / 10.0;
+                                double roundedScore10 = score10 >= 0 ? Math.floor(score10 + 0.5) : Math.ceil(score10 - 0.5);
+                                return roundedScore10 >= params.min_badge;
+                            }
+                        }
+
+                        return false;
+                    """,
+                    "params": {
+                        "min_badge": min_badge,
+                    },
+                }
+            }
         })
     
     # 3. Preference Filters (multiple allowed, combined with AND)

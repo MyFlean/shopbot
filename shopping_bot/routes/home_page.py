@@ -218,6 +218,31 @@ def _get_adjusted_score(product_src: Dict[str, Any]) -> float:
         return -1.0
 
 
+def _get_card_flean_sort_key(card: Dict[str, Any]) -> tuple[float, float]:
+    """
+    Sort key for product cards by Flean quality.
+    Primary: badge score (10, 9, 8...); Secondary: percentile.
+    """
+    score_value = -1.0
+    percentile_value = -1.0
+
+    try:
+        score = card.get("flean_score")
+        if score is not None:
+            score_value = float(score)
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        percentile = card.get("flean_percentile")
+        if percentile is not None:
+            percentile_value = float(percentile)
+    except (TypeError, ValueError):
+        pass
+
+    return (score_value, percentile_value)
+
+
 def _get_best_selling_data() -> Dict[str, Any]:
     """Best-selling from fixed category paths ranked by flean_score.adjusted_score."""
     fetcher = get_es_fetcher()
@@ -267,6 +292,9 @@ def _get_best_selling_data() -> Dict[str, Any]:
             selected_ids.add(product_id)
             if len(selected_products) >= BEST_SELLING_TOTAL_PRODUCTS:
                 break
+
+    # Final response is consistently ordered by Flean score descending.
+    selected_products.sort(key=_get_card_flean_sort_key, reverse=True)
 
     return {
         "products": selected_products[:BEST_SELLING_TOTAL_PRODUCTS],
@@ -440,6 +468,8 @@ def _fetch_subcategory_products(
             if len(collected) >= needed:
                 break
 
+    # Keep per-subcategory response ordered by Flean score descending.
+    collected.sort(key=_get_card_flean_sort_key, reverse=True)
     collected = collected[:needed]
     fallback_used_count = tier_counts["tier2"] + tier_counts["tier3"]
     stats = {
@@ -592,6 +622,9 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
             }
             for tier_name, count in stats["tier_counts"].items():
                 total_tier_counts[tier_name] += int(count)
+
+        # Home-mode flat list should be ranked by Flean score descending.
+        products.sort(key=_get_card_flean_sort_key, reverse=True)
 
         fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
         response_data: Dict[str, Any] = {

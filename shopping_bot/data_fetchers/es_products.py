@@ -218,6 +218,66 @@ def _extract_nutrition_from_source(src: Dict[str, Any]) -> Dict[str, Optional[fl
     }
 
 
+def _get_raw_nutri_breakdown(src: Dict[str, Any]) -> Dict[str, Any]:
+    """Return raw nutrient map with updated breakdown taking precedence."""
+    nutritional_data = src.get("category_data", {}).get("nutritional", {})
+    if not isinstance(nutritional_data, dict):
+        return {}
+    updated = nutritional_data.get("nutri_breakdown_updated")
+    if isinstance(updated, dict) and updated:
+        return updated
+    fallback = nutritional_data.get("nutri_breakdown")
+    if isinstance(fallback, dict):
+        return fallback
+    return {}
+
+
+def _format_nutrition_label_and_unit(raw_key: str) -> Tuple[str, str]:
+    """Convert ES nutrient key like 'saturated fat g' to ('Saturated Fat', 'g')."""
+    key = str(raw_key or "").strip().replace("_", " ")
+    if not key:
+        return "", ""
+
+    parts = [p for p in key.split() if p]
+    if not parts:
+        return "", ""
+
+    unit_tokens = {"g", "mg", "mcg", "kcal"}
+    unit = ""
+    if parts[-1].lower() in unit_tokens:
+        unit = parts[-1].lower()
+        parts = parts[:-1]
+
+    label = " ".join(parts).title() if parts else key.title()
+    return label, unit
+
+
+def _build_dynamic_nutrition_items(src: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Build PDP nutrition items dynamically from ES nutri_breakdown fields."""
+    breakdown = _get_raw_nutri_breakdown(src)
+    items: List[Dict[str, str]] = []
+    if not breakdown:
+        return items
+
+    for raw_key, raw_value in breakdown.items():
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if value == 0:
+            continue
+
+        label, unit = _format_nutrition_label_and_unit(str(raw_key))
+        if not label:
+            continue
+
+        display_val = int(value) if value == int(value) else round(value, 2)
+        value_text = f"{display_val} {unit}" if unit else str(display_val)
+        items.append({"nutrient": label, "value": value_text})
+
+    return items
+
+
 def _generate_macro_tags(nutrition: Dict[str, Optional[float]], max_tags: int = 2) -> List[Dict[str, Any]]:
     """Generate top N macro tags sorted by value descending."""
     macro_config = [
@@ -661,25 +721,8 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         ingredients = [{"name": i.strip()} for i in ingredients_text.replace("|", ",").split(",") if i.strip()] if ingredients_text else []
         additives = []
 
-    # ── nutrition (merged value+unit, with basis) ──
-    nutri_map = [
-        ("Energy", nutrition.get("calories"), "kcal"),
-        ("Protein", nutrition.get("protein_g"), "g"),
-        ("Carbohydrates", nutrition.get("carbs_g"), "g"),
-        ("Sugars", nutrition.get("sugar_g"), "g"),
-        ("Total fat", nutrition.get("fat_g"), "g"),
-        ("Saturated fat", nutrition.get("saturated_fat_g"), "g"),
-        ("Trans fat", nutrition.get("trans_fat_g"), "g"),
-        ("Fiber", nutrition.get("fiber_g"), "g"),
-        ("Cholesterol", nutrition.get("cholesterol_mg"), "mg"),
-        ("Calcium", nutrition.get("calcium_mg"), "mg"),
-        ("Sodium", nutrition.get("sodium_mg"), "mg"),
-    ]
-    nutri_items = []
-    for name, val, unit in nutri_map:
-        if val is not None:
-            display_val = int(val) if val == int(val) else round(val, 1)
-            nutri_items.append({"nutrient": name, "value": f"{display_val} {unit}"})
+    # ── nutrition (dynamic from ES nutri_breakdown, with basis) ──
+    nutri_items = _build_dynamic_nutrition_items(src)
 
     nutrition_section = {
         "basis": nutritional_data.get("qty", "per 100 g"),

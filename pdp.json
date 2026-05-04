@@ -1,0 +1,215 @@
+{
+  "data": {
+    "additional_info": [
+      {
+        "label": "Disclaimer",
+        "value": "Product packaging, specifications and information may change from time to time. Please refer to the product label for the most accurate and updated information."
+      },
+      {
+        "label": "Country of Origin",
+        "value": "India"
+      }
+    ],
+    "additives": [],
+    "cons_list": [],
+    "flean_badge": {
+      "color": "#046A38",
+      "level": "elite",
+      "level_text": "Best in Class",
+      "score": 86,
+      "score_display": "86.0"
+    },
+    "highlights": [
+      {
+        "label": "Brand",
+        "value": "DNV"
+      },
+      {
+        "label": "Product Name",
+        "value": "DNV Kasundi Mustard Sauce"
+      },
+      {
+        "label": "Weight / Volume",
+        "value": "100 g"
+      },
+      {
+        "label": "Category",
+        "value": "Packaged Meals"
+      },
+      {
+        "label": "Subcategory",
+        "value": "Papads And Pickles And Chutneys"
+      }
+    ],
+    "ingredients": [
+      {
+        "name": "Mustard Powder"
+      },
+      {
+        "name": "Yellow Mustard Seeds (8%)"
+      },
+      {
+        "name": "Red Mustard Seeds (4%)"
+      },
+      {
+        "name": "Turmeric Powder (1%)"
+      },
+      {
+        "name": "Purified Water"
+      },
+      {
+        "name": "Acidity Regulator (260) and Iodised Salt."
+      }
+    ],
+    "macro_tags": [
+      {
+        "label": "115 kcal",
+        "nutrient": "calories",
+        "unit": "kcal",
+        "value": 115
+      },
+      {
+        "label": "5 g Protein",
+        "nutrient": "protein",
+        "unit": "g",
+        "value": 5
+      }
+    ],
+    "notes": {
+      "criteria_note": "Per 100 g labels reflect Flean Criteria.",
+      "ranking_note": "Note: Overall ranking considers multiple factors. Individual warnings highlight specific concerns."
+    },
+    "nutrition": {
+      "basis": "100 g",
+      "items": [
+        {
+          "nutrient": "Energy",
+          "value": "115 kcal"
+        },
+        {
+          "nutrient": "Protein",
+          "value": "4.9 g"
+        },
+        {
+          "nutrient": "Total fat",
+          "value": "3.7 g"
+        }
+      ]
+    },
+    "product_info": {
+      "brand": "DNV",
+      "category": "Packaged Meals",
+      "currency": "INR",
+      "description": "",
+      "id": "01K8FR7B02SYVK1HC94KR0ZJK8",
+      "image_url": "https://img.flean.ai/product/01K8FR7B02SYVK1HC94KR0ZJK8/01.png",
+      "image_urls": [
+        "https://img.flean.ai/product/01K8FR7B02SYVK1HC94KR0ZJK8/02.jpg",
+        "https://img.flean.ai/product/01K8FR7B02SYVK1HC94KR0ZJK8/03.jpg"
+      ],
+      "in_stock": false,
+      "mrp": 65,
+      "name": "DNV Kasundi Mustard Sauce",
+      "price": 56,
+      "qty": "100 g",
+      "size": "350 g",
+      "subcategory": "Papads And Pickles And Chutneys",
+      "visibility": "visible"
+    },
+    "score_cards": {
+      "calories": {
+        "color": "#F59E0B",
+        "icon_url": "https://img.flean.ai/assets/Pdp-Icons/06.svg",
+        "percentile": 28,
+        "status": "subpar",
+        "status_label": "Sub-Par",
+        "subtitle": "100 g",
+        "title": "Calories",
+        "value": "115 kcal"
+      },
+      "fiber": {
+        "color": "#F59E0B",
+        "icon_url": "https://img.flean.ai/assets/Pdp-Icons/03.svg",
+        "percentile": 34.5,
+        "status": "subpar",
+        "status_label": "Sub-Par",
+        "subtitle": "Efficiency",
+        "title": "Fiber",
+        "value": "Top 65.5%"
+      },
+      "flean_rank": {
+        "color": "#046A38",
+        "icon_url": "https://img.flean.ai/assets/Pdp-Icons/01.svg",
+        "percentile": 99.8,
+        "status": "elite",
+        "status_label": "Best in Class",
+        "subtitle": "Papads And Pickles And Chutneys",
+        "title": "Flean Rank",
+        "value": "Top 0.2%"
+      },
+      "oils": {
+        "color": "#EF4444",
+        "icon_url": "https://img.flean.ai/assets/Pdp-Icons/05.svg",
+        "percentile": 16.5,
+        "status": "villain",
+        "status_label": "The Villain Zone",
+        "subtitle": "Percentile: 17",
+        "title": "Oils",
+        "value": "High"
+      },
+      "protein": {
+        "color": "#22C55E",
+        "icon_url": "https://img.flean.ai/assets/Pdp-Icons/02.svg",
+        "percentile": 76.1,
+        "status": "top",
+        "status_label": "Top Tier",
+        "subtitle": "Efficiency",
+        "title": "Protein",
+        "value": "Top 23.9%"
+      },
+      "sweeteners": {
+        "color": "#F59E0B",
+        "icon_url": "https://img.flean.ai/assets/Pdp-Icons/04.svg",
+        "percentile": 37.3,
+        "status": "subpar",
+        "status_label": "Sub-Par",
+        "subtitle": "Percentile: 37",
+        "title": "Sweeteners",
+        "value": "High"
+      },
+      "watch_outs": {
+        "color": "#6B7280",
+        "percentile": 50,
+        "status": "average",
+        "status_label": "Average Choice",
+        "subtitle": "Good",
+        "title": "Watch-outs",
+        "value": "None",
+        "visible": false
+      }
+    },
+    "scoring_detail": {
+      "bonuses": {
+        "prot_bonus": 5.85,
+        "simplicity_bonus": 3
+      },
+      "penalties": {
+        "calories_penalty": 1,
+        "total_fat_penalty": 1.85
+      },
+      "rda_pct": {
+        "added_sugar_pct": 0,
+        "energy_pct": 5.8,
+        "fiber_pct": 0,
+        "protein_pct": 8.2,
+        "sat_fat_pct": 0,
+        "sodium_pct": 0,
+        "total_fat_pct": 5.5,
+        "trans_fat_pct": 0
+      },
+      "total_bonus": 8.85,
+      "total_penalty": 2.85
+    }
+  },
+  "success": true
+}

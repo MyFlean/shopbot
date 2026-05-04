@@ -250,13 +250,30 @@ def _get_best_selling_data() -> Dict[str, Any]:
     selected_ids: set[str] = set()
     backfill_candidates: List[tuple[float, Dict[str, Any]]] = []
 
-    for path in BEST_SELLING_CATEGORY_PATHS:
-        raw_products = fetcher.search_by_category_paths(
-            paths=[path],
+    # Prefer a single ES request (terms + top_hits aggregation) when mapping supports it.
+    # Fallback to the legacy per-path query loop if aggregation isn't available.
+    agg_results: Optional[Dict[str, List[Dict[str, Any]]]] = None
+    try:
+        agg_results = fetcher.best_selling_by_category_paths_agg(
+            paths=BEST_SELLING_CATEGORY_PATHS,
+            per_category=BEST_SELLING_PER_CATEGORY,
+            fetch_per_category=BEST_SELLING_PER_CATEGORY + BEST_SELLING_FETCH_BUFFER,
             filters=None,
-            size=BEST_SELLING_PER_CATEGORY + BEST_SELLING_FETCH_BUFFER,
             exclude_ids=None,
         )
+    except Exception:
+        agg_results = None
+
+    for path in BEST_SELLING_CATEGORY_PATHS:
+        if agg_results is not None and path in agg_results:
+            raw_products = agg_results.get(path) or []
+        else:
+            raw_products = fetcher.search_by_category_paths(
+                paths=[path],
+                filters=None,
+                size=BEST_SELLING_PER_CATEGORY + BEST_SELLING_FETCH_BUFFER,
+                exclude_ids=None,
+            )
 
         scored_cards: List[tuple[float, Dict[str, Any]]] = []
         for src in raw_products:

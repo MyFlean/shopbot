@@ -3561,6 +3561,119 @@ class ElasticsearchProductsFetcher:
             print(f"DEBUG: search_by_category_paths failed | paths={paths} | error={exc}")
             return []
 
+    def best_selling_by_category_paths_agg(
+        self,
+        paths: List[str],
+        per_category: int = 2,
+        fetch_per_category: int = 10,
+        filters: Optional[Dict[str, Any]] = None,
+        exclude_ids: Optional[List[str]] = None,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Fetch best-selling candidates per category path using a single ES aggregation request.
+
+        Returns a mapping: { path: [raw _source docs...] } where each list is sorted by
+        flean_score.adjusted_score descending (ES-side sort).
+
+        Notes:
+        - Requires `category_paths.keyword` to exist (we detect via `_ensure_mapping_hints`).
+        - If keyword mapping is unavailable, callers should fall back to `search_by_category_paths`.
+        """
+        if not paths:
+            return {}
+        try:
+            self._ensure_mapping_hints()
+            if not self._has_category_paths_keyword:
+                raise RuntimeError("category_paths.keyword not available; cannot aggregate by exact path")
+
+            # Guardrails: keep request bounded
+            per_category = max(1, int(per_category))
+            fetch_per_category = max(per_category, int(fetch_per_category))
+            fetch_per_category = min(fetch_per_category, 50)
+            max_buckets = min(len(paths), 25)
+
+            filter_clauses: List[Dict[str, Any]] = [VISIBILITY_FILTER]
+            if filters:
+                filter_clauses.extend(_build_filter_clauses(filters))
+            if exclude_ids:
+                filter_clauses.append({"bool": {"must_not": [{"terms": {"id": exclude_ids}}]}})
+
+            # Use exact matching on keyword field.
+            cat_kw = "category_paths.keyword"
+            filter_clauses.append({"terms": {cat_kw: [p for p in paths if p]}})
+
+            body: Dict[str, Any] = {
+                "size": 0,
+                "track_total_hits": False,
+                "query": {"bool": {"filter": filter_clauses}},
+                "aggs": {
+                    "by_path": {
+                        "terms": {
+                            "field": cat_kw,
+                            "size": max_buckets,
+                            # Ensure buckets are returned for the provided set.
+                            # (Execution hint is optional but can help on high-cardinality fields.)
+                            "execution_hint": "map",
+                        },
+                        "aggs": {
+                            "top_products": {
+                                "top_hits": {
+                                    "size": fetch_per_category,
+                                    "_source": {
+                                        "includes": [
+                                            "id",
+                                            "name",
+                                            "brand",
+                                            "price",
+                                            "mrp",
+                                            "hero_image.*",
+                                            "images",
+                                            "package_claims.*",
+                                            "category_group",
+                                            "category_paths",
+                                            "category_data.*",
+                                            "flean_score.*",
+                                            "stats.*",
+                                            "size",
+                                            "visibility",
+                                        ]
+                                    },
+                                    "sort": [
+                                        {"flean_score.adjusted_score": {"order": "desc", "missing": "_last"}},
+                                        {"stats.adjusted_score_percentiles.subcategory_percentile": {"order": "desc", "missing": "_last"}},
+                                        {"_score": "desc"},
+                                    ],
+                                }
+                            }
+                        },
+                    }
+                },
+            }
+
+            endpoint = f"{self.base_url}/{self.index}/_search"
+            resp = requests.post(endpoint, json=body, timeout=TIMEOUT, **self._request_kwargs())
+            resp.raise_for_status()
+            data = resp.json() or {}
+            buckets = (((data.get("aggregations") or {}).get("by_path") or {}).get("buckets") or [])
+
+            out: Dict[str, List[Dict[str, Any]]] = {}
+            for b in buckets:
+                key = b.get("key")
+                hits = (((b.get("top_products") or {}).get("hits") or {}).get("hits") or [])
+                docs = [h.get("_source") for h in hits if isinstance(h, dict) and h.get("_source")]
+                if key and docs:
+                    out[str(key)] = docs
+
+            # Ensure all requested paths exist as keys (even if empty),
+            # so callers can treat missing as 0 results rather than "not queried".
+            for p in paths:
+                if p and p not in out:
+                    out[p] = []
+            return out
+
+        except Exception as exc:
+            print(f"DEBUG: best_selling_by_category_paths_agg failed | paths={paths} | error={exc}")
+            return {}
+
 
 # Parameter extraction and normalization
 def _extract_defaults_from_context(ctx) -> Dict[str, Any]:

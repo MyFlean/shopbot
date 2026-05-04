@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import time
 import traceback
 
 from datetime import datetime
@@ -250,19 +252,32 @@ def _get_best_selling_data() -> Dict[str, Any]:
     selected_ids: set[str] = set()
     backfill_candidates: List[tuple[float, Dict[str, Any]]] = []
 
+    force_legacy = (os.getenv("BEST_SELLING_FORCE_LEGACY") or "").strip().lower() in ("1", "true", "yes", "on")
+
     # Prefer a single ES request (terms + top_hits aggregation) when mapping supports it.
-    # Fallback to the legacy per-path query loop if aggregation isn't available.
+    # Fallback to the legacy per-path query loop if aggregation isn't available or is forced off.
     agg_results: Optional[Dict[str, List[Dict[str, Any]]]] = None
-    try:
-        agg_results = fetcher.best_selling_by_category_paths_agg(
-            paths=BEST_SELLING_CATEGORY_PATHS,
-            per_category=BEST_SELLING_PER_CATEGORY,
-            fetch_per_category=BEST_SELLING_PER_CATEGORY + BEST_SELLING_FETCH_BUFFER,
-            filters=None,
-            exclude_ids=None,
-        )
-    except Exception:
-        agg_results = None
+    mode = "legacy"
+    es_fetch_ms: Optional[float] = None
+
+    if not force_legacy:
+        _t0 = time.perf_counter()
+        try:
+            agg_results = fetcher.best_selling_by_category_paths_agg(
+                paths=BEST_SELLING_CATEGORY_PATHS,
+                per_category=BEST_SELLING_PER_CATEGORY,
+                fetch_per_category=BEST_SELLING_PER_CATEGORY + BEST_SELLING_FETCH_BUFFER,
+                filters=None,
+                exclude_ids=None,
+            )
+            mode = "agg"
+        except Exception:
+            agg_results = None
+            mode = "legacy"
+        finally:
+            es_fetch_ms = (time.perf_counter() - _t0) * 1000.0
+    else:
+        mode = "legacy_forced"
 
     for path in BEST_SELLING_CATEGORY_PATHS:
         if agg_results is not None and path in agg_results:
@@ -312,6 +327,22 @@ def _get_best_selling_data() -> Dict[str, Any]:
 
     # Final response is consistently ordered by Flean score descending.
     selected_products.sort(key=_get_card_flean_sort_key, reverse=True)
+
+    try:
+        log.info(
+            "HOME_BEST_SELLING_FETCH",
+            extra={
+                "mode": mode,
+                "force_legacy": force_legacy,
+                "es_fetch_ms": round(es_fetch_ms, 2) if es_fetch_ms is not None else None,
+                "paths": BEST_SELLING_CATEGORY_PATHS,
+                "per_category": BEST_SELLING_PER_CATEGORY,
+                "fetch_per_category": BEST_SELLING_PER_CATEGORY + BEST_SELLING_FETCH_BUFFER,
+                "returned": min(len(selected_products), BEST_SELLING_TOTAL_PRODUCTS),
+            },
+        )
+    except Exception:
+        pass
 
     return {
         "products": selected_products[:BEST_SELLING_TOTAL_PRODUCTS],

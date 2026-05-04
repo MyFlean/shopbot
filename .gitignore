@@ -105,3 +105,6 @@ shopbot.zip
 *.tfplan
 .terraform/
 .terraform.lock.hcl
+
+# Local installers / large binaries
+AWSCLIV2.pkg

@@ -63,10 +63,11 @@ SORT_ALIASES = {
 }
 
 
-def _resolve_sort(raw: Optional[str]) -> str:
-    """Normalize sort input: catalogue aliases -> canonical unified values."""
+def _resolve_sort(raw: Optional[str], has_query: bool = False) -> str:
+    """Normalize sort input: query defaults + catalogue aliases -> canonical unified values."""
     if not raw:
-        return "flean_score_desc"
+        # Query flows should prioritize lexical relevance unless caller overrides sort.
+        return "relevance" if has_query else "flean_score_desc"
     raw = str(raw).strip().lower()
     return SORT_ALIASES.get(raw, raw)
 
@@ -198,7 +199,7 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             )
 
         # Resolve sort (with catalogue aliases) and validate
-        resolved_sort = _resolve_sort(sort_raw)
+        resolved_sort = _resolve_sort(sort_raw, has_query=bool(query))
         if resolved_sort not in VALID_SORT_OPTIONS:
             return _error_response(
                 "INVALID_SORT",

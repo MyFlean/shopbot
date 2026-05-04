@@ -3281,7 +3281,7 @@ class ElasticsearchProductsFetcher:
         
         try:
             # Normalize inputs
-            query_text = query.strip() if has_query else None
+            query_text = " ".join(query.strip().split()) if has_query else None
             subcat = subcategory.strip() if has_subcategory else None
             size = max(1, min(size, 100))
             offset = page * size
@@ -3308,10 +3308,65 @@ class ElasticsearchProductsFetcher:
             
             # Build the query
             if query_text:
-                # Text search mode: use multi_match across relevant fields
+                query_token_count = len(query_text.split())
+                required_token_coverage = "100%" if query_token_count <= 2 else "2<75%"
+
+                # Balanced text search:
+                # - strongly reward exact/near-exact name matches
+                # - keep fuzzy matching as a lower-priority fallback
                 query_body: Dict[str, Any] = {
                     "bool": {
                         "must": [
+                            {
+                                "multi_match": {
+                                    "query": query_text,
+                                    "fields": [
+                                        "name^4",
+                                        "brand^3",
+                                        "description",
+                                    ],
+                                    "type": "best_fields",
+                                    "operator": "or",
+                                    "minimum_should_match": required_token_coverage,
+                                }
+                            }
+                        ],
+                        "should": [
+                            {
+                                "match_phrase": {
+                                    "name": {
+                                        "query": query_text,
+                                        "boost": 8.0
+                                    }
+                                }
+                            },
+                            {
+                                "multi_match": {
+                                    "query": query_text,
+                                    "fields": [
+                                        "name^3",
+                                        "brand^2",
+                                    ],
+                                    "type": "cross_fields",
+                                    "operator": "and",
+                                    "boost": 5.0
+                                }
+                            },
+                            {
+                                "multi_match": {
+                                    "query": query_text,
+                                    "fields": [
+                                        "name^4",
+                                        "brand^2",
+                                        "description^1.5",
+                                        "package_claims.health_claims",
+                                        "package_claims.dietary_labels"
+                                    ],
+                                    "type": "best_fields",
+                                    "operator": "and",
+                                    "boost": 2.5
+                                }
+                            },
                             {
                                 "multi_match": {
                                     "query": query_text,
@@ -3323,10 +3378,12 @@ class ElasticsearchProductsFetcher:
                                         "package_claims.dietary_labels"
                                     ],
                                     "type": "best_fields",
-                                    "fuzziness": "AUTO"
+                                    "fuzziness": "AUTO",
+                                    "boost": 0.8
                                 }
                             }
                         ],
+                        "minimum_should_match": 1,
                         "filter": filter_clauses
                     }
                 }
@@ -3376,7 +3433,7 @@ class ElasticsearchProductsFetcher:
             
             # Add min_score for text queries to filter out irrelevant results
             if query_text:
-                body["min_score"] = 0.5
+                body["min_score"] = 1.2
             
             search_endpoint = f"{self.base_url}/{self.index}/_search"
             print(f"DEBUG: ES search_products_unified | query={query_text} | subcategory={subcat} | page={page} | size={size} | sort={sort_by}")

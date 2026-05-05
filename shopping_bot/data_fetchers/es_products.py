@@ -3589,7 +3589,9 @@ class ElasticsearchProductsFetcher:
             per_category = max(1, int(per_category))
             fetch_per_category = max(per_category, int(fetch_per_category))
             fetch_per_category = min(fetch_per_category, 50)
-            max_buckets = min(len(paths), 25)
+            # Keep the request bounded; we only support a small fixed set here.
+            paths = [p for p in paths if p]
+            paths = paths[:25]
 
             filter_clauses: List[Dict[str, Any]] = [VISIBILITY_FILTER]
             if filters:
@@ -3599,7 +3601,12 @@ class ElasticsearchProductsFetcher:
 
             # Use exact matching on keyword field.
             cat_kw = "category_paths.keyword"
-            filter_clauses.append({"terms": {cat_kw: [p for p in paths if p]}})
+            # Also add a top-level terms filter to reduce work for the aggregations.
+            filter_clauses.append({"terms": {cat_kw: paths}})
+
+            # For a fixed, small set of category paths, a filters aggregation is typically
+            # more stable (and avoids terms bucketing/global ordinals overhead).
+            agg_filters = {p: {"term": {cat_kw: p}} for p in paths}
 
             body: Dict[str, Any] = {
                 "size": 0,
@@ -3607,13 +3614,7 @@ class ElasticsearchProductsFetcher:
                 "query": {"bool": {"filter": filter_clauses}},
                 "aggs": {
                     "by_path": {
-                        "terms": {
-                            "field": cat_kw,
-                            "size": max_buckets,
-                            # Ensure buckets are returned for the provided set.
-                            # (Execution hint is optional but can help on high-cardinality fields.)
-                            "execution_hint": "map",
-                        },
+                        "filters": {"filters": agg_filters},
                         "aggs": {
                             "top_products": {
                                 "top_hits": {
@@ -3645,29 +3646,36 @@ class ElasticsearchProductsFetcher:
                                 }
                             }
                         },
-                    }
+                    },
                 },
             }
 
             endpoint = f"{self.base_url}/{self.index}/_search"
+            t0 = time.perf_counter()
             resp = requests.post(endpoint, json=body, timeout=TIMEOUT, **self._request_kwargs())
+            req_ms = (time.perf_counter() - t0) * 1000.0
             resp.raise_for_status()
             data = resp.json() or {}
-            buckets = (((data.get("aggregations") or {}).get("by_path") or {}).get("buckets") or [])
+            took_ms = data.get("took")
+            buckets = (((data.get("aggregations") or {}).get("by_path") or {}).get("buckets") or {}) or {}
+            try:
+                print(
+                    f"DEBUG: BEST_SELLING_AGG_OK | paths={len(paths)} | fetch_per_category={fetch_per_category} | "
+                    f"req_ms={req_ms:.1f} | es_took_ms={took_ms}"
+                )
+            except Exception:
+                pass
 
             out: Dict[str, List[Dict[str, Any]]] = {}
-            for b in buckets:
-                key = b.get("key")
+            for key, b in buckets.items():
                 hits = (((b.get("top_products") or {}).get("hits") or {}).get("hits") or [])
                 docs = [h.get("_source") for h in hits if isinstance(h, dict) and h.get("_source")]
-                if key and docs:
-                    out[str(key)] = docs
+                out[str(key)] = docs
 
             # Ensure all requested paths exist as keys (even if empty),
             # so callers can treat missing as 0 results rather than "not queried".
             for p in paths:
-                if p and p not in out:
-                    out[p] = []
+                out.setdefault(p, [])
             return out
 
         except Exception as exc:

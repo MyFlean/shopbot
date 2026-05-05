@@ -2564,7 +2564,9 @@ class ElasticsearchProductsFetcher:
         try:
             mapping_endpoint = f"{self.base_url}/{self.index}/_mapping"
             print(f"DEBUG: ES_MAPPING_REQUEST | endpoint={mapping_endpoint} | method=GET | timeout={TIMEOUT}s")
-            resp = requests.get(mapping_endpoint, timeout=TIMEOUT, **self._request_kwargs())
+            # Mapping lookups are non-critical; keep them on a short leash so we don't
+            # amplify transient ES slowness into multi-second tail latency.
+            resp = requests.get(mapping_endpoint, timeout=min(TIMEOUT, 2), **self._request_kwargs())
             resp.raise_for_status()
             data = resp.json() or {}
             # Traverse to detect 'category_paths.keyword'

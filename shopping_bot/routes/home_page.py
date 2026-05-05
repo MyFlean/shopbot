@@ -25,7 +25,6 @@ import logging
 import os
 import time
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from datetime import datetime
 from functools import lru_cache
@@ -280,33 +279,16 @@ def _get_best_selling_data() -> Dict[str, Any]:
     else:
         mode = "legacy_forced"
 
-    # If aggregation isn't available, execute legacy per-path searches in parallel so that
-    # transient ES slowness doesn't stack into ~3×TIMEOUT tail latency.
-    legacy_results: Dict[str, List[Dict[str, Any]]] = {}
-    if agg_results is None:
-        with ThreadPoolExecutor(max_workers=min(3, len(BEST_SELLING_CATEGORY_PATHS))) as ex:
-            futures = {
-                ex.submit(
-                    fetcher.search_by_category_paths,
-                    paths=[path],
-                    filters=None,
-                    size=BEST_SELLING_PER_CATEGORY + BEST_SELLING_FETCH_BUFFER,
-                    exclude_ids=None,
-                ): path
-                for path in BEST_SELLING_CATEGORY_PATHS
-            }
-            for fut in as_completed(futures):
-                path = futures[fut]
-                try:
-                    legacy_results[path] = fut.result() or []
-                except Exception:
-                    legacy_results[path] = []
-
     for path in BEST_SELLING_CATEGORY_PATHS:
         if agg_results is not None and path in agg_results:
             raw_products = agg_results.get(path) or []
         else:
-            raw_products = legacy_results.get(path) or []
+            raw_products = fetcher.search_by_category_paths(
+                paths=[path],
+                filters=None,
+                size=BEST_SELLING_PER_CATEGORY + BEST_SELLING_FETCH_BUFFER,
+                exclude_ids=None,
+            )
 
         scored_cards: List[tuple[float, Dict[str, Any]]] = []
         for src in raw_products:

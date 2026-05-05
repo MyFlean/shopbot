@@ -15,6 +15,7 @@ import asyncio
 from logging import log
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple
 import json
 from urllib.parse import urlparse
@@ -2475,6 +2476,7 @@ class ElasticsearchProductsFetcher:
         self.index = index or ELASTIC_INDEX
         self.api_key = (api_key or ELASTIC_API_KEY)
         self._has_category_paths_keyword: Optional[bool] = None
+        self._category_paths_exact_field: Optional[str] = None
         self.use_iam_auth = (
             _is_truthy_env("AOSS_ENABLED")
             or _is_truthy_env("ES_USE_IAM")
@@ -2558,7 +2560,7 @@ class ElasticsearchProductsFetcher:
         return kwargs
     
     def _ensure_mapping_hints(self) -> None:
-        """Lazy-load index mapping to detect availability of 'category_paths.keyword'."""
+        """Lazy-load index mapping to detect an exact-match field for category_paths."""
         if self._has_category_paths_keyword is not None:
             return
         try:
@@ -2569,8 +2571,11 @@ class ElasticsearchProductsFetcher:
             resp = requests.get(mapping_endpoint, timeout=min(TIMEOUT, 2), **self._request_kwargs())
             resp.raise_for_status()
             data = resp.json() or {}
-            # Traverse to detect 'category_paths.keyword'
+            # Traverse to detect an exact-match field for category paths.
+            # Prefer category_paths.keyword when present, but allow category_paths
+            # directly if it is already mapped as keyword.
             has_kw = False
+            exact_field: Optional[str] = None
             try:
                 # mappings can be keyed by index name
                 for _idx, payload in (data or {}).items():
@@ -2580,12 +2585,22 @@ class ElasticsearchProductsFetcher:
                     fields = cat.get("fields", {}) or {}
                     if isinstance(fields.get("keyword"), dict):
                         has_kw = True
+                        exact_field = "category_paths.keyword"
+                        break
+                    if str(cat.get("type") or "").strip().lower() == "keyword":
+                        has_kw = True
+                        exact_field = "category_paths"
                         break
             except Exception:
                 has_kw = False
             self._has_category_paths_keyword = has_kw
+            self._category_paths_exact_field = exact_field
             try:
-                print(f"DEBUG: MAPPING_HINT | category_paths.keyword={'yes' if has_kw else 'no'}")
+                print(
+                    "DEBUG: MAPPING_HINT | "
+                    f"category_paths_exact_field={exact_field or 'none'} | "
+                    f"exact_match_available={'yes' if has_kw else 'no'}"
+                )
             except Exception:
                 pass
         except Exception as exc:
@@ -2594,6 +2609,7 @@ class ElasticsearchProductsFetcher:
             except Exception:
                 pass
             self._has_category_paths_keyword = False
+            self._category_paths_exact_field = None
     
     def search(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute search against Elasticsearch with fallback strategies."""
@@ -3577,15 +3593,16 @@ class ElasticsearchProductsFetcher:
         flean_score.adjusted_score descending (ES-side sort).
 
         Notes:
-        - Requires `category_paths.keyword` to exist (we detect via `_ensure_mapping_hints`).
-        - If keyword mapping is unavailable, callers should fall back to `search_by_category_paths`.
+        - Requires an exact-match category path field (`category_paths.keyword` or `category_paths`
+          when mapped as `keyword`) detected via `_ensure_mapping_hints`.
+        - If no exact mapping is available, callers should fall back to `search_by_category_paths`.
         """
         if not paths:
             return {}
         try:
             self._ensure_mapping_hints()
-            if not self._has_category_paths_keyword:
-                raise RuntimeError("category_paths.keyword not available; cannot aggregate by exact path")
+            if not self._has_category_paths_keyword or not self._category_paths_exact_field:
+                raise RuntimeError("No exact category_paths field available; cannot aggregate by exact path")
 
             # Guardrails: keep request bounded
             per_category = max(1, int(per_category))
@@ -3601,8 +3618,8 @@ class ElasticsearchProductsFetcher:
             if exclude_ids:
                 filter_clauses.append({"bool": {"must_not": [{"terms": {"id": exclude_ids}}]}})
 
-            # Use exact matching on keyword field.
-            cat_kw = "category_paths.keyword"
+            # Use exact matching on the detected exact field.
+            cat_kw = self._category_paths_exact_field
             # Also add a top-level terms filter to reduce work for the aggregations.
             filter_clauses.append({"terms": {cat_kw: paths}})
 
@@ -3682,6 +3699,138 @@ class ElasticsearchProductsFetcher:
 
         except Exception as exc:
             print(f"DEBUG: best_selling_by_category_paths_agg failed | paths={paths} | error={exc}")
+            return {}
+
+    def flean_picks_by_subcategories_agg(
+        self,
+        subcategories: Dict[str, List[str]],
+        per_subcategory: int,
+        fetch_per_subcategory: int,
+        filters: Optional[Dict[str, Any]] = None,
+        exclude_ids: Optional[List[str]] = None,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Fetch top products per Flean Picks subcategory in one ES request (filters + top_hits).
+
+        ``subcategories`` maps a stable bucket key (e.g. ``high_protein_snacks``) to one or more
+        exact category paths. Each bucket matches any path in its list via ``terms`` on the
+        resolved exact category_paths field (see ``_ensure_mapping_hints``).
+
+        Returns ``{ bucket_key: [_source, ...] }`` sorted by ``flean_score.adjusted_score`` desc
+        per bucket (ES-side). Empty dict on failure (caller should fall back to per-path search).
+        """
+        if not subcategories:
+            return {}
+        try:
+            self._ensure_mapping_hints()
+            if not self._has_category_paths_keyword or not self._category_paths_exact_field:
+                raise RuntimeError("No exact category_paths field available; cannot aggregate")
+
+            per_subcategory = max(1, int(per_subcategory))
+            fetch_per_subcategory = max(per_subcategory, int(fetch_per_subcategory))
+            fetch_per_subcategory = min(fetch_per_subcategory, 50)
+
+            cat_kw = self._category_paths_exact_field
+            all_paths: List[str] = []
+            for _k, paths in (subcategories or {}).items():
+                for p in paths or []:
+                    if p:
+                        all_paths.append(str(p))
+            all_paths = sorted(set(all_paths))
+            if not all_paths:
+                return {}
+
+            filter_clauses: List[Dict[str, Any]] = [VISIBILITY_FILTER]
+            if filters:
+                filter_clauses.extend(_build_filter_clauses(filters))
+            if exclude_ids:
+                filter_clauses.append({"bool": {"must_not": [{"terms": {"id": exclude_ids}}]}})
+            filter_clauses.append({"terms": {cat_kw: all_paths}})
+
+            agg_filters: Dict[str, Dict[str, Any]] = {}
+            for bucket_key, paths in subcategories.items():
+                plist = [p for p in (paths or []) if p]
+                if not plist:
+                    continue
+                agg_filters[str(bucket_key)] = {"terms": {cat_kw: plist}}
+
+            if not agg_filters:
+                return {}
+
+            body: Dict[str, Any] = {
+                "size": 0,
+                "track_total_hits": False,
+                "query": {"bool": {"filter": filter_clauses}},
+                "aggs": {
+                    "by_subcat": {
+                        "filters": {"filters": agg_filters},
+                        "aggs": {
+                            "top_products": {
+                                "top_hits": {
+                                    "size": fetch_per_subcategory,
+                                    "_source": {
+                                        "includes": [
+                                            "id",
+                                            "name",
+                                            "brand",
+                                            "price",
+                                            "mrp",
+                                            "hero_image.*",
+                                            "images",
+                                            "package_claims.*",
+                                            "category_group",
+                                            "category_paths",
+                                            "category_data.*",
+                                            "flean_score.*",
+                                            "stats.*",
+                                            "size",
+                                            "visibility",
+                                        ]
+                                    },
+                                    "sort": [
+                                        {"flean_score.adjusted_score": {"order": "desc", "missing": "_last"}},
+                                        {
+                                            "stats.adjusted_score_percentiles.subcategory_percentile": {
+                                                "order": "desc",
+                                                "missing": "_last",
+                                            }
+                                        },
+                                        {"_score": "desc"},
+                                    ],
+                                }
+                            }
+                        },
+                    },
+                },
+            }
+
+            endpoint = f"{self.base_url}/{self.index}/_search"
+            t0 = time.perf_counter()
+            resp = requests.post(endpoint, json=body, timeout=TIMEOUT, **self._request_kwargs())
+            req_ms = (time.perf_counter() - t0) * 1000.0
+            resp.raise_for_status()
+            data = resp.json() or {}
+            took_ms = data.get("took")
+            buckets = (((data.get("aggregations") or {}).get("by_subcat") or {}).get("buckets") or {}) or {}
+            try:
+                print(
+                    f"DEBUG: FLEAN_PICKS_AGG_OK | buckets={len(agg_filters)} | "
+                    f"fetch_per_subcategory={fetch_per_subcategory} | req_ms={req_ms:.1f} | es_took_ms={took_ms}"
+                )
+            except Exception:
+                pass
+
+            out: Dict[str, List[Dict[str, Any]]] = {}
+            for key, b in buckets.items():
+                hits = (((b.get("top_products") or {}).get("hits") or {}).get("hits") or [])
+                docs = [h.get("_source") for h in hits if isinstance(h, dict) and h.get("_source")]
+                out[str(key)] = docs
+
+            for bk in agg_filters:
+                out.setdefault(bk, [])
+            return out
+
+        except Exception as exc:
+            print(f"DEBUG: flean_picks_by_subcategories_agg failed | subcategories={list(subcategories)} | error={exc}")
             return {}
 
 

@@ -473,6 +473,62 @@ def _build_flean_hybrid_tier_filters(user_filters: Optional[Dict[str, Any]]) -> 
     ]
 
 
+def _legacy_unified_flean_picks_fetch(
+    source: str,
+    user_filters: Optional[Dict[str, Any]],
+    needed: int,
+) -> tuple[
+    Optional[List[Dict[str, Any]]],
+    Optional[List[Dict[str, Any]]],
+    Dict[str, Any],
+    Dict[str, int],
+]:
+    """Sequential ES path: one ``_fetch_subcategory_products`` per Flean Picks bucket."""
+    per_subcategory: Dict[str, Any] = {}
+    total_tier_counts = {"tier1": 0, "tier2": 0, "tier3": 0}
+    if source == "home":
+        products: List[Dict[str, Any]] = []
+        for key, cfg in FLEAN_PICKS_CATEGORIES.items():
+            sub_products, stats = _fetch_subcategory_products(
+                es_paths=cfg["es_paths"],
+                user_filters=user_filters,
+                needed=needed,
+            )
+            products.extend(sub_products)
+            per_subcategory[key] = {
+                "requested_count": stats["requested_count"],
+                "collected_count": stats["collected_count"],
+                "tier_counts": stats["tier_counts"],
+                "used_fallback": stats["used_fallback"],
+            }
+            for tier_name, count in stats["tier_counts"].items():
+                total_tier_counts[tier_name] += int(count)
+        return products, None, per_subcategory, total_tier_counts
+
+    collections: List[Dict[str, Any]] = []
+    for key, cfg in FLEAN_PICKS_CATEGORIES.items():
+        sub_products, stats = _fetch_subcategory_products(
+            es_paths=cfg["es_paths"],
+            user_filters=user_filters,
+            needed=needed,
+        )
+        collections.append({
+            "key": key,
+            "name": cfg["name"],
+            "image_url": cfg["image_url"],
+            "products": sub_products,
+        })
+        per_subcategory[key] = {
+            "requested_count": stats["requested_count"],
+            "collected_count": stats["collected_count"],
+            "tier_counts": stats["tier_counts"],
+            "used_fallback": stats["used_fallback"],
+        }
+        for tier_name, count in stats["tier_counts"].items():
+            total_tier_counts[tier_name] += int(count)
+    return None, collections, per_subcategory, total_tier_counts
+
+
 def _fetch_subcategory_products(
     es_paths: List[str],
     user_filters: Optional[Dict[str, Any]],
@@ -646,36 +702,251 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
         ``collections`` with 4 subcategories, up to 12 products each.
     Actual counts can be lower if Elasticsearch returns fewer matches after
     3-tier fallback (tier1 all filters -> tier2 remove carbs -> tier3 remove fat).
+
+    When ``FLEAN_PICKS_FORCE_LEGACY`` is unset/false, prefers one ES aggregation per
+    relaxation tier (up to 3 calls for all buckets) via ``flean_picks_by_subcategories_agg``,
+    then supplements any short bucket with the legacy per-bucket search.
     """
     filters_applied = _merge_filters(BASE_PERSONALIZATION_FILTERS, user_filters)
     no_match_message = "No products matched your selected filters. Try relaxing your filters."
 
+    force_legacy = (os.getenv("FLEAN_PICKS_FORCE_LEGACY") or "").strip().lower() in ("1", "true", "yes", "on")
+    needed = 2 if source == "home" else 12
+    requested_total = len(FLEAN_PICKS_CATEGORIES) * needed
+
+    def _log_fetch(
+        mode: str,
+        es_calls: int,
+        es_fetch_ms: float,
+        used_legacy_supplement: bool,
+        agg_rounds: int = 0,
+    ) -> None:
+        try:
+            payload = {
+                "event": "HOME_FLEAN_PICKS_FETCH",
+                "source": source,
+                "mode": mode,
+                "force_legacy": force_legacy,
+                "needed_per_subcategory": needed,
+                "es_calls": es_calls,
+                "es_fetch_ms": round(es_fetch_ms, 2),
+                "used_legacy_supplement": used_legacy_supplement,
+                "agg_rounds": agg_rounds,
+            }
+            # Use stdout so CloudWatch shows it reliably (same as other DEBUG: ES lines).
+            print(f"DEBUG: HOME_FLEAN_PICKS_FETCH | {json.dumps(payload, default=str)}")
+        except Exception:
+            pass
+
+    if force_legacy:
+        products_l, collections_l, per_subcategory, total_tier_counts = _legacy_unified_flean_picks_fetch(
+            source, user_filters, needed
+        )
+        _log_fetch("legacy_forced", 0, 0.0, False)
+        if source == "home":
+            products = products_l or []
+            products.sort(key=_get_card_flean_sort_key, reverse=True)
+            fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
+            response_data: Dict[str, Any] = {
+                "source": "home",
+                "products": products,
+                "filters_applied": filters_applied,
+                "fallback_meta": {
+                    "requested_products": requested_total,
+                    "returned_products": len(products),
+                    "user_filters_supplied": bool(user_filters),
+                    "per_subcategory": per_subcategory,
+                    "total_tier_counts": total_tier_counts,
+                    "matched_with_user_filters_count": total_tier_counts["tier1"] if bool(user_filters) else 0,
+                    "fallback_used_count": fallback_used_count,
+                    "fallback_used": fallback_used_count > 0,
+                },
+            }
+            if len(products) == 0:
+                response_data["message"] = no_match_message
+            return response_data
+
+        collections = collections_l or []
+        returned_total = sum(len(c["products"]) for c in collections)
+        fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
+        response_data = {
+            "source": "see_all",
+            "collections": collections,
+            "filters_applied": filters_applied,
+            "fallback_meta": {
+                "requested_products": requested_total,
+                "returned_products": returned_total,
+                "user_filters_supplied": bool(user_filters),
+                "per_subcategory": per_subcategory,
+                "total_tier_counts": total_tier_counts,
+                "matched_with_user_filters_count": total_tier_counts["tier1"] if bool(user_filters) else 0,
+                "fallback_used_count": fallback_used_count,
+                "fallback_used": fallback_used_count > 0,
+            },
+        }
+        if returned_total == 0:
+            response_data["message"] = no_match_message
+        return response_data
+
+    # --- aggregation path (tiers), then legacy supplement for any short bucket ---
+    fetcher = get_es_fetcher()
+    fetch_per = min(needed + 4, 50)
+    collected: Dict[str, List[Dict[str, Any]]] = {k: [] for k in FLEAN_PICKS_CATEGORIES}
+    collected_ids: set[str] = set()
+    tier_by_key: Dict[str, Dict[str, int]] = {
+        k: {"tier1": 0, "tier2": 0, "tier3": 0} for k in FLEAN_PICKS_CATEGORIES
+    }
+    tiers = _build_flean_hybrid_tier_filters(user_filters)
+    used_filters_seen: List[Optional[Dict[str, Any]]] = []
+    es_calls = 0
+    es_fetch_ms = 0.0
+    agg_rounds_ok = 0
+    tier1_agg_failed = False
+
+    for tier_name, tier_filters in tiers:
+        if any(tier_filters == seen for seen in used_filters_seen):
+            continue
+        used_filters_seen.append(tier_filters)
+        short_keys = [k for k in FLEAN_PICKS_CATEGORIES if len(collected[k]) < needed]
+        if not short_keys:
+            break
+        submap = {k: FLEAN_PICKS_CATEGORIES[k]["es_paths"] for k in short_keys}
+        t0 = time.perf_counter()
+        raw_map = fetcher.flean_picks_by_subcategories_agg(
+            subcategories=submap,
+            per_subcategory=needed,
+            fetch_per_subcategory=fetch_per,
+            filters=tier_filters,
+            exclude_ids=sorted(collected_ids) if collected_ids else None,
+        )
+        es_fetch_ms += (time.perf_counter() - t0) * 1000.0
+        es_calls += 1
+        if not raw_map:
+            if tier_name == "tier1":
+                tier1_agg_failed = True
+            break
+        agg_rounds_ok += 1
+        for key in short_keys:
+            for src in raw_map.get(key) or []:
+                card = transform_to_product_card(src)
+                if not card:
+                    continue
+                pid = card.get("id")
+                if not pid or pid in collected_ids:
+                    continue
+                if len(collected[key]) >= needed:
+                    break
+                collected[key].append(card)
+                collected_ids.add(pid)
+                tier_by_key[key][tier_name] += 1
+
+    used_legacy_supplement = False
+    if tier1_agg_failed:
+        products_l, collections_l, per_subcategory, total_tier_counts = _legacy_unified_flean_picks_fetch(
+            source, user_filters, needed
+        )
+        _log_fetch("agg_failed_fallback", es_calls, es_fetch_ms, False, agg_rounds=0)
+        if source == "home":
+            products = products_l or []
+            products.sort(key=_get_card_flean_sort_key, reverse=True)
+            fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
+            response_data = {
+                "source": "home",
+                "products": products,
+                "filters_applied": filters_applied,
+                "fallback_meta": {
+                    "requested_products": requested_total,
+                    "returned_products": len(products),
+                    "user_filters_supplied": bool(user_filters),
+                    "per_subcategory": per_subcategory,
+                    "total_tier_counts": total_tier_counts,
+                    "matched_with_user_filters_count": total_tier_counts["tier1"] if bool(user_filters) else 0,
+                    "fallback_used_count": fallback_used_count,
+                    "fallback_used": fallback_used_count > 0,
+                },
+            }
+            if len(products) == 0:
+                response_data["message"] = no_match_message
+            return response_data
+
+        collections = collections_l or []
+        returned_total = sum(len(c["products"]) for c in collections)
+        fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
+        response_data = {
+            "source": "see_all",
+            "collections": collections,
+            "filters_applied": filters_applied,
+            "fallback_meta": {
+                "requested_products": requested_total,
+                "returned_products": returned_total,
+                "user_filters_supplied": bool(user_filters),
+                "per_subcategory": per_subcategory,
+                "total_tier_counts": total_tier_counts,
+                "matched_with_user_filters_count": total_tier_counts["tier1"] if bool(user_filters) else 0,
+                "fallback_used_count": fallback_used_count,
+                "fallback_used": fallback_used_count > 0,
+            },
+        }
+        if returned_total == 0:
+            response_data["message"] = no_match_message
+        return response_data
+
+    for key in FLEAN_PICKS_CATEGORIES:
+        if len(collected[key]) >= needed:
+            continue
+        used_legacy_supplement = True
+        before_len = len(collected[key])
+        sub_products, stats = _fetch_subcategory_products(
+            es_paths=FLEAN_PICKS_CATEGORIES[key]["es_paths"],
+            user_filters=user_filters,
+            needed=needed,
+        )
+        for card in sub_products:
+            pid = card.get("id")
+            if not pid or pid in collected_ids:
+                continue
+            if len(collected[key]) >= needed:
+                break
+            collected[key].append(card)
+            collected_ids.add(pid)
+        stc = stats.get("tier_counts") or {}
+        if before_len == 0:
+            tier_by_key[key] = {
+                "tier1": int(stc.get("tier1", 0)),
+                "tier2": int(stc.get("tier2", 0)),
+                "tier3": int(stc.get("tier3", 0)),
+            }
+        else:
+            for tn in ("tier1", "tier2", "tier3"):
+                tier_by_key[key][tn] = int(tier_by_key[key].get(tn, 0)) + int(stc.get(tn, 0))
+
+    per_subcategory = {}
+    total_tier_counts = {"tier1": 0, "tier2": 0, "tier3": 0}
+    for key in FLEAN_PICKS_CATEGORIES:
+        bucket = collected[key]
+        bucket.sort(key=_get_card_flean_sort_key, reverse=True)
+        collected[key] = bucket[:needed]
+        tc = tier_by_key[key]
+        fallback_used = int(tc.get("tier2", 0)) + int(tc.get("tier3", 0)) > 0
+        per_subcategory[key] = {
+            "requested_count": needed,
+            "collected_count": len(collected[key]),
+            "tier_counts": dict(tc),
+            "used_fallback": fallback_used,
+        }
+        for tn, cnt in tc.items():
+            total_tier_counts[tn] += int(cnt)
+
+    mode = "agg_partial_fallback" if used_legacy_supplement else "agg"
+    _log_fetch(mode, es_calls, es_fetch_ms, used_legacy_supplement, agg_rounds=agg_rounds_ok)
+
     if source == "home":
         products: List[Dict[str, Any]] = []
-        per_subcategory: Dict[str, Any] = {}
-        total_tier_counts = {"tier1": 0, "tier2": 0, "tier3": 0}
-        requested_total = len(FLEAN_PICKS_CATEGORIES) * 2
-        for key, cfg in FLEAN_PICKS_CATEGORIES.items():
-            sub_products, stats = _fetch_subcategory_products(
-                es_paths=cfg["es_paths"],
-                user_filters=user_filters,
-                needed=2,
-            )
-            products.extend(sub_products)
-            per_subcategory[key] = {
-                "requested_count": stats["requested_count"],
-                "collected_count": stats["collected_count"],
-                "tier_counts": stats["tier_counts"],
-                "used_fallback": stats["used_fallback"],
-            }
-            for tier_name, count in stats["tier_counts"].items():
-                total_tier_counts[tier_name] += int(count)
-
-        # Home-mode flat list should be ranked by Flean score descending.
+        for key in FLEAN_PICKS_CATEGORIES:
+            products.extend(collected[key])
         products.sort(key=_get_card_flean_sort_key, reverse=True)
-
         fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
-        response_data: Dict[str, Any] = {
+        response_data = {
             "source": "home",
             "products": products,
             "filters_applied": filters_applied,
@@ -694,32 +965,14 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
             response_data["message"] = no_match_message
         return response_data
 
-    # --- see_all ---
     collections: List[Dict[str, Any]] = []
-    per_subcategory: Dict[str, Any] = {}
-    total_tier_counts = {"tier1": 0, "tier2": 0, "tier3": 0}
-    requested_total = len(FLEAN_PICKS_CATEGORIES) * 12
     for key, cfg in FLEAN_PICKS_CATEGORIES.items():
-        sub_products, stats = _fetch_subcategory_products(
-            es_paths=cfg["es_paths"],
-            user_filters=user_filters,
-            needed=12,
-        )
         collections.append({
             "key": key,
             "name": cfg["name"],
             "image_url": cfg["image_url"],
-            "products": sub_products,
+            "products": collected[key],
         })
-        per_subcategory[key] = {
-            "requested_count": stats["requested_count"],
-            "collected_count": stats["collected_count"],
-            "tier_counts": stats["tier_counts"],
-            "used_fallback": stats["used_fallback"],
-        }
-        for tier_name, count in stats["tier_counts"].items():
-            total_tier_counts[tier_name] += int(count)
-
     returned_total = sum(len(c["products"]) for c in collections)
     fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
     response_data = {

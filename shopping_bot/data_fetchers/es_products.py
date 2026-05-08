@@ -1040,7 +1040,7 @@ DIETARY_FILTERS = {
     "pcos_friendly": "pcos_friendly",
 }
 
-VISIBILITY_FILTER = {"term": {"visibility": "visible"}}
+VISIBILITY_FILTER = {"terms": {"visibility": ["visible", "soft"]}}
 HIDDEN_VISIBILITY = {"hardstop"}
 
 

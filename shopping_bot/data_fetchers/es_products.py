@@ -420,6 +420,90 @@ def _get_score_tier(percentile: float) -> Dict[str, str]:
     return SCORE_TIERS[-1]
 
 
+# Sentiment colors for PDP score-card subtitles (subset of SCORE_TIERS palette).
+_HIGHLIGHT_SUBTITLE_POSITIVE_HEX = "#22C55E"  # top tier green
+_HIGHLIGHT_SUBTITLE_NEUTRAL_HEX = "#6B7280"  # average grey
+_HIGHLIGHT_SUBTITLE_NEGATIVE_HEX = "#EF4444"  # villain red
+
+
+def _resolve_highlight_tags(src: Dict[str, Any]) -> Dict[str, Any]:
+    """Return highlight_tags dict from ES _source (Mongo-synced shape), or {}."""
+    cd = src.get("category_data")
+    if isinstance(cd, dict):
+        tags = cd.get("tags")
+        if isinstance(tags, dict):
+            ht = tags.get("highlight_tags")
+            if isinstance(ht, dict) and ht:
+                return ht
+    root_tags = src.get("tags")
+    if isinstance(root_tags, dict):
+        ht = root_tags.get("highlight_tags")
+        if isinstance(ht, dict) and ht:
+            return ht
+    ht = src.get("highlight_tags")
+    if isinstance(ht, dict) and ht:
+        return ht
+    return {}
+
+
+def _humanize_highlight_tag(tag: str) -> str:
+    s = str(tag or "").strip().replace("_", " ")
+    if not s:
+        return ""
+    return s.title()
+
+
+def _subtitle_and_color_from_highlight_group(group: Any) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Build subtitle text and subtitle_color hex from one highlight_tags group.
+
+    Tags are ordered negative, then positive, then neutral; joined with ' · '.
+    Color reflects worst sentiment present among non-empty buckets used for text.
+    """
+    if not isinstance(group, dict):
+        return None, None
+
+    def _clean_list(key: str) -> List[str]:
+        raw = group.get(key)
+        if not isinstance(raw, list):
+            return []
+        return [str(x).strip() for x in raw if isinstance(x, str) and str(x).strip()]
+
+    neg = _clean_list("negative")
+    pos = _clean_list("positive")
+    neu = _clean_list("neutral")
+
+    parts: List[str] = []
+    for t in neg + pos + neu:
+        h = _humanize_highlight_tag(t)
+        if h:
+            parts.append(h)
+    if not parts:
+        return None, None
+
+    subtitle = " · ".join(parts)
+    if neg:
+        color = _HIGHLIGHT_SUBTITLE_NEGATIVE_HEX
+    elif pos:
+        color = _HIGHLIGHT_SUBTITLE_POSITIVE_HEX
+    else:
+        color = _HIGHLIGHT_SUBTITLE_NEUTRAL_HEX
+    return subtitle, color
+
+
+def _apply_highlight_subtitle_to_card(
+    card: Dict[str, Any],
+    highlight_root: Dict[str, Any],
+    group_key: str,
+) -> None:
+    """If highlight data exists, overwrite subtitle and set subtitle_color on card."""
+    group = highlight_root.get(group_key) if isinstance(highlight_root, dict) else None
+    sub, col = _subtitle_and_color_from_highlight_group(group)
+    if sub:
+        card["subtitle"] = sub
+        card["subtitle_color"] = col
+
+
 _BADGE_SCORE_DENY = {"", "na", "n/a", "null", "-", "not detected"}
 
 
@@ -556,6 +640,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
 
     # ── score_cards (named object with direct access) ──
     score_cards = {}
+    _highlight_tags_root = _resolve_highlight_tags(src)
 
     # Flean Rank card
     if flean_percentile is not None:
@@ -587,6 +672,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
             "color": _tier["color"],
             "icon_url": SCORE_CARD_ICONS["protein"],
         }
+        _apply_highlight_subtitle_to_card(score_cards["protein"], _highlight_tags_root, "protein_tags")
 
     # Fiber card
     fiber_pctile = (stats.get("fiber_percentiles") or {}).get("subcategory_percentile")
@@ -603,6 +689,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
             "color": _tier["color"],
             "icon_url": SCORE_CARD_ICONS["fiber"],
         }
+        _apply_highlight_subtitle_to_card(score_cards["fiber"], _highlight_tags_root, "carbs_fiber_tags")
 
     # Sweeteners card
     sweetener_pctile = (stats.get("sweetener_penalty_percentiles") or {}).get("subcategory_percentile")
@@ -619,6 +706,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
             "color": _tier["color"],
             "icon_url": SCORE_CARD_ICONS["sweeteners"],
         }
+        _apply_highlight_subtitle_to_card(score_cards["sweeteners"], _highlight_tags_root, "sweetners_sugar_tags")
 
     # Oils card
     oil_pctile = (stats.get("oil_penalty_percentiles") or {}).get("subcategory_percentile")
@@ -635,6 +723,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
             "color": _tier["color"],
             "icon_url": SCORE_CARD_ICONS["oils"],
         }
+        _apply_highlight_subtitle_to_card(score_cards["oils"], _highlight_tags_root, "oils_fats_tags")
 
     # Watch-outs card (always include, visible flag indicates if should be shown)
     empty_food_pctile = (stats.get("empty_food_penalty_percentiles") or {}).get("subcategory_percentile")
@@ -672,6 +761,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
             "color": _cal_color,
             "icon_url": SCORE_CARD_ICONS["calories"],
         }
+        _apply_highlight_subtitle_to_card(score_cards["calories"], _highlight_tags_root, "energy_tags")
 
     # ── notes (static display notes for UI) ──
     notes = {

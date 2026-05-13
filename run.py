@@ -18,6 +18,8 @@ from flask import request
 
 # Load env before any other imports that might read it
 load_dotenv()
+# Optional local overrides (gitignored): e.g. static AWS keys for AOSS SigV4
+load_dotenv(".env.local", override=True)
 
 # Local imports after env load
 from shopping_bot import create_app  # your app factory

@@ -143,6 +143,9 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
       - nutrition: {basis: "per 100 g", items: [{nutrient, value}]}
       - additional_info: [{label, value}] array (only non-empty values included)
       - macro_tags: [{label, nutrient, value, unit}] top 2 macro nutrients
+      - in_stock (top-level on data): bool — true when ES `visibility` normalizes to
+        "visible" (case-insensitive); otherwise false. Separate from `product_info.in_stock`
+        (Zepto / availability when present).
 
     Path Parameters:
         product_id: Elasticsearch product ID

@@ -760,8 +760,13 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     # ── cons_list (watch-out items from ES) ──
     cons_list = src.get("cons_list", []) or []
 
+    # Listing availability for PDP `data.in_stock` (distinct from product_info.in_stock = Zepto, etc.)
+    _vis_raw = str(src.get("visibility", "visible") or "visible").strip().lower()
+    listing_in_stock = _vis_raw == "visible"
+
     return {
         "product_info": product_info,
+        "in_stock": listing_in_stock,
         "flean_badge": flean_badge,
         "score_cards": score_cards,
         "scoring_detail": scoring_detail,

@@ -21,7 +21,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
 from ..config import get_config
 from ..data_fetchers.es_products import (
@@ -55,6 +55,71 @@ def _error_response(code: str, message: str, status: int = 400) -> Tuple[Dict[st
         "success": False,
         "error": {"code": code, "message": message}
     }), status
+
+
+def _get_validation_cache_redis_client() -> Any:
+    """
+    Return Redis client when available.
+
+    Works with eager init (ctx_mgr present) and lambda lazy init path
+    (initializer function stored in app extensions).
+    """
+    ctx_mgr = current_app.extensions.get("ctx_mgr")
+    if ctx_mgr is None and "_get_or_init_redis" in current_app.extensions:
+        try:
+            ctx_mgr = current_app.extensions["_get_or_init_redis"]()
+        except Exception as exc:
+            log.warning("PDP_CACHE_REDIS_INIT_FAILED | error=%s", exc)
+            return None
+    return getattr(ctx_mgr, "redis", None) if ctx_mgr else None
+
+
+def _get_cached_in_stock_override(product_id: str, pincode: str) -> Optional[bool]:
+    """
+    Read validation cache entry and derive in_stock override.
+
+    Returns:
+      - True/False when cache entry exists and status is recognized
+      - None when no usable cache entry exists (caller should keep ES value)
+    """
+    if not product_id or not pincode:
+        return None
+
+    redis_client = _get_validation_cache_redis_client()
+    if not redis_client:
+        return None
+
+    cache_key = f"product_val:{pincode}:{product_id}"
+    try:
+        raw = redis_client.get(cache_key)
+    except Exception as exc:
+        log.warning("PDP_CACHE_READ_FAILED | key=%s | error=%s", cache_key, exc)
+        return None
+
+    if not raw:
+        return None
+
+    try:
+        entry = raw if isinstance(raw, dict) else json.loads(raw)
+    except Exception as exc:
+        log.warning("PDP_CACHE_PARSE_FAILED | key=%s | error=%s", cache_key, exc)
+        return None
+
+    if not isinstance(entry, dict):
+        return None
+
+    status = entry.get("status")
+    payload = entry.get("payload")
+
+    if status == "success" and isinstance(payload, dict):
+        category_group = payload.get("category_group")
+        stock_message = (payload.get("stock_message", "") or "").lower()
+        return True if category_group == "meals" else "out of stock" not in stock_message
+
+    if status == "failed":
+        return False
+
+    return None
 
 
 # ============================================================================
@@ -97,8 +162,18 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
             log.warning(f"PDP_NOT_FOUND | id={pid}")
             return _error_response("PRODUCT_NOT_FOUND", f"Product with ID '{pid}' not found", 404)
 
+        # Optional pincode for Redis-backed availability override.
+        pincode = (request.args.get("pincode", "") or "").strip()
+
         # Transform to sectioned PDP format
         pdp_data = transform_to_pdp(raw_src)
+
+        if pincode:
+            cache_in_stock = _get_cached_in_stock_override(pid, pincode)
+            if cache_in_stock is not None:
+                product_info = pdp_data.get("product_info")
+                if isinstance(product_info, dict):
+                    product_info["in_stock"] = bool(cache_in_stock)
 
         log.info(f"PDP_SUCCESS | id={pid} | name={raw_src.get('name', '')[:30]}")
         return jsonify(_success_response(pdp_data)), 200

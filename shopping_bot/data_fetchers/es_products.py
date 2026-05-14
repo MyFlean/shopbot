@@ -484,10 +484,9 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         subcategory_label = segments[-1].replace("_", " ").title() if segments else ""
         category_label = segments[-2].replace("_", " ").title() if len(segments) >= 2 else ""
 
-    # Stock status from availability
-    availability = src.get("availability", {}) or {}
-    zepto_avail = availability.get("zepto", {}) or {}
-    in_stock = zepto_avail.get("in_stock", False)
+    # Listing / PDP in_stock: ES visibility (optional pincode+Redis override in product_api)
+    _vis_norm = str(src.get("visibility", "visible") or "visible").strip().lower()
+    in_stock = _vis_norm == "visible"
 
     # ── product_info ──
     product_info = {
@@ -760,13 +759,8 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     # ── cons_list (watch-out items from ES) ──
     cons_list = src.get("cons_list", []) or []
 
-    # Listing availability for PDP `data.in_stock` (distinct from product_info.in_stock = Zepto, etc.)
-    _vis_raw = str(src.get("visibility", "visible") or "visible").strip().lower()
-    listing_in_stock = _vis_raw == "visible"
-
     return {
         "product_info": product_info,
-        "in_stock": listing_in_stock,
         "flean_badge": flean_badge,
         "score_cards": score_cards,
         "scoring_detail": scoring_detail,

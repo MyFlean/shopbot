@@ -39,6 +39,7 @@ from typing import Any, Dict, List, Optional
 from flask import Blueprint, current_app, jsonify, request
 
 from ..data_fetchers.es_products import get_es_fetcher, transform_to_product_card
+from ..utils.pincode_mapping import PincodeMappingError, resolve_canonical_pincode
 from .product_api import _validate_filters
 
 log = logging.getLogger(__name__)
@@ -202,6 +203,19 @@ def _resolve_request_pincode() -> Optional[str]:
         if text:
             return text
     return None
+
+
+def _resolve_canonical_request_pincode() -> Optional[str]:
+    request_pincode = _resolve_request_pincode()
+    if not request_pincode:
+        return None
+    canonical_pincode = resolve_canonical_pincode(request_pincode)
+    log.info(
+        "PINCODE_CANONICAL_RESOLVED | request_pincode=%s | canonical_pincode=%s",
+        request_pincode,
+        canonical_pincode,
+    )
+    return canonical_pincode
 
 
 def _is_validation_filter_active_for_pincode(pincode: Optional[str]) -> bool:
@@ -370,6 +384,14 @@ def _get_adjusted_score(product_src: Dict[str, Any]) -> float:
         return -1.0
 
 
+def _is_validation_candidate_eligible(product_src: Dict[str, Any]) -> bool:
+    """Candidate eligibility for ecom warm flow."""
+    visibility = str(product_src.get("visibility", "") or "").strip().lower()
+    if visibility != "visible":
+        return False
+    return _get_adjusted_score(product_src) >= 8.0
+
+
 def _get_card_flean_sort_key(card: Dict[str, Any]) -> tuple[float, float]:
     """
     Sort key for product cards by Flean quality.
@@ -395,10 +417,9 @@ def _get_card_flean_sort_key(card: Dict[str, Any]) -> tuple[float, float]:
     return (score_value, percentile_value)
 
 
-def _get_best_selling_data() -> Dict[str, Any]:
+def _get_best_selling_data(effective_pincode: Optional[str] = None) -> Dict[str, Any]:
     """Best-selling from fixed category paths ranked by flean_score.adjusted_score."""
     fetcher = get_es_fetcher()
-    effective_pincode = _resolve_request_pincode()
     selected_products: List[Dict[str, Any]] = []
     selected_ids: set[str] = set()
     backfill_candidates: List[tuple[float, Dict[str, Any]]] = []
@@ -777,6 +798,8 @@ def _build_validation_candidates_payload(limit: int) -> Dict[str, Any]:
     fetcher = get_es_fetcher()
     candidates: List[Dict[str, Any]] = []
     requested_at = datetime.utcnow().isoformat() + "Z"
+    inspected_total = 0
+    eligible_total = 0
 
     # Best-selling top candidates per fixed path.
     best_raw_map = fetcher.best_selling_by_category_paths_agg(
@@ -791,9 +814,14 @@ def _build_validation_candidates_payload(limit: int) -> Dict[str, Any]:
         if not docs:
             docs = fetcher.search_by_category_paths(paths=[path], filters=None, size=limit, exclude_ids=None)
         docs = sorted(docs, key=_get_adjusted_score, reverse=True)
+        inspected_count = len(docs)
+        eligible_docs = [doc for doc in docs if _is_validation_candidate_eligible(doc)]
+        eligible_count = len(eligible_docs)
+        inspected_total += inspected_count
+        eligible_total += eligible_count
         product_ids = [
             str(doc.get("id")).strip()
-            for doc in docs
+            for doc in eligible_docs
             if str(doc.get("id", "")).strip()
         ][:limit]
         candidates.append(
@@ -802,6 +830,8 @@ def _build_validation_candidates_payload(limit: int) -> Dict[str, Any]:
                 "subcategory_key": path,
                 "es_paths": [path],
                 "product_ids": product_ids,
+                "inspected_count": inspected_count,
+                "eligible_count": eligible_count,
             }
         )
 
@@ -824,9 +854,14 @@ def _build_validation_candidates_payload(limit: int) -> Dict[str, Any]:
                 exclude_ids=None,
             )
         docs = sorted(docs, key=_get_adjusted_score, reverse=True)
+        inspected_count = len(docs)
+        eligible_docs = [doc for doc in docs if _is_validation_candidate_eligible(doc)]
+        eligible_count = len(eligible_docs)
+        inspected_total += inspected_count
+        eligible_total += eligible_count
         product_ids = [
             str(doc.get("id")).strip()
-            for doc in docs
+            for doc in eligible_docs
             if str(doc.get("id", "")).strip()
         ][:limit]
         candidates.append(
@@ -835,6 +870,8 @@ def _build_validation_candidates_payload(limit: int) -> Dict[str, Any]:
                 "subcategory_key": key,
                 "es_paths": cfg.get("es_paths", []),
                 "product_ids": product_ids,
+                "inspected_count": inspected_count,
+                "eligible_count": eligible_count,
             }
         )
 
@@ -842,6 +879,8 @@ def _build_validation_candidates_payload(limit: int) -> Dict[str, Any]:
         "version": "v1",
         "requested_at": requested_at,
         "candidate_limit": limit,
+        "inspected_total": inspected_total,
+        "eligible_total": eligible_total,
         "candidates": candidates,
     }
 
@@ -888,10 +927,12 @@ def get_validation_candidates() -> tuple[Dict[str, Any], int]:
         payload = _build_validation_candidates_payload(limit=limit)
         total_candidates = sum(len(item.get("product_ids", [])) for item in payload.get("candidates", []))
         log.info(
-            "HOME_VALIDATION_CANDIDATES | subcategories=%s | total_products=%s | limit=%s",
+            "HOME_VALIDATION_CANDIDATES | subcategories=%s | total_products=%s | limit=%s | inspected_total=%s | eligible_total=%s",
             len(payload.get("candidates", [])),
             total_candidates,
             limit,
+            payload.get("inspected_total", 0),
+            payload.get("eligible_total", 0),
         )
         return jsonify(_build_success_response(payload)), 200
     except Exception as exc:
@@ -908,9 +949,13 @@ def get_best_selling() -> tuple[Dict[str, Any], int]:
     per category by flean_score.adjusted_score, and backfills to return up to 6.
     """
     try:
-        result = _get_best_selling_data()
+        effective_pincode = _resolve_canonical_request_pincode()
+        result = _get_best_selling_data(effective_pincode=effective_pincode)
         log.info(f"HOME_BEST_SELLING | returned={len(result.get('products', []))}")
         return jsonify(_build_success_response(result)), 200
+    except PincodeMappingError as exc:
+        log.warning("HOME_BEST_SELLING_PINCODE_ERROR | error=%s", exc)
+        return jsonify(_build_error_response("PINCODE_MAPPING_ERROR", str(exc))), 400
     except Exception as e:
         log.error(f"HOME_BEST_SELLING_ERROR | error={e}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load best-selling products")), 500
@@ -921,7 +966,8 @@ def get_curated_home() -> tuple[Dict[str, Any], int]:
     """Legacy: home curated strip. Delegates to unified flean picks (``source=home``, up to 8 products)."""
     try:
         filters = _extract_curate_filters()
-        result = _unified_flean_picks_logic("home", filters, effective_pincode=_resolve_request_pincode())
+        effective_pincode = _resolve_canonical_request_pincode()
+        result = _unified_flean_picks_logic("home", filters, effective_pincode=effective_pincode)
         wrapped = {
             "products": result.get("products", []),
             "section_title": "Curated For You",
@@ -930,6 +976,9 @@ def get_curated_home() -> tuple[Dict[str, Any], int]:
         }
         log.info(f"HOME_CURATED_LEGACY | returned={len(wrapped['products'])}")
         return jsonify(_build_success_response(wrapped)), 200
+    except PincodeMappingError as exc:
+        log.warning("HOME_CURATED_PINCODE_ERROR | error=%s", exc)
+        return jsonify(_build_error_response("PINCODE_MAPPING_ERROR", str(exc))), 400
     except Exception as e:
         log.error(f"HOME_CURATED_ERROR | error={e}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load curated products")), 500
@@ -940,7 +989,8 @@ def get_curated_all() -> tuple[Dict[str, Any], int]:
     """Legacy: See All curated products. Delegates to unified flean picks (``see_all``: 4 collections × up to 12)."""
     try:
         filters = _extract_curate_filters()
-        result = _unified_flean_picks_logic("see_all", filters, effective_pincode=_resolve_request_pincode())
+        effective_pincode = _resolve_canonical_request_pincode()
+        result = _unified_flean_picks_logic("see_all", filters, effective_pincode=effective_pincode)
         all_products: List[Dict[str, Any]] = []
         for coll in result.get("collections", []):
             all_products.extend(coll.get("products", []))
@@ -951,6 +1001,9 @@ def get_curated_all() -> tuple[Dict[str, Any], int]:
         }
         log.info(f"HOME_CURATED_ALL_LEGACY | returned={len(all_products)}")
         return jsonify(_build_success_response(wrapped)), 200
+    except PincodeMappingError as exc:
+        log.warning("HOME_CURATED_ALL_PINCODE_ERROR | error=%s", exc)
+        return jsonify(_build_error_response("PINCODE_MAPPING_ERROR", str(exc))), 400
     except Exception as e:
         log.error(f"HOME_CURATED_ALL_ERROR | error={e}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load curated products")), 500
@@ -1354,7 +1407,8 @@ def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
             else:
                 user_filters = None
 
-        result = _unified_flean_picks_logic(source, user_filters, effective_pincode=_resolve_request_pincode())
+        effective_pincode = _resolve_canonical_request_pincode()
+        result = _unified_flean_picks_logic(source, user_filters, effective_pincode=effective_pincode)
 
         if source == "home":
             fallback_meta = result.get("fallback_meta", {})
@@ -1378,6 +1432,9 @@ def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
 
         return jsonify(_build_success_response(result)), 200
 
+    except PincodeMappingError as exc:
+        log.warning("FLEAN_PICKS_PINCODE_ERROR | error=%s", exc)
+        return jsonify(_build_error_response("PINCODE_MAPPING_ERROR", str(exc))), 400
     except Exception as exc:
         log.error(f"FLEAN_PICKS_UNIFIED_ERROR | error={exc}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load Flean Picks")), 500
@@ -1397,10 +1454,11 @@ def get_flean_picks_collection(collection_key: str) -> tuple[Dict[str, Any], int
             )), 404
 
         cfg = FLEAN_PICKS_CATEGORIES[collection_key]
+        effective_pincode = _resolve_canonical_request_pincode()
         products, _stats = _fetch_subcategory_products(cfg["es_paths"], user_filters=None, needed=6)
         products = _filter_cards_with_validation_cache(
             products,
-            _resolve_request_pincode(),
+            effective_pincode,
             section="flean_picks",
             subcategory_key=collection_key,
         )
@@ -1411,6 +1469,9 @@ def get_flean_picks_collection(collection_key: str) -> tuple[Dict[str, Any], int
             "name": cfg["name"],
             "products": products,
         })), 200
+    except PincodeMappingError as exc:
+        log.warning("FLEAN_PICKS_COLLECTION_PINCODE_ERROR | key=%s | error=%s", collection_key, exc)
+        return jsonify(_build_error_response("PINCODE_MAPPING_ERROR", str(exc))), 400
     except Exception as exc:
         log.error(f"FLEAN_PICKS_LEGACY_ERROR | key={collection_key} | error={exc}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load collection")), 500

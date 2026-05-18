@@ -29,6 +29,7 @@ from ..data_fetchers.es_products import (
     transform_to_pdp,
     transform_to_product_card,
 )
+from ..utils.pincode_mapping import PincodeMappingError, resolve_canonical_pincode
 
 log = logging.getLogger(__name__)
 bp = Blueprint("product_api", __name__)
@@ -166,13 +167,21 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
             return _error_response("PRODUCT_NOT_FOUND", f"Product with ID '{pid}' not found", 404)
 
         # Optional pincode for Redis-backed availability override.
-        pincode = (request.args.get("pincode", "") or "").strip()
+        request_pincode = (request.args.get("pincode", "") or "").strip()
+        canonical_pincode = ""
+        if request_pincode:
+            canonical_pincode = resolve_canonical_pincode(request_pincode)
+            log.info(
+                "PDP_PINCODE_CANONICAL_RESOLVED | request_pincode=%s | canonical_pincode=%s",
+                request_pincode,
+                canonical_pincode,
+            )
 
         # Transform to sectioned PDP format
         pdp_data = transform_to_pdp(raw_src)
 
-        if pincode:
-            cache_in_stock = _get_cached_in_stock_override(pid, pincode)
+        if canonical_pincode:
+            cache_in_stock = _get_cached_in_stock_override(pid, canonical_pincode)
             if cache_in_stock is not None:
                 product_info = pdp_data.get("product_info")
                 if isinstance(product_info, dict):
@@ -181,6 +190,9 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
         log.info(f"PDP_SUCCESS | id={pid} | name={raw_src.get('name', '')[:30]}")
         return jsonify(_success_response(pdp_data)), 200
 
+    except PincodeMappingError as exc:
+        log.warning("PDP_PINCODE_MAPPING_ERROR | id=%s | error=%s", product_id, exc)
+        return _error_response("PINCODE_MAPPING_ERROR", str(exc), 400)
     except Exception as e:
         log.error(f"PDP_ERROR | id={product_id} | error={e}", exc_info=True)
         return _error_response("INTERNAL_ERROR", "Failed to fetch product details", 500)

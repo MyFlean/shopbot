@@ -6,12 +6,17 @@ This module provides API endpoints for the Flutter app's home page:
 1. GET /api/v1/home/banners - Promotional banners/ads carousel
 2. GET /api/v1/home/categories - Product categories (4 by default, all with ?all=true)
 3. GET /api/v1/home/best-selling - Best selling products (category-path score based)
-4. GET /api/v1/home/curated - Legacy home curated strip (unified flean picks home; up to 8 from ES)
-5. GET /api/v1/home/curated/all - Legacy See All (unified flean picks collections; up to 12 per bucket from ES)
-6. GET /api/v1/home/why-flean - Value proposition cards
-7. GET /api/v1/home/collaborations - Partner brand names
-8. POST /api/v1/home/refresh - Clear cache and reload data
-9. POST /api/v1/home/unified - Unified endpoint returning all sections in one response
+4. GET|POST /api/v1/home/curated - Legacy home curated strip (up to 8 from ES)
+5. GET|POST /api/v1/home/curated/all - Legacy See All (up to 12 per collection from ES)
+6. GET|POST /api/v1/home/flean-picks - Flean Picks collections (all or source-specific)
+7. GET /api/v1/home/flean-picks/<collection_key> - Single Flean Picks collection (legacy)
+8. GET /api/v1/home/why-flean - Value proposition cards
+9. GET /api/v1/home/collaborations - Partner brand names
+10. POST /api/v1/home/unified - Unified endpoint returning all sections in one response
+11. GET /api/v1/home/unified - Unified endpoint (GET equivalent with empty body)
+12. GET /api/v1/home/health - Health check endpoint
+13. POST /api/v1/home/refresh - Clear cache and reload data
+14. POST /api/v1/home/reload - Alias for refresh endpoint
 
 Products are fetched from Elasticsearch (best-selling by category paths, curated by configured strategy).
 Other data is loaded from JSON files in shopping_bot/data/home/
@@ -31,7 +36,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
 from ..data_fetchers.es_products import get_es_fetcher, transform_to_product_card
 from .product_api import _validate_filters
@@ -90,6 +95,12 @@ BEST_SELLING_CATEGORY_PATHS: List[str] = [
 BEST_SELLING_PER_CATEGORY = 2
 BEST_SELLING_TOTAL_PRODUCTS = 6
 BEST_SELLING_FETCH_BUFFER = 8
+
+HOME_VALIDATION_FILTER_ENABLED = True
+HOME_VALIDATION_FAIL_OPEN = True
+HOME_VALIDATION_ALLOWED_PINCODES = {"201303", "201304", "201305"}
+HOME_VALIDATION_CANDIDATE_MAX = 50
+HOME_VALIDATION_CANDIDATE_DEFAULT = 50
 
 # ============================================================================
 # Data Loading & Caching
@@ -154,6 +165,143 @@ def _build_error_response(code: str, message: str) -> Dict[str, Any]:
             "message": message
         }
     }
+
+
+def _get_validation_cache_redis_client() -> Any:
+    """Return Redis client for validation cache lookup when available."""
+    try:
+        ctx_mgr = current_app.extensions.get("ctx_mgr")
+        if ctx_mgr is None and "_get_or_init_redis" in current_app.extensions:
+            ctx_mgr = current_app.extensions["_get_or_init_redis"]()
+        return getattr(ctx_mgr, "redis", None) if ctx_mgr else None
+    except Exception:
+        return None
+
+
+def _resolve_request_pincode() -> Optional[str]:
+    """Resolve pincode from request context (query/header/body)."""
+    candidates: List[Optional[str]] = [
+        request.args.get("pincode"),
+        request.headers.get("X-Pincode"),
+        request.headers.get("x-pincode"),
+    ]
+    if request.method in {"POST", "PUT", "PATCH"}:
+        body = request.get_json(force=True, silent=True) or {}
+        if isinstance(body, dict):
+            candidates.extend(
+                [
+                    body.get("pincode"),
+                    body.get("postal_code"),
+                    body.get("zip_code"),
+                ]
+            )
+    for value in candidates:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _is_validation_filter_active_for_pincode(pincode: Optional[str]) -> bool:
+    if not HOME_VALIDATION_FILTER_ENABLED:
+        return False
+    if not pincode:
+        return False
+    if HOME_VALIDATION_ALLOWED_PINCODES and pincode not in HOME_VALIDATION_ALLOWED_PINCODES:
+        return False
+    return True
+
+
+def _derive_is_available_from_validation_entry(entry: Dict[str, Any]) -> Optional[bool]:
+    """Map cached validation entry to availability boolean."""
+    status = entry.get("status")
+    payload = entry.get("payload")
+    if status == "success" and isinstance(payload, dict):
+        category_group = payload.get("category_group")
+        stock_message = (payload.get("stock_message", "") or "").lower()
+        return True if category_group == "meals" else "out of stock" not in stock_message
+    if status == "failed":
+        return False
+    return None
+
+
+def _filter_cards_with_validation_cache(
+    cards: List[Dict[str, Any]],
+    pincode: Optional[str],
+    section: str,
+    subcategory_key: str,
+) -> List[Dict[str, Any]]:
+    """Filter cards by Redis validation cache with fail-open fallback."""
+    if not cards:
+        return cards
+    if not _is_validation_filter_active_for_pincode(pincode):
+        return cards
+
+    redis_client = _get_validation_cache_redis_client()
+    if not redis_client:
+        return cards if HOME_VALIDATION_FAIL_OPEN else []
+
+    kept: List[Dict[str, Any]] = []
+    for card in cards:
+        product_id = str(card.get("id") or "").strip()
+        if not product_id:
+            continue
+        cache_key = f"product_val:{pincode}:{product_id}"
+        try:
+            raw = redis_client.get(cache_key)
+        except Exception as exc:
+            log.warning(
+                "HOME_VALIDATION_CACHE_READ_FAILED | section=%s | subcategory=%s | pincode=%s | key=%s | error=%s",
+                section,
+                subcategory_key,
+                pincode,
+                cache_key,
+                exc,
+            )
+            return cards if HOME_VALIDATION_FAIL_OPEN else []
+        if not raw:
+            continue
+
+        try:
+            entry = raw if isinstance(raw, dict) else json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(entry, dict):
+            continue
+
+        available = _derive_is_available_from_validation_entry(entry)
+        if available is True:
+            kept.append(card)
+
+    if kept:
+        log.info(
+            "HOME_VALIDATION_FILTER_APPLIED | section=%s | subcategory=%s | pincode=%s | before=%s | after=%s",
+            section,
+            subcategory_key,
+            pincode,
+            len(cards),
+            len(kept),
+        )
+        return kept
+
+    # Requirement: if no products satisfy validation, keep current behavior.
+    log.info(
+        "HOME_VALIDATION_FILTER_FALLBACK | section=%s | subcategory=%s | pincode=%s | before=%s | reason=empty_after_filter",
+        section,
+        subcategory_key,
+        pincode,
+        len(cards),
+    )
+    return cards
+
+
+def _parse_candidate_limit() -> int:
+    raw_limit = request.args.get("limit", str(HOME_VALIDATION_CANDIDATE_DEFAULT))
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        limit = HOME_VALIDATION_CANDIDATE_DEFAULT
+    return max(1, min(limit, HOME_VALIDATION_CANDIDATE_MAX))
 
 
 # ============================================================================
@@ -248,6 +396,7 @@ def _get_card_flean_sort_key(card: Dict[str, Any]) -> tuple[float, float]:
 def _get_best_selling_data() -> Dict[str, Any]:
     """Best-selling from fixed category paths ranked by flean_score.adjusted_score."""
     fetcher = get_es_fetcher()
+    effective_pincode = _resolve_request_pincode()
     selected_products: List[Dict[str, Any]] = []
     selected_ids: set[str] = set()
     backfill_candidates: List[tuple[float, Dict[str, Any]]] = []
@@ -301,6 +450,21 @@ def _get_best_selling_data() -> Dict[str, Any]:
             scored_cards.append((_get_adjusted_score(src), card))
 
         scored_cards.sort(key=lambda item: item[0], reverse=True)
+        cards_before_validation = [card for _, card in scored_cards]
+        cards_after_validation = _filter_cards_with_validation_cache(
+            cards_before_validation,
+            effective_pincode,
+            section="best_selling",
+            subcategory_key=path,
+        )
+        if len(cards_after_validation) != len(cards_before_validation):
+            score_by_id = {card.get("id"): score for score, card in scored_cards}
+            scored_cards = [
+                (float(score_by_id.get(card.get("id"), -1.0)), card)
+                for card in cards_after_validation
+                if card.get("id")
+            ]
+            scored_cards.sort(key=lambda item: item[0], reverse=True)
 
         category_count = 0
         for score, card in scored_cards:
@@ -482,10 +646,12 @@ def _legacy_unified_flean_picks_fetch(
     Optional[List[Dict[str, Any]]],
     Dict[str, Any],
     Dict[str, int],
+    Dict[str, List[Dict[str, Any]]],
 ]:
     """Sequential ES path: one ``_fetch_subcategory_products`` per Flean Picks bucket."""
     per_subcategory: Dict[str, Any] = {}
     total_tier_counts = {"tier1": 0, "tier2": 0, "tier3": 0}
+    products_by_key: Dict[str, List[Dict[str, Any]]] = {}
     if source == "home":
         products: List[Dict[str, Any]] = []
         for key, cfg in FLEAN_PICKS_CATEGORIES.items():
@@ -494,6 +660,7 @@ def _legacy_unified_flean_picks_fetch(
                 user_filters=user_filters,
                 needed=needed,
             )
+            products_by_key[key] = sub_products
             products.extend(sub_products)
             per_subcategory[key] = {
                 "requested_count": stats["requested_count"],
@@ -503,7 +670,7 @@ def _legacy_unified_flean_picks_fetch(
             }
             for tier_name, count in stats["tier_counts"].items():
                 total_tier_counts[tier_name] += int(count)
-        return products, None, per_subcategory, total_tier_counts
+        return products, None, per_subcategory, total_tier_counts, products_by_key
 
     collections: List[Dict[str, Any]] = []
     for key, cfg in FLEAN_PICKS_CATEGORIES.items():
@@ -512,6 +679,7 @@ def _legacy_unified_flean_picks_fetch(
             user_filters=user_filters,
             needed=needed,
         )
+        products_by_key[key] = sub_products
         collections.append({
             "key": key,
             "name": cfg["name"],
@@ -526,7 +694,7 @@ def _legacy_unified_flean_picks_fetch(
         }
         for tier_name, count in stats["tier_counts"].items():
             total_tier_counts[tier_name] += int(count)
-    return None, collections, per_subcategory, total_tier_counts
+    return None, collections, per_subcategory, total_tier_counts, products_by_key
 
 
 def _fetch_subcategory_products(
@@ -602,6 +770,80 @@ def _get_collaborations_data() -> Dict[str, Any]:
     return {"brands": collaborations, "section_title": "Exclusive Collaborations"}
 
 
+def _build_validation_candidates_payload(limit: int) -> Dict[str, Any]:
+    """Build top validation candidates for ecom pre-warm job."""
+    fetcher = get_es_fetcher()
+    candidates: List[Dict[str, Any]] = []
+    requested_at = datetime.utcnow().isoformat() + "Z"
+
+    # Best-selling top candidates per fixed path.
+    best_raw_map = fetcher.best_selling_by_category_paths_agg(
+        paths=BEST_SELLING_CATEGORY_PATHS,
+        per_category=limit,
+        fetch_per_category=limit,
+        filters=None,
+        exclude_ids=None,
+    )
+    for path in BEST_SELLING_CATEGORY_PATHS:
+        docs = best_raw_map.get(path) or []
+        if not docs:
+            docs = fetcher.search_by_category_paths(paths=[path], filters=None, size=limit, exclude_ids=None)
+        docs = sorted(docs, key=_get_adjusted_score, reverse=True)
+        product_ids = [
+            str(doc.get("id")).strip()
+            for doc in docs
+            if str(doc.get("id", "")).strip()
+        ][:limit]
+        candidates.append(
+            {
+                "section": "best_selling",
+                "subcategory_key": path,
+                "es_paths": [path],
+                "product_ids": product_ids,
+            }
+        )
+
+    # Flean picks top candidates per configured subcategory.
+    subcat_paths = {key: cfg.get("es_paths", []) for key, cfg in FLEAN_PICKS_CATEGORIES.items()}
+    flean_raw_map = fetcher.flean_picks_by_subcategories_agg(
+        subcategories=subcat_paths,
+        per_subcategory=limit,
+        fetch_per_subcategory=limit,
+        filters=BASE_PERSONALIZATION_FILTERS,
+        exclude_ids=None,
+    )
+    for key, cfg in FLEAN_PICKS_CATEGORIES.items():
+        docs = flean_raw_map.get(key) or []
+        if not docs:
+            docs = fetcher.search_by_category_paths(
+                paths=cfg.get("es_paths", []),
+                filters=BASE_PERSONALIZATION_FILTERS,
+                size=limit,
+                exclude_ids=None,
+            )
+        docs = sorted(docs, key=_get_adjusted_score, reverse=True)
+        product_ids = [
+            str(doc.get("id")).strip()
+            for doc in docs
+            if str(doc.get("id", "")).strip()
+        ][:limit]
+        candidates.append(
+            {
+                "section": "flean_picks",
+                "subcategory_key": key,
+                "es_paths": cfg.get("es_paths", []),
+                "product_ids": product_ids,
+            }
+        )
+
+    return {
+        "version": "v1",
+        "requested_at": requested_at,
+        "candidate_limit": limit,
+        "candidates": candidates,
+    }
+
+
 # ============================================================================
 # API Endpoints
 # ============================================================================
@@ -631,6 +873,30 @@ def get_categories() -> tuple[Dict[str, Any], int]:
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load categories")), 500
 
 
+@bp.route("/api/v1/home/validation-candidates", methods=["GET"])
+def get_validation_candidates() -> tuple[Dict[str, Any], int]:
+    """
+    Internal endpoint for ecom cache warm jobs.
+
+    Returns top product IDs (max 50 per subcategory) for best-selling and
+    flean-picks subcategories so ecom can validate them ahead of home traffic.
+    """
+    try:
+        limit = _parse_candidate_limit()
+        payload = _build_validation_candidates_payload(limit=limit)
+        total_candidates = sum(len(item.get("product_ids", [])) for item in payload.get("candidates", []))
+        log.info(
+            "HOME_VALIDATION_CANDIDATES | subcategories=%s | total_products=%s | limit=%s",
+            len(payload.get("candidates", [])),
+            total_candidates,
+            limit,
+        )
+        return jsonify(_build_success_response(payload)), 200
+    except Exception as exc:
+        log.error("HOME_VALIDATION_CANDIDATES_ERROR | error=%s", exc, exc_info=True)
+        return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to build validation candidates")), 500
+
+
 @bp.route("/api/v1/home/best-selling", methods=["GET"])
 def get_best_selling() -> tuple[Dict[str, Any], int]:
     """
@@ -653,7 +919,7 @@ def get_curated_home() -> tuple[Dict[str, Any], int]:
     """Legacy: home curated strip. Delegates to unified flean picks (``source=home``, up to 8 products)."""
     try:
         filters = _extract_curate_filters()
-        result = _unified_flean_picks_logic("home", filters)
+        result = _unified_flean_picks_logic("home", filters, effective_pincode=_resolve_request_pincode())
         wrapped = {
             "products": result.get("products", []),
             "section_title": "Curated For You",
@@ -672,7 +938,7 @@ def get_curated_all() -> tuple[Dict[str, Any], int]:
     """Legacy: See All curated products. Delegates to unified flean picks (``see_all``: 4 collections × up to 12)."""
     try:
         filters = _extract_curate_filters()
-        result = _unified_flean_picks_logic("see_all", filters)
+        result = _unified_flean_picks_logic("see_all", filters, effective_pincode=_resolve_request_pincode())
         all_products: List[Dict[str, Any]] = []
         for coll in result.get("collections", []):
             all_products.extend(coll.get("products", []))
@@ -692,7 +958,11 @@ def get_curated_all() -> tuple[Dict[str, Any], int]:
 # Unified Flean Picks API  (replaces curated + flean-picks endpoints)
 # ============================================================================
 
-def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _unified_flean_picks_logic(
+    source: str,
+    user_filters: Optional[Dict[str, Any]],
+    effective_pincode: Optional[str] = None,
+) -> Dict[str, Any]:
     """Core logic shared by the new unified endpoint and legacy wrappers.
 
     source == "home":
@@ -713,6 +983,17 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
     force_legacy = (os.getenv("FLEAN_PICKS_FORCE_LEGACY") or "").strip().lower() in ("1", "true", "yes", "on")
     needed = 2 if source == "home" else 12
     requested_total = len(FLEAN_PICKS_CATEGORIES) * needed
+
+    def _apply_validation_for_collected(collected_map: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for key, products in collected_map.items():
+            out[key] = _filter_cards_with_validation_cache(
+                products,
+                effective_pincode,
+                section="flean_picks",
+                subcategory_key=key,
+            )
+        return out
 
     def _log_fetch(
         mode: str,
@@ -739,12 +1020,15 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
             pass
 
     if force_legacy:
-        products_l, collections_l, per_subcategory, total_tier_counts = _legacy_unified_flean_picks_fetch(
+        _products_l, _collections_l, per_subcategory, total_tier_counts, products_by_key = _legacy_unified_flean_picks_fetch(
             source, user_filters, needed
         )
         _log_fetch("legacy_forced", 0, 0.0, False)
+        products_by_key = _apply_validation_for_collected(products_by_key)
         if source == "home":
-            products = products_l or []
+            products = []
+            for key in FLEAN_PICKS_CATEGORIES:
+                products.extend(products_by_key.get(key, []))
             products.sort(key=_get_card_flean_sort_key, reverse=True)
             fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
             response_data: Dict[str, Any] = {
@@ -766,7 +1050,16 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
                 response_data["message"] = no_match_message
             return response_data
 
-        collections = collections_l or []
+        collections = []
+        for key, cfg in FLEAN_PICKS_CATEGORIES.items():
+            collections.append(
+                {
+                    "key": key,
+                    "name": cfg["name"],
+                    "image_url": cfg["image_url"],
+                    "products": products_by_key.get(key, []),
+                }
+            )
         returned_total = sum(len(c["products"]) for c in collections)
         fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
         response_data = {
@@ -842,12 +1135,15 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
 
     used_legacy_supplement = False
     if tier1_agg_failed:
-        products_l, collections_l, per_subcategory, total_tier_counts = _legacy_unified_flean_picks_fetch(
+        _products_l, _collections_l, per_subcategory, total_tier_counts, products_by_key = _legacy_unified_flean_picks_fetch(
             source, user_filters, needed
         )
         _log_fetch("agg_failed_fallback", es_calls, es_fetch_ms, False, agg_rounds=0)
+        products_by_key = _apply_validation_for_collected(products_by_key)
         if source == "home":
-            products = products_l or []
+            products = []
+            for key in FLEAN_PICKS_CATEGORIES:
+                products.extend(products_by_key.get(key, []))
             products.sort(key=_get_card_flean_sort_key, reverse=True)
             fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
             response_data = {
@@ -869,7 +1165,16 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
                 response_data["message"] = no_match_message
             return response_data
 
-        collections = collections_l or []
+        collections = []
+        for key, cfg in FLEAN_PICKS_CATEGORIES.items():
+            collections.append(
+                {
+                    "key": key,
+                    "name": cfg["name"],
+                    "image_url": cfg["image_url"],
+                    "products": products_by_key.get(key, []),
+                }
+            )
         returned_total = sum(len(c["products"]) for c in collections)
         fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
         response_data = {
@@ -936,6 +1241,8 @@ def _unified_flean_picks_logic(source: str, user_filters: Optional[Dict[str, Any
         }
         for tn, cnt in tc.items():
             total_tier_counts[tn] += int(cnt)
+
+    collected = _apply_validation_for_collected(collected)
 
     mode = "agg_partial_fallback" if used_legacy_supplement else "agg"
     _log_fetch(mode, es_calls, es_fetch_ms, used_legacy_supplement, agg_rounds=agg_rounds_ok)
@@ -1038,7 +1345,7 @@ def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
             else:
                 user_filters = None
 
-        result = _unified_flean_picks_logic(source, user_filters)
+        result = _unified_flean_picks_logic(source, user_filters, effective_pincode=_resolve_request_pincode())
 
         if source == "home":
             fallback_meta = result.get("fallback_meta", {})
@@ -1082,6 +1389,12 @@ def get_flean_picks_collection(collection_key: str) -> tuple[Dict[str, Any], int
 
         cfg = FLEAN_PICKS_CATEGORIES[collection_key]
         products, _stats = _fetch_subcategory_products(cfg["es_paths"], user_filters=None, needed=6)
+        products = _filter_cards_with_validation_cache(
+            products,
+            _resolve_request_pincode(),
+            section="flean_picks",
+            subcategory_key=collection_key,
+        )
 
         log.info(f"FLEAN_PICKS_LEGACY | key={collection_key} | returned={len(products)}")
         return jsonify(_build_success_response({

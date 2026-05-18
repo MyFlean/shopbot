@@ -94,7 +94,9 @@ BEST_SELLING_CATEGORY_PATHS: List[str] = [
 ]
 BEST_SELLING_PER_CATEGORY = 2
 BEST_SELLING_TOTAL_PRODUCTS = 6
-BEST_SELLING_FETCH_BUFFER = 8
+BEST_SELLING_FETCH_BUFFER = 13
+FLEAN_PICKS_HOME_FETCH_PER_SUBCATEGORY = 12
+FLEAN_PICKS_SEE_ALL_FETCH_PER_SUBCATEGORY = 24
 
 HOME_VALIDATION_FILTER_ENABLED = True
 HOME_VALIDATION_FAIL_OPEN = True
@@ -982,6 +984,11 @@ def _unified_flean_picks_logic(
 
     force_legacy = (os.getenv("FLEAN_PICKS_FORCE_LEGACY") or "").strip().lower() in ("1", "true", "yes", "on")
     needed = 2 if source == "home" else 12
+    fetch_needed = (
+        FLEAN_PICKS_HOME_FETCH_PER_SUBCATEGORY
+        if source == "home"
+        else FLEAN_PICKS_SEE_ALL_FETCH_PER_SUBCATEGORY
+    )
     requested_total = len(FLEAN_PICKS_CATEGORIES) * needed
 
     def _apply_validation_for_collected(collected_map: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
@@ -1009,6 +1016,7 @@ def _unified_flean_picks_logic(
                 "mode": mode,
                 "force_legacy": force_legacy,
                 "needed_per_subcategory": needed,
+                "fetch_needed_per_subcategory": fetch_needed,
                 "es_calls": es_calls,
                 "es_fetch_ms": round(es_fetch_ms, 2),
                 "used_legacy_supplement": used_legacy_supplement,
@@ -1021,14 +1029,14 @@ def _unified_flean_picks_logic(
 
     if force_legacy:
         _products_l, _collections_l, per_subcategory, total_tier_counts, products_by_key = _legacy_unified_flean_picks_fetch(
-            source, user_filters, needed
+            source, user_filters, fetch_needed
         )
         _log_fetch("legacy_forced", 0, 0.0, False)
         products_by_key = _apply_validation_for_collected(products_by_key)
         if source == "home":
             products = []
             for key in FLEAN_PICKS_CATEGORIES:
-                products.extend(products_by_key.get(key, []))
+                products.extend(products_by_key.get(key, [])[:needed])
             products.sort(key=_get_card_flean_sort_key, reverse=True)
             fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
             response_data: Dict[str, Any] = {
@@ -1057,7 +1065,7 @@ def _unified_flean_picks_logic(
                     "key": key,
                     "name": cfg["name"],
                     "image_url": cfg["image_url"],
-                    "products": products_by_key.get(key, []),
+                    "products": products_by_key.get(key, [])[:needed],
                 }
             )
         returned_total = sum(len(c["products"]) for c in collections)
@@ -1083,7 +1091,7 @@ def _unified_flean_picks_logic(
 
     # --- aggregation path (tiers), then legacy supplement for any short bucket ---
     fetcher = get_es_fetcher()
-    fetch_per = min(needed + 4, 50)
+    fetch_per = min(fetch_needed, 50)
     collected: Dict[str, List[Dict[str, Any]]] = {k: [] for k in FLEAN_PICKS_CATEGORIES}
     collected_ids: set[str] = set()
     tier_by_key: Dict[str, Dict[str, int]] = {
@@ -1100,14 +1108,14 @@ def _unified_flean_picks_logic(
         if any(tier_filters == seen for seen in used_filters_seen):
             continue
         used_filters_seen.append(tier_filters)
-        short_keys = [k for k in FLEAN_PICKS_CATEGORIES if len(collected[k]) < needed]
+        short_keys = [k for k in FLEAN_PICKS_CATEGORIES if len(collected[k]) < fetch_needed]
         if not short_keys:
             break
         submap = {k: FLEAN_PICKS_CATEGORIES[k]["es_paths"] for k in short_keys}
         t0 = time.perf_counter()
         raw_map = fetcher.flean_picks_by_subcategories_agg(
             subcategories=submap,
-            per_subcategory=needed,
+            per_subcategory=fetch_needed,
             fetch_per_subcategory=fetch_per,
             filters=tier_filters,
             exclude_ids=sorted(collected_ids) if collected_ids else None,
@@ -1127,7 +1135,7 @@ def _unified_flean_picks_logic(
                 pid = card.get("id")
                 if not pid or pid in collected_ids:
                     continue
-                if len(collected[key]) >= needed:
+                if len(collected[key]) >= fetch_needed:
                     break
                 collected[key].append(card)
                 collected_ids.add(pid)
@@ -1136,14 +1144,14 @@ def _unified_flean_picks_logic(
     used_legacy_supplement = False
     if tier1_agg_failed:
         _products_l, _collections_l, per_subcategory, total_tier_counts, products_by_key = _legacy_unified_flean_picks_fetch(
-            source, user_filters, needed
+            source, user_filters, fetch_needed
         )
         _log_fetch("agg_failed_fallback", es_calls, es_fetch_ms, False, agg_rounds=0)
         products_by_key = _apply_validation_for_collected(products_by_key)
         if source == "home":
             products = []
             for key in FLEAN_PICKS_CATEGORIES:
-                products.extend(products_by_key.get(key, []))
+                products.extend(products_by_key.get(key, [])[:needed])
             products.sort(key=_get_card_flean_sort_key, reverse=True)
             fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
             response_data = {
@@ -1172,7 +1180,7 @@ def _unified_flean_picks_logic(
                     "key": key,
                     "name": cfg["name"],
                     "image_url": cfg["image_url"],
-                    "products": products_by_key.get(key, []),
+                    "products": products_by_key.get(key, [])[:needed],
                 }
             )
         returned_total = sum(len(c["products"]) for c in collections)
@@ -1197,20 +1205,20 @@ def _unified_flean_picks_logic(
         return response_data
 
     for key in FLEAN_PICKS_CATEGORIES:
-        if len(collected[key]) >= needed:
+        if len(collected[key]) >= fetch_needed:
             continue
         used_legacy_supplement = True
         before_len = len(collected[key])
         sub_products, stats = _fetch_subcategory_products(
             es_paths=FLEAN_PICKS_CATEGORIES[key]["es_paths"],
             user_filters=user_filters,
-            needed=needed,
+            needed=fetch_needed,
         )
         for card in sub_products:
             pid = card.get("id")
             if not pid or pid in collected_ids:
                 continue
-            if len(collected[key]) >= needed:
+            if len(collected[key]) >= fetch_needed:
                 break
             collected[key].append(card)
             collected_ids.add(pid)
@@ -1230,7 +1238,7 @@ def _unified_flean_picks_logic(
     for key in FLEAN_PICKS_CATEGORIES:
         bucket = collected[key]
         bucket.sort(key=_get_card_flean_sort_key, reverse=True)
-        collected[key] = bucket[:needed]
+        collected[key] = bucket[:fetch_needed]
         tc = tier_by_key[key]
         fallback_used = int(tc.get("tier2", 0)) + int(tc.get("tier3", 0)) > 0
         per_subcategory[key] = {
@@ -1250,7 +1258,7 @@ def _unified_flean_picks_logic(
     if source == "home":
         products: List[Dict[str, Any]] = []
         for key in FLEAN_PICKS_CATEGORIES:
-            products.extend(collected[key])
+            products.extend(collected[key][:needed])
         products.sort(key=_get_card_flean_sort_key, reverse=True)
         fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
         response_data = {
@@ -1278,7 +1286,8 @@ def _unified_flean_picks_logic(
             "key": key,
             "name": cfg["name"],
             "image_url": cfg["image_url"],
-            "products": collected[key],
+            # Final response keeps the existing per-bucket contract (max 12).
+            "products": collected[key][:needed],
         })
     returned_total = sum(len(c["products"]) for c in collections)
     fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]

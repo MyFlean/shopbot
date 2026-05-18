@@ -132,7 +132,10 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
     PDP API: Returns pre-parsed, sectioned product data ready for Flutter display.
 
     Sections returned:
-      - product_info: id, name, brand, price, mrp, currency, image_url, image_urls, qty, description
+      - product_info: id, name, brand, price, mrp, currency, image_url, image_urls, qty, description,
+        visibility, in_stock (bool: true when ES `visibility` normalizes to "visible", case-insensitive;
+        if `pincode` query param is set and Redis has a validation cache entry for this product+pincode,
+        `_get_cached_in_stock_override` may replace in_stock — see that helper)
       - flean_badge: score (float|null), score_display (string), level, level_text
         (fallback from adjusted_score: score is adjusted_score/10, score_display is full adjusted score as string; N/A if absent)
       - score_cards: named object with keys {flean_rank, protein, fiber, sweeteners, oils, watch_outs, calories}

@@ -568,10 +568,9 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         subcategory_label = segments[-1].replace("_", " ").title() if segments else ""
         category_label = segments[-2].replace("_", " ").title() if len(segments) >= 2 else ""
 
-    # Stock status from availability
-    availability = src.get("availability", {}) or {}
-    zepto_avail = availability.get("zepto", {}) or {}
-    in_stock = zepto_avail.get("in_stock", False)
+    # Listing / PDP in_stock: ES visibility (optional pincode+Redis override in product_api)
+    _vis_norm = str(src.get("visibility", "visible") or "visible").strip().lower()
+    in_stock = _vis_norm == "visible"
 
     # ── product_info ──
     product_info = {

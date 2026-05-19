@@ -1,0 +1,37 @@
+tag_id,tag_name,parent_tag,sentiment,line1,line1_type,line2,line2_type,line2_fallback,line3,line3_type,line3_fallback,notes
+low_calories,Light & Lean,energy_tags,positive,Calories,static,{kcal} kcal / {x} g,dynamic,,Low calories,static,,l2: raw kcal value formatted as e.g. 249kcal
+medium_calories,Balanced Kcal,energy_tags,neutral,Calories,static,{kcal} kcal / {x} g,dynamic,,Average range,static,,l2: raw kcal value
+high_calories,Energy Dense,energy_tags,negative,Calories,static,{kcal} kcal / {x} g,dynamic,,Calorie dense,static,,l2: raw kcal value
+empty_calories,Zero Nutrients,energy_tags,negative,Calorie quality,static,Mostly empty,static,,Low nutrition,static,,all static
+complete_amino_profile,Perfect Protein,protein_tags,positive,Protein quality,static,High quality,static,,{source_names},dynamic,Top tier protein,"l3: protein source name e.g. ""whey isolate, eggs, etc."" — fallback if missing or >15 chars"
+high_protein_density,Protein-Rich,protein_tags,positive,Protein,static,{protein_g} g / {x} g,dynamic,,Top {percentile}%,dynamic,Good,"l2: raw protein g · l3: percentile phrasing e.g. ""More than 85%"""
+medium_protein_density,Good Protein,protein_tags,neutral,Protein,static,{protein_g} g / {x} g,dynamic,,Moderate source,static,Normal,l2: raw protein g value
+ok_protein_density,Decent Protein,protein_tags,neutral,Protein,static,{protein_g} g / {x} g,dynamic,,Minor amount,static,Normal,l2: raw protein g value
+low_protein_density,Low Protein,protein_tags,negative,Protein,static,{protein_g} g / {x} g,dynamic,,Very low,static,Not so good,l2: raw protein g value
+high_fiber_content,High Fiber,carbs_fiber_tags,positive,Fiber,static,{fiber_g} g / {x} g,dynamic,High Qty,Top {percentile}%,dynamic,,"l2: raw fiber g · l3: percentile phrasing e.g. ""More than 94%"""
+medium_fiber_content,Good Fiber,carbs_fiber_tags,neutral,Fiber,static,{fiber_g} g / {x} g,dynamic,Medium Qty,Good fiber,static,,l2: raw fiber g value
+no_fiber_content,Zero Fiber,carbs_fiber_tags,negative,Fiber,static,No Fiber,static,,Not for gut,static,,all static
+high_carb_fiber_ratio,Optimal Fuel,carbs_fiber_tags,positive,Carb quality,static,{carb_fiber_ratio}:1 ratio,dynamic,Better for gut,Good balance,static,,"l3: actual carb÷fiber ratio e.g. ""5:1 ratio"" — fallback if missing or >15 chars"
+medium_carb_fiber_ratio,Steady Energy,carbs_fiber_tags,neutral,Carb quality,static,{carb_fiber_ratio}:1 ratio,dynamic,Gut friendly,Fair balance,static,,l2: actual carb÷fiber ratio
+low_carb_fiber_ratio,Spike Risk,carbs_fiber_tags,negative,Carb quality,static,{carb_fiber_ratio}:1 ratio,dynamic,Not for gut,Low fiber/carbs,static,,l2: actual carb÷fiber ratio
+better_oils,Heart Healthy,oils_fats_tags,positive,Oils used,static,Better quality fat,static,,{oil_name},dynamic,Premium,"l2: first matched oil name if ≤15 chars — fallback ""Premium"""
+good_fat_source,Healthy Fats,oils_fats_tags,positive,Oils used,static,Good fat source,static,,{oil_name},dynamic,Quality oils,"l2: first matched oil name if ≤15 chars — fallback ""Quality oils"""
+no_trans_fat,Clean Fats,oils_fats_tags,positive,Trans fat,static,None found,static,,Heart friendly,static,,all static
+high_trans_fat,Toxic Fat,oils_fats_tags,negative,Trans fat,static,{trans_fat_g} g / {x} g,dynamic,,Avoid,static,,l2: raw trans fat g value
+trans_fat_risk,Fake Fat Alert,oils_fats_tags,negative,Trans fat,static,Risk detected,static,,Avoid,static,,all static — oil name withheld to avoid char overflow
+seed_oils,Bad Oil Alert,oils_fats_tags,negative,Oils used,static,Refined oils,static,,Less ideal fat,static,,all static — oil name withheld to avoid char overflow
+no_added_sugar,No Added Sugar,sweetners_sugar_tags,positive,Added sugar,static,,static,,Good,static,,all static
+high_added_sugar,High Sugar,sweetners_sugar_tags,negative,Added sugar,static,{added sugar g } / {x} g,dynamic,High Sugar,Avoid,static,,l2: raw sugar value
+medium_added_sugar,Moderate Sugar,sweetners_sugar_tags,neutral,Added sugar,static,{added sugar g } / {x} g,dynamic,Medium Sugar,Limit consumption,static,,l2: raw sugar value
+low_added_sugar,Low Sugar,sweetners_sugar_tags,positive,Added sugar,static,{added sugar g } / {x} g,dynamic,Low Sugar,To have in limits,static,,l2: raw sugar value
+better_sweetners_used,Clean Sweetener,sweetners_sugar_tags,positive,Sweetener,static,Good quality,static,,{sweetener_name},dynamic,Zero concern,"l3: sweetener name e.g. ""Stevia"" — fallback if missing or >15 chars"
+ok_sweetner_used,Safe Sweetener,sweetners_sugar_tags,neutral,Sweetener,static,Low concern,static,,{sweetener_name},dynamic,Mild impact,l3: sweetener name — fallback if missing or >15 chars
+artificial_sweetners_used,Chemical Sweet,sweetners_sugar_tags,neutral,Sweetener,static,Artificial,static,,{sweetener_name},dynamic,Check your diet,"l3: sweetener name e.g. ""Sucralose"" — fallback if missing or >15 chars"
+bad_sweetners_used,Bad Sweetener,sweetners_sugar_tags,negative,Sweetener,static,High concern,static,,{sweetener_name},dynamic,Poor sweeteners,"l3: sweetener name e.g. ""Saccharin"" — fallback if missing or >15 chars"
+no_additives,Whole Food,ingredients_tags,positive,Additives,static,None at all,static,,Clean product,static,,all static
+no_harmful_additives,Clean Label,ingredients_tags,positive,Additives,static,All safe,static,,None Harmful,static,,all static
+preservative_free,Pure Label,ingredients_tags,positive,Preservatives,static,,static,,Free of these,static,,all static
+ok_additives_present,Safe Additives,ingredients_tags,neutral,Additives,static,Decent additives,static,,Low risk only,static,,all static — count excluded (adds noise)
+artificial_additives_present,Chem Additives,ingredients_tags,neutral,Additives,static,Some found,static,,Check the list,static,,all static — count excluded (adds noise)
+harmful_additives_present,Toxic Additives,ingredients_tags,negative,Additives,static,Harmful found,static,,{additive_name},dynamic,High concern,"l3: additive name e.g. ""BHA"" — fallback if missing or >15 chars"
+preservative_present,Preservatives,ingredients_tags,negative,Preservatives,static,Found,static,,{preservative_name},dynamic,Has these,"l3: preservative name e.g. ""Sod. benzoate"" — fallback if missing or >15 chars"

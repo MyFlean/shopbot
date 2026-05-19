@@ -37,6 +37,11 @@ Cfg = get_config()
 
 DATA_DIR = Path(__file__).parent.parent / "data" / "home"
 
+CTA_TYPE_BETTER_OPTIONS = "better_options"
+CTA_TYPE_SIMILAR_OPTIONS = "similar_options"
+CTA_TYPE_ADD_TO_CART = "add_to_cart"
+CTA_TYPE_OUT_OF_STOCK_SHOW_SIMILAR = "out_of_stock_show_similar"
+
 
 # ============================================================================
 # Response Helpers
@@ -123,6 +128,51 @@ def _get_cached_in_stock_override(product_id: str, pincode: str) -> Optional[boo
     return None
 
 
+def _parse_optional_float(value: Any) -> Optional[float]:
+    """Parse float-like values, preserving None when value is absent."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_soft_visibility(visibility: Any) -> bool:
+    """Match the Flutter CTA visibility check (trim + lowercase == soft)."""
+    return str(visibility or "").strip().lower() == "soft"
+
+
+def _resolve_pdp_cta(product_info: Dict[str, Any], flean_badge: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Resolve PDP CTA and image stamp flags.
+
+    Logic mirrors Flean-App PDP CTA behavior and must run after pincode stock override.
+    """
+    in_stock = bool(product_info.get("in_stock", True))
+    visibility = product_info.get("visibility")
+    score = _parse_optional_float((flean_badge or {}).get("score"))
+    is_soft = _is_soft_visibility(visibility)
+
+    if score is not None and score <= 5:
+        cta_type = CTA_TYPE_BETTER_OPTIONS
+    elif in_stock and is_soft:
+        cta_type = CTA_TYPE_SIMILAR_OPTIONS
+    elif in_stock:
+        cta_type = CTA_TYPE_ADD_TO_CART
+    else:
+        cta_type = CTA_TYPE_OUT_OF_STOCK_SHOW_SIMILAR
+
+    show_image_stamp = False
+    if score is not None and score > 5:
+        show_image_stamp = (in_stock and is_soft) or (not in_stock)
+
+    return {
+        "type": cta_type,
+        "show_image_stamp": show_image_stamp,
+    }
+
+
 # ============================================================================
 # PDP API - Product Detail Page (pre-parsed)
 # ============================================================================
@@ -186,6 +236,14 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
                 product_info = pdp_data.get("product_info")
                 if isinstance(product_info, dict):
                     product_info["in_stock"] = bool(cache_in_stock)
+
+        product_info = pdp_data.get("product_info")
+        flean_badge = pdp_data.get("flean_badge")
+        if isinstance(product_info, dict):
+            pdp_data["cta"] = _resolve_pdp_cta(
+                product_info=product_info,
+                flean_badge=flean_badge if isinstance(flean_badge, dict) else {},
+            )
 
         log.info(f"PDP_SUCCESS | id={pid} | name={raw_src.get('name', '')[:30]}")
         return jsonify(_success_response(pdp_data)), 200

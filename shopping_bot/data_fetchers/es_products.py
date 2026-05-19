@@ -25,6 +25,7 @@ import requests
 from ..enums import BackendFunction
 from . import register_fetcher
 from ..scoring_config import build_function_score_functions
+from ..utils.pdp_tag_labels import label_for_tag_id
 
 # ES Configuration (env-only; robust normalization)
 def _normalize_es_base(raw_url: Optional[str], index: Optional[str]) -> str:
@@ -446,13 +447,6 @@ def _resolve_highlight_tags(src: Dict[str, Any]) -> Dict[str, Any]:
     return {}
 
 
-def _humanize_highlight_tag(tag: str) -> str:
-    s = str(tag or "").strip().replace("_", " ")
-    if not s:
-        return ""
-    return s.title()
-
-
 def _subtitle_and_color_from_highlight_group(group: Any) -> Tuple[Optional[str], Optional[str]]:
     """
     Build subtitle text and subtitle_color hex from one highlight_tags group.
@@ -475,7 +469,7 @@ def _subtitle_and_color_from_highlight_group(group: Any) -> Tuple[Optional[str],
 
     parts: List[str] = []
     for t in neg + pos + neu:
-        h = _humanize_highlight_tag(t)
+        h = label_for_tag_id(t)
         if h:
             parts.append(h)
     if not parts:

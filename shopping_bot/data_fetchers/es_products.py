@@ -147,12 +147,58 @@ print("="*80)
 TAG_RE = re.compile(r"<[^>]+>")
 WS_RE = re.compile(r"\s+")
 
+# Product-type anchoring map used by unified search.
+# Keys are query tokens; values are canonical product nouns.
+PRODUCT_NOUN_TOKEN_MAP: Dict[str, str] = {
+    "yogurt": "yogurt",
+    "curd": "yogurt",
+    "dahi": "yogurt",
+    "bread": "bread",
+    "bun": "bread",
+    "chips": "chips",
+    "crisps": "chips",
+    "oats": "oats",
+    "muesli": "cereal",
+    "cereal": "cereal",
+    "cornflakes": "cereal",
+    "pasta": "pasta",
+    "noodles": "noodles",
+    "bar": "protein_bar",
+    "bars": "protein_bar",
+    "khakhra": "khakhra",
+    "biscuit": "biscuit",
+    "biscuits": "biscuit",
+}
+
+PRODUCT_NOUN_ANCHOR_TERMS: Dict[str, List[str]] = {
+    "yogurt": ["yogurt", "greek yogurt", "curd", "dahi"],
+    "bread": ["bread", "bun", "loaf"],
+    "chips": ["chips", "crisps"],
+    "oats": ["oats", "oatmeal"],
+    "cereal": ["cereal", "muesli", "cornflakes"],
+    "pasta": ["pasta", "penne", "fusilli", "macaroni"],
+    "noodles": ["noodles", "ramen", "vermicelli"],
+    "protein_bar": ["protein bar", "bar"],
+    "khakhra": ["khakhra"],
+    "biscuit": ["biscuit", "cookies"],
+}
+
 def _clean_text(s: Optional[str]) -> Optional[str]:
     if not s:
         return s
     s = TAG_RE.sub("", s)
     s = WS_RE.sub(" ", s).strip()
     return s
+
+
+def _extract_core_product_noun(query_text: str) -> Optional[str]:
+    """Detect a core product noun token from query for type anchoring."""
+    tokens = re.findall(r"[a-z0-9]+", (query_text or "").lower())
+    for token in tokens:
+        noun = PRODUCT_NOUN_TOKEN_MAP.get(token)
+        if noun:
+            return noun
+    return None
 
 def _extract_protein(src: Dict[str, Any]) -> Optional[float]:
     try:
@@ -3414,9 +3460,30 @@ class ElasticsearchProductsFetcher:
                 })
             
             # Build the query
+            dynamic_min_score: Optional[float] = None
             if query_text:
                 query_token_count = len(query_text.split())
-                required_token_coverage = "100%" if query_token_count <= 2 else "2<75%"
+                core_noun = _extract_core_product_noun(query_text)
+                if query_token_count <= 1:
+                    must_operator = "or"
+                    required_token_coverage = "100%"
+                    fuzzy_fuzziness = "AUTO"
+                    fuzzy_boost = 0.8
+                    dynamic_min_score = 1.1
+                elif query_token_count == 2:
+                    must_operator = "or"
+                    required_token_coverage = "100%"
+                    fuzzy_fuzziness = "AUTO"
+                    fuzzy_boost = 0.75
+                    dynamic_min_score = 1.0
+                else:
+                    # Keep 3+ token queries strict enough for relevance,
+                    # but avoid over-constraining recall for natural language searches.
+                    must_operator = "or"
+                    required_token_coverage = "67%"
+                    fuzzy_fuzziness = "1"
+                    fuzzy_boost = 0.45
+                    dynamic_min_score = 0.75
 
                 # Balanced text search:
                 # - strongly reward exact/near-exact name matches
@@ -3428,12 +3495,12 @@ class ElasticsearchProductsFetcher:
                                 "multi_match": {
                                     "query": query_text,
                                     "fields": [
-                                        "name^4",
+                                        "name^5",
                                         "brand^3",
-                                        "description",
+                                        "category_paths^2",
                                     ],
                                     "type": "best_fields",
-                                    "operator": "or",
+                                    "operator": must_operator,
                                     "minimum_should_match": required_token_coverage,
                                 }
                             }
@@ -3485,8 +3552,8 @@ class ElasticsearchProductsFetcher:
                                         "package_claims.dietary_labels"
                                     ],
                                     "type": "best_fields",
-                                    "fuzziness": "AUTO",
-                                    "boost": 0.8
+                                    "fuzziness": fuzzy_fuzziness,
+                                    "boost": fuzzy_boost
                                 }
                             }
                         ],
@@ -3494,6 +3561,31 @@ class ElasticsearchProductsFetcher:
                         "filter": filter_clauses
                     }
                 }
+
+                # Stage 3: product-type anchoring.
+                # If a core noun is detected (e.g., yogurt, bread, chips),
+                # enforce at least one strong noun match in name/category paths.
+                if core_noun:
+                    anchor_terms = PRODUCT_NOUN_ANCHOR_TERMS.get(core_noun, [core_noun])
+                    anchor_should: List[Dict[str, Any]] = []
+                    for term in anchor_terms[:4]:
+                        anchor_should.append({
+                            "match_phrase": {
+                                "name": {"query": term, "boost": 4.0}
+                            }
+                        })
+                        anchor_should.append({
+                            "wildcard": {
+                                "category_paths": {"value": f"*{term}*"}
+                            }
+                        })
+                    if anchor_should:
+                        query_body["bool"]["must"].append({
+                            "bool": {
+                                "should": anchor_should,
+                                "minimum_should_match": 1,
+                            }
+                        })
             else:
                 # Browse mode: match_all with filters
                 query_body = {
@@ -3539,8 +3631,8 @@ class ElasticsearchProductsFetcher:
             }
             
             # Add min_score for text queries to filter out irrelevant results
-            if query_text:
-                body["min_score"] = 1.2
+            if query_text and dynamic_min_score is not None:
+                body["min_score"] = dynamic_min_score
             
             search_endpoint = f"{self.base_url}/{self.index}/_search"
             print(f"DEBUG: ES search_products_unified | query={query_text} | subcategory={subcat} | page={page} | size={size} | sort={sort_by}")

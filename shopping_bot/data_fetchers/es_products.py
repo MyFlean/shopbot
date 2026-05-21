@@ -25,6 +25,7 @@ import requests
 from ..enums import BackendFunction
 from . import register_fetcher
 from ..scoring_config import build_function_score_functions
+from ..utils.pdp_tag_labels import label_for_tag_id
 
 # ES Configuration (env-only; robust normalization)
 def _normalize_es_base(raw_url: Optional[str], index: Optional[str]) -> str:
@@ -446,49 +447,41 @@ def _resolve_highlight_tags(src: Dict[str, Any]) -> Dict[str, Any]:
     return {}
 
 
-def _humanize_highlight_tag(tag: str) -> str:
-    s = str(tag or "").strip().replace("_", " ")
-    if not s:
-        return ""
-    return s.title()
+def _highlight_tag_ids_from_group(group: Any, bucket: str) -> List[str]:
+    if not isinstance(group, dict):
+        return []
+    raw = group.get(bucket)
+    if not isinstance(raw, list):
+        return []
+    return [str(x).strip() for x in raw if isinstance(x, str) and str(x).strip()]
 
 
-def _subtitle_and_color_from_highlight_group(group: Any) -> Tuple[Optional[str], Optional[str]]:
+def _subtitle_new_from_highlight_group(group: Any) -> Optional[List[Dict[str, str]]]:
     """
-    Build subtitle text and subtitle_color hex from one highlight_tags group.
+    Build subtitle_new entries from one highlight_tags group.
 
-    Tags are ordered negative, then positive, then neutral; joined with ' · '.
-    Color reflects worst sentiment present among non-empty buckets used for text.
+    Tags are ordered negative, then positive, then neutral. Each entry has
+    tag_label (from config map) and color_code from its sentiment bucket.
     """
     if not isinstance(group, dict):
-        return None, None
+        return None
 
-    def _clean_list(key: str) -> List[str]:
-        raw = group.get(key)
-        if not isinstance(raw, list):
-            return []
-        return [str(x).strip() for x in raw if isinstance(x, str) and str(x).strip()]
-
-    neg = _clean_list("negative")
-    pos = _clean_list("positive")
-    neu = _clean_list("neutral")
-
-    parts: List[str] = []
-    for t in neg + pos + neu:
-        h = _humanize_highlight_tag(t)
-        if h:
-            parts.append(h)
-    if not parts:
-        return None, None
-
-    subtitle = " · ".join(parts)
-    if neg:
-        color = _HIGHLIGHT_SUBTITLE_NEGATIVE_HEX
-    elif pos:
-        color = _HIGHLIGHT_SUBTITLE_POSITIVE_HEX
-    else:
-        color = _HIGHLIGHT_SUBTITLE_NEUTRAL_HEX
-    return subtitle, color
+    bucket_colors = {
+        "negative": _HIGHLIGHT_SUBTITLE_NEGATIVE_HEX,
+        "positive": _HIGHLIGHT_SUBTITLE_POSITIVE_HEX,
+        "neutral": _HIGHLIGHT_SUBTITLE_NEUTRAL_HEX,
+    }
+    items: List[Dict[str, str]] = []
+    for bucket, color in (
+        ("negative", bucket_colors["negative"]),
+        ("positive", bucket_colors["positive"]),
+        ("neutral", bucket_colors["neutral"]),
+    ):
+        for tag_id in _highlight_tag_ids_from_group(group, bucket):
+            label = label_for_tag_id(tag_id)
+            if label:
+                items.append({"tag_label": label, "color_code": color})
+    return items if items else None
 
 
 def _apply_highlight_subtitle_to_card(
@@ -496,12 +489,11 @@ def _apply_highlight_subtitle_to_card(
     highlight_root: Dict[str, Any],
     group_key: str,
 ) -> None:
-    """If highlight data exists, overwrite subtitle and set subtitle_color on card."""
+    """If highlight data exists, set subtitle_new only; legacy subtitle unchanged."""
     group = highlight_root.get(group_key) if isinstance(highlight_root, dict) else None
-    sub, col = _subtitle_and_color_from_highlight_group(group)
-    if sub:
-        card["subtitle"] = sub
-        card["subtitle_color"] = col
+    subtitle_new = _subtitle_new_from_highlight_group(group)
+    if subtitle_new:
+        card["subtitle_new"] = subtitle_new
 
 
 _BADGE_SCORE_DENY = {"", "na", "n/a", "null", "-", "not detected"}

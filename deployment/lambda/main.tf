@@ -271,6 +271,23 @@ resource "aws_iam_role_policy" "lambda_aoss" {
   })
 }
 
+# App-config JSON from S3 (serviceable_pincodes.json for pincode canonicalization on /rs APIs)
+resource "aws_iam_role_policy" "lambda_s3_app_config" {
+  name = "${var.project_name}-lambda-s3-app-config"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "s3:GetObject"
+      ]
+      Resource = "arn:aws:s3:::${var.s3_app_config_bucket}/*"
+    }]
+  })
+}
+
 # Security Group - REMOVED (Lambda runs outside VPC, no security group needed)
 
 # Outputs are defined in outputs.tf

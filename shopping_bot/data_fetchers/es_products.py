@@ -147,58 +147,12 @@ print("="*80)
 TAG_RE = re.compile(r"<[^>]+>")
 WS_RE = re.compile(r"\s+")
 
-# Product-type anchoring map used by unified search.
-# Keys are query tokens; values are canonical product nouns.
-PRODUCT_NOUN_TOKEN_MAP: Dict[str, str] = {
-    "yogurt": "yogurt",
-    "curd": "yogurt",
-    "dahi": "yogurt",
-    "bread": "bread",
-    "bun": "bread",
-    "chips": "chips",
-    "crisps": "chips",
-    "oats": "oats",
-    "muesli": "cereal",
-    "cereal": "cereal",
-    "cornflakes": "cereal",
-    "pasta": "pasta",
-    "noodles": "noodles",
-    "bar": "protein_bar",
-    "bars": "protein_bar",
-    "khakhra": "khakhra",
-    "biscuit": "biscuit",
-    "biscuits": "biscuit",
-}
-
-PRODUCT_NOUN_ANCHOR_TERMS: Dict[str, List[str]] = {
-    "yogurt": ["yogurt", "greek yogurt", "curd", "dahi"],
-    "bread": ["bread", "bun", "loaf"],
-    "chips": ["chips", "crisps"],
-    "oats": ["oats", "oatmeal"],
-    "cereal": ["cereal", "muesli", "cornflakes"],
-    "pasta": ["pasta", "penne", "fusilli", "macaroni"],
-    "noodles": ["noodles", "ramen", "vermicelli"],
-    "protein_bar": ["protein bar", "bar"],
-    "khakhra": ["khakhra"],
-    "biscuit": ["biscuit", "cookies"],
-}
-
 def _clean_text(s: Optional[str]) -> Optional[str]:
     if not s:
         return s
     s = TAG_RE.sub("", s)
     s = WS_RE.sub(" ", s).strip()
     return s
-
-
-def _extract_core_product_noun(query_text: str) -> Optional[str]:
-    """Detect a core product noun token from query for type anchoring."""
-    tokens = re.findall(r"[a-z0-9]+", (query_text or "").lower())
-    for token in tokens:
-        noun = PRODUCT_NOUN_TOKEN_MAP.get(token)
-        if noun:
-            return noun
-    return None
 
 def _extract_protein(src: Dict[str, Any]) -> Optional[float]:
     try:
@@ -2612,6 +2566,8 @@ class ElasticsearchProductsFetcher:
         self.api_key = (api_key or ELASTIC_API_KEY)
         self._has_category_paths_keyword: Optional[bool] = None
         self._category_paths_exact_field: Optional[str] = None
+        self._has_leaf_category_exact: Optional[bool] = None
+        self._leaf_category_exact_field: Optional[str] = None
         self.use_iam_auth = (
             _is_truthy_env("AOSS_ENABLED")
             or _is_truthy_env("ES_USE_IAM")
@@ -2695,8 +2651,8 @@ class ElasticsearchProductsFetcher:
         return kwargs
     
     def _ensure_mapping_hints(self) -> None:
-        """Lazy-load index mapping to detect an exact-match field for category_paths."""
-        if self._has_category_paths_keyword is not None:
+        """Lazy-load index mapping to detect exact-match fields for search-critical fields."""
+        if self._has_category_paths_keyword is not None and self._has_leaf_category_exact is not None:
             return
         try:
             mapping_endpoint = f"{self.base_url}/{self.index}/_mapping"
@@ -2706,11 +2662,11 @@ class ElasticsearchProductsFetcher:
             resp = requests.get(mapping_endpoint, timeout=min(TIMEOUT, 2), **self._request_kwargs())
             resp.raise_for_status()
             data = resp.json() or {}
-            # Traverse to detect an exact-match field for category paths.
-            # Prefer category_paths.keyword when present, but allow category_paths
-            # directly if it is already mapped as keyword.
+            # Traverse mappings to detect exact-match fields.
             has_kw = False
             exact_field: Optional[str] = None
+            has_leaf_exact = False
+            leaf_exact_field: Optional[str] = None
             try:
                 # mappings can be keyed by index name
                 for _idx, payload in (data or {}).items():
@@ -2725,16 +2681,35 @@ class ElasticsearchProductsFetcher:
                     if str(cat.get("type") or "").strip().lower() == "keyword":
                         has_kw = True
                         exact_field = "category_paths"
+                    # Mapping definitions are dicts even when document values are arrays.
+                    leaf = props.get("leaf_category", {}) or {}
+                    if isinstance(leaf, list):
+                        leaf = leaf[0] if leaf and isinstance(leaf[0], dict) else {}
+                    if not isinstance(leaf, dict):
+                        leaf = {}
+                    leaf_fields = leaf.get("fields", {}) or {}
+                    if isinstance(leaf_fields.get("keyword"), dict):
+                        has_leaf_exact = True
+                        leaf_exact_field = "leaf_category.keyword"
+                    elif str(leaf.get("type") or "").strip().lower() == "keyword":
+                        has_leaf_exact = True
+                        leaf_exact_field = "leaf_category"
+                    if has_kw and has_leaf_exact:
                         break
             except Exception:
                 has_kw = False
+                has_leaf_exact = False
             self._has_category_paths_keyword = has_kw
             self._category_paths_exact_field = exact_field
+            self._has_leaf_category_exact = has_leaf_exact
+            self._leaf_category_exact_field = leaf_exact_field
             try:
                 print(
                     "DEBUG: MAPPING_HINT | "
                     f"category_paths_exact_field={exact_field or 'none'} | "
-                    f"exact_match_available={'yes' if has_kw else 'no'}"
+                    f"category_paths_exact_match_available={'yes' if has_kw else 'no'} | "
+                    f"leaf_category_exact_field={leaf_exact_field or 'none'} | "
+                    f"leaf_category_exact_match_available={'yes' if has_leaf_exact else 'no'}"
                 )
             except Exception:
                 pass
@@ -2745,6 +2720,114 @@ class ElasticsearchProductsFetcher:
                 pass
             self._has_category_paths_keyword = False
             self._category_paths_exact_field = None
+            self._has_leaf_category_exact = False
+            self._leaf_category_exact_field = None
+
+    def _resolve_leaf_category_from_query(self, query_text: str) -> Optional[str]:
+        """
+        Resolve the most likely leaf_category from user query text.
+
+        Uses direct ES lookup on the exact leaf_category field only.
+        """
+        query_text = " ".join(str(query_text or "").strip().split())
+        if not query_text:
+            return None
+        try:
+            self._ensure_mapping_hints()
+            if not self._leaf_category_exact_field:
+                return None
+
+            normalized = query_text.strip()
+            tokens = [t for t in re.findall(r"[a-z0-9]+", normalized.lower()) if len(t) >= 3]
+            stop_tokens = {"high", "low", "healthy", "free", "no", "added", "protein", "sugar", "fat", "fiber", "fibre"}
+            signal_tokens = [t for t in tokens if t not in stop_tokens][:5]
+            should_clauses: List[Dict[str, Any]] = [
+                {
+                    "term": {
+                        self._leaf_category_exact_field: {
+                            "value": normalized,
+                            "boost": 12.0,
+                        }
+                    }
+                },
+            ]
+            for tok in signal_tokens:
+                should_clauses.append({
+                    "wildcard": {
+                        self._leaf_category_exact_field: {
+                            "value": f"*{tok}*",
+                            "boost": 4.0,
+                            "case_insensitive": True,
+                        }
+                    }
+                })
+            if len(signal_tokens) >= 2:
+                joined = " ".join(signal_tokens[:2])
+                should_clauses.append({
+                    "wildcard": {
+                        self._leaf_category_exact_field: {
+                            "value": f"*{joined}*",
+                            "boost": 6.0,
+                            "case_insensitive": True,
+                        }
+                    }
+                })
+            body: Dict[str, Any] = {
+                "size": 20,
+                "_source": ["leaf_category"],
+                "query": {
+                    "bool": {
+                        "filter": [VISIBILITY_FILTER],
+                        "should": should_clauses,
+                        "minimum_should_match": 1,
+                    }
+                },
+                "min_score": 0.5,
+            }
+            endpoint = f"{self.base_url}/{self.index}/_search"
+            response = requests.post(
+                endpoint,
+                json=body,
+                timeout=TIMEOUT,
+                **self._request_kwargs(),
+            )
+            response.raise_for_status()
+            data = response.json() or {}
+            hits = (data.get("hits", {}) or {}).get("hits", []) or []
+            if not hits:
+                return None
+            resolved: Optional[str] = None
+            candidate_scores: Dict[str, int] = {}
+            for hit in hits:
+                source = hit.get("_source", {}) or {}
+                leaf = source.get("leaf_category")
+                leaf_values: List[str] = []
+                if isinstance(leaf, str) and leaf.strip():
+                    leaf_values = [leaf.strip()]
+                elif isinstance(leaf, list):
+                    leaf_values = [str(item).strip() for item in leaf if str(item).strip()]
+                for value in leaf_values:
+                    value_l = value.lower()
+                    overlap = sum(1 for tok in signal_tokens if tok in value_l)
+                    score = overlap * 10 + (2 if value_l == normalized.lower() else 0) + 1
+                    candidate_scores[value] = candidate_scores.get(value, 0) + score
+
+            if candidate_scores:
+                resolved = max(candidate_scores.items(), key=lambda item: item[1])[0]
+
+            if not resolved:
+                return None
+            try:
+                print(f"DEBUG: LEAF_CATEGORY_RESOLVED | query={query_text} | leaf_category={resolved}")
+            except Exception:
+                pass
+            return resolved
+        except Exception as exc:
+            try:
+                print(f"DEBUG: LEAF_CATEGORY_RESOLVE_ERROR | query={query_text} | error={exc}")
+            except Exception:
+                pass
+            return None
     
     def search(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute search against Elasticsearch with fallback strategies."""
@@ -3461,9 +3544,11 @@ class ElasticsearchProductsFetcher:
             
             # Build the query
             dynamic_min_score: Optional[float] = None
+            resolved_leaf_category: Optional[str] = None
             if query_text:
                 query_token_count = len(query_text.split())
-                core_noun = _extract_core_product_noun(query_text)
+                resolved_leaf_category = self._resolve_leaf_category_from_query(query_text)
+                must_query_text = query_text
                 if query_token_count <= 1:
                     must_operator = "or"
                     required_token_coverage = "100%"
@@ -3484,6 +3569,13 @@ class ElasticsearchProductsFetcher:
                     fuzzy_fuzziness = "1"
                     fuzzy_boost = 0.45
                     dynamic_min_score = 0.75
+                if resolved_leaf_category and query_token_count >= 3:
+                    # With a hard category anchor in place, keep lexical recall broad enough
+                    # to avoid zero-result collapse on natural language queries.
+                    must_operator = "or"
+                    required_token_coverage = "34%"
+                    dynamic_min_score = min(dynamic_min_score or 0.75, 0.6)
+                    must_query_text = resolved_leaf_category
 
                 # Balanced text search:
                 # - strongly reward exact/near-exact name matches
@@ -3493,7 +3585,7 @@ class ElasticsearchProductsFetcher:
                         "must": [
                             {
                                 "multi_match": {
-                                    "query": query_text,
+                                    "query": must_query_text,
                                     "fields": [
                                         "name^5",
                                         "brand^3",
@@ -3562,29 +3654,11 @@ class ElasticsearchProductsFetcher:
                     }
                 }
 
-                # Stage 3: product-type anchoring.
-                # If a core noun is detected (e.g., yogurt, bread, chips),
-                # enforce at least one strong noun match in name/category paths.
-                if core_noun:
-                    anchor_terms = PRODUCT_NOUN_ANCHOR_TERMS.get(core_noun, [core_noun])
-                    anchor_should: List[Dict[str, Any]] = []
-                    for term in anchor_terms[:4]:
-                        anchor_should.append({
-                            "match_phrase": {
-                                "name": {"query": term, "boost": 4.0}
-                            }
-                        })
-                        anchor_should.append({
-                            "wildcard": {
-                                "category_paths": {"value": f"*{term}*"}
-                            }
-                        })
-                    if anchor_should:
-                        query_body["bool"]["must"].append({
-                            "bool": {
-                                "should": anchor_should,
-                                "minimum_should_match": 1,
-                            }
+                # Hard leaf-category anchor: enforce exact leaf category only.
+                if resolved_leaf_category:
+                    if self._leaf_category_exact_field:
+                        filter_clauses.append({
+                            "term": {self._leaf_category_exact_field: resolved_leaf_category}
                         })
             else:
                 # Browse mode: match_all with filters
@@ -3603,7 +3677,7 @@ class ElasticsearchProductsFetcher:
                 "_source": {
                     "includes": [
                         "id", "name", "brand", "price", "mrp", "hero_image.*","images",
-                        "package_claims.*", "category_group", "category_paths",
+                        "package_claims.*", "category_group", "category_paths", "leaf_category",
                         "description", "use", "flean_score.*",
                         "stats.adjusted_score_percentiles.*",
                         "stats.wholefood_percentiles.*",
@@ -3666,6 +3740,7 @@ class ElasticsearchProductsFetcher:
                     "has_prev": page > 0,
                     "query": query_text,
                     "subcategory": subcat,
+                    "resolved_leaf_category": resolved_leaf_category,
                     "sort_by": sort_by,
                     "filters_applied": filters if filters else None
                 }

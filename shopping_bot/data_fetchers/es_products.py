@@ -3544,38 +3544,58 @@ class ElasticsearchProductsFetcher:
             
             # Build the query
             dynamic_min_score: Optional[float] = None
-            resolved_leaf_category: Optional[str] = None
             if query_text:
-                query_token_count = len(query_text.split())
-                resolved_leaf_category = self._resolve_leaf_category_from_query(query_text)
-                must_query_text = query_text
+                raw_tokens = re.findall(r"[a-z0-9]+", query_text.lower())
+                query_tokens = raw_tokens[:8]
+                query_token_count = len(query_tokens)
+                if query_token_count == 0:
+                    query_tokens = query_text.lower().split()[:8]
+                    query_token_count = len(query_tokens)
+
+                # Build bounded contiguous n-grams (no permutations/combinations explosion).
+                stop_tokens = {"a", "an", "the", "and", "or", "for", "to", "with", "of"}
+                phrase_tokens = [t for t in query_tokens if t not in stop_tokens]
+                must_stop_tokens = {
+                    "high", "low", "healthy", "free", "no", "added", "protein", "sugar",
+                    "fat", "fiber", "fibre", "keto", "friendly", "clean", "label"
+                }
+                must_tokens = [t for t in phrase_tokens if t not in must_stop_tokens]
+                core_query_text = " ".join(must_tokens) if must_tokens else query_text
+                ngram_phrases: List[Tuple[str, float]] = []
+                max_ngrams = 12
+                if len(phrase_tokens) >= 2:
+                    for n in (3, 2):
+                        if len(phrase_tokens) < n:
+                            continue
+                        for i in range(0, len(phrase_tokens) - n + 1):
+                            phrase = " ".join(phrase_tokens[i:i + n])
+                            boost = 6.0 if n == 3 else 4.5
+                            # Earlier phrases usually carry stronger intent.
+                            boost -= min(i * 0.2, 1.0)
+                            ngram_phrases.append((phrase, boost))
+                            if len(ngram_phrases) >= max_ngrams:
+                                break
+                        if len(ngram_phrases) >= max_ngrams:
+                            break
+
                 if query_token_count <= 1:
                     must_operator = "or"
                     required_token_coverage = "100%"
                     fuzzy_fuzziness = "AUTO"
                     fuzzy_boost = 0.8
-                    dynamic_min_score = 1.1
+                    dynamic_min_score = 0.2
                 elif query_token_count == 2:
-                    must_operator = "or"
+                    must_operator = "and"
                     required_token_coverage = "100%"
-                    fuzzy_fuzziness = "AUTO"
-                    fuzzy_boost = 0.75
-                    dynamic_min_score = 1.0
-                else:
-                    # Keep 3+ token queries strict enough for relevance,
-                    # but avoid over-constraining recall for natural language searches.
-                    must_operator = "or"
-                    required_token_coverage = "67%"
                     fuzzy_fuzziness = "1"
-                    fuzzy_boost = 0.45
-                    dynamic_min_score = 0.75
-                if resolved_leaf_category and query_token_count >= 3:
-                    # With a hard category anchor in place, keep lexical recall broad enough
-                    # to avoid zero-result collapse on natural language queries.
+                    fuzzy_boost = 0.7
+                    dynamic_min_score = 0.25
+                else:
                     must_operator = "or"
-                    required_token_coverage = "34%"
-                    dynamic_min_score = min(dynamic_min_score or 0.75, 0.6)
-                    must_query_text = resolved_leaf_category
+                    required_token_coverage = "2<75%"
+                    fuzzy_fuzziness = "1"
+                    fuzzy_boost = 0.6
+                    dynamic_min_score = 0.1
 
                 # Balanced text search:
                 # - strongly reward exact/near-exact name matches
@@ -3585,11 +3605,11 @@ class ElasticsearchProductsFetcher:
                         "must": [
                             {
                                 "multi_match": {
-                                    "query": must_query_text,
+                                    "query": core_query_text,
                                     "fields": [
-                                        "name^5",
-                                        "brand^3",
-                                        "category_paths^2",
+                                        "name^8",
+                                        "brand^1.5",
+                                        "category_paths^0.8",
                                     ],
                                     "type": "best_fields",
                                     "operator": must_operator,
@@ -3602,7 +3622,7 @@ class ElasticsearchProductsFetcher:
                                 "match_phrase": {
                                     "name": {
                                         "query": query_text,
-                                        "boost": 8.0
+                                        "boost": 14.0
                                     }
                                 }
                             },
@@ -3610,12 +3630,12 @@ class ElasticsearchProductsFetcher:
                                 "multi_match": {
                                     "query": query_text,
                                     "fields": [
-                                        "name^3",
+                                        "name^5",
                                         "brand^2",
                                     ],
                                     "type": "cross_fields",
-                                    "operator": "and",
-                                    "boost": 5.0
+                                    "operator": "or",
+                                    "boost": 7.0
                                 }
                             },
                             {
@@ -3623,14 +3643,14 @@ class ElasticsearchProductsFetcher:
                                     "query": query_text,
                                     "fields": [
                                         "name^4",
-                                        "brand^2",
-                                        "description^1.5",
-                                        "package_claims.health_claims",
-                                        "package_claims.dietary_labels"
+                                        "brand^1.5",
+                                        "description^0.5",
+                                        "package_claims.health_claims^0.4",
+                                        "package_claims.dietary_labels^0.4"
                                     ],
                                     "type": "best_fields",
-                                    "operator": "and",
-                                    "boost": 2.5
+                                    "operator": "or",
+                                    "boost": 2.0
                                 }
                             },
                             {
@@ -3638,10 +3658,7 @@ class ElasticsearchProductsFetcher:
                                     "query": query_text,
                                     "fields": [
                                         "name^3",
-                                        "brand^2",
-                                        "description",
-                                        "package_claims.health_claims",
-                                        "package_claims.dietary_labels"
+                                        "brand^1.2",
                                     ],
                                     "type": "best_fields",
                                     "fuzziness": fuzzy_fuzziness,
@@ -3649,16 +3666,20 @@ class ElasticsearchProductsFetcher:
                                 }
                             }
                         ],
-                        "minimum_should_match": 1,
+                        "minimum_should_match": 0,
                         "filter": filter_clauses
                     }
                 }
-
-                # Hard leaf-category anchor: enforce exact leaf category only.
-                if resolved_leaf_category:
-                    if self._leaf_category_exact_field:
-                        filter_clauses.append({
-                            "term": {self._leaf_category_exact_field: resolved_leaf_category}
+                if ngram_phrases:
+                    should_clauses = query_body["bool"]["should"]
+                    for phrase, boost in ngram_phrases:
+                        should_clauses.append({
+                            "match_phrase": {
+                                "name": {
+                                    "query": phrase,
+                                    "boost": boost
+                                }
+                            }
                         })
             else:
                 # Browse mode: match_all with filters
@@ -3740,7 +3761,6 @@ class ElasticsearchProductsFetcher:
                     "has_prev": page > 0,
                     "query": query_text,
                     "subcategory": subcat,
-                    "resolved_leaf_category": resolved_leaf_category,
                     "sort_by": sort_by,
                     "filters_applied": filters if filters else None
                 }

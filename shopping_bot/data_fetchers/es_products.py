@@ -396,10 +396,10 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 SCORE_TIERS: List[Dict[str, Any]] = [
-    {"min": 90, "status": "elite",   "label": "Best in Class",  "color": "#046A38"},
-    {"min": 75, "status": "top",     "label": "Top Tier",       "color": "#22C55E"},
-    {"min": 50, "status": "average", "label": "Average Choice",  "color": "#6B7280"},
-    {"min": 25, "status": "subpar",  "label": "Sub-Par",        "color": "#F59E0B"},
+    {"min": 90, "status": "elite",   "label": "Best in Class",  "color": "#81A18C"},
+    {"min": 75, "status": "top",     "label": "Top Tier",       "color": "#8FAF9A2E"},
+    {"min": 50, "status": "average", "label": "Average Choice",  "color": "#F2E9BB80"},
+    {"min": 25, "status": "subpar",  "label": "Sub-Par",        "color": "#FFF3EF"},
     {"min": 0,  "status": "villain", "label": "The Villain Zone","color": "#EF4444"},
 ]
 

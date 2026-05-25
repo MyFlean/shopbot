@@ -246,8 +246,9 @@ def _filter_cards_with_validation_cache(
     pincode: Optional[str],
     section: str,
     subcategory_key: str,
+    target_count: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """Filter cards by Redis validation cache with fail-open fallback."""
+    """Filter cards by Redis validation cache with optional validated-first backfill."""
     if not cards:
         return cards
     if not _is_validation_filter_active_for_pincode(pincode):
@@ -257,7 +258,9 @@ def _filter_cards_with_validation_cache(
     if not redis_client:
         return cards if HOME_VALIDATION_FAIL_OPEN else []
 
-    kept: List[Dict[str, Any]] = []
+    validated_available: List[Dict[str, Any]] = []
+    uncached_or_unknown: List[Dict[str, Any]] = []
+    excluded_unavailable = 0
     for card in cards:
         product_id = str(card.get("id") or "").strip()
         if not product_id:
@@ -276,37 +279,78 @@ def _filter_cards_with_validation_cache(
             )
             return cards if HOME_VALIDATION_FAIL_OPEN else []
         if not raw:
+            if target_count is not None:
+                uncached_or_unknown.append(card)
             continue
 
         try:
             entry = raw if isinstance(raw, dict) else json.loads(raw)
         except Exception:
+            if target_count is not None:
+                uncached_or_unknown.append(card)
             continue
         if not isinstance(entry, dict):
+            if target_count is not None:
+                uncached_or_unknown.append(card)
             continue
 
         available = _derive_is_available_from_validation_entry(entry)
         if available is True:
-            kept.append(card)
+            validated_available.append(card)
+        elif available is False:
+            excluded_unavailable += 1
+        elif target_count is not None:
+            uncached_or_unknown.append(card)
 
-    if kept:
+    if target_count is not None:
+        target = max(0, int(target_count))
+        selected = list(validated_available)
+        backfilled_unknown = 0
+        if len(selected) < target:
+            for card in uncached_or_unknown:
+                if len(selected) >= target:
+                    break
+                selected.append(card)
+                backfilled_unknown += 1
         log.info(
-            "HOME_VALIDATION_FILTER_APPLIED | section=%s | subcategory=%s | pincode=%s | before=%s | after=%s",
+            "HOME_VALIDATION_FILTER_APPLIED | section=%s | subcategory=%s | pincode=%s | before=%s | after=%s | validated_available=%s | excluded_unavailable=%s | backfilled_unknown=%s | target_count=%s",
             section,
             subcategory_key,
             pincode,
             len(cards),
-            len(kept),
+            len(selected),
+            len(validated_available),
+            excluded_unavailable,
+            backfilled_unknown,
+            target,
         )
-        return kept
+        return selected
+
+    if validated_available:
+        log.info(
+            "HOME_VALIDATION_FILTER_APPLIED | section=%s | subcategory=%s | pincode=%s | before=%s | after=%s | validated_available=%s | excluded_unavailable=%s | backfilled_unknown=%s | target_count=%s",
+            section,
+            subcategory_key,
+            pincode,
+            len(cards),
+            len(validated_available),
+            len(validated_available),
+            excluded_unavailable,
+            0,
+            None,
+        )
+        return validated_available
 
     # Requirement: if no products satisfy validation, keep current behavior.
     log.info(
-        "HOME_VALIDATION_FILTER_FALLBACK | section=%s | subcategory=%s | pincode=%s | before=%s | reason=empty_after_filter",
+        "HOME_VALIDATION_FILTER_FALLBACK | section=%s | subcategory=%s | pincode=%s | before=%s | validated_available=%s | excluded_unavailable=%s | backfilled_unknown=%s | reason=empty_after_filter",
         section,
         subcategory_key,
         pincode,
         len(cards),
+        len(validated_available),
+        excluded_unavailable,
+        0,
     )
     return cards
 
@@ -1052,8 +1096,21 @@ def _unified_flean_picks_logic(
                 effective_pincode,
                 section="flean_picks",
                 subcategory_key=key,
+                target_count=needed,
             )
         return out
+
+    def _sync_per_subcategory_collected_counts(
+        per_subcategory_meta: Dict[str, Any],
+        collected_map: Dict[str, List[Dict[str, Any]]],
+    ) -> None:
+        for key, stats in per_subcategory_meta.items():
+            if not isinstance(stats, dict):
+                continue
+            post_count = len(collected_map.get(key, []))
+            pre_count = int(stats.get("collected_count", 0))
+            stats["pre_validation_collected_count"] = pre_count
+            stats["collected_count"] = post_count
 
     def _log_fetch(
         mode: str,
@@ -1086,6 +1143,7 @@ def _unified_flean_picks_logic(
         )
         _log_fetch("legacy_forced", 0, 0.0, False)
         products_by_key = _apply_validation_for_collected(products_by_key)
+        _sync_per_subcategory_collected_counts(per_subcategory, products_by_key)
         if source == "home":
             products = []
             for key in FLEAN_PICKS_CATEGORIES:
@@ -1201,6 +1259,7 @@ def _unified_flean_picks_logic(
         )
         _log_fetch("agg_failed_fallback", es_calls, es_fetch_ms, False, agg_rounds=0)
         products_by_key = _apply_validation_for_collected(products_by_key)
+        _sync_per_subcategory_collected_counts(per_subcategory, products_by_key)
         if source == "home":
             products = []
             for key in FLEAN_PICKS_CATEGORIES:
@@ -1304,6 +1363,7 @@ def _unified_flean_picks_logic(
             total_tier_counts[tn] += int(cnt)
 
     collected = _apply_validation_for_collected(collected)
+    _sync_per_subcategory_collected_counts(per_subcategory, collected)
 
     mode = "agg_partial_fallback" if used_legacy_supplement else "agg"
     _log_fetch(mode, es_calls, es_fetch_ms, used_legacy_supplement, agg_rounds=agg_rounds_ok)
@@ -1461,6 +1521,7 @@ def get_flean_picks_collection(collection_key: str) -> tuple[Dict[str, Any], int
             effective_pincode,
             section="flean_picks",
             subcategory_key=collection_key,
+            target_count=6,
         )
 
         log.info(f"FLEAN_PICKS_LEGACY | key={collection_key} | returned={len(products)}")

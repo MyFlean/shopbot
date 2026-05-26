@@ -3,7 +3,7 @@
 Product APIs for Flutter App
 ─────────────────────────────
 Endpoints:
-  GET  /api/v1/flean-score                → Mock flean-score descriptive tags by product ID
+  GET  /api/v1/flean-score                → Real flean-score descriptive tags by product ID
   GET  /api/v1/product/<id>               → PDP (pre-parsed sectioned data)
   POST /api/v1/products/pdp/batch         → Batch PDP for multiple IDs
   GET  /api/v1/product/<id>/alternatives  → 5 healthier alternatives (product cards)
@@ -42,73 +42,6 @@ CTA_TYPE_BETTER_OPTIONS = "better_options"
 CTA_TYPE_SIMILAR_OPTIONS = "similar_options"
 CTA_TYPE_ADD_TO_CART = "add_to_cart"
 CTA_TYPE_OUT_OF_STOCK_SHOW_SIMILAR = "out_of_stock_show_similar"
-
-MOCK_FLEAN_SCORE_RESPONSE: Dict[str, Any] = {
-    "name": "Provilac High Protein Milk",
-    "flean_score": 10,
-    "descriptive_tags": [
-        {
-            "sentiment": "positive",
-            "h1_label": "What is good about this product",
-            "value": [
-                {
-                    "h2_label": "Protein",
-                    "value": [
-                        {"h3_label": "Protein Qty", "value": "10 g / 100 g"},
-                        {"h3_label": "Protein Source", "value": "Milk, Whey Isolate"},
-                    ],
-                },
-                {
-                    "h2_label": "Oils",
-                    "value": [
-                        {"h3_label": "Good Oils", "value": "Extra Virgin Olive Oil"},
-                    ],
-                },
-            ],
-        },
-        {
-            "sentiment": "neutral",
-            "h1_label": "What is ok about this product",
-            "value": [
-                {
-                    "h2_label": "Fat",
-                    "value": [
-                        {"h3_label": "Fat Qty", "value": "Decent"},
-                        {"h3_label": "Fat Source", "value": "Oils"},
-                    ],
-                },
-                {
-                    "h2_label": "Sweetners",
-                    "value": [
-                        {"h3_label": "Artificial Oils", "value": "abc, def, ghi"},
-                    ],
-                },
-            ],
-        },
-        {
-            "sentiment": "negative",
-            "h1_label": "What is not so good about this product",
-            "value": [
-                {
-                    "h2_label": "Trans Fat",
-                    "value": [
-                        {"h3_label": "Trans Fat Qty", "value": "1 g / 100 g"},
-                    ],
-                },
-                {
-                    "h2_label": "Additives",
-                    "value": [
-                        {
-                            "h3_label": "Additives: ",
-                            "value": "INS 211 : Bad for cholesterol, Benzol : Connected to cancer",
-                        },
-                    ],
-                },
-            ],
-        },
-    ]
-}
-
 
 # ============================================================================
 # Response Helpers
@@ -330,7 +263,7 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
 @bp.route("/api/v1/flean-score", methods=["GET"])
 def get_flean_score() -> Tuple[Dict[str, Any], int]:
     """
-    Mock Flean Score API.
+    Real Flean Score API.
 
     Query Parameters:
         id (required): Product ID
@@ -338,8 +271,30 @@ def get_flean_score() -> Tuple[Dict[str, Any], int]:
     product_id = (request.args.get("id", "") or "").strip()
     if not product_id:
         return _error_response("INVALID_ID", "Product ID is required", 400)
+    try:
+        fetcher = get_es_fetcher()
+        raw_src = fetcher.get_product_by_id(product_id)
+        if not raw_src:
+            log.warning("FLEAN_SCORE_NOT_FOUND | id=%s", product_id)
+            return _error_response("NOT_FOUND", "Product not found", 404)
 
-    return jsonify(MOCK_FLEAN_SCORE_RESPONSE), 200
+        pdp_data = transform_to_pdp(raw_src)
+        flean_badge = pdp_data.get("flean_badge") if isinstance(pdp_data, dict) else {}
+
+        descriptive_tags = raw_src.get("descriptive_tags", [])
+        if not isinstance(descriptive_tags, list):
+            descriptive_tags = []
+
+        response = {
+            "name": str(raw_src.get("name", "") or ""),
+            "flean_score": (flean_badge or {}).get("score"),
+            "descriptive_tags": descriptive_tags,
+        }
+        log.info("FLEAN_SCORE_SUCCESS | id=%s | score=%s", product_id, response["flean_score"])
+        return jsonify(response), 200
+    except Exception as e:
+        log.error("FLEAN_SCORE_ERROR | id=%s | error=%s", product_id, e, exc_info=True)
+        return _error_response("INTERNAL_ERROR", "Failed to fetch flean score", 500)
 
 
 # ============================================================================

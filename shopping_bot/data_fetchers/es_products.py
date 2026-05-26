@@ -16,7 +16,7 @@ from logging import log
 import os
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 import json
 from urllib.parse import urlparse
 
@@ -426,6 +426,54 @@ _HIGHLIGHT_SUBTITLE_POSITIVE_HEX = "#4E6E3A"  # top tier green
 _HIGHLIGHT_SUBTITLE_NEUTRAL_HEX = "#8D8D8D"  # average grey
 _HIGHLIGHT_SUBTITLE_NEGATIVE_HEX = "#E57964"  # villain red
 
+_WATCH_OUTS_SUBTITLE_BUCKETS: FrozenSet[str] = frozenset({"negative", "neutral"})
+
+
+def _normalize_processing_type(src: Dict[str, Any]) -> str:
+    cd = src.get("category_data")
+    if not isinstance(cd, dict):
+        return ""
+    raw = cd.get("processing_type")
+    if raw is None:
+        return ""
+    return str(raw).strip().lower()
+
+
+def _is_ultra_processed(src: Dict[str, Any]) -> bool:
+    return _normalize_processing_type(src) == "ultra_processed"
+
+
+def _ingredients_tags_group(highlight_root: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(highlight_root, dict):
+        return {}
+    group = highlight_root.get("ingredients_tags")
+    return group if isinstance(group, dict) else {}
+
+
+def _ingredients_tags_has_neutral_or_negative(group: Any) -> bool:
+    if not isinstance(group, dict):
+        return False
+    return bool(_highlight_tag_ids_from_group(group, "negative")) or bool(
+        _highlight_tag_ids_from_group(group, "neutral")
+    )
+
+
+def _ingredients_tags_has_negative(group: Any) -> bool:
+    if not isinstance(group, dict):
+        return False
+    return bool(_highlight_tag_ids_from_group(group, "negative"))
+
+
+def _watch_outs_tier(has_negative: bool) -> Dict[str, str]:
+    if has_negative:
+        tier = SCORE_TIERS[-1]
+        return {"status": tier["status"], "label": tier["label"], "color": tier["color"]}
+    return {
+        "status": "warning",
+        "label": "Caution",
+        "color": SCORE_TIERS[3]["color"],
+    }
+
 
 def _resolve_highlight_tags(src: Dict[str, Any]) -> Dict[str, Any]:
     """Return highlight_tags dict from ES _source (Mongo-synced shape), or {}."""
@@ -456,12 +504,16 @@ def _highlight_tag_ids_from_group(group: Any, bucket: str) -> List[str]:
     return [str(x).strip() for x in raw if isinstance(x, str) and str(x).strip()]
 
 
-def _subtitle_new_from_highlight_group(group: Any) -> Optional[List[Dict[str, str]]]:
+def _subtitle_new_from_highlight_group(
+    group: Any,
+    include_buckets: Optional[FrozenSet[str]] = None,
+) -> Optional[List[Dict[str, str]]]:
     """
     Build subtitle_new entries from one highlight_tags group.
 
     Tags are ordered negative, then positive, then neutral. Each entry has
     tag_label (from config map) and color_code from its sentiment bucket.
+    When include_buckets is set, only those sentiment buckets are included.
     """
     if not isinstance(group, dict):
         return None
@@ -477,6 +529,8 @@ def _subtitle_new_from_highlight_group(group: Any) -> Optional[List[Dict[str, st
         ("positive", bucket_colors["positive"]),
         ("neutral", bucket_colors["neutral"]),
     ):
+        if include_buckets is not None and bucket not in include_buckets:
+            continue
         for tag_id in _highlight_tag_ids_from_group(group, bucket):
             label = label_for_tag_id(tag_id)
             if label:
@@ -488,10 +542,11 @@ def _apply_highlight_subtitle_to_card(
     card: Dict[str, Any],
     highlight_root: Dict[str, Any],
     group_key: str,
+    include_buckets: Optional[FrozenSet[str]] = None,
 ) -> None:
     """If highlight data exists, set subtitle_new only; legacy subtitle unchanged."""
     group = highlight_root.get(group_key) if isinstance(highlight_root, dict) else None
-    subtitle_new = _subtitle_new_from_highlight_group(group)
+    subtitle_new = _subtitle_new_from_highlight_group(group, include_buckets=include_buckets)
     if subtitle_new:
         card["subtitle_new"] = subtitle_new
 
@@ -632,21 +687,9 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     # ── score_cards (named object with direct access) ──
     score_cards = {}
     _highlight_tags_root = _resolve_highlight_tags(src)
-
-    # Flean Rank card (disabled — overall rank shown via flean_badge only)
-    # if flean_percentile is not None:
-    #     rank_pct = round(100 - flean_percentile, 1)
-    #     _tier = _get_score_tier(flean_percentile)
-    #     score_cards["flean_rank"] = {
-    #         "title": "Flean Rank",
-    #         "value": f"Top {rank_pct}%",
-    #         "subtitle": subcategory_label,
-    #         "percentile": round(flean_percentile, 1),
-    #         "status": _tier["status"],
-    #         "status_label": _tier["label"],
-    #         "color": _tier["color"],
-    #         "icon_url": SCORE_CARD_ICONS["flean_rank"],
-    #     }
+    _ingredients_group = _ingredients_tags_group(_highlight_tags_root)
+    _is_ultra = _is_ultra_processed(src)
+    show_watch_outs = _is_ultra and _ingredients_tags_has_neutral_or_negative(_ingredients_group)
 
     # Protein card
     protein_pctile = (stats.get("protein_percentiles") or {}).get("subcategory_percentile")
@@ -716,20 +759,43 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         }
         _apply_highlight_subtitle_to_card(score_cards["oils"], _highlight_tags_root, "oils_fats_tags")
 
-    # Watch-outs card (always include, visible flag indicates if should be shown)
-    empty_food_pctile = (stats.get("empty_food_penalty_percentiles") or {}).get("subcategory_percentile")
-    if empty_food_pctile is not None:
-        is_ultra_processed = empty_food_pctile < 40
-        _tier = _get_score_tier(empty_food_pctile)
-        score_cards["watch_outs"] = {
+    # Watch-outs vs Flean Rank (mutually exclusive)
+    if show_watch_outs:
+        has_negative = _ingredients_tags_has_negative(_ingredients_group)
+        _wo_tier = _watch_outs_tier(has_negative)
+        empty_food_pctile = (stats.get("empty_food_penalty_percentiles") or {}).get(
+            "subcategory_percentile"
+        )
+        watch_card: Dict[str, Any] = {
             "title": "Watch-outs",
-            "value": "Ultra-Processed" if is_ultra_processed else "None",
-            "subtitle": "Caution" if is_ultra_processed else "Good",
-            "percentile": round(empty_food_pctile, 1),
+            "value": "Ultra-Processed",
+            "percentile": round(empty_food_pctile, 1) if empty_food_pctile is not None else None,
+            "status": _wo_tier["status"],
+            "status_label": _wo_tier["label"],
+            "color": _wo_tier["color"],
+            "visible": True,
+        }
+        subtitle_new = _subtitle_new_from_highlight_group(
+            _ingredients_group,
+            include_buckets=_WATCH_OUTS_SUBTITLE_BUCKETS,
+        )
+        if subtitle_new:
+            watch_card["subtitle_new"] = subtitle_new
+        else:
+            watch_card["subtitle"] = "Caution" if _is_ultra else "Good"
+        score_cards["watch_outs"] = watch_card
+    elif flean_percentile is not None:
+        rank_pct = round(100 - flean_percentile, 1)
+        _tier = _get_score_tier(flean_percentile)
+        score_cards["flean_rank"] = {
+            "title": "Flean Rank",
+            "value": f"Top {rank_pct}%",
+            "subtitle": subcategory_label,
+            "percentile": round(flean_percentile, 1),
             "status": _tier["status"],
             "status_label": _tier["label"],
             "color": _tier["color"],
-            "visible": is_ultra_processed,
+            "icon_url": SCORE_CARD_ICONS["flean_rank"],
         }
 
     # Calories card

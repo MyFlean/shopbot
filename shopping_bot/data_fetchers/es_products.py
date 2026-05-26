@@ -633,20 +633,20 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     score_cards = {}
     _highlight_tags_root = _resolve_highlight_tags(src)
 
-    # Flean Rank card
-    if flean_percentile is not None:
-        rank_pct = round(100 - flean_percentile, 1)
-        _tier = _get_score_tier(flean_percentile)
-        score_cards["flean_rank"] = {
-            "title": "Flean Rank",
-            "value": f"Top {rank_pct}%",
-            "subtitle": subcategory_label,
-            "percentile": round(flean_percentile, 1),
-            "status": _tier["status"],
-            "status_label": _tier["label"],
-            "color": _tier["color"],
-            "icon_url": SCORE_CARD_ICONS["flean_rank"],
-        }
+    # Flean Rank card (disabled — overall rank shown via flean_badge only)
+    # if flean_percentile is not None:
+    #     rank_pct = round(100 - flean_percentile, 1)
+    #     _tier = _get_score_tier(flean_percentile)
+    #     score_cards["flean_rank"] = {
+    #         "title": "Flean Rank",
+    #         "value": f"Top {rank_pct}%",
+    #         "subtitle": subcategory_label,
+    #         "percentile": round(flean_percentile, 1),
+    #         "status": _tier["status"],
+    #         "status_label": _tier["label"],
+    #         "color": _tier["color"],
+    #         "icon_url": SCORE_CARD_ICONS["flean_rank"],
+    #     }
 
     # Protein card
     protein_pctile = (stats.get("protein_percentiles") or {}).get("subcategory_percentile")
@@ -671,7 +671,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         fib_rank = round(100 - fiber_pctile, 1)
         _tier = _get_score_tier(fiber_pctile)
         score_cards["fiber"] = {
-            "title": "Fiber",
+            "title": "Fiber & Carbs",
             "value": f"Top {fib_rank}%",
             "subtitle": "Efficiency",
             "percentile": round(fiber_pctile, 1),
@@ -685,11 +685,11 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     # Sweeteners card
     sweetener_pctile = (stats.get("sweetener_penalty_percentiles") or {}).get("subcategory_percentile")
     if sweetener_pctile is not None:
-        sw_level = "Low" if sweetener_pctile >= 70 else ("Medium" if sweetener_pctile >= 40 else "High")
+        sw_rank = round(100 - sweetener_pctile, 1)
         _tier = _get_score_tier(sweetener_pctile)
         score_cards["sweeteners"] = {
             "title": "Sweeteners",
-            "value": sw_level,
+            "value": f"Top {sw_rank}%",
             "subtitle": f"Percentile: {round(sweetener_pctile)}",
             "percentile": round(sweetener_pctile, 1),
             "status": _tier["status"],
@@ -699,16 +699,16 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         }
         _apply_highlight_subtitle_to_card(score_cards["sweeteners"], _highlight_tags_root, "sweetners_sugar_tags")
 
-    # Oils card
-    oil_pctile = (stats.get("oil_penalty_percentiles") or {}).get("subcategory_percentile")
-    if oil_pctile is not None:
-        oil_level = "Low" if oil_pctile >= 70 else ("Medium" if oil_pctile >= 40 else "High")
-        _tier = _get_score_tier(oil_pctile)
+    # Fat card (API key oils; percentile from total fat penalty)
+    fat_pctile = (stats.get("total_fat_penalty_percentiles") or {}).get("subcategory_percentile")
+    if fat_pctile is not None:
+        fat_rank = round(100 - fat_pctile, 1)
+        _tier = _get_score_tier(fat_pctile)
         score_cards["oils"] = {
-            "title": "Oils",
-            "value": oil_level,
-            "subtitle": f"Percentile: {round(oil_pctile)}",
-            "percentile": round(oil_pctile, 1),
+            "title": "Fat",
+            "value": f"Top {fat_rank}%",
+            "subtitle": f"Percentile: {round(fat_pctile)}",
+            "percentile": round(fat_pctile, 1),
             "status": _tier["status"],
             "status_label": _tier["label"],
             "color": _tier["color"],
@@ -744,7 +744,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
             _cal_status, _cal_label, _cal_color = "average", "Average Choice", "#6B7280"
         score_cards["calories"] = {
             "title": "Calories",
-            "value": f"{cal_val} kcal",
+            "value": f"{cal_val} kcal/ {cal_basis}",
             "subtitle": cal_basis,
             "percentile": round(calories_pctile, 1) if calories_pctile else None,
             "status": _cal_status,

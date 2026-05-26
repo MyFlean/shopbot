@@ -413,12 +413,25 @@ SCORE_CARD_ICONS: Dict[str, str] = {
 }
 
 
+_SCORE_TIER_BY_STATUS: Dict[str, Dict[str, Any]] = {t["status"]: t for t in SCORE_TIERS}
+
+
 def _get_score_tier(percentile: float) -> Dict[str, str]:
-    """Return status, label, and hex color for a given percentile (5-tier system)."""
+    """Return status, label, color, and theme for a given percentile (5-tier system)."""
     for tier in SCORE_TIERS:
         if percentile >= tier["min"]:
-            return {"status": tier["status"], "label": tier["label"], "color": tier["color"]}
-    return SCORE_TIERS[-1]
+            return _tier_to_card_fields(tier)
+    return _tier_to_card_fields(SCORE_TIERS[-1])
+
+
+def _tier_to_card_fields(tier: Dict[str, Any]) -> Dict[str, str]:
+    status = str(tier["status"])
+    return {
+        "status": status,
+        "label": tier["label"],
+        "color": tier["color"],
+        "theme": status,
+    }
 
 
 # Sentiment colors for PDP score-card subtitles (subset of SCORE_TIERS palette).
@@ -466,12 +479,13 @@ def _ingredients_tags_has_negative(group: Any) -> bool:
 
 def _watch_outs_tier(has_negative: bool) -> Dict[str, str]:
     if has_negative:
-        tier = SCORE_TIERS[-1]
-        return {"status": tier["status"], "label": tier["label"], "color": tier["color"]}
+        return _tier_to_card_fields(SCORE_TIERS[-1])
+    subpar = _SCORE_TIER_BY_STATUS["subpar"]
     return {
         "status": "warning",
         "label": "Caution",
-        "color": SCORE_TIERS[3]["color"],
+        "color": subpar["color"],
+        "theme": subpar["status"],
     }
 
 
@@ -704,6 +718,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
             "status": _tier["status"],
             "status_label": _tier["label"],
             "color": _tier["color"],
+            "theme": _tier["theme"],
             "icon_url": SCORE_CARD_ICONS["protein"],
         }
         _apply_highlight_subtitle_to_card(score_cards["protein"], _highlight_tags_root, "protein_tags")
@@ -721,6 +736,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
             "status": _tier["status"],
             "status_label": _tier["label"],
             "color": _tier["color"],
+            "theme": _tier["theme"],
             "icon_url": SCORE_CARD_ICONS["fiber"],
         }
         _apply_highlight_subtitle_to_card(score_cards["fiber"], _highlight_tags_root, "carbs_fiber_tags")
@@ -738,6 +754,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
             "status": _tier["status"],
             "status_label": _tier["label"],
             "color": _tier["color"],
+            "theme": _tier["theme"],
             "icon_url": SCORE_CARD_ICONS["sweeteners"],
         }
         _apply_highlight_subtitle_to_card(score_cards["sweeteners"], _highlight_tags_root, "sweetners_sugar_tags")
@@ -755,6 +772,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
             "status": _tier["status"],
             "status_label": _tier["label"],
             "color": _tier["color"],
+            "theme": _tier["theme"],
             "icon_url": SCORE_CARD_ICONS["oils"],
         }
         _apply_highlight_subtitle_to_card(score_cards["oils"], _highlight_tags_root, "oils_fats_tags")
@@ -773,6 +791,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
             "status": _wo_tier["status"],
             "status_label": _wo_tier["label"],
             "color": _wo_tier["color"],
+            "theme": _wo_tier["theme"],
             "visible": True,
         }
         subtitle_new = _subtitle_new_from_highlight_group(
@@ -795,6 +814,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
             "status": _tier["status"],
             "status_label": _tier["label"],
             "color": _tier["color"],
+            "theme": _tier["theme"],
             "icon_url": SCORE_CARD_ICONS["flean_rank"],
         }
 
@@ -804,18 +824,18 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         cal_basis = nutritional_data.get("qty", "100 g")
         calories_pctile = (stats.get("calories_penalty_percentiles") or {}).get("subcategory_percentile")
         if calories_pctile is not None:
-            _tier = _get_score_tier(calories_pctile)
-            _cal_status, _cal_label, _cal_color = _tier["status"], _tier["label"], _tier["color"]
+            _cal_tier = _get_score_tier(calories_pctile)
         else:
-            _cal_status, _cal_label, _cal_color = "average", "Average Choice", "#6B7280"
+            _cal_tier = _tier_to_card_fields(_SCORE_TIER_BY_STATUS["average"])
         score_cards["calories"] = {
             "title": "Calories",
             "value": f"{cal_val} kcal/ {cal_basis}",
             "subtitle": cal_basis,
             "percentile": round(calories_pctile, 1) if calories_pctile else None,
-            "status": _cal_status,
-            "status_label": _cal_label,
-            "color": _cal_color,
+            "status": _cal_tier["status"],
+            "status_label": _cal_tier["label"],
+            "color": _cal_tier["color"],
+            "theme": _cal_tier["theme"],
             "icon_url": SCORE_CARD_ICONS["calories"],
         }
         _apply_highlight_subtitle_to_card(score_cards["calories"], _highlight_tags_root, "energy_tags")

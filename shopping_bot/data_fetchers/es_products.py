@@ -16,7 +16,7 @@ from logging import log
 import os
 import re
 import time
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 import json
 from urllib.parse import urlparse
 
@@ -410,7 +410,42 @@ SCORE_CARD_ICONS: Dict[str, str] = {
     "sweeteners": "https://img.flean.ai/assets/Pdp-Icons/04.svg",
     "oils":       "https://img.flean.ai/assets/Pdp-Icons/05.svg",
     "calories":   "https://img.flean.ai/assets/Pdp-Icons/06.svg",
+    "additives":  "https://img.flean.ai/assets/Pdp-Icons/09.svg",
+    "preservatives": "https://img.flean.ai/assets/Pdp-Icons/10.svg",
 }
+
+# ingredients_tags domain sets and worst-wins tier rules (status, value, tag_ids).
+_INGREDIENTS_TIER_RULE = Tuple[str, str, FrozenSet[str]]
+
+ADDITIVES_TAG_IDS: FrozenSet[str] = frozenset({
+    "no_additives",
+    "no_harmful_additives",
+    "ok_additives_present",
+    "artificial_additives_present",
+    "harmful_additives_present",
+})
+
+ADDITIVES_TIER_RULES: List[_INGREDIENTS_TIER_RULE] = [
+    ("villain", "Harmful", frozenset({"harmful_additives_present"})),
+    ("subpar", "Caution", frozenset({"artificial_additives_present"})),
+    ("average", "Safe", frozenset({"ok_additives_present"})),
+    ("elite", "None", frozenset({"no_additives", "no_harmful_additives"})),
+]
+
+PRESERVATIVES_TAG_IDS: FrozenSet[str] = frozenset({
+    "preservative_free",
+    "ok_preservatives_present",
+    "artificial_preservatives_present",
+    "harmful_preservatives_present",
+    "preservative_present",
+})
+
+PRESERVATIVES_TIER_RULES: List[_INGREDIENTS_TIER_RULE] = [
+    ("villain", "Harmful", frozenset({"harmful_preservatives_present", "preservative_present"})),
+    ("subpar", "Caution", frozenset({"artificial_preservatives_present"})),
+    ("average", "Safe", frozenset({"ok_preservatives_present"})),
+    ("elite", "None", frozenset({"preservative_free"})),
+]
 
 
 _SCORE_TIER_BY_STATUS: Dict[str, Dict[str, Any]] = {t["status"]: t for t in SCORE_TIERS}
@@ -439,9 +474,6 @@ _HIGHLIGHT_SUBTITLE_POSITIVE_HEX = "#4E6E3A"  # top tier green
 _HIGHLIGHT_SUBTITLE_NEUTRAL_HEX = "#8D8D8D"  # average grey
 _HIGHLIGHT_SUBTITLE_NEGATIVE_HEX = "#E57964"  # villain red
 
-_WATCH_OUTS_SUBTITLE_BUCKETS: FrozenSet[str] = frozenset({"negative", "neutral"})
-
-
 def _normalize_processing_type(src: Dict[str, Any]) -> str:
     cd = src.get("category_data")
     if not isinstance(cd, dict):
@@ -461,14 +493,6 @@ def _ingredients_tags_group(highlight_root: Dict[str, Any]) -> Dict[str, Any]:
         return {}
     group = highlight_root.get("ingredients_tags")
     return group if isinstance(group, dict) else {}
-
-
-def _ingredients_tags_has_neutral_or_negative(group: Any) -> bool:
-    if not isinstance(group, dict):
-        return False
-    return bool(_highlight_tag_ids_from_group(group, "negative")) or bool(
-        _highlight_tag_ids_from_group(group, "neutral")
-    )
 
 
 def _ingredients_tags_has_negative(group: Any) -> bool:
@@ -518,9 +542,39 @@ def _highlight_tag_ids_from_group(group: Any, bucket: str) -> List[str]:
     return [str(x).strip() for x in raw if isinstance(x, str) and str(x).strip()]
 
 
+def _collect_ingredients_tag_ids(group: Any) -> Set[str]:
+    if not isinstance(group, dict):
+        return set()
+    ids: Set[str] = set()
+    for bucket in ("positive", "neutral", "negative"):
+        ids.update(_highlight_tag_ids_from_group(group, bucket))
+    return ids
+
+
+def _resolve_ingredients_domain_card(
+    group: Any,
+    domain_ids: FrozenSet[str],
+    tier_rules: List[_INGREDIENTS_TIER_RULE],
+) -> Optional[Dict[str, str]]:
+    """Worst-wins tier match among domain tag ids present in ingredients_tags."""
+    present = _collect_ingredients_tag_ids(group) & domain_ids
+    if not present:
+        return None
+    for status, value, rule_tags in tier_rules:
+        if present & rule_tags:
+            tier = _SCORE_TIER_BY_STATUS.get(status)
+            if not tier:
+                continue
+            fields = _tier_to_card_fields(tier)
+            fields["value"] = value
+            return fields
+    return None
+
+
 def _subtitle_new_from_highlight_group(
     group: Any,
     include_buckets: Optional[FrozenSet[str]] = None,
+    include_tag_ids: Optional[FrozenSet[str]] = None,
 ) -> Optional[List[Dict[str, str]]]:
     """
     Build subtitle_new entries from one highlight_tags group.
@@ -528,6 +582,7 @@ def _subtitle_new_from_highlight_group(
     Tags are ordered negative, then positive, then neutral. Each entry has
     tag_label (from config map) and color_code from its sentiment bucket.
     When include_buckets is set, only those sentiment buckets are included.
+    When include_tag_ids is set, only those tag ids are included.
     """
     if not isinstance(group, dict):
         return None
@@ -546,6 +601,8 @@ def _subtitle_new_from_highlight_group(
         if include_buckets is not None and bucket not in include_buckets:
             continue
         for tag_id in _highlight_tag_ids_from_group(group, bucket):
+            if include_tag_ids is not None and tag_id not in include_tag_ids:
+                continue
             label = label_for_tag_id(tag_id)
             if label:
                 items.append({"tag_label": label, "color_code": color})
@@ -557,12 +614,51 @@ def _apply_highlight_subtitle_to_card(
     highlight_root: Dict[str, Any],
     group_key: str,
     include_buckets: Optional[FrozenSet[str]] = None,
+    include_tag_ids: Optional[FrozenSet[str]] = None,
 ) -> None:
     """If highlight data exists, set subtitle_new only; legacy subtitle unchanged."""
     group = highlight_root.get(group_key) if isinstance(highlight_root, dict) else None
-    subtitle_new = _subtitle_new_from_highlight_group(group, include_buckets=include_buckets)
+    subtitle_new = _subtitle_new_from_highlight_group(
+        group,
+        include_buckets=include_buckets,
+        include_tag_ids=include_tag_ids,
+    )
     if subtitle_new:
         card["subtitle_new"] = subtitle_new
+
+
+def _build_ingredients_domain_card(
+    group: Any,
+    card_key: str,
+    title: str,
+    domain_ids: FrozenSet[str],
+    tier_rules: List[_INGREDIENTS_TIER_RULE],
+    stats: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    resolved = _resolve_ingredients_domain_card(group, domain_ids, tier_rules)
+    if not resolved:
+        return None
+
+    pctile_key = f"{card_key}_penalty_percentiles"
+    pctile = (stats.get(pctile_key) or {}).get("subcategory_percentile")
+
+    card: Dict[str, Any] = {
+        "title": title,
+        "value": resolved["value"],
+        "percentile": round(pctile, 1) if pctile is not None else None,
+        "status": resolved["status"],
+        "status_label": resolved["label"],
+        "color": resolved["color"],
+        "theme": resolved["theme"],
+        "icon_url": SCORE_CARD_ICONS[card_key],
+        "visible": True,
+    }
+    subtitle_new = _subtitle_new_from_highlight_group(group, include_tag_ids=domain_ids)
+    if subtitle_new:
+        card["subtitle_new"] = subtitle_new
+    else:
+        card["subtitle"] = title
+    return card
 
 
 _BADGE_SCORE_DENY = {"", "na", "n/a", "null", "-", "not detected"}
@@ -703,7 +799,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     _highlight_tags_root = _resolve_highlight_tags(src)
     _ingredients_group = _ingredients_tags_group(_highlight_tags_root)
     _is_ultra = _is_ultra_processed(src)
-    show_watch_outs = _is_ultra and _ingredients_tags_has_neutral_or_negative(_ingredients_group)
+    show_watch_outs = _is_ultra
 
     # Protein card
     protein_pctile = (stats.get("protein_percentiles") or {}).get("subcategory_percentile")
@@ -777,6 +873,28 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         }
         _apply_highlight_subtitle_to_card(score_cards["oils"], _highlight_tags_root, "oils_fats_tags")
 
+    _additives_card = _build_ingredients_domain_card(
+        _ingredients_group,
+        "additives",
+        "Additives",
+        ADDITIVES_TAG_IDS,
+        ADDITIVES_TIER_RULES,
+        stats,
+    )
+    if _additives_card:
+        score_cards["additives"] = _additives_card
+
+    _preservatives_card = _build_ingredients_domain_card(
+        _ingredients_group,
+        "preservatives",
+        "Preservatives",
+        PRESERVATIVES_TAG_IDS,
+        PRESERVATIVES_TIER_RULES,
+        stats,
+    )
+    if _preservatives_card:
+        score_cards["preservatives"] = _preservatives_card
+
     # Watch-outs vs Flean Rank (mutually exclusive)
     if show_watch_outs:
         has_negative = _ingredients_tags_has_negative(_ingredients_group)
@@ -784,9 +902,10 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         empty_food_pctile = (stats.get("empty_food_penalty_percentiles") or {}).get(
             "subcategory_percentile"
         )
-        watch_card: Dict[str, Any] = {
+        score_cards["watch_outs"] = {
             "title": "Watch-outs",
-            "value": "Ultra-Processed",
+            "value": "Processed",
+            "subtitle": "Ultra Processed",
             "percentile": round(empty_food_pctile, 1) if empty_food_pctile is not None else None,
             "status": _wo_tier["status"],
             "status_label": _wo_tier["label"],
@@ -794,15 +913,6 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
             "theme": _wo_tier["theme"],
             "visible": True,
         }
-        subtitle_new = _subtitle_new_from_highlight_group(
-            _ingredients_group,
-            include_buckets=_WATCH_OUTS_SUBTITLE_BUCKETS,
-        )
-        if subtitle_new:
-            watch_card["subtitle_new"] = subtitle_new
-        else:
-            watch_card["subtitle"] = "Caution" if _is_ultra else "Good"
-        score_cards["watch_outs"] = watch_card
     elif flean_percentile is not None:
         rank_pct = round(100 - flean_percentile, 1)
         _tier = _get_score_tier(flean_percentile)

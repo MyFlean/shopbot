@@ -396,11 +396,11 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 SCORE_TIERS: List[Dict[str, Any]] = [
-    {"min": 90, "status": "elite",   "label": "Best in Class",  "color": "#81A18C"},
-    {"min": 75, "status": "top",     "label": "Top Tier",       "color": "#8FAF9A2E"},
-    {"min": 50, "status": "average", "label": "Average Choice",  "color": "#F2E9BB80"},
+    {"min": 90, "status": "elite",   "label": "Best",  "color": "#81A18C"},
+    {"min": 75, "status": "top",     "label": "Top",       "color": "#8FAF9A2E"},
+    {"min": 50, "status": "average", "label": "Average",  "color": "#F2E9BB80"},
     {"min": 25, "status": "subpar",  "label": "Sub-Par",        "color": "#FFF3EF"},
-    {"min": 0,  "status": "villain", "label": "The Villain Zone","color": "#EF4444"},
+    {"min": 0,  "status": "villain", "label": "Avoid",     "color": "#EF4444"},
 ]
 
 SCORE_CARD_ICONS: Dict[str, str] = {
@@ -825,8 +825,8 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         fib_rank = round(100 - fiber_pctile, 1)
         _tier = _get_score_tier(fiber_pctile)
         score_cards["fiber"] = {
-            "title": "Fiber & Carbs",
-            "value": f"Top {fib_rank}%",
+            "title": "Fiber",
+            "value": _tier["label"],
             "subtitle": "Efficiency",
             "percentile": round(fiber_pctile, 1),
             "status": _tier["status"],
@@ -844,7 +844,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         _tier = _get_score_tier(sweetener_pctile)
         score_cards["sweeteners"] = {
             "title": "Sweeteners",
-            "value": f"Top {sw_rank}%",
+            "value": _tier["label"],
             "subtitle": f"Percentile: {round(sweetener_pctile)}",
             "percentile": round(sweetener_pctile, 1),
             "status": _tier["status"],
@@ -861,8 +861,8 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         fat_rank = round(100 - fat_pctile, 1)
         _tier = _get_score_tier(fat_pctile)
         score_cards["oils"] = {
-            "title": "Fat",
-            "value": f"Top {fat_rank}%",
+            "title": "Fats",
+            "value": _tier["label"],
             "subtitle": f"Percentile: {round(fat_pctile)}",
             "percentile": round(fat_pctile, 1),
             "status": _tier["status"],

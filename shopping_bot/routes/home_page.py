@@ -39,7 +39,11 @@ from typing import Any, Dict, List, Optional
 from flask import Blueprint, current_app, jsonify, request
 
 from ..data_fetchers.es_products import get_es_fetcher, transform_to_product_card
-from ..utils.pincode_mapping import PincodeMappingError, resolve_canonical_pincode
+from ..utils.pincode_mapping import (
+    PincodeMappingError,
+    is_placeholder_pincode,
+    resolve_canonical_pincode,
+)
 from .product_api import _validate_filters
 
 log = logging.getLogger(__name__)
@@ -207,7 +211,7 @@ def _resolve_request_pincode() -> Optional[str]:
 
 def _resolve_canonical_request_pincode() -> Optional[str]:
     request_pincode = _resolve_request_pincode()
-    if not request_pincode:
+    if is_placeholder_pincode(request_pincode):
         return None
     canonical_pincode = resolve_canonical_pincode(request_pincode)
     log.info(
@@ -220,6 +224,8 @@ def _resolve_canonical_request_pincode() -> Optional[str]:
 
 def _is_validation_filter_active_for_pincode(pincode: Optional[str]) -> bool:
     if not HOME_VALIDATION_FILTER_ENABLED:
+        return False
+    if is_placeholder_pincode(pincode):
         return False
     if not pincode:
         return False

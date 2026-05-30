@@ -406,12 +406,12 @@ SCORE_TIERS: List[Dict[str, Any]] = [
 SCORE_CARD_ICONS: Dict[str, str] = {
     "flean_rank": "https://img.flean.ai/assets/Pdp-Icons/01.svg",
     "protein":    "https://img.flean.ai/assets/Pdp-Icons/02.svg",
-    "fiber":      "https://img.flean.ai/assets/Pdp-Icons/fiber.png",
+    "fiber":      "https://img.flean.ai/assets/Pdp-Icons/fiber.svg",
     "sweeteners": "https://img.flean.ai/assets/Pdp-Icons/04.svg",
     "oils":       "https://img.flean.ai/assets/Pdp-Icons/05.svg",
     "calories":   "https://img.flean.ai/assets/Pdp-Icons/06.svg",
-    "preservatives": "https://img.flean.ai/assets/Pdp-Icons/preservatives.png",
-    "additives": "https://img.flean.ai/assets/Pdp-Icons/additives.png",
+    "preservatives": "https://img.flean.ai/assets/Pdp-Icons/preservatives.svg",
+    "additives": "https://img.flean.ai/assets/Pdp-Icons/additives.svg",
 }
 
 # ingredients_tags domain sets and worst-wins tier rules (status, value, tag_ids).

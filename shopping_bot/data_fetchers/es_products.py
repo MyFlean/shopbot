@@ -841,7 +841,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     sweetener_pctile = (stats.get("sweetener_penalty_percentiles") or {}).get("subcategory_percentile")
     if sweetener_pctile is not None:
         sw_rank = round(100 - sweetener_pctile, 1)
-        _tier = _get_score_tier(sweetener_pctile)
+        _tier = _get_score_tier(sw_rank)
         score_cards["sweeteners"] = {
             "title": "Sweeteners",
             "value": _tier["label"],
@@ -859,7 +859,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     fat_pctile = (stats.get("total_fat_penalty_percentiles") or {}).get("subcategory_percentile")
     if fat_pctile is not None:
         fat_rank = round(100 - fat_pctile, 1)
-        _tier = _get_score_tier(fat_pctile)
+        _tier = _get_score_tier(fat_rank)
         score_cards["oils"] = {
             "title": "Fats",
             "value": _tier["label"],
@@ -934,7 +934,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         cal_basis = nutritional_data.get("qty", "100 g")
         calories_pctile = (stats.get("calories_penalty_percentiles") or {}).get("subcategory_percentile")
         if calories_pctile is not None:
-            _cal_tier = _get_score_tier(calories_pctile)
+            _cal_tier = _get_score_tier(round(100 - calories_pctile, 1))
         else:
             _cal_tier = _tier_to_card_fields(_SCORE_TIER_BY_STATUS["average"])
         score_cards["calories"] = {

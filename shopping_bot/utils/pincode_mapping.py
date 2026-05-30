@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import boto3
 
@@ -14,6 +14,15 @@ log = logging.getLogger(__name__)
 
 class PincodeMappingError(RuntimeError):
     """Raised when request pincode cannot be canonicalized."""
+
+
+PLACEHOLDER_PINCODES = frozenset({"000000"})
+
+
+def is_placeholder_pincode(pincode: Optional[str]) -> bool:
+    """True when pincode is missing or a client placeholder (no serviceability lookup)."""
+    text = str(pincode or "").strip()
+    return not text or text in PLACEHOLDER_PINCODES
 
 
 def _load_serviceable_mapping() -> Dict[str, Dict[str, List[str]]]:

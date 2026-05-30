@@ -399,7 +399,7 @@ SCORE_TIERS: List[Dict[str, Any]] = [
     {"min": 90, "status": "elite",   "label": "Best",  "color": "#81A18C"},
     {"min": 75, "status": "top",     "label": "Top",       "color": "#8FAF9A2E"},
     {"min": 50, "status": "average", "label": "Average",  "color": "#F2E9BB80"},
-    {"min": 25, "status": "subpar",  "label": "Sub-Par",        "color": "#FFF3EF"},
+    {"min": 25, "status": "subpar",  "label": "Caution",        "color": "#FFF3EF"},
     {"min": 0,  "status": "villain", "label": "Avoid",     "color": "#EF4444"},
 ]
 

@@ -470,9 +470,9 @@ def _tier_to_card_fields(tier: Dict[str, Any]) -> Dict[str, str]:
 
 
 # Sentiment colors for PDP score-card subtitles (subset of SCORE_TIERS palette).
-_HIGHLIGHT_SUBTITLE_POSITIVE_HEX = "#4E6E3A"  # top tier green
-_HIGHLIGHT_SUBTITLE_NEUTRAL_HEX = "#8D8D8D"  # average grey
-_HIGHLIGHT_SUBTITLE_NEGATIVE_HEX = "#E57964"  # villain red
+_HIGHLIGHT_SUBTITLE_POSITIVE_HEX = "#2E7D32"  # top tier green
+_HIGHLIGHT_SUBTITLE_NEUTRAL_HEX = "#B49A61"  # average grey
+_HIGHLIGHT_SUBTITLE_NEGATIVE_HEX = "#C62828"  # villain red
 
 def _normalize_processing_type(src: Dict[str, Any]) -> str:
     cd = src.get("category_data")

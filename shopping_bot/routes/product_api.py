@@ -194,8 +194,9 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
       - flean_badge: score (float|null), score_display (string), level, level_text
         (fallback from adjusted_score: score is adjusted_score/10, score_display is full adjusted score as string; N/A if absent)
       - score_cards: named object with keys {protein, fiber, sweeteners, oils, additives, preservatives,
-                     watch_outs, calories, flean_rank} (oils title "Fat"; additives/preservatives from
-                     ingredients_tags tier rules with value/theme/subtitle_new; watch_outs when
+                     watch_outs, calories, flean_rank} (oils title "Fats"; additives value/theme from
+                     additives_penalty_percentiles.subcategory_percentile like sweeteners; preservatives
+                     from ingredients_tags tier rules; watch_outs when
                      processing_type is ultra_processed with value "Processed" and static subtitle
                      "Ultra Processed"; flean_rank only when watch_outs absent)
                      each containing {title, value, subtitle, subtitle_new, percentile, status, theme, ...}

@@ -406,12 +406,12 @@ SCORE_TIERS: List[Dict[str, Any]] = [
 SCORE_CARD_ICONS: Dict[str, str] = {
     "flean_rank": "https://img.flean.ai/assets/Pdp-Icons/01.svg",
     "protein":    "https://img.flean.ai/assets/Pdp-Icons/02.svg",
-    "fiber":      "https://img.flean.ai/assets/Pdp-Icons/fiber.svg",
+    "fiber":      "https://img.flean.ai/assets/Pdp-Icons/fiber1.svg",
     "sweeteners": "https://img.flean.ai/assets/Pdp-Icons/03.svg",
     "oils":       "https://img.flean.ai/assets/Pdp-Icons/04.svg",
     "calories":   "https://img.flean.ai/assets/Pdp-Icons/06.svg",
-    "preservatives": "https://img.flean.ai/assets/Pdp-Icons/preservatives.svg",
-    "additives": "https://img.flean.ai/assets/Pdp-Icons/additives.svg",
+    "preservatives": "https://img.flean.ai/assets/Pdp-Icons/preservatives1.svg",
+    "additives": "https://img.flean.ai/assets/Pdp-Icons/additives1.svg",
 }
 
 # ingredients_tags domain sets and worst-wins tier rules (status, value, tag_ids).
@@ -873,16 +873,28 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         }
         _apply_highlight_subtitle_to_card(score_cards["oils"], _highlight_tags_root, "oils_fats_tags")
 
-    _additives_card = _build_ingredients_domain_card(
-        _ingredients_group,
-        "additives",
-        "Additives",
-        ADDITIVES_TAG_IDS,
-        ADDITIVES_TIER_RULES,
-        stats,
-    )
-    if _additives_card:
-        score_cards["additives"] = _additives_card
+    # Additives card (percentile from additives_penalty_percentiles, like sweeteners)
+    additives_pctile = (stats.get("additives_penalty_percentiles") or {}).get("subcategory_percentile")
+    if additives_pctile is not None:
+        additives_rank = round(100 - additives_pctile, 1)
+        _tier = _get_score_tier(additives_rank)
+        score_cards["additives"] = {
+            "title": "Additives",
+            "value": _tier["label"],
+            "subtitle": f"Percentile: {round(additives_pctile)}",
+            "percentile": round(additives_pctile, 1),
+            "status": _tier["status"],
+            "status_label": _tier["label"],
+            "color": _tier["color"],
+            "theme": _tier["theme"],
+            "icon_url": SCORE_CARD_ICONS["additives"],
+            "visible": True,
+        }
+        subtitle_new = _subtitle_new_from_highlight_group(
+            _ingredients_group, include_tag_ids=ADDITIVES_TAG_IDS
+        )
+        if subtitle_new:
+            score_cards["additives"]["subtitle_new"] = subtitle_new
 
     _preservatives_card = _build_ingredients_domain_card(
         _ingredients_group,

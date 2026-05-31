@@ -20,18 +20,37 @@ def _base_src(**overrides):
             }
         elif key == "processing_type":
             src["category_data"]["processing_type"] = val
+        elif key == "stats":
+            src["stats"] = val
         else:
             src[key] = val
     return src
 
 
-def test_additives_caution_from_artificial_tag():
+def test_additives_average_from_penalty_percentile():
     src = _base_src(
+        stats={
+            "additives_penalty_percentiles": {"subcategory_percentile": 38.1},
+        }
+    )
+    pdp = transform_to_pdp(src)
+    card = pdp["score_cards"]["additives"]
+    assert card["value"] == "Average"
+    assert card["theme"] == "average"
+    assert card["percentile"] == 38.1
+    assert card["subtitle"] == "Percentile: 38"
+
+
+def test_additives_percentile_with_tag_subtitle_new():
+    src = _base_src(
+        stats={
+            "additives_penalty_percentiles": {"subcategory_percentile": 60.0},
+        },
         ingredients_tags={
             "positive": [],
             "neutral": ["artificial_additives_present"],
             "negative": [],
-        }
+        },
     )
     pdp = transform_to_pdp(src)
     card = pdp["score_cards"]["additives"]
@@ -86,11 +105,11 @@ def test_preservatives_villain_preservative_present():
     assert card["theme"] == "villain"
 
 
-def test_additives_omitted_when_no_tier_match():
+def test_additives_omitted_when_no_percentile():
     src = _base_src(
         ingredients_tags={
             "positive": ["high_protein"],
-            "neutral": [],
+            "neutral": ["artificial_additives_present"],
             "negative": [],
         }
     )
@@ -100,11 +119,14 @@ def test_additives_omitted_when_no_tier_match():
 
 def test_both_domain_cards_when_both_match():
     src = _base_src(
+        stats={
+            "additives_penalty_percentiles": {"subcategory_percentile": 38.1},
+        },
         ingredients_tags={
             "positive": ["preservative_free"],
             "neutral": ["artificial_additives_present"],
             "negative": [],
-        }
+        },
     )
     pdp = transform_to_pdp(src)
     assert "additives" in pdp["score_cards"]

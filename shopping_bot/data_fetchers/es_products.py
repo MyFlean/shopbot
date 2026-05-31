@@ -808,7 +808,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         _tier = _get_score_tier(protein_pctile)
         score_cards["protein"] = {
             "title": "Protein",
-            "value": f"Top {prot_rank}%",
+            "value": _tier["label"],
             "subtitle": "Efficiency",
             "percentile": round(protein_pctile, 1),
             "status": _tier["status"],

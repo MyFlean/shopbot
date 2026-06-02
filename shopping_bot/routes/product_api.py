@@ -215,6 +215,11 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
             return _error_response("INVALID_ID", "Product ID is required", 400)
 
         pid = product_id.strip()
+        if pid.endswith("_offer"):
+            pid = pid[:-len("_offer")]
+            if not pid:
+                return _error_response("INVALID_ID", "Product ID is required", 400)
+
         fetcher = get_es_fetcher()
         raw_src = fetcher.get_product_by_id(pid)
 

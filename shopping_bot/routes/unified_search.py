@@ -62,6 +62,11 @@ SORT_ALIASES = {
     "price": "price_asc",
 }
 
+# Keep unified search base personalization aligned with Flean Picks.
+BASE_PERSONALIZATION_FILTERS: Dict[str, Any] = {
+    "ingredient_preferences": ["no_palm_oil"],
+}
+
 
 def _resolve_sort(raw: Optional[str], has_query: bool = False) -> str:
     """Normalize sort input: query defaults + catalogue aliases -> canonical unified values."""
@@ -104,6 +109,24 @@ def _normalize_filter_aliases(filters: Optional[Dict[str, Any]]) -> Optional[Dic
         normalized.pop("dietary", None)
 
     return normalized
+
+
+def _merge_filters(base: Dict[str, Any], user: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge base filters with user filters (user wins, list values are unioned)."""
+    if not user:
+        return dict(base)
+    merged: Dict[str, Any] = {}
+    for key in {*base, *user}:
+        bv = base.get(key)
+        uv = user.get(key)
+        if isinstance(bv, list) and isinstance(uv, list):
+            seen: set = set()
+            merged[key] = [x for x in (bv + uv) if not (x in seen or seen.add(x))]
+        elif uv is not None:
+            merged[key] = uv
+        else:
+            merged[key] = bv
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -190,8 +213,10 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 raw_filters = dict(raw_filters)
                 raw_filters["food_type"] = top_food_type
 
-        # At least one selector is required
-        if not query and not subcategory and not raw_filters:
+        has_user_filters = bool(raw_filters)
+
+        # At least one selector is required (based on user input only).
+        if not query and not subcategory and not has_user_filters:
             return _error_response(
                 "MISSING_PARAMETER",
                 "At least one of 'query', 'subcategory', or 'filters' must be provided",
@@ -207,9 +232,10 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 400,
             )
 
-        # Normalize filter key aliases, then validate via product_api validator
-        normalized_filters = _normalize_filter_aliases(raw_filters if raw_filters else None)
-        validated_filters, filter_error = _validate_filters(normalized_filters)
+        # Normalize user filter aliases, merge with base defaults, then validate.
+        normalized_user_filters = _normalize_filter_aliases(raw_filters if raw_filters else None)
+        merged_filters = _merge_filters(BASE_PERSONALIZATION_FILTERS, normalized_user_filters)
+        validated_filters, filter_error = _validate_filters(merged_filters)
         if filter_error:
             return _error_response("INVALID_FILTERS", filter_error, 400)
 

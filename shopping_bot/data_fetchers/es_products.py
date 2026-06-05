@@ -3944,11 +3944,106 @@ class ElasticsearchProductsFetcher:
             hits = (data.get("hits", {}) or {}).get("hits", []) or []
             total = (data.get("hits", {}) or {}).get("total", {})
             total_count = total.get("value", 0) if isinstance(total, dict) else total
+
+            # Safe fallback for zero-result text queries:
+            # keep current relevance path untouched and only retry when primary
+            # lexical/fuzzy matching returns no results.
+            fallback_used = False
+            if (
+                total_count == 0
+                and query_text
+                and not subcat
+                and page == 0
+            ):
+                fallback_tokens = re.findall(r"[a-z0-9]+", query_text.lower())
+                fallback_tokens = [t for t in fallback_tokens if 3 <= len(t) <= 24][:6]
+                if fallback_tokens:
+                    fallback_should: List[Dict[str, Any]] = [
+                        {
+                            "match_phrase_prefix": {
+                                "name": {
+                                    "query": query_text,
+                                    "boost": 5.0,
+                                    "max_expansions": 30
+                                }
+                            }
+                        }
+                    ]
+
+                    for idx, token in enumerate(fallback_tokens):
+                        token_boost = max(6.0 - (idx * 0.6), 3.0)
+                        fallback_should.extend([
+                            {
+                                "prefix": {
+                                    "name.keyword": {
+                                        "value": token,
+                                        "boost": token_boost
+                                    }
+                                }
+                            },
+                            {
+                                "wildcard": {
+                                    "name.keyword": {
+                                        "value": f"{token}*",
+                                        "boost": max(token_boost - 2.5, 1.2)
+                                    }
+                                }
+                            },
+                            {
+                                "prefix": {
+                                    "brand.keyword": {
+                                        "value": token,
+                                        "boost": 2.0
+                                    }
+                                }
+                            },
+                        ])
+
+                    fallback_query = {
+                        "bool": {
+                            "filter": filter_clauses,
+                            "should": fallback_should,
+                            "minimum_should_match": 1
+                        }
+                    }
+                    fallback_body: Dict[str, Any] = {
+                        "size": size,
+                        "from": offset,
+                        "track_total_hits": True,
+                        "_source": body.get("_source"),
+                        "query": fallback_query,
+                        "sort": sort_config,
+                    }
+                    fallback_response = requests.post(
+                        search_endpoint,
+                        json=fallback_body,
+                        timeout=TIMEOUT,
+                        **self._request_kwargs(),
+                    )
+                    fallback_response.raise_for_status()
+                    fallback_data = fallback_response.json() or {}
+                    fallback_hits = (fallback_data.get("hits", {}) or {}).get("hits", []) or []
+                    fallback_total = (fallback_data.get("hits", {}) or {}).get("total", {})
+                    fallback_total_count = (
+                        fallback_total.get("value", 0) if isinstance(fallback_total, dict) else fallback_total
+                    )
+                    if fallback_total_count > 0:
+                        data = fallback_data
+                        hits = fallback_hits
+                        total_count = fallback_total_count
+                        fallback_used = True
+                        print(
+                            "DEBUG: ES search_products_unified fallback_hit "
+                            f"| query={query_text} | token_count={len(fallback_tokens)} | total={fallback_total_count}"
+                        )
             
             # Extract raw _source from each hit
             products = [h.get("_source", {}) for h in hits if h.get("_source")]
             
-            print(f"DEBUG: ES search_products_unified | total={total_count} | returned={len(products)}")
+            print(
+                f"DEBUG: ES search_products_unified | total={total_count} | "
+                f"returned={len(products)} | fallback_used={fallback_used}"
+            )
             
             return {
                 "products": products,

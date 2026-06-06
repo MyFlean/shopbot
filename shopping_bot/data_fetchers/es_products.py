@@ -24,6 +24,7 @@ import requests
 
 from ..enums import BackendFunction
 from . import register_fetcher
+from ..config import get_config
 from ..scoring_config import build_function_score_functions
 from ..utils.pdp_tag_labels import label_for_tag_id
 
@@ -135,6 +136,9 @@ ELASTIC_API_KEY = (os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")).
 TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
 SUGGEST_API_ENABLED = not _is_truthy_env("SEARCH_SUGGEST_DISABLED")
 GUARDED_FUZZY_FALLBACK_ENABLED = not _is_truthy_env("SEARCH_DISABLE_FUZZY_FALLBACK")
+Cfg = get_config()
+SEARCH_SUGGEST_PHONETIC_ENABLED = bool(getattr(Cfg, "SEARCH_SUGGEST_PHONETIC_ENABLED", False))
+SEARCH_UNIFIED_PHONETIC_ENABLED = bool(getattr(Cfg, "SEARCH_UNIFIED_PHONETIC_ENABLED", False))
 
 # Debug search config on module load
 print("="*80)
@@ -3286,6 +3290,39 @@ class ElasticsearchProductsFetcher:
             size = 8
             size = max(1, min(int(size), 20))
             filter_clauses: List[Dict[str, Any]] = [VISIBILITY_FILTER]
+            primary_should: List[Dict[str, Any]] = [
+                {
+                    "multi_match": {
+                        "query": query_text,
+                        "type": "bool_prefix",
+                        "fields": [
+                            "name_sayt^3",
+                            "name_sayt._2gram^2.2",
+                            "name_sayt._3gram^1.6",
+                            "brand_sayt^2",
+                            "brand_sayt._2gram^1.3",
+                            "brand_sayt._3gram^1.1",
+                        ],
+                    }
+                }
+            ]
+            if SEARCH_SUGGEST_PHONETIC_ENABLED:
+                # Experiment: prioritize phonetic matching in primary suggestion retrieval.
+                primary_should.insert(
+                    0,
+                    {
+                        "multi_match": {
+                            "query": query_text,
+                            "fields": [
+                                "name_phonetic^16",
+                                "brand_phonetic^11",
+                            ],
+                            "type": "best_fields",
+                            "operator": "or",
+                            "boost": 18.0,
+                        }
+                    },
+                )
 
             body: Dict[str, Any] = {
                 "size": min(size * 4, 80),
@@ -3296,22 +3333,8 @@ class ElasticsearchProductsFetcher:
                 "query": {
                     "bool": {
                         "filter": filter_clauses,
-                        "must": [
-                            {
-                                "multi_match": {
-                                    "query": query_text,
-                                    "type": "bool_prefix",
-                                    "fields": [
-                                        "name_sayt^3",
-                                        "name_sayt._2gram^2.2",
-                                        "name_sayt._3gram^1.6",
-                                        "brand_sayt^2",
-                                        "brand_sayt._2gram^1.3",
-                                        "brand_sayt._3gram^1.1",
-                                    ],
-                                }
-                            }
-                        ],
+                        "should": primary_should,
+                        "minimum_should_match": 1,
                     }
                 },
             }
@@ -3331,6 +3354,7 @@ class ElasticsearchProductsFetcher:
             fallback_used = False
             fuzzy_fallback_used = False
             prefix_fallback_used = False
+            phonetic_fallback_used = False
 
             # Stage-2 fuzzy fallback for typo-tolerant suggestions.
             if not hits and len(query_text) >= 3:
@@ -3431,6 +3455,46 @@ class ElasticsearchProductsFetcher:
                 hits = (fallback_data.get("hits", {}) or {}).get("hits", []) or []
                 took_ms = int(fallback_data.get("took", 0) or 0)
 
+            # Stage-4 phonetic fallback for sound-alike typos.
+            if not hits and SEARCH_SUGGEST_PHONETIC_ENABLED and len(query_text) >= 3:
+                fallback_used = True
+                phonetic_fallback_used = True
+                phonetic_body: Dict[str, Any] = {
+                    "size": min(size * 4, 80),
+                    "track_total_hits": False,
+                    "_source": body["_source"],
+                    "min_score": 0.35,
+                    "query": {
+                        "bool": {
+                            "filter": filter_clauses,
+                            "should": [
+                                {
+                                    "multi_match": {
+                                        "query": query_text,
+                                        "fields": [
+                                            "name_phonetic^3.0",
+                                            "brand_phonetic^1.8",
+                                        ],
+                                        "type": "best_fields",
+                                        "operator": "or",
+                                    }
+                                }
+                            ],
+                            "minimum_should_match": 1,
+                        }
+                    },
+                }
+                phonetic_response = requests.post(
+                    search_endpoint,
+                    json=phonetic_body,
+                    timeout=TIMEOUT,
+                    **self._request_kwargs(),
+                )
+                phonetic_response.raise_for_status()
+                phonetic_data = phonetic_response.json() or {}
+                hits = (phonetic_data.get("hits", {}) or {}).get("hits", []) or []
+                took_ms = int(phonetic_data.get("took", 0) or 0)
+
             seen_text: set = set()
             suggestions: List[Dict[str, Any]] = []
             for hit in hits:
@@ -3494,6 +3558,7 @@ class ElasticsearchProductsFetcher:
                     "fallback_used": fallback_used,
                     "fuzzy_fallback_used": fuzzy_fallback_used,
                     "prefix_fallback_used": prefix_fallback_used,
+                    "phonetic_fallback_used": phonetic_fallback_used,
                     "took_ms": took_ms,
                 },
             }
@@ -3961,6 +4026,7 @@ class ElasticsearchProductsFetcher:
             subcat = subcategory.strip() if has_subcategory else None
             size = max(1, min(size, 100))
             offset = page * size
+            phonetic_used = False
             
             # Build sort configuration
             sort_config = _build_sort_config(sort_by if sort_by != "relevance" else None)
@@ -4058,17 +4124,27 @@ class ElasticsearchProductsFetcher:
                 # Balanced text search:
                 # - strongly reward exact/near-exact name matches
                 # - keep fuzzy matching as a lower-priority fallback
+                must_fields = [
+                    "name^8",
+                    "brand^1.5",
+                    "category_paths^0.8",
+                ]
+                if SEARCH_UNIFIED_PHONETIC_ENABLED:
+                    # Experiment: prioritize phonetic retrieval for sound-alike spellings.
+                    must_fields = [
+                        "name_phonetic^14",
+                        "brand_phonetic^9",
+                        "name^6",
+                        "brand^1.5",
+                        "category_paths^0.8",
+                    ]
                 query_body: Dict[str, Any] = {
                     "bool": {
                         "must": [
                             {
                                 "multi_match": {
                                     "query": core_query_text,
-                                    "fields": [
-                                        "name^8",
-                                        "brand^1.5",
-                                        "category_paths^0.8",
-                                    ],
+                                    "fields": must_fields,
                                     "type": "best_fields",
                                     "operator": must_operator,
                                     "minimum_should_match": required_token_coverage,
@@ -4142,6 +4218,20 @@ class ElasticsearchProductsFetcher:
                                 }
                             }
                         })
+                if SEARCH_UNIFIED_PHONETIC_ENABLED:
+                    query_body["bool"]["should"].append({
+                        "multi_match": {
+                            "query": query_text,
+                            "fields": [
+                                "name_phonetic^16",
+                                "brand_phonetic^11",
+                            ],
+                            "type": "best_fields",
+                            "operator": "or",
+                            "boost": 18.0,
+                        }
+                    })
+                    phonetic_used = True
             else:
                 # Browse mode: match_all with filters
                 query_body = {
@@ -4406,6 +4496,7 @@ class ElasticsearchProductsFetcher:
                     "took_ms": int(data.get("took", 0) or 0),
                     "fuzzy_fallback_used": fuzzy_fallback_used,
                     "prefix_fallback_used": fallback_used,
+                    "phonetic_used": phonetic_used,
                 }
             }
             

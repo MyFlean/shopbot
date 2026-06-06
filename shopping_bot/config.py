@@ -84,6 +84,9 @@ class BaseConfig:
     USE_ASSESSMENT_FOR_ASK_ONLY: bool = os.getenv("USE_ASSESSMENT_FOR_ASK_ONLY", "false").lower() in {"1", "true", "yes", "on"}
     # Flag: enable/disable budget questions globally in ASKUSER flows
     ASK_ENABLE_BUDGET: bool = os.getenv("ASK_ENABLE_BUDGET", "false").lower() in {"1", "true", "yes", "on"}
+    # Search phonetic feature flags
+    SEARCH_SUGGEST_PHONETIC_ENABLED: bool = os.getenv("SEARCH_SUGGEST_PHONETIC_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+    SEARCH_UNIFIED_PHONETIC_ENABLED: bool = os.getenv("SEARCH_UNIFIED_PHONETIC_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     
     # Health threshold filter: minimum flean percentile to include products (0-100, default 0 = disabled)
     HEALTH_THRESHOLD_PERCENTILE: float = float(os.getenv("HEALTH_THRESHOLD_PERCENTILE", "0"))

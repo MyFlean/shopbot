@@ -24,6 +24,7 @@ import requests
 
 from ..enums import BackendFunction
 from . import register_fetcher
+from ..config import get_config
 from ..scoring_config import build_function_score_functions
 from ..utils.pdp_tag_labels import label_for_tag_id
 
@@ -133,6 +134,11 @@ _RAW_ES_URL = os.getenv("ES_URL") or os.getenv("ELASTIC_BASE", "")
 ELASTIC_BASE = _normalize_es_base(_RAW_ES_URL, ELASTIC_INDEX)
 ELASTIC_API_KEY = (os.getenv("ES_API_KEY") or os.getenv("ELASTIC_API_KEY", "")).strip().strip("'\"")
 TIMEOUT = int(os.getenv("ELASTIC_TIMEOUT_SECONDS", "10"))
+SUGGEST_API_ENABLED = not _is_truthy_env("SEARCH_SUGGEST_DISABLED")
+GUARDED_FUZZY_FALLBACK_ENABLED = not _is_truthy_env("SEARCH_DISABLE_FUZZY_FALLBACK")
+Cfg = get_config()
+SEARCH_SUGGEST_PHONETIC_ENABLED = bool(getattr(Cfg, "SEARCH_SUGGEST_PHONETIC_ENABLED", False))
+SEARCH_UNIFIED_PHONETIC_ENABLED = bool(getattr(Cfg, "SEARCH_UNIFIED_PHONETIC_ENABLED", False))
 
 # Debug search config on module load
 print("="*80)
@@ -3269,6 +3275,305 @@ class ElasticsearchProductsFetcher:
             print(f"DEBUG: Brand suggest failed: {exc}")
         return None
 
+    def search_suggestions(
+        self,
+        query: str,
+    ) -> Dict[str, Any]:
+        """Fetch autocomplete suggestions using search_as_you_type fields."""
+        try:
+            if not SUGGEST_API_ENABLED:
+                return {"suggestions": [], "meta": {"error": "suggest_api_disabled"}}
+            query_text = " ".join((query or "").strip().split())
+            if not query_text:
+                return {"suggestions": [], "meta": {"query": "", "size": 0, "fallback_used": False}}
+
+            size = 8
+            size = max(1, min(int(size), 20))
+            filter_clauses: List[Dict[str, Any]] = [VISIBILITY_FILTER]
+            primary_should: List[Dict[str, Any]] = [
+                {
+                    "multi_match": {
+                        "query": query_text,
+                        "type": "bool_prefix",
+                        "fields": [
+                            "name_sayt^3",
+                            "name_sayt._2gram^2.2",
+                            "name_sayt._3gram^1.6",
+                            "brand_sayt^2",
+                            "brand_sayt._2gram^1.3",
+                            "brand_sayt._3gram^1.1",
+                        ],
+                    }
+                }
+            ]
+            if SEARCH_SUGGEST_PHONETIC_ENABLED:
+                # Experiment: prioritize phonetic matching in primary suggestion retrieval.
+                primary_should.insert(
+                    0,
+                    {
+                        "multi_match": {
+                            "query": query_text,
+                            "fields": [
+                                "name_phonetic^16",
+                                "brand_phonetic^11",
+                            ],
+                            "type": "best_fields",
+                            "operator": "or",
+                            "boost": 18.0,
+                        }
+                    },
+                )
+
+            body: Dict[str, Any] = {
+                "size": min(size * 4, 80),
+                "track_total_hits": False,
+                "_source": {
+                    "includes": ["name", "brand", "category_group", "category_paths"],
+                },
+                "query": {
+                    "bool": {
+                        "filter": filter_clauses,
+                        "should": primary_should,
+                        "minimum_should_match": 1,
+                    }
+                },
+            }
+
+            search_endpoint = f"{self.base_url}/{self.index}/_search"
+            response = requests.post(
+                search_endpoint,
+                json=body,
+                timeout=TIMEOUT,
+                **self._request_kwargs(),
+            )
+            response.raise_for_status()
+            data = response.json() or {}
+            hits = (data.get("hits", {}) or {}).get("hits", []) or []
+            took_ms = int(data.get("took", 0) or 0)
+
+            fallback_used = False
+            fuzzy_fallback_used = False
+            prefix_fallback_used = False
+            phonetic_fallback_used = False
+
+            # Stage-2 fuzzy fallback for typo-tolerant suggestions.
+            if not hits and len(query_text) >= 3:
+                fallback_used = True
+                fuzzy_fallback_used = True
+                fuzzy_body: Dict[str, Any] = {
+                    "size": min(size * 4, 80),
+                    "track_total_hits": False,
+                    "_source": body["_source"],
+                    "min_score": 0.45,
+                    "query": {
+                        "bool": {
+                            "filter": filter_clauses,
+                            "should": [
+                                {
+                                    "multi_match": {
+                                        "query": query_text,
+                                        "fields": [
+                                            "name^4",
+                                            "brand^2",
+                                        ],
+                                        "type": "best_fields",
+                                        "operator": "or",
+                                        "fuzziness": "AUTO",
+                                        "prefix_length": 1,
+                                        "max_expansions": 25,
+                                    }
+                                },
+                                {
+                                    "match_phrase_prefix": {
+                                        "name": {
+                                            "query": query_text,
+                                            "boost": 2.1,
+                                            "max_expansions": 15,
+                                        }
+                                    }
+                                },
+                            ],
+                            "minimum_should_match": 1,
+                        }
+                    },
+                }
+                fuzzy_response = requests.post(
+                    search_endpoint,
+                    json=fuzzy_body,
+                    timeout=TIMEOUT,
+                    **self._request_kwargs(),
+                )
+                fuzzy_response.raise_for_status()
+                fuzzy_data = fuzzy_response.json() or {}
+                hits = (fuzzy_data.get("hits", {}) or {}).get("hits", []) or []
+                took_ms = int(fuzzy_data.get("took", 0) or 0)
+
+            # Stage-3 lexical fallback keeps suggestions functioning until all docs
+            # are reindexed with search_as_you_type fields.
+            if not hits:
+                fallback_used = True
+                prefix_fallback_used = True
+                fallback_body: Dict[str, Any] = {
+                    "size": min(size * 4, 80),
+                    "track_total_hits": False,
+                    "_source": body["_source"],
+                    "query": {
+                        "bool": {
+                            "filter": filter_clauses,
+                            "should": [
+                                {
+                                    "match_phrase_prefix": {
+                                        "name": {
+                                            "query": query_text,
+                                            "boost": 4.0,
+                                            "max_expansions": 30,
+                                        }
+                                    }
+                                },
+                                {
+                                    "match_phrase_prefix": {
+                                        "brand": {
+                                            "query": query_text,
+                                            "boost": 2.4,
+                                            "max_expansions": 20,
+                                        }
+                                    }
+                                },
+                            ],
+                            "minimum_should_match": 1,
+                        }
+                    },
+                }
+                fallback_response = requests.post(
+                    search_endpoint,
+                    json=fallback_body,
+                    timeout=TIMEOUT,
+                    **self._request_kwargs(),
+                )
+                fallback_response.raise_for_status()
+                fallback_data = fallback_response.json() or {}
+                hits = (fallback_data.get("hits", {}) or {}).get("hits", []) or []
+                took_ms = int(fallback_data.get("took", 0) or 0)
+
+            # Stage-4 phonetic fallback for sound-alike typos.
+            if not hits and SEARCH_SUGGEST_PHONETIC_ENABLED and len(query_text) >= 3:
+                fallback_used = True
+                phonetic_fallback_used = True
+                phonetic_body: Dict[str, Any] = {
+                    "size": min(size * 4, 80),
+                    "track_total_hits": False,
+                    "_source": body["_source"],
+                    "min_score": 0.35,
+                    "query": {
+                        "bool": {
+                            "filter": filter_clauses,
+                            "should": [
+                                {
+                                    "multi_match": {
+                                        "query": query_text,
+                                        "fields": [
+                                            "name_phonetic^3.0",
+                                            "brand_phonetic^1.8",
+                                        ],
+                                        "type": "best_fields",
+                                        "operator": "or",
+                                    }
+                                }
+                            ],
+                            "minimum_should_match": 1,
+                        }
+                    },
+                }
+                phonetic_response = requests.post(
+                    search_endpoint,
+                    json=phonetic_body,
+                    timeout=TIMEOUT,
+                    **self._request_kwargs(),
+                )
+                phonetic_response.raise_for_status()
+                phonetic_data = phonetic_response.json() or {}
+                hits = (phonetic_data.get("hits", {}) or {}).get("hits", []) or []
+                took_ms = int(phonetic_data.get("took", 0) or 0)
+
+            seen_text: set = set()
+            suggestions: List[Dict[str, Any]] = []
+            for hit in hits:
+                src = hit.get("_source") or {}
+                score = float(hit.get("_score") or 0.0)
+                name = " ".join(str(src.get("name") or "").split()).strip()
+                brand = " ".join(str(src.get("brand") or "").split()).strip()
+                category = " ".join(str(src.get("category_group") or "").split()).strip()
+
+                if name:
+                    key = f"product::{name.lower()}"
+                    if key not in seen_text:
+                        seen_text.add(key)
+                        suggestions.append({
+                            "text": name,
+                            "type": "product",
+                            "brand": brand or None,
+                            "category_group": category or None,
+                            "score": score,
+                        })
+                if brand:
+                    key = f"brand::{brand.lower()}"
+                    if key not in seen_text:
+                        seen_text.add(key)
+                        suggestions.append({
+                            "text": brand,
+                            "type": "brand",
+                            "brand": brand,
+                            "category_group": category or None,
+                            "score": max(score - 0.2, 0.0),
+                        })
+
+            # Deterministic tie-break to avoid suggestion order jitter.
+            # Prioritize brand suggestions before product suggestions.
+            def _type_priority(item: Dict[str, Any]) -> int:
+                t = str(item.get("type") or "").lower()
+                if t == "brand":
+                    return 0
+                if t == "product":
+                    return 1
+                return 2
+
+            suggestions.sort(
+                key=lambda s: (
+                    _type_priority(s),
+                    -float(s.get("score") or 0.0),
+                    len(s.get("text", "")),
+                    s.get("text", "").lower(),
+                )
+            )
+            suggestions = suggestions[:size]
+            for item in suggestions:
+                item.pop("score", None)
+
+            return {
+                "suggestions": suggestions,
+                "meta": {
+                    "query": query_text,
+                    "size": size,
+                    "returned": len(suggestions),
+                    "fallback_used": fallback_used,
+                    "fuzzy_fallback_used": fuzzy_fallback_used,
+                    "prefix_fallback_used": prefix_fallback_used,
+                    "phonetic_fallback_used": phonetic_fallback_used,
+                    "took_ms": took_ms,
+                },
+            }
+        except requests.exceptions.Timeout:
+            return {
+                "suggestions": [],
+                "meta": {"query": query, "size": 8, "returned": 0, "error": "timeout"},
+            }
+        except Exception as exc:
+            print(f"DEBUG: ES search_suggestions failed | query={query} | error={exc}")
+            return {
+                "suggestions": [],
+                "meta": {"query": query, "size": 8, "returned": 0, "error": str(exc)},
+            }
+
     def search_by_ids(self, ids: List[str]) -> List[Dict[str, Any]]:
         """Fetch documents by matching the 'id' field using a terms query.
 
@@ -3721,6 +4026,7 @@ class ElasticsearchProductsFetcher:
             subcat = subcategory.strip() if has_subcategory else None
             size = max(1, min(size, 100))
             offset = page * size
+            phonetic_used = False
             
             # Build sort configuration
             sort_config = _build_sort_config(sort_by if sort_by != "relevance" else None)
@@ -3781,36 +4087,64 @@ class ElasticsearchProductsFetcher:
                 if query_token_count <= 1:
                     must_operator = "or"
                     required_token_coverage = "100%"
-                    fuzzy_fuzziness = "AUTO"
-                    fuzzy_boost = 0.8
+                    token_len = len(query_tokens[0]) if query_tokens else 0
+                    if token_len <= 3:
+                        fuzzy_fuzziness = "AUTO"
+                        fuzzy_prefix_length = 1
+                        fuzzy_max_expansions = 20
+                        fuzzy_boost = 0.35
+                    elif token_len <= 6:
+                        fuzzy_fuzziness = "AUTO"
+                        fuzzy_prefix_length = 1
+                        fuzzy_max_expansions = 30
+                        fuzzy_boost = 0.55
+                    else:
+                        fuzzy_fuzziness = "AUTO"
+                        fuzzy_prefix_length = 2
+                        fuzzy_max_expansions = 40
+                        fuzzy_boost = 0.75
                     dynamic_min_score = 0.2
                 elif query_token_count == 2:
                     must_operator = "and"
                     required_token_coverage = "100%"
-                    fuzzy_fuzziness = "1"
+                    fuzzy_fuzziness = "AUTO"
+                    fuzzy_prefix_length = 1
+                    fuzzy_max_expansions = 35
                     fuzzy_boost = 0.7
                     dynamic_min_score = 0.25
                 else:
                     must_operator = "or"
                     required_token_coverage = "2<75%"
-                    fuzzy_fuzziness = "1"
+                    fuzzy_fuzziness = "AUTO"
+                    fuzzy_prefix_length = 2
+                    fuzzy_max_expansions = 40
                     fuzzy_boost = 0.6
                     dynamic_min_score = 0.1
 
                 # Balanced text search:
                 # - strongly reward exact/near-exact name matches
                 # - keep fuzzy matching as a lower-priority fallback
+                must_fields = [
+                    "name^8",
+                    "brand^1.5",
+                    "category_paths^0.8",
+                ]
+                if SEARCH_UNIFIED_PHONETIC_ENABLED:
+                    # Experiment: prioritize phonetic retrieval for sound-alike spellings.
+                    must_fields = [
+                        "name_phonetic^14",
+                        "brand_phonetic^9",
+                        "name^6",
+                        "brand^1.5",
+                        "category_paths^0.8",
+                    ]
                 query_body: Dict[str, Any] = {
                     "bool": {
                         "must": [
                             {
                                 "multi_match": {
                                     "query": core_query_text,
-                                    "fields": [
-                                        "name^8",
-                                        "brand^1.5",
-                                        "category_paths^0.8",
-                                    ],
+                                    "fields": must_fields,
                                     "type": "best_fields",
                                     "operator": must_operator,
                                     "minimum_should_match": required_token_coverage,
@@ -3862,6 +4196,9 @@ class ElasticsearchProductsFetcher:
                                     ],
                                     "type": "best_fields",
                                     "fuzziness": fuzzy_fuzziness,
+                                    "prefix_length": fuzzy_prefix_length,
+                                    "max_expansions": fuzzy_max_expansions,
+                                    "fuzzy_transpositions": True,
                                     "boost": fuzzy_boost
                                 }
                             }
@@ -3881,6 +4218,20 @@ class ElasticsearchProductsFetcher:
                                 }
                             }
                         })
+                if SEARCH_UNIFIED_PHONETIC_ENABLED:
+                    query_body["bool"]["should"].append({
+                        "multi_match": {
+                            "query": query_text,
+                            "fields": [
+                                "name_phonetic^16",
+                                "brand_phonetic^11",
+                            ],
+                            "type": "best_fields",
+                            "operator": "or",
+                            "boost": 18.0,
+                        }
+                    })
+                    phonetic_used = True
             else:
                 # Browse mode: match_all with filters
                 query_body = {
@@ -3944,11 +4295,190 @@ class ElasticsearchProductsFetcher:
             hits = (data.get("hits", {}) or {}).get("hits", []) or []
             total = (data.get("hits", {}) or {}).get("total", {})
             total_count = total.get("value", 0) if isinstance(total, dict) else total
+            max_score = float((data.get("hits", {}) or {}).get("max_score") or 0.0)
+
+            # Guarded fuzzy fallback:
+            # if exact/phrase-heavy path is weak (or empty), try a bounded fuzzy query
+            # before moving to prefix/wildcard fallback.
+            fallback_used = False
+            fuzzy_fallback_used = False
+            should_try_fuzzy_fallback = (
+                GUARDED_FUZZY_FALLBACK_ENABLED
+                and
+                bool(query_text)
+                and not subcat
+                and page == 0
+                and (
+                    total_count == 0
+                    or (total_count > 0 and max_score < 1.2)
+                )
+            )
+            if should_try_fuzzy_fallback:
+                fuzzy_fallback_query = {
+                    "bool": {
+                        "filter": filter_clauses,
+                        "should": [
+                            {
+                                "multi_match": {
+                                    "query": query_text,
+                                    "fields": [
+                                        "name^4.5",
+                                        "brand^2.2",
+                                        "description^0.6",
+                                    ],
+                                    "type": "best_fields",
+                                    "fuzziness": fuzzy_fuzziness,
+                                    "prefix_length": fuzzy_prefix_length,
+                                    "max_expansions": fuzzy_max_expansions,
+                                    "fuzzy_transpositions": True,
+                                    "operator": "or",
+                                    "boost": max(fuzzy_boost + 0.25, 0.7),
+                                }
+                            },
+                            {
+                                "match_phrase_prefix": {
+                                    "name": {
+                                        "query": query_text,
+                                        "boost": 3.4,
+                                        "max_expansions": 25,
+                                    }
+                                }
+                            },
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                }
+                fuzzy_fallback_body: Dict[str, Any] = {
+                    "size": size,
+                    "from": offset,
+                    "track_total_hits": True,
+                    "_source": body.get("_source"),
+                    "query": fuzzy_fallback_query,
+                    "sort": sort_config,
+                    "min_score": max(dynamic_min_score or 0.0, 0.08),
+                }
+                fuzzy_fallback_response = requests.post(
+                    search_endpoint,
+                    json=fuzzy_fallback_body,
+                    timeout=TIMEOUT,
+                    **self._request_kwargs(),
+                )
+                fuzzy_fallback_response.raise_for_status()
+                fuzzy_fallback_data = fuzzy_fallback_response.json() or {}
+                fuzzy_hits = (fuzzy_fallback_data.get("hits", {}) or {}).get("hits", []) or []
+                fuzzy_total = (fuzzy_fallback_data.get("hits", {}) or {}).get("total", {})
+                fuzzy_total_count = (
+                    fuzzy_total.get("value", 0) if isinstance(fuzzy_total, dict) else fuzzy_total
+                )
+                if fuzzy_total_count > 0 and (total_count == 0 or fuzzy_total_count >= total_count):
+                    data = fuzzy_fallback_data
+                    hits = fuzzy_hits
+                    total_count = fuzzy_total_count
+                    max_score = float((fuzzy_fallback_data.get("hits", {}) or {}).get("max_score") or 0.0)
+                    fuzzy_fallback_used = True
+                    print(
+                        "DEBUG: ES search_products_unified fuzzy_fallback_hit "
+                        f"| query={query_text} | total={fuzzy_total_count} | max_score={max_score:.3f}"
+                    )
+
+            # Safe fallback for zero-result text queries:
+            # keep current relevance path untouched and only retry when primary
+            # lexical/fuzzy matching returns no results.
+            if (
+                total_count == 0
+                and query_text
+                and not subcat
+                and page == 0
+            ):
+                fallback_tokens = re.findall(r"[a-z0-9]+", query_text.lower())
+                fallback_tokens = [t for t in fallback_tokens if 3 <= len(t) <= 24][:6]
+                if fallback_tokens:
+                    fallback_should: List[Dict[str, Any]] = [
+                        {
+                            "match_phrase_prefix": {
+                                "name": {
+                                    "query": query_text,
+                                    "boost": 5.0,
+                                    "max_expansions": 30
+                                }
+                            }
+                        }
+                    ]
+
+                    for idx, token in enumerate(fallback_tokens):
+                        token_boost = max(6.0 - (idx * 0.6), 3.0)
+                        fallback_should.extend([
+                            {
+                                "prefix": {
+                                    "name.keyword": {
+                                        "value": token,
+                                        "boost": token_boost
+                                    }
+                                }
+                            },
+                            {
+                                "wildcard": {
+                                    "name.keyword": {
+                                        "value": f"{token}*",
+                                        "boost": max(token_boost - 2.5, 1.2)
+                                    }
+                                }
+                            },
+                            {
+                                "prefix": {
+                                    "brand.keyword": {
+                                        "value": token,
+                                        "boost": 2.0
+                                    }
+                                }
+                            },
+                        ])
+
+                    fallback_query = {
+                        "bool": {
+                            "filter": filter_clauses,
+                            "should": fallback_should,
+                            "minimum_should_match": 1
+                        }
+                    }
+                    fallback_body: Dict[str, Any] = {
+                        "size": size,
+                        "from": offset,
+                        "track_total_hits": True,
+                        "_source": body.get("_source"),
+                        "query": fallback_query,
+                        "sort": sort_config,
+                    }
+                    fallback_response = requests.post(
+                        search_endpoint,
+                        json=fallback_body,
+                        timeout=TIMEOUT,
+                        **self._request_kwargs(),
+                    )
+                    fallback_response.raise_for_status()
+                    fallback_data = fallback_response.json() or {}
+                    fallback_hits = (fallback_data.get("hits", {}) or {}).get("hits", []) or []
+                    fallback_total = (fallback_data.get("hits", {}) or {}).get("total", {})
+                    fallback_total_count = (
+                        fallback_total.get("value", 0) if isinstance(fallback_total, dict) else fallback_total
+                    )
+                    if fallback_total_count > 0:
+                        data = fallback_data
+                        hits = fallback_hits
+                        total_count = fallback_total_count
+                        fallback_used = True
+                        print(
+                            "DEBUG: ES search_products_unified fallback_hit "
+                            f"| query={query_text} | token_count={len(fallback_tokens)} | total={fallback_total_count}"
+                        )
             
             # Extract raw _source from each hit
             products = [h.get("_source", {}) for h in hits if h.get("_source")]
             
-            print(f"DEBUG: ES search_products_unified | total={total_count} | returned={len(products)}")
+            print(
+                f"DEBUG: ES search_products_unified | total={total_count} | "
+                f"returned={len(products)} | fuzzy_fallback_used={fuzzy_fallback_used} | fallback_used={fallback_used}"
+            )
             
             return {
                 "products": products,
@@ -3962,7 +4492,11 @@ class ElasticsearchProductsFetcher:
                     "query": query_text,
                     "subcategory": subcat,
                     "sort_by": sort_by,
-                    "filters_applied": filters if filters else None
+                    "filters_applied": filters if filters else None,
+                    "took_ms": int(data.get("took", 0) or 0),
+                    "fuzzy_fallback_used": fuzzy_fallback_used,
+                    "prefix_fallback_used": fallback_used,
+                    "phonetic_used": phonetic_used,
                 }
             }
             

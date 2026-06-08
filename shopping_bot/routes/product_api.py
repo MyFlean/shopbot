@@ -147,7 +147,27 @@ def _is_soft_visibility(visibility: Any) -> bool:
     return str(visibility or "").strip().lower() == "soft"
 
 
-def _resolve_pdp_cta(product_info: Dict[str, Any], flean_badge: Dict[str, Any]) -> Dict[str, Any]:
+def _has_palm_oil_ingredient(ingredients: Any) -> bool:
+    """Detect palm oil mention from normalized PDP ingredient items."""
+    if not isinstance(ingredients, list):
+        return False
+
+    for item in ingredients:
+        if isinstance(item, dict):
+            text = item.get("name")
+        else:
+            text = item
+        normalized = str(text or "").strip().lower()
+        if "palm oil" in normalized:
+            return True
+    return False
+
+
+def _resolve_pdp_cta(
+    product_info: Dict[str, Any],
+    flean_badge: Dict[str, Any],
+    has_palm_oil: bool = False,
+) -> Dict[str, Any]:
     """
     Resolve PDP CTA and image stamp flags.
 
@@ -158,7 +178,7 @@ def _resolve_pdp_cta(product_info: Dict[str, Any], flean_badge: Dict[str, Any]) 
     score = _parse_optional_float((flean_badge or {}).get("score"))
     is_soft = _is_soft_visibility(visibility)
 
-    if score is not None and score <= 5:
+    if (score is not None and score <= 5) or has_palm_oil:
         cta_type = CTA_TYPE_BETTER_OPTIONS
     elif in_stock and is_soft:
         cta_type = CTA_TYPE_SIMILAR_OPTIONS
@@ -253,10 +273,12 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
 
         product_info = pdp_data.get("product_info")
         flean_badge = pdp_data.get("flean_badge")
+        ingredients = pdp_data.get("ingredients")
         if isinstance(product_info, dict):
             pdp_data["cta"] = _resolve_pdp_cta(
                 product_info=product_info,
                 flean_badge=flean_badge if isinstance(flean_badge, dict) else {},
+                has_palm_oil=_has_palm_oil_ingredient(ingredients),
             )
 
         log.info(f"PDP_SUCCESS | id={pid} | name={raw_src.get('name', '')[:30]}")

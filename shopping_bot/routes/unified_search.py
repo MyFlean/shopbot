@@ -37,6 +37,7 @@ Requires at least one of query/subcategory/filters (same as /api/v1/products).
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Blueprint, jsonify, request
@@ -51,6 +52,7 @@ from .product_api import (
 
 log = logging.getLogger(__name__)
 bp = Blueprint("unified_search", __name__)
+SUGGEST_ROUTE_ENABLED = os.getenv("SEARCH_SUGGEST_DISABLED", "").strip().lower() not in {"1", "true", "yes", "on"}
 
 
 # ---------------------------------------------------------------------------
@@ -268,3 +270,54 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
     except Exception as exc:
         log.error(f"UNIFIED_SEARCH_ERROR | error={exc}", exc_info=True)
         return _error_response("INTERNAL_ERROR", "Failed to fetch products", 500)
+
+
+@bp.route("/v1/search/suggest", methods=["GET", "POST"])
+def unified_search_suggest() -> Tuple[Dict[str, Any], int]:
+    """Autocomplete suggestions endpoint powered by search_as_you_type fields.
+
+    Request contract: only `query` is accepted from clients.
+    """
+    try:
+        if not SUGGEST_ROUTE_ENABLED:
+            return _error_response("FEATURE_DISABLED", "Search suggestions are disabled", 503)
+
+        if request.method == "GET":
+            query = (request.args.get("query") or "").strip()
+        else:
+            body = request.get_json(force=True, silent=True) or {}
+            query = body.get("query")
+            if query is None:
+                query = ""
+            if not isinstance(query, str):
+                return _error_response("INVALID_QUERY", "'query' must be a string", 400)
+            query = query.strip()
+
+        if not query:
+            return _error_response("MISSING_PARAMETER", "'query' is required", 400)
+
+        try:
+            fetcher = get_es_fetcher()
+        except RuntimeError as exc:
+            log.error(f"UNIFIED_SEARCH_SUGGEST_CONFIG_ERROR | error={exc}", exc_info=True)
+            return _error_response("INTERNAL_ERROR", str(exc), 500)
+
+        result = fetcher.search_suggestions(
+            query=query,
+        )
+        meta = result.get("meta", {}) or {}
+        if meta.get("error"):
+            log.error(f"UNIFIED_SEARCH_SUGGEST_ES_ERROR | error={meta.get('error')}")
+            return _error_response("SEARCH_ERROR", f"Suggestion search failed: {meta.get('error')}", 500)
+
+        log.info(
+            "UNIFIED_SEARCH_SUGGEST_COMPLETE | query=%s | returned=%s | took_ms=%s | fallback=%s",
+            query,
+            meta.get("returned", 0),
+            meta.get("took_ms"),
+            meta.get("fallback_used"),
+        )
+        return jsonify(_success_response({"suggestions": result.get("suggestions", [])}, meta=meta)), 200
+    except Exception as exc:
+        log.error(f"UNIFIED_SEARCH_SUGGEST_ERROR | error={exc}", exc_info=True)
+        return _error_response("INTERNAL_ERROR", "Failed to fetch suggestions", 500)

@@ -3,7 +3,9 @@
 Unified Search Endpoint
 
 -----------------------
-GET|POST /rs/v1/search
+APIs:
+  - GET|POST /rs/v1/search
+  - GET|POST /rs/v1/search/suggest
 
 A functional superset of:
   - POST /rs/search

@@ -11,6 +11,7 @@ Endpoints:
   POST /api/v1/scanner                    → Top 3 product cards from image scan
   GET  /api/v1/catalogue                  → Products by subcategory (product cards)
   GET  /api/v1/catalogue/mapping          → Category → subcategory → ES path mapping
+  GET|POST /api/v1/products               → Unified products search + filters + pagination
 """
 
 from __future__ import annotations
@@ -147,20 +148,34 @@ def _is_soft_visibility(visibility: Any) -> bool:
     return str(visibility or "").strip().lower() == "soft"
 
 
-def _has_palm_oil_ingredient(ingredients: Any) -> bool:
-    """Detect palm oil mention from normalized PDP ingredient items."""
-    if not isinstance(ingredients, list):
+def _has_palm_oil_ingredient(product_doc: Any) -> bool:
+    """
+    Infer palm-oil presence from category tags.
+
+    Rule: if `category_data.tags.ingredient_tags` contains `no_palm_oil`, product
+    does not have palm oil; otherwise treat it as containing palm oil.
+    """
+    if not isinstance(product_doc, dict):
         return False
 
-    for item in ingredients:
-        if isinstance(item, dict):
-            text = item.get("name")
-        else:
-            text = item
-        normalized = str(text or "").strip().lower()
-        if "palm oil" in normalized:
-            return True
-    return False
+    category_data = product_doc.get("category_data")
+    if not isinstance(category_data, dict):
+        return False
+
+    tags = category_data.get("tags")
+    if not isinstance(tags, dict):
+        return False
+
+    ingredient_tags = tags.get("ingredient_tags")
+    if not isinstance(ingredient_tags, list):
+        return False
+
+    normalized_tags = {
+        str(tag or "").strip().lower()
+        for tag in ingredient_tags
+        if str(tag or "").strip()
+    }
+    return "no_palm_oil" not in normalized_tags
 
 
 def _resolve_pdp_cta(
@@ -273,12 +288,11 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
 
         product_info = pdp_data.get("product_info")
         flean_badge = pdp_data.get("flean_badge")
-        ingredients = pdp_data.get("ingredients")
         if isinstance(product_info, dict):
             pdp_data["cta"] = _resolve_pdp_cta(
                 product_info=product_info,
                 flean_badge=flean_badge if isinstance(flean_badge, dict) else {},
-                has_palm_oil=_has_palm_oil_ingredient(ingredients),
+                has_palm_oil=_has_palm_oil_ingredient(raw_src),
             )
 
         log.info(f"PDP_SUCCESS | id={pid} | name={raw_src.get('name', '')[:30]}")

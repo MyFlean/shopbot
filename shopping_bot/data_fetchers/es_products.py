@@ -3528,18 +3528,8 @@ class ElasticsearchProductsFetcher:
                         })
 
             # Deterministic tie-break to avoid suggestion order jitter.
-            # Prioritize brand suggestions before product suggestions.
-            def _type_priority(item: Dict[str, Any]) -> int:
-                t = str(item.get("type") or "").lower()
-                if t == "brand":
-                    return 0
-                if t == "product":
-                    return 1
-                return 2
-
             suggestions.sort(
                 key=lambda s: (
-                    _type_priority(s),
                     -float(s.get("score") or 0.0),
                     len(s.get("text", "")),
                     s.get("text", "").lower(),

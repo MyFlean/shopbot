@@ -3278,6 +3278,7 @@ class ElasticsearchProductsFetcher:
     def search_suggestions(
         self,
         query: str,
+        size: int = 8,
     ) -> Dict[str, Any]:
         """Fetch autocomplete suggestions using search_as_you_type fields."""
         try:
@@ -3287,8 +3288,7 @@ class ElasticsearchProductsFetcher:
             if not query_text:
                 return {"suggestions": [], "meta": {"query": "", "size": 0, "fallback_used": False}}
 
-            size = 8
-            size = max(1, min(int(size), 20))
+            size = max(1, min(int(size), 100))
             filter_clauses: List[Dict[str, Any]] = [VISIBILITY_FILTER]
             primary_should: List[Dict[str, Any]] = [
                 {
@@ -3527,19 +3527,8 @@ class ElasticsearchProductsFetcher:
                             "score": max(score - 0.2, 0.0),
                         })
 
-            # Deterministic tie-break to avoid suggestion order jitter.
-            # Prioritize brand suggestions before product suggestions.
-            def _type_priority(item: Dict[str, Any]) -> int:
-                t = str(item.get("type") or "").lower()
-                if t == "brand":
-                    return 0
-                if t == "product":
-                    return 1
-                return 2
-
             suggestions.sort(
                 key=lambda s: (
-                    _type_priority(s),
                     -float(s.get("score") or 0.0),
                     len(s.get("text", "")),
                     s.get("text", "").lower(),
@@ -3565,13 +3554,13 @@ class ElasticsearchProductsFetcher:
         except requests.exceptions.Timeout:
             return {
                 "suggestions": [],
-                "meta": {"query": query, "size": 8, "returned": 0, "error": "timeout"},
+                "meta": {"query": query, "size": size, "returned": 0, "error": "timeout"},
             }
         except Exception as exc:
             print(f"DEBUG: ES search_suggestions failed | query={query} | error={exc}")
             return {
                 "suggestions": [],
-                "meta": {"query": query, "size": 8, "returned": 0, "error": str(exc)},
+                "meta": {"query": query, "size": size, "returned": 0, "error": str(exc)},
             }
 
     def search_by_ids(self, ids: List[str]) -> List[Dict[str, Any]]:

@@ -55,6 +55,10 @@ from .product_api import (
 log = logging.getLogger(__name__)
 bp = Blueprint("unified_search", __name__)
 SUGGEST_ROUTE_ENABLED = os.getenv("SEARCH_SUGGEST_DISABLED", "").strip().lower() not in {"1", "true", "yes", "on"}
+MAX_SUGGEST_BRANDS = 4
+MAX_PRODUCTS_PER_BRAND = 3
+V1_SUGGEST_SIZE = 8
+V2_SUGGEST_SIZE = 100
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +112,99 @@ def _normalize_filter_aliases(filters: Optional[Dict[str, Any]]) -> Optional[Dic
         normalized.pop("dietary", None)
 
     return normalized
+
+
+def _group_suggestions_by_brand(suggestions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Group ranked suggestions into brand buckets for the final API response."""
+    grouped: Dict[str, Dict[str, Any]] = {}
+    brand_order: List[str] = []
+    seen_products: Dict[str, set[str]] = {}
+
+    for item in suggestions or []:
+        if not isinstance(item, dict):
+            continue
+
+        suggestion_type = str(item.get("type") or "").strip().lower()
+
+        if suggestion_type == "brand":
+            brand_name = " ".join(str(item.get("text") or item.get("brand") or "").split()).strip()
+            if not brand_name:
+                continue
+            brand_key = brand_name.casefold()
+            if brand_key not in grouped:
+                grouped[brand_key] = {"brand": brand_name, "products": []}
+                brand_order.append(brand_key)
+                seen_products[brand_key] = set()
+            continue
+
+        if suggestion_type != "product":
+            continue
+
+        brand_name = " ".join(str(item.get("brand") or "").split()).strip()
+        product_text = " ".join(str(item.get("text") or "").split()).strip()
+        if not brand_name or not product_text:
+            continue
+
+        brand_key = brand_name.casefold()
+        if brand_key not in grouped:
+            grouped[brand_key] = {"brand": brand_name, "products": []}
+            brand_order.append(brand_key)
+            seen_products[brand_key] = set()
+
+        product_key = product_text.lower()
+        if product_key in seen_products[brand_key]:
+            continue
+        if len(grouped[brand_key]["products"]) >= MAX_PRODUCTS_PER_BRAND:
+            continue
+        seen_products[brand_key].add(product_key)
+        grouped[brand_key]["products"].append({"text": product_text, "type": "product"})
+
+    return [grouped[brand_key] for brand_key in brand_order[:MAX_SUGGEST_BRANDS]]
+
+
+def _extract_suggest_query() -> Tuple[Optional[str], Optional[Tuple[Dict[str, Any], int]]]:
+    """Parse and validate suggest query from GET/POST."""
+    if request.method == "GET":
+        query = (request.args.get("query") or "").strip()
+        if not query:
+            return None, _error_response("MISSING_PARAMETER", "'query' is required", 400)
+        return query, None
+
+    body = request.get_json(force=True, silent=True) or {}
+    query = body.get("query")
+    if query is None:
+        query = ""
+    if not isinstance(query, str):
+        return None, _error_response("INVALID_QUERY", "'query' must be a string", 400)
+    query = query.strip()
+    if not query:
+        return None, _error_response("MISSING_PARAMETER", "'query' is required", 400)
+    return query, None
+
+
+def _fetch_flat_suggestions(query: str, size: int, version: str) -> Tuple[Optional[Dict[str, Any]], Optional[Tuple[Dict[str, Any], int]]]:
+    """Fetch flat suggestions from Elasticsearch fetcher."""
+    try:
+        fetcher = get_es_fetcher()
+    except RuntimeError as exc:
+        log.error("UNIFIED_SEARCH_SUGGEST_CONFIG_ERROR | version=%s | error=%s", version, exc, exc_info=True)
+        return None, _error_response("INTERNAL_ERROR", str(exc), 500)
+
+    try:
+        result = fetcher.search_suggestions(
+            query=query,
+            size=size,
+        )
+    except TypeError as exc:
+        if "unexpected keyword argument 'size'" not in str(exc):
+            raise
+        # Backward-compatible call shape for older mocks/callers.
+        result = fetcher.search_suggestions(query=query)
+    meta = result.get("meta", {}) or {}
+    if meta.get("error"):
+        log.error("UNIFIED_SEARCH_SUGGEST_ES_ERROR | version=%s | error=%s", version, meta.get("error"))
+        return None, _error_response("SEARCH_ERROR", f"Suggestion search failed: {meta.get('error')}", 500)
+    return result, None
 
 
 # ---------------------------------------------------------------------------
@@ -276,50 +373,69 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
 
 @bp.route("/v1/search/suggest", methods=["GET", "POST"])
 def unified_search_suggest() -> Tuple[Dict[str, Any], int]:
-    """Autocomplete suggestions endpoint powered by search_as_you_type fields.
-
-    Request contract: only `query` is accepted from clients.
-    """
+    """Legacy flat autocomplete suggestions endpoint."""
     try:
         if not SUGGEST_ROUTE_ENABLED:
             return _error_response("FEATURE_DISABLED", "Search suggestions are disabled", 503)
 
-        if request.method == "GET":
-            query = (request.args.get("query") or "").strip()
-        else:
-            body = request.get_json(force=True, silent=True) or {}
-            query = body.get("query")
-            if query is None:
-                query = ""
-            if not isinstance(query, str):
-                return _error_response("INVALID_QUERY", "'query' must be a string", 400)
-            query = query.strip()
+        query, query_error = _extract_suggest_query()
+        if query_error is not None:
+            return query_error
+        assert query is not None
 
-        if not query:
-            return _error_response("MISSING_PARAMETER", "'query' is required", 400)
+        result, fetch_error = _fetch_flat_suggestions(query=query, size=V1_SUGGEST_SIZE, version="v1")
+        if fetch_error is not None:
+            return fetch_error
+        assert result is not None
 
-        try:
-            fetcher = get_es_fetcher()
-        except RuntimeError as exc:
-            log.error(f"UNIFIED_SEARCH_SUGGEST_CONFIG_ERROR | error={exc}", exc_info=True)
-            return _error_response("INTERNAL_ERROR", str(exc), 500)
-
-        result = fetcher.search_suggestions(
-            query=query,
-        )
+        flat_suggestions = result.get("suggestions", []) or []
         meta = result.get("meta", {}) or {}
-        if meta.get("error"):
-            log.error(f"UNIFIED_SEARCH_SUGGEST_ES_ERROR | error={meta.get('error')}")
-            return _error_response("SEARCH_ERROR", f"Suggestion search failed: {meta.get('error')}", 500)
+        meta["returned"] = len(flat_suggestions)
 
         log.info(
-            "UNIFIED_SEARCH_SUGGEST_COMPLETE | query=%s | returned=%s | took_ms=%s | fallback=%s",
+            "UNIFIED_SEARCH_SUGGEST_COMPLETE | version=%s | query=%s | returned=%s | took_ms=%s | fallback=%s",
+            "v1",
             query,
-            meta.get("returned", 0),
+            len(flat_suggestions),
             meta.get("took_ms"),
             meta.get("fallback_used"),
         )
-        return jsonify(_success_response({"suggestions": result.get("suggestions", [])}, meta=meta)), 200
+        return jsonify(_success_response({"suggestions": flat_suggestions}, meta=meta)), 200
     except Exception as exc:
-        log.error(f"UNIFIED_SEARCH_SUGGEST_ERROR | error={exc}", exc_info=True)
+        log.error("UNIFIED_SEARCH_SUGGEST_ERROR | version=%s | error=%s", "v1", exc, exc_info=True)
+        return _error_response("INTERNAL_ERROR", "Failed to fetch suggestions", 500)
+
+
+@bp.route("/v2/search/suggest", methods=["GET", "POST"])
+def unified_search_suggest_v2() -> Tuple[Dict[str, Any], int]:
+    """Grouped autocomplete suggestions endpoint."""
+    try:
+        if not SUGGEST_ROUTE_ENABLED:
+            return _error_response("FEATURE_DISABLED", "Search suggestions are disabled", 503)
+
+        query, query_error = _extract_suggest_query()
+        if query_error is not None:
+            return query_error
+        assert query is not None
+
+        result, fetch_error = _fetch_flat_suggestions(query=query, size=V2_SUGGEST_SIZE, version="v2")
+        if fetch_error is not None:
+            return fetch_error
+        assert result is not None
+
+        grouped_suggestions = _group_suggestions_by_brand(result.get("suggestions", []) or [])
+        meta = result.get("meta", {}) or {}
+        meta["returned"] = len(grouped_suggestions)
+
+        log.info(
+            "UNIFIED_SEARCH_SUGGEST_COMPLETE | version=%s | query=%s | returned=%s | took_ms=%s | fallback=%s",
+            "v2",
+            query,
+            len(grouped_suggestions),
+            meta.get("took_ms"),
+            meta.get("fallback_used"),
+        )
+        return jsonify(_success_response({"suggestions": grouped_suggestions}, meta=meta)), 200
+    except Exception as exc:
+        log.error("UNIFIED_SEARCH_SUGGEST_ERROR | version=%s | error=%s", "v2", exc, exc_info=True)
         return _error_response("INTERNAL_ERROR", "Failed to fetch suggestions", 500)

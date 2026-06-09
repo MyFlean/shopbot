@@ -55,7 +55,7 @@ from .product_api import (
 log = logging.getLogger(__name__)
 bp = Blueprint("unified_search", __name__)
 SUGGEST_ROUTE_ENABLED = os.getenv("SEARCH_SUGGEST_DISABLED", "").strip().lower() not in {"1", "true", "yes", "on"}
-MAX_SUGGEST_BRANDS = 4
+MAX_SUGGEST_BRANDS = 3
 MAX_PRODUCTS_PER_BRAND = 3
 V1_SUGGEST_SIZE = 8
 V2_SUGGEST_SIZE = 100

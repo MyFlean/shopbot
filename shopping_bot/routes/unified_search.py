@@ -351,6 +351,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             try:
                 card = transform_to_product_card(raw)
                 if card is not None:
+                    if raw.get("_score") is not None:
+                        card["_score"] = raw.get("_score")
                     product_cards.append(card)
             except Exception as e:
                 log.warning(

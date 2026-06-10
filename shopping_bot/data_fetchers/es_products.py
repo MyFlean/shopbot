@@ -56,6 +56,24 @@ def _is_truthy_env(var_name: str) -> bool:
     return os.getenv(var_name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _get_bool_env(var_name: str, default: bool) -> bool:
+    raw = os.getenv(var_name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_float_env(var_name: str, default: float, minimum: float, maximum: float) -> float:
+    raw = os.getenv(var_name)
+    if raw is None:
+        return default
+    try:
+        val = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, val))
+
+
 def _is_aoss_url(url: Optional[str]) -> bool:
     return "aoss.amazonaws.com" in str(url or "").lower()
 
@@ -139,6 +157,13 @@ GUARDED_FUZZY_FALLBACK_ENABLED = not _is_truthy_env("SEARCH_DISABLE_FUZZY_FALLBA
 Cfg = get_config()
 SEARCH_SUGGEST_PHONETIC_ENABLED = bool(getattr(Cfg, "SEARCH_SUGGEST_PHONETIC_ENABLED", False))
 SEARCH_UNIFIED_PHONETIC_ENABLED = bool(getattr(Cfg, "SEARCH_UNIFIED_PHONETIC_ENABLED", False))
+SEARCH_RELEVANCE_FLEAN_BOOST_ENABLED = _get_bool_env("SEARCH_RELEVANCE_FLEAN_BOOST_ENABLED", True)
+SEARCH_RELEVANCE_FLEAN_BOOST_WEIGHT = _get_float_env(
+    "SEARCH_RELEVANCE_FLEAN_BOOST_WEIGHT",
+    default=0.5,
+    minimum=0.0,
+    maximum=0.5,
+)
 
 # Debug search config on module load
 print("="*80)
@@ -148,6 +173,8 @@ print(f"📍 ELASTIC_BASE (normalized): {ELASTIC_BASE}")
 print(f"📍 ELASTIC_INDEX: {ELASTIC_INDEX}")
 print(f"🔑 API_KEY: {'***SET***' if ELASTIC_API_KEY else 'NOT SET'}")
 print(f"⏱️  TIMEOUT: {TIMEOUT}s")
+print(f"🧪 SEARCH_RELEVANCE_FLEAN_BOOST_ENABLED: {SEARCH_RELEVANCE_FLEAN_BOOST_ENABLED}")
+print(f"🧪 SEARCH_RELEVANCE_FLEAN_BOOST_WEIGHT: {SEARCH_RELEVANCE_FLEAN_BOOST_WEIGHT}")
 print("="*80)
 
 # Text cleaning
@@ -3941,8 +3968,20 @@ class ElasticsearchProductsFetcher:
             total = (data.get("hits", {}) or {}).get("total", {})
             total_count = total.get("value", 0) if isinstance(total, dict) else total
             
-            # Extract raw _source from each hit
-            products = [h.get("_source", {}) for h in hits if h.get("_source")]
+            # Extract raw _source from each hit and preserve ES relevance score.
+            products: List[Dict[str, Any]] = []
+            for hit in hits:
+                source = hit.get("_source")
+                if not isinstance(source, dict):
+                    continue
+                product_doc = dict(source)
+                if hit.get("_score") is not None:
+                    try:
+                        product_doc["_score"] = float(hit.get("_score"))
+                    except (TypeError, ValueError):
+                        # Keep the source payload stable even if score is malformed.
+                        pass
+                products.append(product_doc)
             
             print(f"DEBUG: ES search_by_subcategory | total={total_count} | returned={len(products)}")
             
@@ -4016,6 +4055,8 @@ class ElasticsearchProductsFetcher:
             size = max(1, min(size, 100))
             offset = page * size
             phonetic_used = False
+            relevance_flean_boost_applied = False
+            relevance_flean_boost_weight = 0.0
             
             # Build sort configuration
             sort_config = _build_sort_config(sort_by if sort_by != "relevance" else None)
@@ -4121,8 +4162,8 @@ class ElasticsearchProductsFetcher:
                 if SEARCH_UNIFIED_PHONETIC_ENABLED:
                     # Experiment: prioritize phonetic retrieval for sound-alike spellings.
                     must_fields = [
-                        "name_phonetic^14",
-                        "brand_phonetic^9",
+                        "name_phonetic^9",
+                        "brand_phonetic^5",
                         "name^6",
                         "brand^1.5",
                         "category_paths^0.8",
@@ -4212,12 +4253,12 @@ class ElasticsearchProductsFetcher:
                         "multi_match": {
                             "query": query_text,
                             "fields": [
-                                "name_phonetic^16",
-                                "brand_phonetic^11",
+                                "name_phonetic^10",
+                                "brand_phonetic^6",
                             ],
                             "type": "best_fields",
                             "operator": "or",
-                            "boost": 18.0,
+                            "boost": 10.0,
                         }
                     })
                     phonetic_used = True
@@ -4229,6 +4270,57 @@ class ElasticsearchProductsFetcher:
                         "filter": filter_clauses
                     }
                 }
+
+            if (
+                query_text
+                and sort_by == "relevance"
+                and SEARCH_RELEVANCE_FLEAN_BOOST_ENABLED
+                and SEARCH_RELEVANCE_FLEAN_BOOST_WEIGHT > 0.0
+            ):
+                query_body = {
+                    "function_score": {
+                        "query": query_body,
+                        "functions": [
+                            {
+                                "script_score": {
+                                    "script": {
+                                        "lang": "painless",
+                                        "source": """
+                                            double raw = -1.0;
+                                            if (doc.containsKey('flean_score.adjusted_score_label')
+                                                && !doc['flean_score.adjusted_score_label'].empty) {
+                                                def v = doc['flean_score.adjusted_score_label'].value;
+                                                if (v instanceof Number) {
+                                                    raw = ((Number) v).doubleValue();
+                                                } else {
+                                                    try {
+                                                        raw = Double.parseDouble(v.toString());
+                                                    } catch (Exception ignored) {
+                                                        raw = -1.0;
+                                                    }
+                                                }
+                                            }
+                                            if (raw < 0.0) {
+                                                return 1.0;
+                                            }
+                                            double clamped = Math.max(0.0, Math.min(10.0, raw));
+                                            return 1.0 + ((clamped / 10.0) * params.weight);
+                                        """,
+                                        "params": {"weight": SEARCH_RELEVANCE_FLEAN_BOOST_WEIGHT},
+                                    }
+                                }
+                            }
+                        ],
+                        "score_mode": "multiply",
+                        "boost_mode": "multiply",
+                    }
+                }
+                relevance_flean_boost_applied = True
+                relevance_flean_boost_weight = SEARCH_RELEVANCE_FLEAN_BOOST_WEIGHT
+                print(
+                    "DEBUG: ES relevance_flean_boost "
+                    f"| query={query_text} | weight={relevance_flean_boost_weight:.3f}"
+                )
             
             # Build full ES request body
             body: Dict[str, Any] = {
@@ -4461,8 +4553,19 @@ class ElasticsearchProductsFetcher:
                             f"| query={query_text} | token_count={len(fallback_tokens)} | total={fallback_total_count}"
                         )
             
-            # Extract raw _source from each hit
-            products = [h.get("_source", {}) for h in hits if h.get("_source")]
+            # Extract raw _source from each hit and preserve ES relevance score.
+            products: List[Dict[str, Any]] = []
+            for hit in hits:
+                source = hit.get("_source")
+                if not isinstance(source, dict):
+                    continue
+                product_doc = dict(source)
+                if hit.get("_score") is not None:
+                    try:
+                        product_doc["_score"] = float(hit.get("_score"))
+                    except (TypeError, ValueError):
+                        pass
+                products.append(product_doc)
             
             print(
                 f"DEBUG: ES search_products_unified | total={total_count} | "
@@ -4486,6 +4589,8 @@ class ElasticsearchProductsFetcher:
                     "fuzzy_fallback_used": fuzzy_fallback_used,
                     "prefix_fallback_used": fallback_used,
                     "phonetic_used": phonetic_used,
+                    "relevance_flean_boost_enabled": relevance_flean_boost_applied,
+                    "relevance_flean_boost_weight": relevance_flean_boost_weight,
                 }
             }
             

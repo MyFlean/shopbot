@@ -100,6 +100,17 @@ BEST_SELLING_CATEGORY_PATHS: List[str] = [
 BEST_SELLING_PER_CATEGORY = 2
 BEST_SELLING_TOTAL_PRODUCTS = 6
 BEST_SELLING_FETCH_BUFFER = 13
+SUPPLEMENTS_CATEGORY_PATHS: List[str] = [
+    "f_and_b/supplements/performance/creatine",
+    "f_and_b/supplements/amino_acids/bcaa",
+    "f_and_b/supplements/protein/plant_protein",
+    "f_and_b/supplements/protein/whey_isolate",
+    "f_and_b/supplements/protein/whey_concentrate",
+    "f_and_b/supplements/protein/whey_hydro",
+]
+SUPPLEMENTS_PER_CATEGORY = 1
+SUPPLEMENTS_TOTAL_PRODUCTS = 6
+SUPPLEMENTS_FETCH_BUFFER = 9
 FLEAN_PICKS_HOME_FETCH_PER_SUBCATEGORY = 12
 FLEAN_PICKS_SEE_ALL_FETCH_PER_SUBCATEGORY = 24
 
@@ -587,6 +598,126 @@ def _get_best_selling_data(effective_pincode: Optional[str] = None) -> Dict[str,
     }
 
 
+def _get_supplements_data(effective_pincode: Optional[str] = None) -> Dict[str, Any]:
+    """Supplements from fixed category paths ranked by flean_score.adjusted_score."""
+    fetcher = get_es_fetcher()
+    selected_products: List[Dict[str, Any]] = []
+    selected_ids: set[str] = set()
+    backfill_candidates: List[tuple[float, Dict[str, Any]]] = []
+
+    force_legacy = (os.getenv("SUPPLEMENTS_FORCE_LEGACY") or "").strip().lower() in ("1", "true", "yes", "on")
+
+    # Prefer a single ES request (terms + top_hits aggregation) when mapping supports it.
+    # Fallback to the legacy per-path query loop if aggregation isn't available or is forced off.
+    agg_results: Optional[Dict[str, List[Dict[str, Any]]]] = None
+    mode = "legacy"
+    es_fetch_ms: Optional[float] = None
+
+    if not force_legacy:
+        _t0 = time.perf_counter()
+        try:
+            agg_results = fetcher.best_selling_by_category_paths_agg(
+                paths=SUPPLEMENTS_CATEGORY_PATHS,
+                per_category=SUPPLEMENTS_PER_CATEGORY,
+                fetch_per_category=SUPPLEMENTS_PER_CATEGORY + SUPPLEMENTS_FETCH_BUFFER,
+                filters=None,
+                exclude_ids=None,
+            )
+            mode = "agg"
+        except Exception:
+            agg_results = None
+            mode = "legacy"
+        finally:
+            es_fetch_ms = (time.perf_counter() - _t0) * 1000.0
+    else:
+        mode = "legacy_forced"
+
+    for path in SUPPLEMENTS_CATEGORY_PATHS:
+        if agg_results is not None and path in agg_results:
+            raw_products = agg_results.get(path) or []
+        else:
+            raw_products = fetcher.search_by_category_paths(
+                paths=[path],
+                filters=None,
+                size=SUPPLEMENTS_PER_CATEGORY + SUPPLEMENTS_FETCH_BUFFER,
+                exclude_ids=None,
+            )
+
+        scored_cards: List[tuple[float, Dict[str, Any]]] = []
+        for src in raw_products:
+            card = transform_to_product_card(src)
+            if not card:
+                continue
+            product_id = card.get("id")
+            if not product_id:
+                continue
+            scored_cards.append((_get_adjusted_score(src), card))
+
+        scored_cards.sort(key=lambda item: item[0], reverse=True)
+        cards_before_validation = [card for _, card in scored_cards]
+        cards_after_validation = _filter_cards_with_validation_cache(
+            cards_before_validation,
+            effective_pincode,
+            section="supplements",
+            subcategory_key=path,
+        )
+        if len(cards_after_validation) != len(cards_before_validation):
+            score_by_id = {card.get("id"): score for score, card in scored_cards}
+            scored_cards = [
+                (float(score_by_id.get(card.get("id"), -1.0)), card)
+                for card in cards_after_validation
+                if card.get("id")
+            ]
+            scored_cards.sort(key=lambda item: item[0], reverse=True)
+
+        category_count = 0
+        for score, card in scored_cards:
+            product_id = card["id"]
+            if product_id in selected_ids:
+                continue
+            if category_count < SUPPLEMENTS_PER_CATEGORY:
+                selected_products.append(card)
+                selected_ids.add(product_id)
+                category_count += 1
+            else:
+                backfill_candidates.append((score, card))
+
+    if len(selected_products) < SUPPLEMENTS_TOTAL_PRODUCTS:
+        backfill_candidates.sort(key=lambda item: item[0], reverse=True)
+        for _, card in backfill_candidates:
+            product_id = card["id"]
+            if product_id in selected_ids:
+                continue
+            selected_products.append(card)
+            selected_ids.add(product_id)
+            if len(selected_products) >= SUPPLEMENTS_TOTAL_PRODUCTS:
+                break
+
+    # Final response is consistently ordered by Flean score descending.
+    selected_products.sort(key=_get_card_flean_sort_key, reverse=True)
+
+    try:
+        log.info(
+            "HOME_SUPPLEMENTS_FETCH",
+            extra={
+                "mode": mode,
+                "force_legacy": force_legacy,
+                "es_fetch_ms": round(es_fetch_ms, 2) if es_fetch_ms is not None else None,
+                "paths": SUPPLEMENTS_CATEGORY_PATHS,
+                "per_category": SUPPLEMENTS_PER_CATEGORY,
+                "fetch_per_category": SUPPLEMENTS_PER_CATEGORY + SUPPLEMENTS_FETCH_BUFFER,
+                "returned": min(len(selected_products), SUPPLEMENTS_TOTAL_PRODUCTS),
+            },
+        )
+    except Exception:
+        pass
+
+    return {
+        "products": selected_products[:SUPPLEMENTS_TOTAL_PRODUCTS],
+        "section_title": "Supplements",
+    }
+
+
 def _get_curated_data(use_top_4: bool = True) -> Dict[str, Any]:
     """
     Fetch hand-curated products.
@@ -1009,6 +1140,27 @@ def get_best_selling() -> tuple[Dict[str, Any], int]:
     except Exception as e:
         log.error(f"HOME_BEST_SELLING_ERROR | error={e}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load best-selling products")), 500
+
+
+@bp.route("/api/v1/home/supplements", methods=["GET"])
+def get_supplements() -> tuple[Dict[str, Any], int]:
+    """
+    Get supplement products for the home page.
+
+    Fetches products from fixed supplement category paths in Elasticsearch, picks
+    top 1 per category by flean_score.adjusted_score, and backfills to return up to 6.
+    """
+    try:
+        effective_pincode = _resolve_canonical_request_pincode()
+        result = _get_supplements_data(effective_pincode=effective_pincode)
+        log.info(f"HOME_SUPPLEMENTS | returned={len(result.get('products', []))}")
+        return jsonify(_build_success_response(result)), 200
+    except PincodeMappingError as exc:
+        log.warning("HOME_SUPPLEMENTS_PINCODE_ERROR | error=%s", exc)
+        return jsonify(_build_error_response("PINCODE_MAPPING_ERROR", str(exc))), 400
+    except Exception as e:
+        log.error(f"HOME_SUPPLEMENTS_ERROR | error={e}", exc_info=True)
+        return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load supplements")), 500
 
 
 @bp.route("/api/v1/home/curated", methods=["GET", "POST"])

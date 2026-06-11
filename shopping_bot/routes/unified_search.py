@@ -30,8 +30,10 @@ Accepted params (GET query or POST JSON body):
       preferences / ingredient_preferences (aliases),
       dietary / dietary_preferences (aliases),
       food_type,
-      nutrition {protein, carbs, fat}
+      nutrition {protein, carbs, fat},
+      nutrition_profiles [high_protein, high_fiber, low_carbs, low_sugar, low_sodium, low_fat]
   - Top-level food_type also accepted (simple_search quirk); folded into filters.food_type
+  - GET also accepts nutrition_profiles as a comma-separated query param
 
 Requires at least one of query/subcategory/filters (same as /api/v1/products).
 """
@@ -255,6 +257,12 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                     nutrition_params[key] = v
             if nutrition_params:
                 raw_filters["nutrition"] = nutrition_params
+
+            nutrition_profiles = request.args.get("nutrition_profiles")
+            if nutrition_profiles:
+                raw_filters["nutrition_profiles"] = [
+                    profile.strip() for profile in nutrition_profiles.split(",") if profile.strip()
+                ]
         else:
             body = request.get_json(force=True, silent=True) or {}
 

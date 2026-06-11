@@ -852,6 +852,14 @@ VALID_PREFERENCES = {"no_palm_oil", "no_added_sugar", "no_harmful_additives", "p
 VALID_DIETARY = {"dairy_free", "gluten_free", "nut_free", "pcos_friendly"}
 VALID_FOOD_TYPES = {"veg", "nonveg"}
 VALID_NUTRITION_KEYS = {"protein", "carbs", "fat"}
+VALID_NUTRITION_PROFILES = {
+    "high_protein",
+    "high_fiber",
+    "low_carbs",
+    "low_sugar",
+    "low_sodium",
+    "low_fat",
+}
 NUTRITION_MAX = {"protein": 40, "carbs": 100, "fat": 100}
 NUTRITION_STEP = {"protein": 10, "carbs": 25, "fat": 25}
 
@@ -920,6 +928,27 @@ def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[
                     validated_nutrition[key] = val
         if validated_nutrition:
             validated["nutrition"] = validated_nutrition
+
+    nutrition_profiles = filters.get("nutrition_profiles")
+    if nutrition_profiles is not None:
+        if not isinstance(nutrition_profiles, list):
+            return None, "nutrition_profiles must be an array"
+        normalized_profiles: List[str] = []
+        for profile in nutrition_profiles:
+            if not isinstance(profile, str):
+                return None, "nutrition_profiles must contain only strings"
+            profile_key = profile.strip()
+            if not profile_key:
+                continue
+            if profile_key not in VALID_NUTRITION_PROFILES:
+                return None, (
+                    f"Invalid nutrition_profiles value: '{profile_key}'. "
+                    f"Valid: {sorted(VALID_NUTRITION_PROFILES)}"
+                )
+            if profile_key not in normalized_profiles:
+                normalized_profiles.append(profile_key)
+        if normalized_profiles:
+            validated["nutrition_profiles"] = normalized_profiles
 
     return validated if validated else None, None
 

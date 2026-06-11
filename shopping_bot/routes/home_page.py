@@ -1593,6 +1593,8 @@ def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
     POST:
         JSON body: ``source`` (default ``see_all``), optional ``filters`` for personalization
         (validated; invalid ``filters`` are ignored and only base filters apply).
+        Supported filter shape includes numeric ``nutrition`` sliders and
+        flag-based ``nutrition_profiles`` (e.g. ``["high_protein", "low_sugar"]``).
 
     Mode selection uses strict equality: only ``source == "home"`` selects home mode.
 

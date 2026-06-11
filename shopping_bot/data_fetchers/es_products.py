@@ -1362,6 +1362,34 @@ DIETARY_FILTERS = {
     "pcos_friendly": "pcos_friendly",
 }
 
+# Nutrition profile filters - map request keys to percentile field and range.
+NUTRITION_PROFILE_FILTERS = {
+    "high_protein": {
+        "field": "stats.protein_percentiles.global_percentile",
+        "range": {"gte": 75},
+    },
+    "high_fiber": {
+        "field": "stats.fiber_percentiles.global_percentile",
+        "range": {"gte": 75},
+    },
+    "low_carbs": {
+        "field": "stats.carbs_penalty_percentiles.global_percentile",
+        "range": {"lte": 50},
+    },
+    "low_sugar": {
+        "field": "stats.sugar_penalty_percentiles.global_percentile",
+        "range": {"lte": 50},
+    },
+    "low_sodium": {
+        "field": "stats.sodium_penalty_percentiles.global_percentile",
+        "range": {"lte": 50},
+    },
+    "low_fat": {
+        "field": "stats.total_fat_penalty_percentiles.global_percentile",
+        "range": {"lte": 50},
+    },
+}
+
 VISIBILITY_FILTER = {"terms": {"visibility": ["visible", "soft"]}}
 HIDDEN_VISIBILITY = {"hardstop"}
 
@@ -1378,6 +1406,7 @@ def _build_filter_clauses(filters: Optional[Dict[str, Any]]) -> List[Dict[str, A
             - dietary: List from DIETARY_FILTERS keys
             - food_type: 'veg' or 'nonveg'
             - nutrition: {protein: int, carbs: int, fat: int}
+            - nutrition_profiles: List of percentile-based nutrition profile flags
     
     Returns:
         List of ES filter clauses to be added to bool.filter
@@ -1530,6 +1559,19 @@ def _build_filter_clauses(filters: Optional[Dict[str, Any]]) -> List[Dict[str, A
                 "bool": {
                     "should": should_ranges,
                     "minimum_should_match": 1,
+                }
+            })
+
+    # 7. Nutrition Profile Filters (percentile-based ranges)
+    nutrition_profiles = filters.get("nutrition_profiles", [])
+    if isinstance(nutrition_profiles, list) and nutrition_profiles:
+        for profile in nutrition_profiles:
+            spec = NUTRITION_PROFILE_FILTERS.get(profile)
+            if not spec:
+                continue
+            filter_clauses.append({
+                "range": {
+                    spec["field"]: spec["range"]
                 }
             })
 

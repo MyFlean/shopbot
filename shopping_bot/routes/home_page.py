@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import requests
 import time
 import traceback
 
@@ -117,8 +118,6 @@ FLEAN_PICKS_SEE_ALL_FETCH_PER_SUBCATEGORY = 24
 HOME_VALIDATION_FILTER_ENABLED = True
 HOME_VALIDATION_FAIL_OPEN = True
 HOME_VALIDATION_ALLOWED_PINCODES = {"201303", "201304", "201305"}
-HOME_VALIDATION_CANDIDATE_MAX = 50
-HOME_VALIDATION_CANDIDATE_DEFAULT = 50
 
 # ============================================================================
 # Data Loading & Caching
@@ -372,15 +371,6 @@ def _filter_cards_with_validation_cache(
     return cards
 
 
-def _parse_candidate_limit() -> int:
-    raw_limit = request.args.get("limit", str(HOME_VALIDATION_CANDIDATE_DEFAULT))
-    try:
-        limit = int(raw_limit)
-    except (TypeError, ValueError):
-        limit = HOME_VALIDATION_CANDIDATE_DEFAULT
-    return max(1, min(limit, HOME_VALIDATION_CANDIDATE_MAX))
-
-
 # ============================================================================
 # Elasticsearch Product Fetching (uses shared transformer)
 # ============================================================================
@@ -450,7 +440,8 @@ def _is_validation_candidate_eligible(product_src: Dict[str, Any]) -> bool:
     visibility = str(product_src.get("visibility", "") or "").strip().lower()
     if visibility != "visible":
         return False
-    return _get_adjusted_score(product_src) >= 8.0
+    # adjusted_score is on a 0-100 scale (8.0 badge ~= 80 adjusted_score)
+    return _get_adjusted_score(product_src) >= 80.0
 
 
 def _get_card_flean_sort_key(card: Dict[str, Any]) -> tuple[float, float]:
@@ -974,94 +965,125 @@ def _get_collaborations_data() -> Dict[str, Any]:
     return {"brands": collaborations, "section_title": "Exclusive Collaborations"}
 
 
-def _build_validation_candidates_payload(limit: int) -> Dict[str, Any]:
-    """Build top validation candidates for ecom pre-warm job."""
+def _fetch_full_catalog_validation_candidates() -> Dict[str, Any]:
+    """Fetch all candidate docs in one ES request (no pagination)."""
     fetcher = get_es_fetcher()
-    candidates: List[Dict[str, Any]] = []
+    query_body: Dict[str, Any] = {
+        "bool": {
+            "filter": [
+                {
+                    "bool": {
+                        "should": [
+                            {"term": {"visibility": "visible"}},
+                            {"term": {"visibility.keyword": "visible"}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                },
+                {
+                    "bool": {
+                        "should": [
+                            {"range": {"flean_score.adjusted_score_label": {"gte": 8}}},
+                            {"range": {"flean_score.adjusted_score": {"gte": 80}}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                },
+            ]
+        }
+    }
+
+    count_endpoint = f"{fetcher.base_url}/{fetcher.index}/_count"
+    count_response = requests.post(
+        count_endpoint,
+        json={"query": query_body},
+        timeout=20,
+        **fetcher._request_kwargs(),
+    )
+    count_response.raise_for_status()
+    count_payload = count_response.json() or {}
+    total_catalog_hits = int(count_payload.get("count", 0) or 0)
+    if total_catalog_hits <= 0:
+        return {"docs": [], "total_catalog_hits": 0}
+
+    body: Dict[str, Any] = {
+        "size": total_catalog_hits,
+        "track_total_hits": True,
+        "_source": {
+            "includes": [
+                "id",
+                "visibility",
+                "flean_score.adjusted_score",
+                "flean_score.adjusted_score_label",
+            ]
+        },
+        "query": query_body,
+        "sort": [
+            {"flean_score.adjusted_score": {"order": "desc", "missing": "_last"}},
+        ],
+    }
+    search_endpoint = f"{fetcher.base_url}/{fetcher.index}/_search"
+    response = requests.post(
+        search_endpoint,
+        json=body,
+        timeout=20,
+        **fetcher._request_kwargs(),
+    )
+    response.raise_for_status()
+    payload = response.json() or {}
+    hits = ((payload.get("hits") or {}).get("hits") or [])
+    docs = [hit.get("_source") for hit in hits if isinstance(hit, dict) and hit.get("_source")]
+
+    return {
+        "docs": docs,
+        "total_catalog_hits": total_catalog_hits,
+    }
+
+
+def _build_validation_candidates_payload() -> Dict[str, Any]:
+    """Build full-catalog validation candidates in a single group."""
     requested_at = datetime.utcnow().isoformat() + "Z"
-    inspected_total = 0
-    eligible_total = 0
+    fetched = _fetch_full_catalog_validation_candidates()
+    docs = fetched.get("docs", []) if isinstance(fetched, dict) else []
+    total_catalog_hits = int((fetched.get("total_catalog_hits", 0) if isinstance(fetched, dict) else 0) or 0)
 
-    # Best-selling top candidates per fixed path.
-    best_raw_map = fetcher.best_selling_by_category_paths_agg(
-        paths=BEST_SELLING_CATEGORY_PATHS,
-        per_category=limit,
-        fetch_per_category=limit,
-        filters=None,
-        exclude_ids=None,
-    )
-    for path in BEST_SELLING_CATEGORY_PATHS:
-        docs = best_raw_map.get(path) or []
-        if not docs:
-            docs = fetcher.search_by_category_paths(paths=[path], filters=None, size=limit, exclude_ids=None)
-        docs = sorted(docs, key=_get_adjusted_score, reverse=True)
-        inspected_count = len(docs)
-        eligible_docs = [doc for doc in docs if _is_validation_candidate_eligible(doc)]
-        eligible_count = len(eligible_docs)
-        inspected_total += inspected_count
-        eligible_total += eligible_count
-        product_ids = [
-            str(doc.get("id")).strip()
-            for doc in eligible_docs
-            if str(doc.get("id", "")).strip()
-        ][:limit]
+    seen_ids: set[str] = set()
+    product_ids: List[str] = []
+    inspected_total = len(docs)
+
+    for product in docs:
+        if not isinstance(product, dict):
+            continue
+        if not _is_validation_candidate_eligible(product):
+            continue
+        product_id = str(product.get("id", "")).strip()
+        if not product_id or product_id in seen_ids:
+            continue
+        seen_ids.add(product_id)
+        product_ids.append(product_id)
+
+    candidates = []
+    if product_ids:
         candidates.append(
             {
-                "section": "best_selling",
-                "subcategory_key": path,
-                "es_paths": [path],
+                "section": "full_catalog",
+                "subcategory_key": "all_products",
+                "es_paths": [],
                 "product_ids": product_ids,
-                "inspected_count": inspected_count,
-                "eligible_count": eligible_count,
-            }
-        )
-
-    # Flean picks top candidates per configured subcategory.
-    subcat_paths = {key: cfg.get("es_paths", []) for key, cfg in FLEAN_PICKS_CATEGORIES.items()}
-    flean_raw_map = fetcher.flean_picks_by_subcategories_agg(
-        subcategories=subcat_paths,
-        per_subcategory=limit,
-        fetch_per_subcategory=limit,
-        filters=BASE_PERSONALIZATION_FILTERS,
-        exclude_ids=None,
-    )
-    for key, cfg in FLEAN_PICKS_CATEGORIES.items():
-        docs = flean_raw_map.get(key) or []
-        if not docs:
-            docs = fetcher.search_by_category_paths(
-                paths=cfg.get("es_paths", []),
-                filters=BASE_PERSONALIZATION_FILTERS,
-                size=limit,
-                exclude_ids=None,
-            )
-        docs = sorted(docs, key=_get_adjusted_score, reverse=True)
-        inspected_count = len(docs)
-        eligible_docs = [doc for doc in docs if _is_validation_candidate_eligible(doc)]
-        eligible_count = len(eligible_docs)
-        inspected_total += inspected_count
-        eligible_total += eligible_count
-        product_ids = [
-            str(doc.get("id")).strip()
-            for doc in eligible_docs
-            if str(doc.get("id", "")).strip()
-        ][:limit]
-        candidates.append(
-            {
-                "section": "flean_picks",
-                "subcategory_key": key,
-                "es_paths": cfg.get("es_paths", []),
-                "product_ids": product_ids,
-                "inspected_count": inspected_count,
-                "eligible_count": eligible_count,
+                "inspected_count": inspected_total,
+                "eligible_count": len(product_ids),
             }
         )
 
     return {
-        "version": "v1",
+        "version": "v2",
         "requested_at": requested_at,
-        "candidate_limit": limit,
+        "candidate_groups": len(candidates),
+        "is_paginated": False,
+        "total_catalog_hits": total_catalog_hits,
         "inspected_total": inspected_total,
-        "eligible_total": eligible_total,
+        "eligible_total": len(product_ids),
+        "truncated": total_catalog_hits > inspected_total,
         "candidates": candidates,
     }
 
@@ -1100,20 +1122,19 @@ def get_validation_candidates() -> tuple[Dict[str, Any], int]:
     """
     Internal endpoint for ecom cache warm jobs.
 
-    Returns top product IDs (max 50 per subcategory) for best-selling and
-    flean-picks subcategories so ecom can validate them ahead of home traffic.
+    Returns all full-catalog product IDs for visible products with flean score >= 8
+    in a single candidate group (no pagination/batching).
     """
     try:
-        limit = _parse_candidate_limit()
-        payload = _build_validation_candidates_payload(limit=limit)
+        payload = _build_validation_candidates_payload()
         total_candidates = sum(len(item.get("product_ids", [])) for item in payload.get("candidates", []))
         log.info(
-            "HOME_VALIDATION_CANDIDATES | subcategories=%s | total_products=%s | limit=%s | inspected_total=%s | eligible_total=%s",
+            "HOME_VALIDATION_CANDIDATES | groups=%s | total_products=%s | inspected_total=%s | eligible_total=%s | truncated=%s",
             len(payload.get("candidates", [])),
             total_candidates,
-            limit,
             payload.get("inspected_total", 0),
             payload.get("eligible_total", 0),
+            payload.get("truncated", False),
         )
         return jsonify(_build_success_response(payload)), 200
     except Exception as exc:

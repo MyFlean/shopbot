@@ -1352,6 +1352,7 @@ PREFERENCE_FILTERS = {
     "no_added_sugar": "no_added_sugar",
     "no_harmful_additives": "no_harmful_additives",
     "preservative_free": "preservative_free",
+    "no_maida": "no_maida",
 }
 
 # Dietary restriction filters - map request keys to dietary_tags values

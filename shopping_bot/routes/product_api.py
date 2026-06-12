@@ -848,7 +848,7 @@ VALID_SORT_OPTIONS = {
 
 VALID_PRICE_RANGES = {"below_99", "100_249", "250_499", "above_500"}
 VALID_FLEAN_SCORES = {"10", "9_plus", "8_plus", "7_plus"}
-VALID_PREFERENCES = {"no_palm_oil", "no_added_sugar", "no_harmful_additives", "preservative_free"}
+VALID_PREFERENCES = {"no_palm_oil", "no_added_sugar", "no_harmful_additives", "preservative_free", "no_maida"}
 VALID_DIETARY = {"dairy_free", "gluten_free", "nut_free", "pcos_friendly"}
 VALID_FOOD_TYPES = {"veg", "nonveg"}
 VALID_NUTRITION_KEYS = {"protein", "carbs", "fat"}

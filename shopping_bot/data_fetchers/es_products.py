@@ -299,8 +299,6 @@ def _build_dynamic_nutrition_items(src: Dict[str, Any]) -> List[Dict[str, str]]:
             value = float(raw_value)
         except (TypeError, ValueError):
             continue
-        if value == 0:
-            continue
 
         label, unit = _format_nutrition_label_and_unit(str(raw_key))
         if not label:

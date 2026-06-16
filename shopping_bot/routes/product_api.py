@@ -33,8 +33,7 @@ from ..data_fetchers.es_products import (
 )
 from ..utils.pincode_mapping import (
     PincodeMappingError,
-    is_placeholder_pincode,
-    resolve_canonical_pincode,
+    try_resolve_canonical_pincode,
 )
 
 log = logging.getLogger(__name__)
@@ -267,9 +266,8 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
 
         # Optional pincode for Redis-backed availability override.
         request_pincode = (request.args.get("pincode", "") or "").strip()
-        canonical_pincode = ""
-        if request_pincode and not is_placeholder_pincode(request_pincode):
-            canonical_pincode = resolve_canonical_pincode(request_pincode)
+        canonical_pincode = try_resolve_canonical_pincode(request_pincode) or ""
+        if canonical_pincode:
             log.info(
                 "PDP_PINCODE_CANONICAL_RESOLVED | request_pincode=%s | canonical_pincode=%s",
                 request_pincode,

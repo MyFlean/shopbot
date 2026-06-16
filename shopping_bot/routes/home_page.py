@@ -43,7 +43,7 @@ from ..data_fetchers.es_products import get_es_fetcher, transform_to_product_car
 from ..utils.pincode_mapping import (
     PincodeMappingError,
     is_placeholder_pincode,
-    resolve_canonical_pincode,
+    try_resolve_canonical_pincode,
 )
 from .product_api import _validate_filters
 
@@ -221,14 +221,13 @@ def _resolve_request_pincode() -> Optional[str]:
 
 def _resolve_canonical_request_pincode() -> Optional[str]:
     request_pincode = _resolve_request_pincode()
-    if is_placeholder_pincode(request_pincode):
-        return None
-    canonical_pincode = resolve_canonical_pincode(request_pincode)
-    log.info(
-        "PINCODE_CANONICAL_RESOLVED | request_pincode=%s | canonical_pincode=%s",
-        request_pincode,
-        canonical_pincode,
-    )
+    canonical_pincode = try_resolve_canonical_pincode(request_pincode)
+    if canonical_pincode is not None:
+        log.info(
+            "PINCODE_CANONICAL_RESOLVED | request_pincode=%s | canonical_pincode=%s",
+            request_pincode,
+            canonical_pincode,
+        )
     return canonical_pincode
 
 

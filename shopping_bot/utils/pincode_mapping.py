@@ -16,6 +16,10 @@ class PincodeMappingError(RuntimeError):
     """Raised when request pincode cannot be canonicalized."""
 
 
+class UnmappedPincodeError(PincodeMappingError):
+    """Pincode not present in serviceable_pincodes.json."""
+
+
 PLACEHOLDER_PINCODES = frozenset({"000000"})
 
 
@@ -81,6 +85,17 @@ def resolve_canonical_pincode(request_pincode: str) -> str:
             )
         return matches[0]
 
-    raise PincodeMappingError(
+    raise UnmappedPincodeError(
         f"Pincode {raw} is not mapped in {SERVICEABLE_PINCODES_KEY}"
     )
+
+
+def try_resolve_canonical_pincode(request_pincode: Optional[str]) -> Optional[str]:
+    """Return canonical pincode, or None for placeholder/unmapped (fail-open)."""
+    if is_placeholder_pincode(request_pincode):
+        return None
+    try:
+        return resolve_canonical_pincode(request_pincode)
+    except UnmappedPincodeError:
+        log.warning("PINCODE_UNMAPPED_FAIL_OPEN | request_pincode=%s", request_pincode)
+        return None

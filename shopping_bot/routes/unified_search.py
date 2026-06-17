@@ -47,9 +47,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from flask import Blueprint, jsonify, request
 
 from ..data_fetchers.es_products import get_es_fetcher, transform_to_product_card
+from ..utils.pincode_mapping import try_resolve_canonical_pincode
 from .product_api import (
     VALID_SORT_OPTIONS,
     _error_response,
+    _has_palm_oil_ingredient,
+    _resolve_pdp_cta,
     _success_response,
     _validate_filters,
 )
@@ -61,6 +64,7 @@ MAX_SUGGEST_BRANDS = 3
 MAX_PRODUCTS_PER_BRAND = 3
 V1_SUGGEST_SIZE = 8
 V2_SUGGEST_SIZE = 100
+DEFAULT_SEARCH_PINCODE = "201303"
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +118,91 @@ def _normalize_filter_aliases(filters: Optional[Dict[str, Any]]) -> Optional[Dic
         normalized.pop("dietary", None)
 
     return normalized
+
+
+def _resolve_request_pincode(body: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Resolve request pincode from query/header/body inputs."""
+    candidates: List[Any] = [
+        request.args.get("pincode"),
+        request.headers.get("X-Pincode"),
+        request.headers.get("x-pincode"),
+    ]
+    if isinstance(body, dict):
+        candidates.append(body.get("pincode"))
+
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _resolve_effective_pincode(body: Optional[Dict[str, Any]] = None) -> str:
+    """Canonical request pincode with default fallback for search flows."""
+    request_pincode = _resolve_request_pincode(body)
+    canonical = try_resolve_canonical_pincode(request_pincode)
+    if canonical:
+        return canonical
+    return DEFAULT_SEARCH_PINCODE
+
+
+def _to_bool(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return None
+
+
+def _derive_in_stock_from_availability(raw: Dict[str, Any], effective_pincode: str) -> bool:
+    """
+    Derive listing stock for search cards from availability.<pincode>.
+
+    Rule: in_stock when any provider reports stock OR flean.quantity > 0.
+    Falls back to visibility-based stock when no usable availability signal exists.
+    """
+    visibility = str(raw.get("visibility", "visible") or "visible").strip().lower()
+    fallback_in_stock = visibility == "visible"
+
+    availability = raw.get("availability")
+    if not isinstance(availability, dict):
+        return fallback_in_stock
+
+    pincode_entry = availability.get(effective_pincode)
+    if not isinstance(pincode_entry, dict):
+        return fallback_in_stock
+
+    has_signal = False
+    provider_in_stock = False
+
+    for provider in ("zepto", "blinkit"):
+        provider_data = pincode_entry.get(provider)
+        if not isinstance(provider_data, dict):
+            continue
+        in_stock_value = _to_bool(provider_data.get("in_stock"))
+        if in_stock_value is None:
+            continue
+        has_signal = True
+        provider_in_stock = provider_in_stock or in_stock_value
+
+    flean_data = pincode_entry.get("flean")
+    flean_in_stock = False
+    if isinstance(flean_data, dict) and "quantity" in flean_data:
+        has_signal = True
+        try:
+            flean_in_stock = float(flean_data.get("quantity") or 0) > 0
+        except (TypeError, ValueError):
+            flean_in_stock = False
+
+    if has_signal:
+        return provider_in_stock or flean_in_stock
+    return fallback_in_stock
 
 
 def _group_suggestions_by_brand(suggestions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -217,6 +306,7 @@ def _fetch_flat_suggestions(query: str, size: int, version: str) -> Tuple[Option
 def unified_search() -> Tuple[Dict[str, Any], int]:
     """Unified search/browse/catalogue endpoint."""
     try:
+        body: Dict[str, Any] = {}
         if request.method == "GET":
             query = (request.args.get("query") or "").strip() or None
             subcategory = (request.args.get("subcategory") or "").strip() or None
@@ -321,10 +411,12 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         validated_filters, filter_error = _validate_filters(normalized_filters)
         if filter_error:
             return _error_response("INVALID_FILTERS", filter_error, 400)
+        effective_pincode = _resolve_effective_pincode(body)
 
         log.info(
             f"UNIFIED_SEARCH_REQUEST | query={query} | subcategory={subcategory} | "
-            f"page={page} | size={size} | sort={resolved_sort} | filters={validated_filters}"
+            f"page={page} | size={size} | sort={resolved_sort} | filters={validated_filters} "
+            f"| effective_pincode={effective_pincode}"
         )
 
         try:
@@ -359,6 +451,16 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             try:
                 card = transform_to_product_card(raw)
                 if card is not None:
+                    card_in_stock = _derive_in_stock_from_availability(raw, effective_pincode)
+                    card["in_stock"] = card_in_stock
+                    card["cta"] = _resolve_pdp_cta(
+                        product_info={
+                            "in_stock": card_in_stock,
+                            "visibility": card.get("visibility"),
+                        },
+                        flean_badge={"score": card.get("flean_score")},
+                        has_palm_oil=_has_palm_oil_ingredient(raw),
+                    )
                     if raw.get("_score") is not None:
                         card["_score"] = raw.get("_score")
                     product_cards.append(card)

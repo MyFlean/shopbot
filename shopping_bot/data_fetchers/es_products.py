@@ -4391,6 +4391,8 @@ class ElasticsearchProductsFetcher:
                         "category_data.nutritional.nutri_breakdown.*",
                         "category_data.nutritional.qty",
                         "category_data.nutritional.raw_text",
+                        "category_data.tags.ingredient_tags",
+                        "availability.*",
                         "size", "visibility",
                     ]
                 },

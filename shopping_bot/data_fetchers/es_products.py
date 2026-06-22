@@ -27,6 +27,11 @@ from . import register_fetcher
 from ..config import get_config
 from ..scoring_config import build_function_score_functions
 from ..utils.pdp_tag_labels import label_for_tag_id
+from ..utils.cards_config import (
+    allowed_score_keys_from_config,
+    apply_order_from_config,
+    get_subcategory_cards_config_for_path,
+)
 
 # ES Configuration (env-only; robust normalization)
 def _normalize_es_base(raw_url: Optional[str], index: Optional[str]) -> str:
@@ -728,6 +733,186 @@ def _parse_flean_badge_score_double(val: Any) -> Optional[float]:
     return None
 
 
+def _resolve_subcategory_path(src: Dict[str, Any]) -> str:
+    cat_paths = src.get("category_paths", [])
+    if not cat_paths:
+        return ""
+    longest_path = max(cat_paths, key=lambda p: len(str(p)) if p else 0)
+    return str(longest_path).strip() if longest_path else ""
+
+
+def _build_score_cards(
+    src: Dict[str, Any],
+    *,
+    subcategory_label: str,
+    flean_percentile: Optional[float],
+    stats: Dict[str, Any],
+    nutrition: Dict[str, Any],
+    nutritional_data: Dict[str, Any],
+    allowed_keys: Optional[FrozenSet[str]] = None,
+) -> Dict[str, Any]:
+    def _should_build(key: str) -> bool:
+        return allowed_keys is None or key in allowed_keys
+
+    score_cards: Dict[str, Any] = {}
+    _highlight_tags_root = _resolve_highlight_tags(src)
+    _ingredients_group = _ingredients_tags_group(_highlight_tags_root)
+    show_watch_outs = _is_ultra_processed(src)
+
+    protein_pctile = (stats.get("protein_percentiles") or {}).get("subcategory_percentile")
+    if _should_build("protein") and protein_pctile is not None:
+        _tier = _get_score_tier(protein_pctile)
+        score_cards["protein"] = {
+            "title": "Protein",
+            "value": _tier["label"],
+            "subtitle": "Efficiency",
+            "percentile": round(protein_pctile, 1),
+            "status": _tier["status"],
+            "status_label": _tier["label"],
+            "color": _tier["color"],
+            "theme": _tier["theme"],
+            "icon_url": SCORE_CARD_ICONS["protein"],
+        }
+        _apply_highlight_subtitle_to_card(score_cards["protein"], _highlight_tags_root, "protein_tags")
+
+    fiber_pctile = (stats.get("fiber_percentiles") or {}).get("subcategory_percentile")
+    if _should_build("fiber") and fiber_pctile is not None:
+        _tier = _get_score_tier(fiber_pctile)
+        score_cards["fiber"] = {
+            "title": "Fiber",
+            "value": _tier["label"],
+            "subtitle": "Efficiency",
+            "percentile": round(fiber_pctile, 1),
+            "status": _tier["status"],
+            "status_label": _tier["label"],
+            "color": _tier["color"],
+            "theme": _tier["theme"],
+            "icon_url": SCORE_CARD_ICONS["fiber"],
+        }
+        _apply_highlight_subtitle_to_card(score_cards["fiber"], _highlight_tags_root, "carbs_fiber_tags")
+
+    sweetener_pctile = (stats.get("sweetener_penalty_percentiles") or {}).get("subcategory_percentile")
+    if _should_build("sweeteners") and sweetener_pctile is not None:
+        sw_rank = round(100 - sweetener_pctile, 1)
+        _tier = _get_score_tier(sw_rank)
+        score_cards["sweeteners"] = {
+            "title": "Sweeteners",
+            "value": _tier["label"],
+            "subtitle": f"Percentile: {round(sweetener_pctile)}",
+            "percentile": round(sweetener_pctile, 1),
+            "status": _tier["status"],
+            "status_label": _tier["label"],
+            "color": _tier["color"],
+            "theme": _tier["theme"],
+            "icon_url": SCORE_CARD_ICONS["sweeteners"],
+        }
+        _apply_highlight_subtitle_to_card(score_cards["sweeteners"], _highlight_tags_root, "sweetners_sugar_tags")
+
+    fat_pctile = (stats.get("total_fat_penalty_percentiles") or {}).get("subcategory_percentile")
+    if _should_build("oils") and fat_pctile is not None:
+        _tier = _get_score_tier(round(100 - fat_pctile, 1))
+        score_cards["oils"] = {
+            "title": "Fats",
+            "value": _tier["label"],
+            "subtitle": f"Percentile: {round(fat_pctile)}",
+            "percentile": round(fat_pctile, 1),
+            "status": _tier["status"],
+            "status_label": _tier["label"],
+            "color": _tier["color"],
+            "theme": _tier["theme"],
+            "icon_url": SCORE_CARD_ICONS["oils"],
+        }
+        _apply_highlight_subtitle_to_card(score_cards["oils"], _highlight_tags_root, "oils_fats_tags")
+
+    additives_pctile = (stats.get("additives_penalty_percentiles") or {}).get("subcategory_percentile")
+    if _should_build("additives") and additives_pctile is not None:
+        _tier = _get_score_tier(round(100 - additives_pctile, 1))
+        score_cards["additives"] = {
+            "title": "Additives",
+            "value": _tier["label"],
+            "subtitle": f"Percentile: {round(additives_pctile)}",
+            "percentile": round(additives_pctile, 1),
+            "status": _tier["status"],
+            "status_label": _tier["label"],
+            "color": _tier["color"],
+            "theme": _tier["theme"],
+            "icon_url": SCORE_CARD_ICONS["additives"],
+            "visible": True,
+        }
+        subtitle_new = _subtitle_new_from_highlight_group(
+            _ingredients_group, include_tag_ids=ADDITIVES_TAG_IDS
+        )
+        if subtitle_new:
+            score_cards["additives"]["subtitle_new"] = subtitle_new
+
+    if _should_build("preservatives"):
+        _preservatives_card = _build_ingredients_domain_card(
+            _ingredients_group,
+            "preservatives",
+            "Preservatives",
+            PRESERVATIVES_TAG_IDS,
+            PRESERVATIVES_TIER_RULES,
+            stats,
+        )
+        if _preservatives_card:
+            score_cards["preservatives"] = _preservatives_card
+
+    if show_watch_outs and _should_build("watch_outs"):
+        has_negative = _ingredients_tags_has_negative(_ingredients_group)
+        _wo_tier = _watch_outs_tier(has_negative)
+        empty_food_pctile = (stats.get("empty_food_penalty_percentiles") or {}).get(
+            "subcategory_percentile"
+        )
+        score_cards["watch_outs"] = {
+            "title": "Watch-outs",
+            "value": "Processed",
+            "subtitle": "Ultra Processed",
+            "percentile": round(empty_food_pctile, 1) if empty_food_pctile is not None else None,
+            "status": _wo_tier["status"],
+            "status_label": _wo_tier["label"],
+            "color": _wo_tier["color"],
+            "theme": _wo_tier["theme"],
+            "visible": True,
+        }
+    elif _should_build("flean_rank") and flean_percentile is not None:
+        rank_pct = round(100 - flean_percentile, 1)
+        _tier = _get_score_tier(flean_percentile)
+        score_cards["flean_rank"] = {
+            "title": "Flean Rank",
+            "value": f"Top {rank_pct}%",
+            "subtitle": subcategory_label,
+            "percentile": round(flean_percentile, 1),
+            "status": _tier["status"],
+            "status_label": _tier["label"],
+            "color": _tier["color"],
+            "theme": _tier["theme"],
+            "icon_url": SCORE_CARD_ICONS["flean_rank"],
+        }
+
+    if _should_build("calories") and nutrition.get("calories") is not None:
+        cal_val = round(nutrition["calories"])
+        cal_basis = nutritional_data.get("qty", "100 g")
+        calories_pctile = (stats.get("calories_penalty_percentiles") or {}).get("subcategory_percentile")
+        if calories_pctile is not None:
+            _cal_tier = _get_score_tier(round(100 - calories_pctile, 1))
+        else:
+            _cal_tier = _tier_to_card_fields(_SCORE_TIER_BY_STATUS["average"])
+        score_cards["calories"] = {
+            "title": "Calories",
+            "value": f"{cal_val} kcal/ {cal_basis}",
+            "subtitle": cal_basis,
+            "percentile": round(calories_pctile, 1) if calories_pctile else None,
+            "status": _cal_tier["status"],
+            "status_label": _cal_tier["label"],
+            "color": _cal_tier["color"],
+            "theme": _cal_tier["theme"],
+            "icon_url": SCORE_CARD_ICONS["calories"],
+        }
+        _apply_highlight_subtitle_to_card(score_cards["calories"], _highlight_tags_root, "energy_tags")
+
+    return score_cards
+
+
 def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     """
     Full PDP transformer: raw ES _source → optimized key-value PDP data.
@@ -825,173 +1010,21 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "color": level_color,
     }
 
-    # ── score_cards (named object with direct access) ──
-    score_cards = {}
-    _highlight_tags_root = _resolve_highlight_tags(src)
-    _ingredients_group = _ingredients_tags_group(_highlight_tags_root)
-    _is_ultra = _is_ultra_processed(src)
-    show_watch_outs = _is_ultra
-
-    # Protein card
-    protein_pctile = (stats.get("protein_percentiles") or {}).get("subcategory_percentile")
-    if protein_pctile is not None:
-        prot_rank = round(100 - protein_pctile, 1)
-        _tier = _get_score_tier(protein_pctile)
-        score_cards["protein"] = {
-            "title": "Protein",
-            "value": _tier["label"],
-            "subtitle": "Efficiency",
-            "percentile": round(protein_pctile, 1),
-            "status": _tier["status"],
-            "status_label": _tier["label"],
-            "color": _tier["color"],
-            "theme": _tier["theme"],
-            "icon_url": SCORE_CARD_ICONS["protein"],
-        }
-        _apply_highlight_subtitle_to_card(score_cards["protein"], _highlight_tags_root, "protein_tags")
-
-    # Fiber card
-    fiber_pctile = (stats.get("fiber_percentiles") or {}).get("subcategory_percentile")
-    if fiber_pctile is not None:
-        fib_rank = round(100 - fiber_pctile, 1)
-        _tier = _get_score_tier(fiber_pctile)
-        score_cards["fiber"] = {
-            "title": "Fiber",
-            "value": _tier["label"],
-            "subtitle": "Efficiency",
-            "percentile": round(fiber_pctile, 1),
-            "status": _tier["status"],
-            "status_label": _tier["label"],
-            "color": _tier["color"],
-            "theme": _tier["theme"],
-            "icon_url": SCORE_CARD_ICONS["fiber"],
-        }
-        _apply_highlight_subtitle_to_card(score_cards["fiber"], _highlight_tags_root, "carbs_fiber_tags")
-
-    # Sweeteners card
-    sweetener_pctile = (stats.get("sweetener_penalty_percentiles") or {}).get("subcategory_percentile")
-    if sweetener_pctile is not None:
-        sw_rank = round(100 - sweetener_pctile, 1)
-        _tier = _get_score_tier(sw_rank)
-        score_cards["sweeteners"] = {
-            "title": "Sweeteners",
-            "value": _tier["label"],
-            "subtitle": f"Percentile: {round(sweetener_pctile)}",
-            "percentile": round(sweetener_pctile, 1),
-            "status": _tier["status"],
-            "status_label": _tier["label"],
-            "color": _tier["color"],
-            "theme": _tier["theme"],
-            "icon_url": SCORE_CARD_ICONS["sweeteners"],
-        }
-        _apply_highlight_subtitle_to_card(score_cards["sweeteners"], _highlight_tags_root, "sweetners_sugar_tags")
-
-    # Fat card (API key oils; percentile from total fat penalty)
-    fat_pctile = (stats.get("total_fat_penalty_percentiles") or {}).get("subcategory_percentile")
-    if fat_pctile is not None:
-        fat_rank = round(100 - fat_pctile, 1)
-        _tier = _get_score_tier(fat_rank)
-        score_cards["oils"] = {
-            "title": "Fats",
-            "value": _tier["label"],
-            "subtitle": f"Percentile: {round(fat_pctile)}",
-            "percentile": round(fat_pctile, 1),
-            "status": _tier["status"],
-            "status_label": _tier["label"],
-            "color": _tier["color"],
-            "theme": _tier["theme"],
-            "icon_url": SCORE_CARD_ICONS["oils"],
-        }
-        _apply_highlight_subtitle_to_card(score_cards["oils"], _highlight_tags_root, "oils_fats_tags")
-
-    # Additives card (percentile from additives_penalty_percentiles, like sweeteners)
-    additives_pctile = (stats.get("additives_penalty_percentiles") or {}).get("subcategory_percentile")
-    if additives_pctile is not None:
-        additives_rank = round(100 - additives_pctile, 1)
-        _tier = _get_score_tier(additives_rank)
-        score_cards["additives"] = {
-            "title": "Additives",
-            "value": _tier["label"],
-            "subtitle": f"Percentile: {round(additives_pctile)}",
-            "percentile": round(additives_pctile, 1),
-            "status": _tier["status"],
-            "status_label": _tier["label"],
-            "color": _tier["color"],
-            "theme": _tier["theme"],
-            "icon_url": SCORE_CARD_ICONS["additives"],
-            "visible": True,
-        }
-        subtitle_new = _subtitle_new_from_highlight_group(
-            _ingredients_group, include_tag_ids=ADDITIVES_TAG_IDS
-        )
-        if subtitle_new:
-            score_cards["additives"]["subtitle_new"] = subtitle_new
-
-    _preservatives_card = _build_ingredients_domain_card(
-        _ingredients_group,
-        "preservatives",
-        "Preservatives",
-        PRESERVATIVES_TAG_IDS,
-        PRESERVATIVES_TIER_RULES,
-        stats,
-    )
-    if _preservatives_card:
-        score_cards["preservatives"] = _preservatives_card
-
-    # Watch-outs vs Flean Rank (mutually exclusive)
-    if show_watch_outs:
-        has_negative = _ingredients_tags_has_negative(_ingredients_group)
-        _wo_tier = _watch_outs_tier(has_negative)
-        empty_food_pctile = (stats.get("empty_food_penalty_percentiles") or {}).get(
-            "subcategory_percentile"
-        )
-        score_cards["watch_outs"] = {
-            "title": "Watch-outs",
-            "value": "Processed",
-            "subtitle": "Ultra Processed",
-            "percentile": round(empty_food_pctile, 1) if empty_food_pctile is not None else None,
-            "status": _wo_tier["status"],
-            "status_label": _wo_tier["label"],
-            "color": _wo_tier["color"],
-            "theme": _wo_tier["theme"],
-            "visible": True,
-        }
-    elif flean_percentile is not None:
-        rank_pct = round(100 - flean_percentile, 1)
-        _tier = _get_score_tier(flean_percentile)
-        score_cards["flean_rank"] = {
-            "title": "Flean Rank",
-            "value": f"Top {rank_pct}%",
-            "subtitle": subcategory_label,
-            "percentile": round(flean_percentile, 1),
-            "status": _tier["status"],
-            "status_label": _tier["label"],
-            "color": _tier["color"],
-            "theme": _tier["theme"],
-            "icon_url": SCORE_CARD_ICONS["flean_rank"],
-        }
-
-    # Calories card
-    if nutrition.get("calories") is not None:
-        cal_val = round(nutrition["calories"])
-        cal_basis = nutritional_data.get("qty", "100 g")
-        calories_pctile = (stats.get("calories_penalty_percentiles") or {}).get("subcategory_percentile")
-        if calories_pctile is not None:
-            _cal_tier = _get_score_tier(round(100 - calories_pctile, 1))
-        else:
-            _cal_tier = _tier_to_card_fields(_SCORE_TIER_BY_STATUS["average"])
-        score_cards["calories"] = {
-            "title": "Calories",
-            "value": f"{cal_val} kcal/ {cal_basis}",
-            "subtitle": cal_basis,
-            "percentile": round(calories_pctile, 1) if calories_pctile else None,
-            "status": _cal_tier["status"],
-            "status_label": _cal_tier["label"],
-            "color": _cal_tier["color"],
-            "theme": _cal_tier["theme"],
-            "icon_url": SCORE_CARD_ICONS["calories"],
-        }
-        _apply_highlight_subtitle_to_card(score_cards["calories"], _highlight_tags_root, "energy_tags")
+    # ── score_cards (config-driven: only build cards listed in Redis config) ──
+    cards_config = get_subcategory_cards_config_for_path(_resolve_subcategory_path(src))
+    build_kwargs = {
+        "subcategory_label": subcategory_label,
+        "flean_percentile": flean_percentile,
+        "stats": stats,
+        "nutrition": nutrition,
+        "nutritional_data": nutritional_data,
+    }
+    if cards_config:
+        allowed = allowed_score_keys_from_config(cards_config)
+        score_cards = _build_score_cards(src, allowed_keys=allowed, **build_kwargs)
+        score_cards = apply_order_from_config(score_cards, cards_config)
+    else:
+        score_cards = _build_score_cards(src, **build_kwargs)
 
     # ── notes (static display notes for UI) ──
     notes = {

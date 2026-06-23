@@ -17,33 +17,11 @@ def admin_client():
     return app.test_client()
 
 
-def test_reload_requires_token(admin_client):
-    with patch.dict("os.environ", {"CARDS_CONFIG_ADMIN_TOKEN": "secret-token"}, clear=False):
-        resp = admin_client.post("/rs/api/v1/admin/cards-config/reload")
-    assert resp.status_code == 401
-
-
-def test_reload_disabled_without_env_token(admin_client):
-    with patch.dict("os.environ", {"CARDS_CONFIG_ADMIN_TOKEN": ""}, clear=False):
-        resp = admin_client.post(
-            "/rs/api/v1/admin/cards-config/reload",
-            headers={"X-Cards-Config-Token": "anything"},
-        )
-    assert resp.status_code == 503
-
-
 def test_reload_success(admin_client):
     mock_redis = MagicMock()
-    mock_ctx = MagicMock()
-    mock_ctx.redis = mock_redis
-
     source = {"Default": [{"card": "Flean Rank", "visible": True, "order": 1}]}
 
-    with patch.dict(
-        "os.environ",
-        {"CARDS_CONFIG_ADMIN_TOKEN": "secret-token", "REDIS_HOST": "redis.example"},
-        clear=False,
-    ):
+    with patch.dict("os.environ", {"REDIS_HOST": "redis.example"}, clear=False):
         with patch(
             "shopping_bot.routes.admin_config.load_cards_config_source",
             return_value=source,
@@ -58,7 +36,6 @@ def test_reload_success(admin_client):
                 ):
                     resp = admin_client.post(
                         "/rs/api/v1/admin/cards-config/reload?force=true",
-                        headers={"X-Cards-Config-Token": "secret-token"},
                     )
 
     assert resp.status_code == 200

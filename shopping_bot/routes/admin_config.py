@@ -1,4 +1,4 @@
-"""Operational admin routes (protected by env tokens)."""
+"""Operational admin routes."""
 
 from __future__ import annotations
 
@@ -17,33 +17,6 @@ log = logging.getLogger(__name__)
 bp = Blueprint("admin_config", __name__)
 
 
-def _admin_token() -> str:
-    return os.getenv("CARDS_CONFIG_ADMIN_TOKEN", "").strip()
-
-
-def _require_admin_token() -> Tuple[Dict[str, Any], int] | None:
-    expected = _admin_token()
-    if not expected:
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "CARDS_CONFIG_ADMIN_TOKEN is not configured",
-                }
-            ),
-            503,
-        )
-
-    provided = (
-        request.headers.get("X-Cards-Config-Token")
-        or request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-        or request.args.get("token", "").strip()
-    )
-    if not provided or provided != expected:
-        return jsonify({"success": False, "error": "Unauthorized"}), 401
-    return None
-
-
 def _get_redis_client():
     ctx_mgr = current_app.extensions.get("ctx_mgr")
     if ctx_mgr is None and "_get_or_init_redis" in current_app.extensions:
@@ -60,10 +33,6 @@ def reload_cards_config() -> Tuple[Dict[str, Any], int]:
 
     Equivalent to: python scripts/load_cards_config_to_redis.py [--force]
     """
-    auth_error = _require_admin_token()
-    if auth_error is not None:
-        return auth_error
-
     force_raw = request.args.get("force", "true")
     force = str(force_raw).strip().lower() in {"1", "true", "yes", "on"}
 

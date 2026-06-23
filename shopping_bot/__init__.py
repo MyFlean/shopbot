@@ -417,6 +417,22 @@ def create_app(config_name: str = 'production') -> Flask:
                 extra={"error_type": type(e).__name__},
             )
 
+        # Register admin config routes (cards-config reload, etc.)
+        try:
+            from .routes.admin_config import bp as admin_config_bp
+            app.register_blueprint(admin_config_bp, url_prefix='/rs')
+            log.info(
+                "REGISTER_ROUTES_SUCCESS | admin config registered "
+                "(/rs/api/v1/admin/cards-config/reload)"
+            )
+        except Exception as e:
+            log.error(
+                "REGISTER_ROUTES_ERROR | admin config failed: %s",
+                str(e),
+                exc_info=True,
+                extra={"error_type": type(e).__name__},
+            )
+
         # Register unified search endpoint (superset of /rs/search, /rs/api/v1/catalogue, /rs/api/v1/products)
         try:
             from .routes.unified_search import bp as unified_search_bp

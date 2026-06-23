@@ -230,7 +230,127 @@ CARD_DISPLAY_NAME_TO_SCORE_KEY: Dict[str, str] = {
     "Calories": "calories",
     "Flean Rank": "flean_rank",
     "Watch Outs": "watch_outs",
+    "Natural Sugar": "natural_sugar",
+    "Glycemic Index": "glycemic_index",
+    "Vitamins & Minerals": "vitamins_minerals",
+    "Antioxidants": "antioxidants",
+    "Gut Health": "gut_health",
 }
+
+# Unified score-card build registry.
+# build_type: percentile | highlight_only | additives | preservatives | watch_outs | flean_rank | glycemic_index | sentiment_highlight
+# tier_mode (percentile): bonus → High/Good/Average/Poor/Sub-Par | penalty → Very Low/Low/Present/High/Very High
+# ES highlight tag groups come from Redis config highlight_tag only (not registry).
+CARD_STATS_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "watch_outs": {"build_type": "watch_outs", "default_title": "Watch-outs"},
+    "flean_rank": {"build_type": "flean_rank", "default_title": "Flean Rank"},
+    "protein": {
+        "build_type": "percentile",
+        "default_title": "Protein",
+        "stats_fields": ("protein_percentiles",),
+        "tier_mode": "bonus",
+        "subtitle": "Efficiency",
+    },
+    "fiber": {
+        "build_type": "percentile",
+        "default_title": "Fiber",
+        "stats_fields": ("fiber_percentiles",),
+        "tier_mode": "bonus",
+        "subtitle": "Efficiency",
+    },
+    "natural_sugar": {
+        "build_type": "percentile",
+        "default_title": "Natural Sugar",
+        "stats_fields": ("total_sugar_percentiles",),
+        "tier_mode": "penalty",
+        "subtitle": "Percentile",
+    },
+    "glycemic_index": {
+        "build_type": "glycemic_index",
+        "default_title": "Glycemic Index",
+    },
+    "vitamins_minerals": {
+        "build_type": "percentile",
+        "default_title": "Vitamins & Minerals",
+        "stats_fields": ("total_vitamin_mineral_percentiles",),
+        "tier_mode": "bonus",
+        "subtitle": "Efficiency",
+    },
+    "sweeteners": {
+        "build_type": "percentile",
+        "default_title": "Sweeteners",
+        "stats_fields": ("sweetener_penalty_percentiles",),
+        "tier_mode": "penalty",
+        "subtitle": "Percentile",
+    },
+    "oils": {
+        "build_type": "percentile",
+        "default_title": "Fats",
+        "stats_fields": ("total_fat_penalty_percentiles",),
+        "tier_mode": "penalty",
+        "subtitle": "Percentile",
+    },
+    "additives": {
+        "build_type": "additives",
+        "default_title": "Additives",
+        "stats_fields": ("additives_penalty_percentiles",),
+        "tier_mode": "penalty",
+    },
+    "preservatives": {
+        "build_type": "preservatives", 
+        "default_title": "Preservatives"
+    },
+    "antioxidants": {
+        "build_type": "sentiment_highlight",
+        "default_title": "Antioxidants",
+    },
+    "calories": {
+        "build_type": "percentile",
+        "default_title": "Calories",
+        "stats_fields": ("calories_penalty_percentiles",),
+        "tier_mode": "penalty",
+        "subtitle": "Percentile",
+    },
+    "gut_health": {
+        "build_type": "sentiment_highlight",
+        "default_title": "Gut Health",
+    },
+}
+
+SCORE_CARD_BUILD_ORDER: Tuple[str, ...] = (
+    "watch_outs",
+    "flean_rank",
+    "protein",
+    "fiber",
+    "natural_sugar",
+    "glycemic_index",
+    "vitamins_minerals",
+    "sweeteners",
+    "oils",
+    "additives",
+    "preservatives",
+    "antioxidants",
+    "calories",
+    "gut_health",
+)
+
+
+def score_key_meta_from_config(
+    config_entries: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """Map score_cards builder keys to Redis config metadata."""
+    meta: Dict[str, Dict[str, Any]] = {}
+    for entry in config_entries:
+        display_name = str(entry.get("card") or "").strip()
+        score_key = CARD_DISPLAY_NAME_TO_SCORE_KEY.get(display_name)
+        if not score_key:
+            continue
+        meta[score_key] = {
+            "title": display_name,
+            "highlight_tag": str(entry.get("highlight_tag") or "").strip(),
+            "optional": bool(entry.get("optional", True)),
+        }
+    return meta
 
 
 def allowed_score_keys_from_config(

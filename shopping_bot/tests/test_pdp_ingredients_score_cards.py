@@ -35,7 +35,7 @@ def test_additives_average_from_penalty_percentile():
     )
     pdp = transform_to_pdp(src)
     card = pdp["score_cards"]["additives"]
-    assert card["value"] == "Average"
+    assert card["value"] == "Present"
     assert card["theme"] == "average"
     assert card["percentile"] == 38.1
     assert card["subtitle"] == "Percentile: 38"
@@ -54,7 +54,7 @@ def test_additives_percentile_with_tag_subtitle_new():
     )
     pdp = transform_to_pdp(src)
     card = pdp["score_cards"]["additives"]
-    assert card["value"] == "Caution"
+    assert card["value"] == "High"
     assert card["theme"] == "subpar"
     assert len(card["subtitle_new"]) == 1
     assert card["subtitle_new"][0]["tag_label"]

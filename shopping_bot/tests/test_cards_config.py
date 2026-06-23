@@ -429,3 +429,20 @@ def test_sentiment_highlight_negative_wins_over_positive(
     }
     pdp = transform_to_pdp(src)
     assert pdp["score_cards"][score_key]["value"] == "Poor"
+
+
+def test_get_redis_client_uses_lazy_initializer():
+    from unittest.mock import MagicMock
+    from flask import Flask
+
+    from shopping_bot.utils.cards_config import _get_redis_client
+
+    app = Flask(__name__)
+    mock_ctx = MagicMock()
+    mock_ctx.redis = MagicMock()
+    app.extensions["ctx_mgr"] = None
+    app.extensions["_get_or_init_redis"] = MagicMock(return_value=mock_ctx)
+
+    with app.app_context():
+        assert _get_redis_client() is mock_ctx.redis
+    app.extensions["_get_or_init_redis"].assert_called_once()

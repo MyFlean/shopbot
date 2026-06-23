@@ -1341,7 +1341,8 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     # ── score_cards (config-driven: only build cards listed in Redis config) ──
-    cards_config = get_subcategory_cards_config_for_path(_resolve_subcategory_path(src))
+    subcategory_path = _resolve_subcategory_path(src)
+    cards_config = get_subcategory_cards_config_for_path(subcategory_path)
     build_kwargs = {
         "subcategory_label": subcategory_label,
         "flean_percentile": flean_percentile,
@@ -1359,7 +1360,36 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         )
         score_cards = apply_order_from_config(score_cards, cards_config)
     else:
+        allowed = None
         score_cards = _build_score_cards(src, **build_kwargs)
+    # #region agent log
+    try:
+        import json as _json, time as _time
+        from pathlib import Path as _Path
+        _Path("/Users/anuj/shopbot/.cursor/debug-9e371a.log").open("a").write(
+            _json.dumps(
+                {
+                    "sessionId": "9e371a",
+                    "hypothesisId": "H2,H4,H5",
+                    "location": "es_products.py:transform_to_pdp",
+                    "message": "score cards built",
+                    "data": {
+                        "product_id": src.get("id"),
+                        "category_paths": src.get("category_paths"),
+                        "resolved_subcategory_path": subcategory_path,
+                        "cards_config_used": bool(cards_config),
+                        "allowed_keys": sorted(allowed) if cards_config else None,
+                        "built_score_card_keys": sorted(score_cards.keys()),
+                        "protein_in_output": "protein" in score_cards,
+                    },
+                    "timestamp": int(_time.time() * 1000),
+                }
+            )
+            + "\n"
+        )
+    except Exception:
+        pass
+    # #endregion
 
     # ── notes (static display notes for UI) ──
     notes = {

@@ -305,11 +305,9 @@ CARD_STATS_REGISTRY: Dict[str, Dict[str, Any]] = {
         "default_title": "Antioxidants",
     },
     "calories": {
-        "build_type": "percentile",
+        "build_type": "calories",
         "default_title": "Calories",
         "stats_fields": ("calories_penalty_percentiles",),
-        "tier_mode": "penalty",
-        "subtitle": "Percentile",
     },
     "gut_health": {
         "build_type": "sentiment_highlight",

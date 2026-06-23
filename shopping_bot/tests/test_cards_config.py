@@ -152,6 +152,26 @@ def _veggies_src(**overrides):
 
 
 @patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+def test_calories_card_value_uses_kcal_format(mock_get_config):
+    mock_get_config.return_value = [
+        {
+            "card": "Calories",
+            "highlight_tag": "energy_tags",
+            "visible": True,
+            "optional": True,
+            "order": 1,
+        },
+    ]
+    src = _rich_src()
+    src["stats"]["calories_penalty_percentiles"] = {"subcategory_percentile": 30.0}
+    pdp = transform_to_pdp(src)
+    cal = pdp["score_cards"]["calories"]
+    assert cal["value"] == "200 kcal/ 100 g"
+    assert cal["subtitle"] == "100 g"
+    assert cal["percentile"] == 30.0
+
+
+@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
 def test_transform_to_pdp_only_builds_visible_configured_cards(mock_get_config):
     mock_get_config.return_value = [
         {"card": "Protein", "visible": False, "order": 1},

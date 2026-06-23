@@ -975,6 +975,36 @@ class _ScoreCardBuildContext:
     meta_by_key: Dict[str, Dict[str, Any]]
 
 
+def _build_calories_card(ctx: _ScoreCardBuildContext) -> Optional[Dict[str, Any]]:
+    cal_raw = ctx.nutrition.get("calories")
+    if cal_raw is None:
+        return None
+
+    cal_val = round(cal_raw)
+    cal_basis = ctx.nutritional_data.get("qty", "100 g")
+    calories_pctile = _subcategory_percentile(ctx.stats, "calories_penalty_percentiles")
+    if calories_pctile is not None:
+        _cal_tier = _get_score_tier(round(100 - calories_pctile, 1))
+    else:
+        _cal_tier = _tier_to_card_fields(_SCORE_TIER_BY_STATUS["average"])
+
+    icon_url = SCORE_CARD_ICONS.get("calories")
+    card: Dict[str, Any] = {
+        "title": _card_title("calories", ctx.meta_by_key),
+        "value": f"{cal_val} kcal/ {cal_basis}",
+        "subtitle": cal_basis,
+        "percentile": round(calories_pctile, 1) if calories_pctile is not None else None,
+        "status": _cal_tier["status"],
+        "status_label": _cal_tier["label"],
+        "color": _cal_tier["color"],
+        "theme": _cal_tier["theme"],
+        "visible": True,
+    }
+    if icon_url:
+        card["icon_url"] = icon_url
+    return card
+
+
 def _build_additives_card(ctx: _ScoreCardBuildContext) -> Optional[Dict[str, Any]]:
     spec = CARD_STATS_REGISTRY.get("additives") or {}
     pctile = _percentile_from_registry_spec(ctx.stats, spec)
@@ -1160,6 +1190,8 @@ def _build_score_card(
         return _build_preservatives_card(ctx)
     if build_type == "glycemic_index":
         return _build_glycemic_index_card(ctx)
+    if build_type == "calories":
+        return _build_calories_card(ctx)
     if build_type == "sentiment_highlight":
         return _build_sentiment_highlight_card(score_key, ctx)
     if build_type == "highlight_only":

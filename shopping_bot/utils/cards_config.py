@@ -190,44 +190,13 @@ def get_subcategory_cards_config(
 def get_subcategory_cards_config_for_path(subcategory_path: str) -> List[Dict[str, Any]]:
     """Resolve Redis client from Flask app and fetch config (empty list if unavailable)."""
     redis_client = _get_redis_client()
-    entries: List[Dict[str, Any]] = []
-    if redis_client is not None:
-        try:
-            entries = get_subcategory_cards_config(redis_client, subcategory_path)
-        except Exception as exc:
-            log.warning("CARDS_CONFIG_READ_ERROR | path=%s | error=%s", subcategory_path, exc)
-            entries = []
-    # #region agent log
+    if redis_client is None:
+        return []
     try:
-        import json as _json, time as _time
-        from pathlib import Path as _Path
-        _Path("/Users/anuj/shopbot/.cursor/debug-9e371a.log").open("a").write(
-            _json.dumps(
-                {
-                    "sessionId": "9e371a",
-                    "hypothesisId": "H1,H3,H5",
-                    "location": "cards_config.py:get_subcategory_cards_config_for_path",
-                    "message": "cards config redis lookup",
-                    "data": {
-                        "subcategory_path": subcategory_path,
-                        "redis_client_available": redis_client is not None,
-                        "config_entry_count": len(entries),
-                        "protein_visible_in_config": next(
-                            (e.get("visible") for e in entries if e.get("card") == "Protein"),
-                            None,
-                        ),
-                        "lookup_key": scorecard_redis_key(subcategory_path) if subcategory_path else scorecard_redis_key(DEFAULT_SUBCATEGORY),
-                        "config_cards": [e.get("card") for e in entries[:12]],
-                    },
-                    "timestamp": int(_time.time() * 1000),
-                }
-            )
-            + "\n"
-        )
-    except Exception:
-        pass
-    # #endregion
-    return entries
+        return get_subcategory_cards_config(redis_client, subcategory_path)
+    except Exception as exc:
+        log.warning("CARDS_CONFIG_READ_ERROR | path=%s | error=%s", subcategory_path, exc)
+        return []
 
 
 def _get_redis_client():

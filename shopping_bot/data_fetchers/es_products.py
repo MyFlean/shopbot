@@ -4484,17 +4484,23 @@ class ElasticsearchProductsFetcher:
             if filters:
                 filter_clauses.extend(_build_filter_clauses(filters))
             
-            # Add subcategory filter if provided
+            # Add subcategory filter if provided.
+            # API callers send leaf ids like "fruits"/"veggies"; avoid broad
+            # contains matching that can leak parent buckets such as
+            # "veggies_and_fruits".
             if subcat:
-                filter_clauses.append({
-                    "bool": {
-                        "should": [
-                            {"term": {"category_paths.keyword": subcat}},
-                            {"wildcard": {"category_paths": {"value": f"*{subcat}*"}}}
-                        ],
-                        "minimum_should_match": 1
-                    }
-                })
+                leaf_subcat = re.sub(r"[^a-z0-9]+", "_", subcat.lower()).strip("_")
+                if leaf_subcat:
+                    filter_clauses.append({
+                        "bool": {
+                            "should": [
+                                {"term": {"category_hierarchies": leaf_subcat}},
+                                {"term": {"category_hierarchies.keyword": leaf_subcat}},
+                                {"wildcard": {"category_paths": {"value": f"*/{leaf_subcat}"}}},
+                            ],
+                            "minimum_should_match": 1
+                        }
+                    })
             
             # Build the query
             dynamic_min_score: Optional[float] = None

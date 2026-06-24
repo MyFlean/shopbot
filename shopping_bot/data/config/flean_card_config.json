@@ -1,0 +1,4826 @@
+{
+  "f_and_b/food/biscuits_and_crackers/cookies": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/biscuits_and_crackers/crackers": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 7
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 8
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/biscuits_and_crackers/wafer_biscuits": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/biscuits_and_crackers/rusks_and_khari": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/biscuits_and_crackers/glucose_and_marie_biscuits": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/biscuits_and_crackers/digestive_biscuits": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/biscuits_and_crackers/cream_filled_biscuits": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_foods/frozen_vegetarian_snacks": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_foods/frozen_sausages_salami_and_ham": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_foods/frozen_roti_and_paratha": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_foods/frozen_vegetables_and_pulp": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_foods/momos_and_similar": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_foods/frozen_raw_meats": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_foods/non_veg_frozen_snacks": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_treats/ice_cream_cakes_and_sandwiches": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_treats/ice_cream_tubs": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_treats/ice_cream_sticks": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_treats/light_ice_cream": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_treats/kulfi": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_treats/ice_cream_cones": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_treats/ice_cream_cups": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/frozen_treats/frozen_pop_cubes": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 5
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/dairy_and_bakery/cheese": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/dairy_and_bakery/yogurt_and_shrikhand": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/dairy_and_bakery/curd_and_probiotic_drinks": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/dairy_and_bakery/eggs": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/dairy_and_bakery/bread_and_buns": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 7
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 8
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/dairy_and_bakery/paneer_and_cream": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/dairy_and_bakery/batter_and_mix": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/dairy_and_bakery/butter": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 5
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/dairy_and_bakery/vegan_beverages": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 7
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 8
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/breakfast_essentials/breakfast_cereals": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 7
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 8
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/breakfast_essentials/dates_and_seeds": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 7
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 8
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/breakfast_essentials/muesli_and_oats": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 7
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 8
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/packaged_meals/ready_to_cook_meals": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/packaged_meals/ready_to_eat_meals": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/packaged_meals/baking_mixes_and_ingredients": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/packaged_meals/pasta_and_soups": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/packaged_meals/papads_and_pickles_and_chutneys": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/packaged_meals/baby_food": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 7
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 8
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/sweet_treats/chocolates": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/sweet_treats/premium_chocolates": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/sweet_treats/indian_mithai": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/sweet_treats/dessert_mixes": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/sweet_treats/candies_gums_and_mints": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 5
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/sweet_treats/pastries_and_cakes": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/light_bites/dry_fruit_and_nut_snacks": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 7
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 8
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/light_bites/savory_namkeen": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/light_bites/energy_bars": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 7
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 8
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/light_bites/popcorn": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/light_bites/nachos": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/light_bites/chips_and_crisps": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/noodles_and_vermicelli/vermicelli_and_noodles": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/spreads_and_condiments/peanut_butter": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/spreads_and_condiments/honey_and_spreads": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/spreads_and_condiments/ketchup_and_sauces": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/dairy_and_bakery/milk": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/dairy_and_bakery/flavored_milk_drinks": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/dairy_and_bakery/gourmet_specialties": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/sodas_juices_and_more/enhanced_hydration": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 5
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/sodas_juices_and_more/fruit_juices": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/sodas_juices_and_more/instant_beverage_mixes": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 5
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/sodas_juices_and_more/bottled_water": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 3
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/sodas_juices_and_more/soda_and_mixers": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 5
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/sodas_juices_and_more/energy_and_non_alcoholic_drinks": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 5
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/sodas_juices_and_more/soft_drinks": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 5
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/sodas_juices_and_more/iced_coffee_and_tea": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/tea_coffee_and_more/tea": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 5
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/tea_coffee_and_more/coffee": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 5
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/tea_coffee_and_more/iced_coffee_and_tea": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/tea_coffee_and_more/beverage_mix": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 6
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/beverages/tea_coffee_and_more/green_and_herbal_tea": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Sweeteners",
+      "highlight_tag": "sweetners_sugar_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Fats",
+      "highlight_tag": "oils_fats_tags",
+      "visible": false,
+      "optional": true,
+      "order": null
+    },
+    {
+      "card": "Additives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Preservatives",
+      "highlight_tag": "ingredients_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 5
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/veggies_and_fruits/veggies": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": false,
+      "order": 2
+    },
+    {
+      "card": "Natural Sugar",
+      "highlight_tag": "ns_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Glycemic Index",
+      "highlight_tag": "gi_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Vitamins & Minerals",
+      "highlight_tag": "vm_tags",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Antioxidants",
+      "highlight_tag": "antioxidant_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Gut Health",
+      "highlight_tag": "gh_tags",
+      "visible": true,
+      "optional": true,
+      "order": 8
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "Default": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": false,
+      "order": 2
+    },
+    {
+      "card": "Natural Sugar",
+      "highlight_tag": "ns_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Glycemic Index",
+      "highlight_tag": "gi_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Vitamins & Minerals",
+      "highlight_tag": "vm_tags",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Antioxidants",
+      "highlight_tag": "antioxidant_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 7
+    },
+    {
+      "card": "Gut Health",
+      "highlight_tag": "gh_tags",
+      "visible": true,
+      "optional": true,
+      "order": 8
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ]
+}

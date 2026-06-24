@@ -12,6 +12,7 @@ Enhanced with:
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from logging import log
 import os
 import re
@@ -27,6 +28,14 @@ from . import register_fetcher
 from ..config import get_config
 from ..scoring_config import build_function_score_functions
 from ..utils.pdp_tag_labels import label_for_tag_id
+from ..utils.cards_config import (
+    CARD_STATS_REGISTRY,
+    SCORE_CARD_BUILD_ORDER,
+    allowed_score_keys_from_config,
+    apply_order_from_config,
+    get_subcategory_cards_config_for_path,
+    score_key_meta_from_config,
+)
 
 # ES Configuration (env-only; robust normalization)
 def _normalize_es_base(raw_url: Optional[str], index: Optional[str]) -> str:
@@ -335,6 +344,12 @@ def _generate_macro_tags(nutrition: Dict[str, Optional[float]], max_tags: int = 
     return [{k: v for k, v in tag.items() if k != "_sort"} for tag in available[:max_tags]]
 
 
+def _copy_if_present(src: Dict[str, Any], dest: Dict[str, Any], key: str) -> None:
+    """Copy `key` only when source explicitly contains it."""
+    if key in src:
+        dest[key] = src.get(key)
+
+
 def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Shared transformer: any product dict → standardized product card.
@@ -407,7 +422,7 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     macro_tags = _generate_macro_tags(nutrition)
     nutrition_clean = {k: v for k, v in nutrition.items() if v is not None}
 
-    return {
+    card = {
         "id": src.get("id", ""),
         "name": _clean_text(src.get("name", "")) or "",
         "brand": src.get("brand", ""),
@@ -424,6 +439,8 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "flean_percentile": flean_percentile,
         "in_stock": True,
     }
+    _copy_if_present(src, card, "scheduled")
+    return card
 
 
 SCORE_TIERS: List[Dict[str, Any]] = [
@@ -432,6 +449,22 @@ SCORE_TIERS: List[Dict[str, Any]] = [
     {"min": 50, "status": "average", "label": "Average",  "color": "#F2E9BB80"},
     {"min": 25, "status": "subpar",  "label": "Poor",        "color": "#FFF3EF"},
     {"min": 0,  "status": "villain", "label": "Worst",     "color": "#EF4444"},
+]
+
+BONUS_SCORE_TIERS: List[Dict[str, Any]] = [
+    {"min": 90, "status": "elite", "label": "High", "color": "#81A18C"},
+    {"min": 75, "status": "top", "label": "Good", "color": "#8FAF9A2E"},
+    {"min": 50, "status": "average", "label": "Average", "color": "#F2E9BB80"},
+    {"min": 25, "status": "subpar", "label": "Poor", "color": "#FFF3EF"},
+    {"min": 0, "status": "villain", "label": "Sub-Par", "color": "#EF4444"},
+]
+
+PENALTY_SCORE_TIERS: List[Dict[str, Any]] = [
+    {"min": 90, "status": "elite", "label": "Very Low", "color": "#81A18C"},
+    {"min": 75, "status": "top", "label": "Low", "color": "#8FAF9A2E"},
+    {"min": 50, "status": "average", "label": "Present", "color": "#F2E9BB80"},
+    {"min": 25, "status": "subpar", "label": "High", "color": "#FFF3EF"},
+    {"min": 0, "status": "villain", "label": "Very High", "color": "#EF4444"},
 ]
 
 SCORE_CARD_ICONS: Dict[str, str] = {
@@ -443,6 +476,19 @@ SCORE_CARD_ICONS: Dict[str, str] = {
     "calories":   "https://img.flean.ai/assets/Pdp-Icons/06.svg",
     "preservatives": "https://img.flean.ai/assets/Pdp-Icons/preservatives1.svg",
     "additives": "https://img.flean.ai/assets/Pdp-Icons/additives1.svg",
+    "natural_sugar": "https://img.flean.ai/assets/Pdp-Icons/03.svg",
+    "glycemic_index": "https://img.flean.ai/assets/Pdp-Icons/glycemic.svg",
+    "vitamins_minerals": "https://img.flean.ai/assets/Pdp-Icons/vitamin.svg",
+    "antioxidants": "https://img.flean.ai/assets/Pdp-Icons/antioxidant.svg",
+    "gut_health": "https://img.flean.ai/assets/Pdp-Icons/gut-health.svg",
+}
+
+_LEGACY_HIGHLIGHT_TAGS: Dict[str, str] = {
+    "protein": "protein_tags",
+    "fiber": "carbs_fiber_tags",
+    "sweeteners": "sweetners_sugar_tags",
+    "oils": "oils_fats_tags",
+    "calories": "energy_tags",
 }
 
 # ingredients_tags domain sets and worst-wins tier rules (status, value, tag_ids).
@@ -478,16 +524,51 @@ PRESERVATIVES_TIER_RULES: List[_INGREDIENTS_TIER_RULE] = [
     ("elite", "None", frozenset({"preservative_free"})),
 ]
 
+_GLYCEMIC_INDEX_TAG_IDS: FrozenSet[str] = frozenset({"low_gi", "medium_gi", "high_gi"})
+_GLYCEMIC_INDEX_VALUE_BY_TAG: Dict[str, str] = {
+    "high_gi": "High",
+    "medium_gi": "Medium",
+    "low_gi": "Low",
+}
+_GLYCEMIC_INDEX_TAG_PRIORITY: Tuple[str, ...] = ("high_gi", "medium_gi", "low_gi")
+_GLYCEMIC_INDEX_STATUS_BY_VALUE: Dict[str, str] = {
+    "Low": "elite",
+    "Medium": "average",
+    "High": "subpar",
+}
+
+_GUT_HEALTH_VALUE_BY_BUCKET: Dict[str, str] = {
+    "negative": "Poor",
+    "neutral": "Average",
+    "positive": "Good",
+}
+_GUT_HEALTH_BUCKET_PRIORITY: Tuple[str, ...] = ("negative", "neutral", "positive")
+_GUT_HEALTH_STATUS_BY_VALUE: Dict[str, str] = {
+    "Good": "elite",
+    "Average": "average",
+    "Poor": "subpar",
+}
+_SENTIMENT_HIGHLIGHT_VALUE_BY_BUCKET = _GUT_HEALTH_VALUE_BY_BUCKET
+_SENTIMENT_HIGHLIGHT_BUCKET_PRIORITY = _GUT_HEALTH_BUCKET_PRIORITY
+_SENTIMENT_HIGHLIGHT_STATUS_BY_VALUE = _GUT_HEALTH_STATUS_BY_VALUE
+
 
 _SCORE_TIER_BY_STATUS: Dict[str, Dict[str, Any]] = {t["status"]: t for t in SCORE_TIERS}
 
 
-def _get_score_tier(percentile: float) -> Dict[str, str]:
-    """Return status, label, color, and theme for a given percentile (5-tier system)."""
-    for tier in SCORE_TIERS:
+def _get_score_tier_from_table(
+    percentile: float,
+    tiers: List[Dict[str, Any]],
+) -> Dict[str, str]:
+    for tier in tiers:
         if percentile >= tier["min"]:
             return _tier_to_card_fields(tier)
-    return _tier_to_card_fields(SCORE_TIERS[-1])
+    return _tier_to_card_fields(tiers[-1])
+
+
+def _get_score_tier(percentile: float) -> Dict[str, str]:
+    """Return status, label, color, and theme for a given percentile (5-tier system)."""
+    return _get_score_tier_from_table(percentile, SCORE_TIERS)
 
 
 def _tier_to_card_fields(tier: Dict[str, Any]) -> Dict[str, str]:
@@ -728,6 +809,448 @@ def _parse_flean_badge_score_double(val: Any) -> Optional[float]:
     return None
 
 
+def _resolve_subcategory_path(src: Dict[str, Any]) -> str:
+    cat_paths = src.get("category_paths", [])
+    if not cat_paths:
+        return ""
+    longest_path = max(cat_paths, key=lambda p: len(str(p)) if p else 0)
+    return str(longest_path).strip() if longest_path else ""
+
+
+def _subcategory_percentile(stats: Dict[str, Any], stats_field: str) -> Optional[float]:
+    raw = (stats.get(stats_field) or {}).get("subcategory_percentile")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _aggregate_subcategory_percentile(
+    stats: Dict[str, Any],
+    stats_fields: Tuple[str, ...],
+    *,
+    mode: str = "max",
+) -> Optional[float]:
+    values = [
+        v
+        for field in stats_fields
+        if (v := _subcategory_percentile(stats, field)) is not None
+    ]
+    if not values:
+        return None
+    if mode == "max":
+        return max(values)
+    return min(values)
+
+
+def _tier_from_highlight_group(group: Any) -> Dict[str, str]:
+    if not isinstance(group, dict):
+        return _tier_to_card_fields(_SCORE_TIER_BY_STATUS["average"])
+    if _highlight_tag_ids_from_group(group, "negative"):
+        return _tier_to_card_fields(_SCORE_TIER_BY_STATUS["villain"])
+    if _highlight_tag_ids_from_group(group, "positive"):
+        return _tier_to_card_fields(SCORE_TIERS[0])
+    return _tier_to_card_fields(_SCORE_TIER_BY_STATUS["average"])
+
+
+def _resolve_highlight_group_key(
+    score_key: str,
+    meta_by_key: Dict[str, Dict[str, Any]],
+) -> str:
+    if meta_by_key:
+        return str((meta_by_key.get(score_key) or {}).get("highlight_tag") or "").strip()
+    return _LEGACY_HIGHLIGHT_TAGS.get(score_key, "")
+
+
+def _apply_card_highlight(
+    card: Dict[str, Any],
+    score_key: str,
+    highlight_root: Dict[str, Any],
+    meta_by_key: Dict[str, Dict[str, Any]],
+) -> None:
+    tag = _resolve_highlight_group_key(score_key, meta_by_key)
+    if tag:
+        _apply_highlight_subtitle_to_card(card, highlight_root, tag)
+
+
+def _card_title(score_key: str, meta_by_key: Dict[str, Dict[str, Any]]) -> str:
+    entry = meta_by_key.get(score_key) if meta_by_key else None
+    if entry and entry.get("title"):
+        return str(entry["title"])
+    spec = CARD_STATS_REGISTRY.get(score_key) or {}
+    default = spec.get("default_title")
+    if default:
+        return str(default)
+    return score_key.replace("_", " ").title()
+
+
+def _tier_for_percentile(pctile: float, tier_mode: str) -> Dict[str, str]:
+    if tier_mode == "penalty":
+        effective = round(100 - pctile, 1)
+        return _get_score_tier_from_table(effective, PENALTY_SCORE_TIERS)
+    return _get_score_tier_from_table(pctile, BONUS_SCORE_TIERS)
+
+
+def _percentile_from_registry_spec(stats: Dict[str, Any], spec: Dict[str, Any]) -> Optional[float]:
+    stats_fields = spec.get("stats_fields") or ()
+    if spec.get("aggregate") == "max":
+        return _aggregate_subcategory_percentile(stats, tuple(stats_fields), mode="max")
+    if stats_fields:
+        return _subcategory_percentile(stats, stats_fields[0])
+    return None
+
+
+def _build_percentile_card_from_registry(
+    score_key: str,
+    stats: Dict[str, Any],
+    meta_by_key: Dict[str, Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    spec = CARD_STATS_REGISTRY.get(score_key) or {}
+    tier_mode = spec.get("tier_mode")
+    if not tier_mode or tier_mode == "highlight_only":
+        return None
+
+    pctile = _percentile_from_registry_spec(stats, spec)
+    if pctile is None:
+        return None
+
+    _tier = _tier_for_percentile(pctile, tier_mode)
+    subtitle = str(spec.get("subtitle") or "Efficiency")
+    if tier_mode == "penalty":
+        subtitle = f"Percentile: {round(pctile)}"
+
+    icon_url = SCORE_CARD_ICONS.get(score_key)
+    card: Dict[str, Any] = {
+        "title": _card_title(score_key, meta_by_key),
+        "value": _tier["label"],
+        "subtitle": subtitle,
+        "percentile": round(pctile, 1),
+        "status": _tier["status"],
+        "status_label": _tier["label"],
+        "color": _tier["color"],
+        "theme": _tier["theme"],
+        "visible": True,
+    }
+    if icon_url:
+        card["icon_url"] = icon_url
+    return card
+
+
+def _build_highlight_card_from_registry(
+    score_key: str,
+    highlight_root: Dict[str, Any],
+    meta_by_key: Dict[str, Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    group_key = _resolve_highlight_group_key(score_key, meta_by_key)
+    if not group_key:
+        return None
+    group = highlight_root.get(group_key) if isinstance(highlight_root, dict) else None
+    if not isinstance(group, dict):
+        return None
+    if not any(_highlight_tag_ids_from_group(group, bucket) for bucket in ("positive", "neutral", "negative")):
+        return None
+
+    _tier = _tier_from_highlight_group(group)
+    icon_url = SCORE_CARD_ICONS.get(score_key)
+    card: Dict[str, Any] = {
+        "title": _card_title(score_key, meta_by_key),
+        "value": _tier["label"],
+        "subtitle": "Efficiency",
+        "percentile": None,
+        "status": _tier["status"],
+        "status_label": _tier["label"],
+        "color": _tier["color"],
+        "theme": _tier["theme"],
+        "visible": True,
+    }
+    if icon_url:
+        card["icon_url"] = icon_url
+    return card
+
+
+@dataclass
+class _ScoreCardBuildContext:
+    stats: Dict[str, Any]
+    nutrition: Dict[str, Any]
+    nutritional_data: Dict[str, Any]
+    subcategory_label: str
+    flean_percentile: Optional[float]
+    highlight_root: Dict[str, Any]
+    ingredients_group: Any
+    show_watch_outs: bool
+    meta_by_key: Dict[str, Dict[str, Any]]
+
+
+def _build_calories_card(ctx: _ScoreCardBuildContext) -> Optional[Dict[str, Any]]:
+    cal_raw = ctx.nutrition.get("calories")
+    if cal_raw is None:
+        return None
+
+    cal_val = round(cal_raw)
+    cal_basis = ctx.nutritional_data.get("qty", "100 g")
+    calories_pctile = _subcategory_percentile(ctx.stats, "calories_penalty_percentiles")
+    if calories_pctile is not None:
+        _cal_tier = _get_score_tier(round(100 - calories_pctile, 1))
+    else:
+        _cal_tier = _tier_to_card_fields(_SCORE_TIER_BY_STATUS["average"])
+
+    icon_url = SCORE_CARD_ICONS.get("calories")
+    card: Dict[str, Any] = {
+        "title": _card_title("calories", ctx.meta_by_key),
+        "value": f"{cal_val} kcal/ {cal_basis}",
+        "subtitle": cal_basis,
+        "percentile": round(calories_pctile, 1) if calories_pctile is not None else None,
+        "status": _cal_tier["status"],
+        "status_label": _cal_tier["label"],
+        "color": _cal_tier["color"],
+        "theme": _cal_tier["theme"],
+        "visible": True,
+    }
+    if icon_url:
+        card["icon_url"] = icon_url
+    return card
+
+
+def _build_additives_card(ctx: _ScoreCardBuildContext) -> Optional[Dict[str, Any]]:
+    spec = CARD_STATS_REGISTRY.get("additives") or {}
+    pctile = _percentile_from_registry_spec(ctx.stats, spec)
+    if pctile is None:
+        return None
+    _tier = _tier_for_percentile(pctile, spec.get("tier_mode", "penalty"))
+    card: Dict[str, Any] = {
+        "title": _card_title("additives", ctx.meta_by_key),
+        "value": _tier["label"],
+        "subtitle": f"Percentile: {round(pctile)}",
+        "percentile": round(pctile, 1),
+        "status": _tier["status"],
+        "status_label": _tier["label"],
+        "color": _tier["color"],
+        "theme": _tier["theme"],
+        "icon_url": SCORE_CARD_ICONS["additives"],
+        "visible": True,
+    }
+    subtitle_new = _subtitle_new_from_highlight_group(
+        ctx.ingredients_group, include_tag_ids=ADDITIVES_TAG_IDS
+    )
+    if subtitle_new:
+        card["subtitle_new"] = subtitle_new
+    return card
+
+
+def _build_preservatives_card(ctx: _ScoreCardBuildContext) -> Optional[Dict[str, Any]]:
+    return _build_ingredients_domain_card(
+        ctx.ingredients_group,
+        "preservatives",
+        "Preservatives",
+        PRESERVATIVES_TAG_IDS,
+        PRESERVATIVES_TIER_RULES,
+        ctx.stats,
+    )
+
+
+def _build_watch_outs_card(ctx: _ScoreCardBuildContext) -> Optional[Dict[str, Any]]:
+    if not ctx.show_watch_outs:
+        return None
+    has_negative = _ingredients_tags_has_negative(ctx.ingredients_group)
+    _wo_tier = _watch_outs_tier(has_negative)
+    empty_food_pctile = (ctx.stats.get("empty_food_penalty_percentiles") or {}).get(
+        "subcategory_percentile"
+    )
+    return {
+        "title": _card_title("watch_outs", ctx.meta_by_key),
+        "value": "Processed",
+        "subtitle": "Ultra Processed",
+        "percentile": round(empty_food_pctile, 1) if empty_food_pctile is not None else None,
+        "status": _wo_tier["status"],
+        "status_label": _wo_tier["label"],
+        "color": _wo_tier["color"],
+        "theme": _wo_tier["theme"],
+        "visible": True,
+    }
+
+
+def _build_flean_rank_card(ctx: _ScoreCardBuildContext) -> Optional[Dict[str, Any]]:
+    if ctx.flean_percentile is None:
+        return None
+    rank_pct = round(100 - ctx.flean_percentile, 1)
+    _tier = _get_score_tier(ctx.flean_percentile)
+    return {
+        "title": _card_title("flean_rank", ctx.meta_by_key),
+        "value": f"Top {rank_pct}%",
+        "subtitle": ctx.subcategory_label,
+        "percentile": round(ctx.flean_percentile, 1),
+        "status": _tier["status"],
+        "status_label": _tier["label"],
+        "color": _tier["color"],
+        "theme": _tier["theme"],
+        "icon_url": SCORE_CARD_ICONS["flean_rank"],
+    }
+
+
+def _resolve_glycemic_index_value(group: Any) -> Optional[str]:
+    present = _collect_ingredients_tag_ids(group) & _GLYCEMIC_INDEX_TAG_IDS
+    if not present:
+        return None
+    for tag_id in _GLYCEMIC_INDEX_TAG_PRIORITY:
+        if tag_id in present:
+            return _GLYCEMIC_INDEX_VALUE_BY_TAG[tag_id]
+    return None
+
+
+def _glycemic_index_tier_for_value(value: str) -> Dict[str, str]:
+    status = _GLYCEMIC_INDEX_STATUS_BY_VALUE.get(value, "average")
+    tier = _SCORE_TIER_BY_STATUS.get(status) or _SCORE_TIER_BY_STATUS["average"]
+    fields = _tier_to_card_fields(tier)
+    fields["value"] = value
+    return fields
+
+
+def _build_glycemic_index_card(ctx: _ScoreCardBuildContext) -> Optional[Dict[str, Any]]:
+    group_key = _resolve_highlight_group_key("glycemic_index", ctx.meta_by_key)
+    if not group_key:
+        return None
+    group = ctx.highlight_root.get(group_key) if isinstance(ctx.highlight_root, dict) else None
+    value = _resolve_glycemic_index_value(group)
+    if not value:
+        return None
+    resolved = _glycemic_index_tier_for_value(value)
+    return {
+        "title": _card_title("glycemic_index", ctx.meta_by_key),
+        "value": resolved["value"],
+        "subtitle": "Efficiency",
+        "percentile": None,
+        "status": resolved["status"],
+        "status_label": resolved["value"],
+        "color": resolved["color"],
+        "theme": resolved["theme"],
+        "icon_url": SCORE_CARD_ICONS["glycemic_index"],
+        "visible": True,
+    }
+
+
+def _resolve_sentiment_highlight_value(group: Any) -> Optional[str]:
+    if not isinstance(group, dict):
+        return None
+    for bucket in _SENTIMENT_HIGHLIGHT_BUCKET_PRIORITY:
+        if _highlight_tag_ids_from_group(group, bucket):
+            return _SENTIMENT_HIGHLIGHT_VALUE_BY_BUCKET[bucket]
+    return None
+
+
+def _sentiment_highlight_tier_for_value(value: str) -> Dict[str, str]:
+    status = _SENTIMENT_HIGHLIGHT_STATUS_BY_VALUE.get(value, "average")
+    tier = _SCORE_TIER_BY_STATUS.get(status) or _SCORE_TIER_BY_STATUS["average"]
+    fields = _tier_to_card_fields(tier)
+    fields["value"] = value
+    return fields
+
+
+def _build_sentiment_highlight_card(
+    score_key: str,
+    ctx: _ScoreCardBuildContext,
+) -> Optional[Dict[str, Any]]:
+    group_key = _resolve_highlight_group_key(score_key, ctx.meta_by_key)
+    if not group_key:
+        return None
+    group = ctx.highlight_root.get(group_key) if isinstance(ctx.highlight_root, dict) else None
+    value = _resolve_sentiment_highlight_value(group)
+    if not value:
+        return None
+    resolved = _sentiment_highlight_tier_for_value(value)
+    icon_url = SCORE_CARD_ICONS.get(score_key)
+    card: Dict[str, Any] = {
+        "title": _card_title(score_key, ctx.meta_by_key),
+        "value": resolved["value"],
+        "subtitle": "Efficiency",
+        "percentile": None,
+        "status": resolved["status"],
+        "status_label": resolved["value"],
+        "color": resolved["color"],
+        "theme": resolved["theme"],
+        "visible": True,
+    }
+    if icon_url:
+        card["icon_url"] = icon_url
+    return card
+
+
+def _build_score_card(
+    score_key: str,
+    ctx: _ScoreCardBuildContext,
+    built: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    spec = CARD_STATS_REGISTRY.get(score_key)
+    if not spec:
+        return None
+
+    build_type = spec.get("build_type", "percentile")
+    if build_type == "watch_outs":
+        return _build_watch_outs_card(ctx)
+    if build_type == "flean_rank":
+        if "watch_outs" in built:
+            return None
+        return _build_flean_rank_card(ctx)
+    if build_type == "additives":
+        return _build_additives_card(ctx)
+    if build_type == "preservatives":
+        return _build_preservatives_card(ctx)
+    if build_type == "glycemic_index":
+        return _build_glycemic_index_card(ctx)
+    if build_type == "calories":
+        return _build_calories_card(ctx)
+    if build_type == "sentiment_highlight":
+        return _build_sentiment_highlight_card(score_key, ctx)
+    if build_type == "highlight_only":
+        return _build_highlight_card_from_registry(score_key, ctx.highlight_root, ctx.meta_by_key)
+    if build_type == "percentile":
+        return _build_percentile_card_from_registry(score_key, ctx.stats, ctx.meta_by_key)
+    return None
+
+
+def _build_score_cards(
+    src: Dict[str, Any],
+    *,
+    subcategory_label: str,
+    flean_percentile: Optional[float],
+    stats: Dict[str, Any],
+    nutrition: Dict[str, Any],
+    nutritional_data: Dict[str, Any],
+    allowed_keys: Optional[FrozenSet[str]] = None,
+    cards_config: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    def _should_build(key: str) -> bool:
+        return allowed_keys is None or key in allowed_keys
+
+    meta_by_key = score_key_meta_from_config(cards_config) if cards_config else {}
+    highlight_root = _resolve_highlight_tags(src)
+    ctx = _ScoreCardBuildContext(
+        stats=stats,
+        nutrition=nutrition,
+        nutritional_data=nutritional_data,
+        subcategory_label=subcategory_label,
+        flean_percentile=flean_percentile,
+        highlight_root=highlight_root,
+        ingredients_group=_ingredients_tags_group(highlight_root),
+        show_watch_outs=_is_ultra_processed(src),
+        meta_by_key=meta_by_key,
+    )
+
+    score_cards: Dict[str, Any] = {}
+    for score_key in SCORE_CARD_BUILD_ORDER:
+        if not _should_build(score_key):
+            continue
+        card = _build_score_card(score_key, ctx, score_cards)
+        if not card:
+            continue
+        score_cards[score_key] = card
+        if score_key != "preservatives":
+            _apply_card_highlight(card, score_key, highlight_root, meta_by_key)
+
+    return score_cards
+
+
 def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     """
     Full PDP transformer: raw ES _source → optimized key-value PDP data.
@@ -778,6 +1301,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "category": category_label,
         "subcategory": subcategory_label,
     }
+    _copy_if_present(src, product_info, "scheduled")
 
     # ── flean_badge ──
     flean_percentile = None
@@ -825,173 +1349,26 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "color": level_color,
     }
 
-    # ── score_cards (named object with direct access) ──
-    score_cards = {}
-    _highlight_tags_root = _resolve_highlight_tags(src)
-    _ingredients_group = _ingredients_tags_group(_highlight_tags_root)
-    _is_ultra = _is_ultra_processed(src)
-    show_watch_outs = _is_ultra
-
-    # Protein card
-    protein_pctile = (stats.get("protein_percentiles") or {}).get("subcategory_percentile")
-    if protein_pctile is not None:
-        prot_rank = round(100 - protein_pctile, 1)
-        _tier = _get_score_tier(protein_pctile)
-        score_cards["protein"] = {
-            "title": "Protein",
-            "value": _tier["label"],
-            "subtitle": "Efficiency",
-            "percentile": round(protein_pctile, 1),
-            "status": _tier["status"],
-            "status_label": _tier["label"],
-            "color": _tier["color"],
-            "theme": _tier["theme"],
-            "icon_url": SCORE_CARD_ICONS["protein"],
-        }
-        _apply_highlight_subtitle_to_card(score_cards["protein"], _highlight_tags_root, "protein_tags")
-
-    # Fiber card
-    fiber_pctile = (stats.get("fiber_percentiles") or {}).get("subcategory_percentile")
-    if fiber_pctile is not None:
-        fib_rank = round(100 - fiber_pctile, 1)
-        _tier = _get_score_tier(fiber_pctile)
-        score_cards["fiber"] = {
-            "title": "Fiber",
-            "value": _tier["label"],
-            "subtitle": "Efficiency",
-            "percentile": round(fiber_pctile, 1),
-            "status": _tier["status"],
-            "status_label": _tier["label"],
-            "color": _tier["color"],
-            "theme": _tier["theme"],
-            "icon_url": SCORE_CARD_ICONS["fiber"],
-        }
-        _apply_highlight_subtitle_to_card(score_cards["fiber"], _highlight_tags_root, "carbs_fiber_tags")
-
-    # Sweeteners card
-    sweetener_pctile = (stats.get("sweetener_penalty_percentiles") or {}).get("subcategory_percentile")
-    if sweetener_pctile is not None:
-        sw_rank = round(100 - sweetener_pctile, 1)
-        _tier = _get_score_tier(sw_rank)
-        score_cards["sweeteners"] = {
-            "title": "Sweeteners",
-            "value": _tier["label"],
-            "subtitle": f"Percentile: {round(sweetener_pctile)}",
-            "percentile": round(sweetener_pctile, 1),
-            "status": _tier["status"],
-            "status_label": _tier["label"],
-            "color": _tier["color"],
-            "theme": _tier["theme"],
-            "icon_url": SCORE_CARD_ICONS["sweeteners"],
-        }
-        _apply_highlight_subtitle_to_card(score_cards["sweeteners"], _highlight_tags_root, "sweetners_sugar_tags")
-
-    # Fat card (API key oils; percentile from total fat penalty)
-    fat_pctile = (stats.get("total_fat_penalty_percentiles") or {}).get("subcategory_percentile")
-    if fat_pctile is not None:
-        fat_rank = round(100 - fat_pctile, 1)
-        _tier = _get_score_tier(fat_rank)
-        score_cards["oils"] = {
-            "title": "Fats",
-            "value": _tier["label"],
-            "subtitle": f"Percentile: {round(fat_pctile)}",
-            "percentile": round(fat_pctile, 1),
-            "status": _tier["status"],
-            "status_label": _tier["label"],
-            "color": _tier["color"],
-            "theme": _tier["theme"],
-            "icon_url": SCORE_CARD_ICONS["oils"],
-        }
-        _apply_highlight_subtitle_to_card(score_cards["oils"], _highlight_tags_root, "oils_fats_tags")
-
-    # Additives card (percentile from additives_penalty_percentiles, like sweeteners)
-    additives_pctile = (stats.get("additives_penalty_percentiles") or {}).get("subcategory_percentile")
-    if additives_pctile is not None:
-        additives_rank = round(100 - additives_pctile, 1)
-        _tier = _get_score_tier(additives_rank)
-        score_cards["additives"] = {
-            "title": "Additives",
-            "value": _tier["label"],
-            "subtitle": f"Percentile: {round(additives_pctile)}",
-            "percentile": round(additives_pctile, 1),
-            "status": _tier["status"],
-            "status_label": _tier["label"],
-            "color": _tier["color"],
-            "theme": _tier["theme"],
-            "icon_url": SCORE_CARD_ICONS["additives"],
-            "visible": True,
-        }
-        subtitle_new = _subtitle_new_from_highlight_group(
-            _ingredients_group, include_tag_ids=ADDITIVES_TAG_IDS
+    # ── score_cards (config-driven: only build cards listed in Redis config) ──
+    cards_config = get_subcategory_cards_config_for_path(_resolve_subcategory_path(src))
+    build_kwargs = {
+        "subcategory_label": subcategory_label,
+        "flean_percentile": flean_percentile,
+        "stats": stats,
+        "nutrition": nutrition,
+        "nutritional_data": nutritional_data,
+    }
+    if cards_config:
+        allowed = allowed_score_keys_from_config(cards_config)
+        score_cards = _build_score_cards(
+            src,
+            allowed_keys=allowed,
+            cards_config=cards_config,
+            **build_kwargs,
         )
-        if subtitle_new:
-            score_cards["additives"]["subtitle_new"] = subtitle_new
-
-    _preservatives_card = _build_ingredients_domain_card(
-        _ingredients_group,
-        "preservatives",
-        "Preservatives",
-        PRESERVATIVES_TAG_IDS,
-        PRESERVATIVES_TIER_RULES,
-        stats,
-    )
-    if _preservatives_card:
-        score_cards["preservatives"] = _preservatives_card
-
-    # Watch-outs vs Flean Rank (mutually exclusive)
-    if show_watch_outs:
-        has_negative = _ingredients_tags_has_negative(_ingredients_group)
-        _wo_tier = _watch_outs_tier(has_negative)
-        empty_food_pctile = (stats.get("empty_food_penalty_percentiles") or {}).get(
-            "subcategory_percentile"
-        )
-        score_cards["watch_outs"] = {
-            "title": "Watch-outs",
-            "value": "Processed",
-            "subtitle": "Ultra Processed",
-            "percentile": round(empty_food_pctile, 1) if empty_food_pctile is not None else None,
-            "status": _wo_tier["status"],
-            "status_label": _wo_tier["label"],
-            "color": _wo_tier["color"],
-            "theme": _wo_tier["theme"],
-            "visible": True,
-        }
-    elif flean_percentile is not None:
-        rank_pct = round(100 - flean_percentile, 1)
-        _tier = _get_score_tier(flean_percentile)
-        score_cards["flean_rank"] = {
-            "title": "Flean Rank",
-            "value": f"Top {rank_pct}%",
-            "subtitle": subcategory_label,
-            "percentile": round(flean_percentile, 1),
-            "status": _tier["status"],
-            "status_label": _tier["label"],
-            "color": _tier["color"],
-            "theme": _tier["theme"],
-            "icon_url": SCORE_CARD_ICONS["flean_rank"],
-        }
-
-    # Calories card
-    if nutrition.get("calories") is not None:
-        cal_val = round(nutrition["calories"])
-        cal_basis = nutritional_data.get("qty", "100 g")
-        calories_pctile = (stats.get("calories_penalty_percentiles") or {}).get("subcategory_percentile")
-        if calories_pctile is not None:
-            _cal_tier = _get_score_tier(round(100 - calories_pctile, 1))
-        else:
-            _cal_tier = _tier_to_card_fields(_SCORE_TIER_BY_STATUS["average"])
-        score_cards["calories"] = {
-            "title": "Calories",
-            "value": f"{cal_val} kcal/ {cal_basis}",
-            "subtitle": cal_basis,
-            "percentile": round(calories_pctile, 1) if calories_pctile else None,
-            "status": _cal_tier["status"],
-            "status_label": _cal_tier["label"],
-            "color": _cal_tier["color"],
-            "theme": _cal_tier["theme"],
-            "icon_url": SCORE_CARD_ICONS["calories"],
-        }
-        _apply_highlight_subtitle_to_card(score_cards["calories"], _highlight_tags_root, "energy_tags")
+        score_cards = apply_order_from_config(score_cards, cards_config)
+    else:
+        score_cards = _build_score_cards(src, **build_kwargs)
 
     # ── notes (static display notes for UI) ──
     notes = {
@@ -1619,7 +1996,7 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 "category_data.nutritional.nutri_breakdown.*",
                 "category_data.nutritional.qty",
                 "category_data.nutritional.raw_text",
-                "size", "visibility",
+                "size", "visibility", "scheduled",
             ]
         },
         "query": {"bool": {"filter": [], "should": [], "minimum_should_match": 0}},
@@ -2332,7 +2709,7 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 "efficacy.aspect_name", "efficacy.sentiment_score", "efficacy.mention_count",
                 "side_effects.effect_name", "side_effects.severity_score", "side_effects.sentiment_score",
                 "package_claims.health_claims", "package_claims.dietary_labels",
-                "size", "visibility",
+                "size", "visibility", "scheduled",
             ]
         },
         "query": {
@@ -3648,7 +4025,7 @@ class ElasticsearchProductsFetcher:
                         "hero_image.*", "images", "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "ingredients.*", "tags_and_sentiments.*",
                         "flean_score.*", "stats.*", "availability.*", "cons_list",
-                        "size", "visibility",
+                        "size", "visibility", "scheduled",
                     ]
                 },
                 "query": {
@@ -3783,7 +4160,7 @@ class ElasticsearchProductsFetcher:
                         "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "flean_score.*", "stats.*",
                         "ingredients.*", "description", "availability.*", "cons_list",
-                        "size", "visibility",
+                        "size", "visibility", "scheduled",
                     ]
                 },
                 "query": {
@@ -3880,7 +4257,7 @@ class ElasticsearchProductsFetcher:
                         "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "flean_score.*", "stats.*",
                         "ingredients.*", "description", "availability.*", "cons_list",
-                        "size", "visibility",
+                        "size", "visibility", "scheduled",
                     ]
                 },
                 "query": {
@@ -4393,7 +4770,7 @@ class ElasticsearchProductsFetcher:
                         "category_data.nutritional.raw_text",
                         "category_data.tags.ingredient_tags",
                         "availability.*",
-                        "size", "visibility",
+                        "size", "visibility", "scheduled",
                     ]
                 },
                 "query": query_body,
@@ -4701,7 +5078,7 @@ class ElasticsearchProductsFetcher:
                         "id", "name", "brand", "price", "mrp", "hero_image.*","images",
                         "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "flean_score.*", "stats.*",
-                        "size", "visibility",
+                        "size", "visibility", "scheduled",
                     ]
                 },
                 "query": {
@@ -4802,6 +5179,7 @@ class ElasticsearchProductsFetcher:
                                             "stats.*",
                                             "size",
                                             "visibility",
+                                            "scheduled",
                                         ]
                                     },
                                     "sort": [
@@ -4931,6 +5309,7 @@ class ElasticsearchProductsFetcher:
                                             "stats.*",
                                             "size",
                                             "visibility",
+                                            "scheduled",
                                         ]
                                     },
                                     "sort": [

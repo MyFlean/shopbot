@@ -138,6 +138,13 @@ def _get_or_init_redis(app: Flask) -> RedisContextManager:
         log.info(f"INIT_REDIS_SUCCESS | memory_usage={health.get('memory_info', {}).get('used_memory_human', 'unknown')}")
         app.extensions["ctx_mgr"] = ctx_mgr
         app.extensions["_redis_initialized"] = True
+
+        try:
+            from .utils.cards_config import ensure_cards_config_in_redis
+            ensure_cards_config_in_redis(ctx_mgr.redis)
+        except Exception as seed_exc:
+            log.warning("CARDS_CONFIG_SEED_ERROR | error=%s", seed_exc)
+
         return ctx_mgr
         
     except Exception as e:
@@ -243,6 +250,12 @@ def create_app(config_name: str = 'production') -> Flask:
             log.info(f"INIT_REDIS_SUCCESS | memory_usage={health.get('memory_info', {}).get('used_memory_human', 'unknown')}")
             app.extensions["ctx_mgr"] = ctx_mgr
             app.extensions["_redis_initialized"] = True
+
+            try:
+                from .utils.cards_config import ensure_cards_config_in_redis
+                ensure_cards_config_in_redis(ctx_mgr.redis)
+            except Exception as seed_exc:
+                log.warning("CARDS_CONFIG_SEED_ERROR | error=%s", seed_exc)
             
         except Exception as e:
             log.error(f"INIT_REDIS_ERROR | error={e}", exc_info=True)
@@ -399,6 +412,22 @@ def create_app(config_name: str = 'production') -> Flask:
         except Exception as e:
             log.error(
                 "REGISTER_ROUTES_ERROR | product API failed: %s",
+                str(e),
+                exc_info=True,
+                extra={"error_type": type(e).__name__},
+            )
+
+        # Register admin config routes (cards-config reload, etc.)
+        try:
+            from .routes.admin_config import bp as admin_config_bp
+            app.register_blueprint(admin_config_bp, url_prefix='/rs')
+            log.info(
+                "REGISTER_ROUTES_SUCCESS | admin config registered "
+                "(/rs/api/v1/admin/cards-config/reload)"
+            )
+        except Exception as e:
+            log.error(
+                "REGISTER_ROUTES_ERROR | admin config failed: %s",
                 str(e),
                 exc_info=True,
                 extra={"error_type": type(e).__name__},

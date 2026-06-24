@@ -51,6 +51,20 @@ resource "aws_lambda_function" "shopbot" {
 
   source_code_hash = filebase64sha256("${path.module}/../../shopbot.zip")
 
+  tracing_config {
+    mode = "Active"
+  }
+
+  logging_config {
+    log_format            = "JSON"
+    application_log_level = "INFO"
+    system_log_level      = "INFO"
+  }
+
+  layers = [
+    "arn:aws:lambda:${var.aws_region}:580247275435:layer:LambdaInsightsExtension:38"
+  ]
+
   # Enable SnapStart for faster cold starts (Python 3.12+)
   snap_start {
     apply_on = "PublishedVersions"
@@ -69,6 +83,9 @@ resource "aws_lambda_function" "shopbot" {
       # Do not set REDIS_HOST here - it will override secrets from Secrets Manager
       LOG_LEVEL     = var.log_level
       BOT_LOG_LEVEL = var.log_level # Smart logger system uses BOT_LOG_LEVEL
+      POWERTOOLS_SERVICE_NAME    = "${var.project_name}-service"
+      POWERTOOLS_METRICS_NAMESPACE = "ShopbotService"
+      POWERTOOLS_LOG_LEVEL       = var.log_level
       # Secrets retrieved via Secrets Manager in code
       SECRETS_MANAGER_SECRET = var.secrets_manager_secret_name
       REDIS_SECRET_NAME      = "flean-services/redis"
@@ -226,6 +243,16 @@ resource "aws_iam_role" "lambda_role" {
 resource "aws_iam_role_policy_attachment" "lambda_basic" {
   role       = aws_iam_role.lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_xray" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_insights" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchLambdaInsightsExecutionRolePolicy"
 }
 
 # VPC access role - REMOVED (Lambda runs outside VPC)

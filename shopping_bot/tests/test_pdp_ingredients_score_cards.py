@@ -1,6 +1,6 @@
 """Smoke tests for additives/preservatives PDP score cards and watch_outs."""
 
-from shopping_bot.data_fetchers.es_products import transform_to_pdp
+from shopping_bot.data_fetchers.es_products import transform_to_pdp, transform_to_product_card
 
 
 def _base_src(**overrides):
@@ -131,3 +131,30 @@ def test_both_domain_cards_when_both_match():
     pdp = transform_to_pdp(src)
     assert "additives" in pdp["score_cards"]
     assert "preservatives" in pdp["score_cards"]
+
+
+def test_pdp_product_info_includes_scheduled_when_present():
+    src = _base_src(scheduled=True)
+    pdp = transform_to_pdp(src)
+    assert pdp["product_info"]["scheduled"] is True
+
+
+def test_pdp_product_info_omits_scheduled_when_missing():
+    src = _base_src()
+    pdp = transform_to_pdp(src)
+    assert "scheduled" not in pdp["product_info"]
+
+
+def test_product_card_includes_scheduled_when_present_false():
+    src = _base_src(scheduled=False)
+    card = transform_to_product_card(src)
+    assert card is not None
+    assert "scheduled" in card
+    assert card["scheduled"] is False
+
+
+def test_product_card_omits_scheduled_when_missing():
+    src = _base_src()
+    card = transform_to_product_card(src)
+    assert card is not None
+    assert "scheduled" not in card

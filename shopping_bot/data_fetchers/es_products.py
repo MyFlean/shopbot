@@ -344,6 +344,12 @@ def _generate_macro_tags(nutrition: Dict[str, Optional[float]], max_tags: int = 
     return [{k: v for k, v in tag.items() if k != "_sort"} for tag in available[:max_tags]]
 
 
+def _copy_if_present(src: Dict[str, Any], dest: Dict[str, Any], key: str) -> None:
+    """Copy `key` only when source explicitly contains it."""
+    if key in src:
+        dest[key] = src.get(key)
+
+
 def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Shared transformer: any product dict → standardized product card.
@@ -416,7 +422,7 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     macro_tags = _generate_macro_tags(nutrition)
     nutrition_clean = {k: v for k, v in nutrition.items() if v is not None}
 
-    return {
+    card = {
         "id": src.get("id", ""),
         "name": _clean_text(src.get("name", "")) or "",
         "brand": src.get("brand", ""),
@@ -433,6 +439,8 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "flean_percentile": flean_percentile,
         "in_stock": True,
     }
+    _copy_if_present(src, card, "scheduled")
+    return card
 
 
 SCORE_TIERS: List[Dict[str, Any]] = [
@@ -1293,6 +1301,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "category": category_label,
         "subcategory": subcategory_label,
     }
+    _copy_if_present(src, product_info, "scheduled")
 
     # ── flean_badge ──
     flean_percentile = None
@@ -2017,7 +2026,7 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 "category_data.nutritional.nutri_breakdown.*",
                 "category_data.nutritional.qty",
                 "category_data.nutritional.raw_text",
-                "size", "visibility",
+                "size", "visibility", "scheduled",
             ]
         },
         "query": {"bool": {"filter": [], "should": [], "minimum_should_match": 0}},
@@ -2730,7 +2739,7 @@ def _build_skin_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
                 "efficacy.aspect_name", "efficacy.sentiment_score", "efficacy.mention_count",
                 "side_effects.effect_name", "side_effects.severity_score", "side_effects.sentiment_score",
                 "package_claims.health_claims", "package_claims.dietary_labels",
-                "size", "visibility",
+                "size", "visibility", "scheduled",
             ]
         },
         "query": {
@@ -4046,7 +4055,7 @@ class ElasticsearchProductsFetcher:
                         "hero_image.*", "images", "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "ingredients.*", "tags_and_sentiments.*",
                         "flean_score.*", "stats.*", "availability.*", "cons_list",
-                        "size", "visibility",
+                        "size", "visibility", "scheduled",
                     ]
                 },
                 "query": {
@@ -4181,7 +4190,7 @@ class ElasticsearchProductsFetcher:
                         "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "flean_score.*", "stats.*",
                         "ingredients.*", "description", "availability.*", "cons_list",
-                        "size", "visibility",
+                        "size", "visibility", "scheduled",
                     ]
                 },
                 "query": {
@@ -4278,7 +4287,7 @@ class ElasticsearchProductsFetcher:
                         "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "flean_score.*", "stats.*",
                         "ingredients.*", "description", "availability.*", "cons_list",
-                        "size", "visibility",
+                        "size", "visibility", "scheduled",
                     ]
                 },
                 "query": {
@@ -4791,7 +4800,7 @@ class ElasticsearchProductsFetcher:
                         "category_data.nutritional.raw_text",
                         "category_data.tags.ingredient_tags",
                         "availability.*",
-                        "size", "visibility",
+                        "size", "visibility", "scheduled",
                     ]
                 },
                 "query": query_body,
@@ -5099,7 +5108,7 @@ class ElasticsearchProductsFetcher:
                         "id", "name", "brand", "price", "mrp", "hero_image.*","images",
                         "package_claims.*", "category_group", "category_paths",
                         "category_data.*", "flean_score.*", "stats.*",
-                        "size", "visibility",
+                        "size", "visibility", "scheduled",
                     ]
                 },
                 "query": {
@@ -5200,6 +5209,7 @@ class ElasticsearchProductsFetcher:
                                             "stats.*",
                                             "size",
                                             "visibility",
+                                            "scheduled",
                                         ]
                                     },
                                     "sort": [
@@ -5329,6 +5339,7 @@ class ElasticsearchProductsFetcher:
                                             "stats.*",
                                             "size",
                                             "visibility",
+                                            "scheduled",
                                         ]
                                     },
                                     "sort": [

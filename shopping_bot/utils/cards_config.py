@@ -240,6 +240,7 @@ CARD_DISPLAY_NAME_TO_SCORE_KEY: Dict[str, str] = {
     "Vitamins & Minerals": "vitamins_minerals",
     "Antioxidants": "antioxidants",
     "Gut Health": "gut_health",
+    "Hydration": "hydration",
 }
 
 # Unified score-card build registry.
@@ -273,6 +274,10 @@ CARD_STATS_REGISTRY: Dict[str, Dict[str, Any]] = {
     "glycemic_index": {
         "build_type": "glycemic_index",
         "default_title": "Glycemic Index",
+    },
+    "hydration": {
+        "build_type": "hydration",
+        "default_title": "Hydration",
     },
     "vitamins_minerals": {
         "build_type": "percentile",
@@ -327,6 +332,7 @@ SCORE_CARD_BUILD_ORDER: Tuple[str, ...] = (
     "fiber",
     "natural_sugar",
     "glycemic_index",
+    "hydration",
     "vitamins_minerals",
     "sweeteners",
     "oils",

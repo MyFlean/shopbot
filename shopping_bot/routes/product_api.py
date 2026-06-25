@@ -228,7 +228,7 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
       - flean_badge: score (float|null), score_display (string), level, level_text
         (fallback from adjusted_score: score is adjusted_score/10, score_display is full adjusted score as string; N/A if absent)
       - score_cards: named object with keys {protein, fiber, sweeteners, oils, additives, preservatives,
-                     watch_outs, calories, flean_rank, natural_sugar, glycemic_index, vitamins_minerals,
+                     watch_outs, calories, flean_rank, natural_sugar, glycemic_index, hydration, vitamins_minerals,
                      antioxidants, gut_health} (produce cards driven by Redis config + stats/highlight_tags)
                      each containing {title, value, subtitle, subtitle_new, percentile, status, theme, ...}
       - notes: {criteria_note, ranking_note}

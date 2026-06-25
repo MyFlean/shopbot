@@ -4690,7 +4690,7 @@
     {
       "card": "Protein",
       "highlight_tag": "protein_tags",
-      "visible": true,
+      "visible": false,
       "optional": true,
       "order": 2
     },
@@ -4721,6 +4721,92 @@
       "visible": true,
       "optional": true,
       "order": 1
+    },
+    {
+      "card": "Antioxidants",
+      "highlight_tag": "antioxidant_tags",
+      "visible": true,
+      "optional": true,
+      "order": 6
+    },
+    {
+      "card": "Hydration",
+      "highlight_tag": "hydration_tags",
+      "visible": true,
+      "optional": true,
+      "order": 7
+    },
+    {
+      "card": "Calories",
+      "highlight_tag": "energy_tags",
+      "visible": true,
+      "optional": false,
+      "order": 9
+    },
+    {
+      "card": "Gut Health",
+      "highlight_tag": "gh_tags",
+      "visible": true,
+      "optional": true,
+      "order": 8
+    },
+    {
+      "card": "Watch Outs",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": null
+    }
+  ],
+  "f_and_b/food/veggies_and_fruits/fruits": [
+    {
+      "card": "Flean Rank",
+      "highlight_tag": "",
+      "visible": true,
+      "optional": true,
+      "order": 5
+    },
+    {
+      "card": "Protein",
+      "highlight_tag": "protein_tags",
+      "visible": false,
+      "optional": true,
+      "order": 2
+    },
+    {
+      "card": "Fiber",
+      "highlight_tag": "carbs_fiber_tags",
+      "visible": true,
+      "optional": false,
+      "order": 2
+    },
+    {
+      "card": "Natural Sugar",
+      "highlight_tag": "ns_tags",
+      "visible": true,
+      "optional": true,
+      "order": 3
+    },
+    {
+      "card": "Glycemic Index",
+      "highlight_tag": "gi_tags",
+      "visible": true,
+      "optional": true,
+      "order": 4
+    },
+    {
+      "card": "Vitamins & Minerals",
+      "highlight_tag": "vm_tags",
+      "visible": true,
+      "optional": true,
+      "order": 1
+    },
+    {
+      "card": "Hydration",
+      "highlight_tag": "hydration_tags",
+      "visible": true,
+      "optional": true,
+      "order": 7
     },
     {
       "card": "Antioxidants",
@@ -4762,7 +4848,7 @@
     {
       "card": "Protein",
       "highlight_tag": "protein_tags",
-      "visible": true,
+      "visible": false,
       "optional": true,
       "order": 2
     },

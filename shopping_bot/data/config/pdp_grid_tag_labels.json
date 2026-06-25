@@ -34,5 +34,6 @@
   "ok_additives_present": "Safe Additives",
   "artificial_additives_present": "Chem Additives",
   "harmful_additives_present": "Toxic Additives",
-  "preservative_present": "Preservatives"
+  "preservative_present": "Preservatives",
+  "hydrating": "High water content"
 }

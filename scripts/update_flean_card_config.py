@@ -30,6 +30,7 @@ CARD_TO_HIGHLIGHT: dict[str, str] = {
     "Calories": "energy_tags",
     "Fats": "oils_fats_tags",
     "Gut Health": "gh_tags",
+    "Hydration": "hydration_tags",
     "Watch Outs": "",
 }
 
@@ -66,6 +67,8 @@ ALIAS_TO_START_CASE: dict[str, str] = {
     "Gut Health": "Gut Health",
     "gutHealth": "Gut Health",
     "GutHealth": "Gut Health",
+    "Hydration": "Hydration",
+    "hydration": "Hydration",
     "watch_outs": "Watch Outs",
     "watchOuts": "Watch Outs",
     "WatchOuts": "Watch Outs",

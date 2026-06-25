@@ -247,6 +247,7 @@ def test_produce_display_names_map_to_score_keys():
     for display_name in (
         "Natural Sugar",
         "Glycemic Index",
+        "Hydration",
         "Vitamins & Minerals",
         "Antioxidants",
         "Gut Health",
@@ -338,6 +339,61 @@ def test_glycemic_index_skipped_without_gi_tag(mock_get_config):
     src["category_data"]["tags"]["highlight_tags"]["gi_tags"] = {"positive": ["unrelated_tag"]}
     pdp = transform_to_pdp(src)
     assert "glycemic_index" not in pdp["score_cards"]
+
+
+_HYDRATION_CONFIG = [
+    {
+        "card": "Hydration",
+        "highlight_tag": "hydration_tags",
+        "visible": True,
+        "optional": True,
+        "order": 1,
+    },
+]
+
+
+@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+def test_hydration_shown_with_hydrating_tag(mock_get_config):
+    mock_get_config.return_value = _HYDRATION_CONFIG
+    src = _veggies_src()
+    src["category_data"]["tags"]["highlight_tags"]["hydration_tags"] = {
+        "positive": ["hydrating"]
+    }
+    pdp = transform_to_pdp(src)
+    card = pdp["score_cards"]["hydration"]
+    assert card["value"] == "High"
+    assert card["percentile"] is None
+    assert card["subtitle_new"][0]["tag_label"] == "High water content"
+
+
+@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+def test_hydration_skipped_without_hydrating_tag(mock_get_config):
+    mock_get_config.return_value = _HYDRATION_CONFIG
+    src = _veggies_src()
+    src["category_data"]["tags"]["highlight_tags"]["hydration_tags"] = {
+        "positive": ["unrelated_tag"]
+    }
+    pdp = transform_to_pdp(src)
+    assert "hydration" not in pdp["score_cards"]
+
+
+@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+def test_hydration_skipped_without_config_highlight_tag(mock_get_config):
+    mock_get_config.return_value = [
+        {
+            "card": "Hydration",
+            "highlight_tag": "",
+            "visible": True,
+            "optional": True,
+            "order": 1,
+        },
+    ]
+    src = _veggies_src()
+    src["category_data"]["tags"]["highlight_tags"]["hydration_tags"] = {
+        "positive": ["hydrating"]
+    }
+    pdp = transform_to_pdp(src)
+    assert "hydration" not in pdp["score_cards"]
 
 
 _GUT_HEALTH_CONFIG = [

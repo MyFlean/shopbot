@@ -478,6 +478,7 @@ SCORE_CARD_ICONS: Dict[str, str] = {
     "additives": "https://img.flean.ai/assets/Pdp-Icons/additives1.svg",
     "natural_sugar": "https://img.flean.ai/assets/Pdp-Icons/03.svg",
     "glycemic_index": "https://img.flean.ai/assets/Pdp-Icons/glycemic.svg",
+    "hydration": "https://img.flean.ai/assets/Pdp-Icons/hydration.svg",
     "vitamins_minerals": "https://img.flean.ai/assets/Pdp-Icons/vitamin.svg",
     "antioxidants": "https://img.flean.ai/assets/Pdp-Icons/antioxidant.svg",
     "gut_health": "https://img.flean.ai/assets/Pdp-Icons/gut-health.svg",
@@ -536,6 +537,10 @@ _GLYCEMIC_INDEX_STATUS_BY_VALUE: Dict[str, str] = {
     "Medium": "average",
     "High": "subpar",
 }
+
+_HYDRATION_TAG_IDS: FrozenSet[str] = frozenset({"hydrating"})
+_HYDRATION_VALUE = "High"
+_HYDRATION_STATUS = "elite"
 
 _GUT_HEALTH_VALUE_BY_BUCKET: Dict[str, str] = {
     "negative": "Poor",
@@ -1130,6 +1135,41 @@ def _build_glycemic_index_card(ctx: _ScoreCardBuildContext) -> Optional[Dict[str
     }
 
 
+def _has_hydration_tag(group: Any) -> bool:
+    if not isinstance(group, dict):
+        return False
+    return bool(_collect_ingredients_tag_ids(group) & _HYDRATION_TAG_IDS)
+
+
+def _hydration_tier_for_value() -> Dict[str, str]:
+    tier = _SCORE_TIER_BY_STATUS.get(_HYDRATION_STATUS) or _SCORE_TIER_BY_STATUS["average"]
+    fields = _tier_to_card_fields(tier)
+    fields["value"] = _HYDRATION_VALUE
+    return fields
+
+
+def _build_hydration_card(ctx: _ScoreCardBuildContext) -> Optional[Dict[str, Any]]:
+    group_key = _resolve_highlight_group_key("hydration", ctx.meta_by_key)
+    if not group_key:
+        return None
+    group = ctx.highlight_root.get(group_key) if isinstance(ctx.highlight_root, dict) else None
+    if not _has_hydration_tag(group):
+        return None
+    resolved = _hydration_tier_for_value()
+    return {
+        "title": _card_title("hydration", ctx.meta_by_key),
+        "value": resolved["value"],
+        "subtitle": "Efficiency",
+        "percentile": None,
+        "status": resolved["status"],
+        "status_label": resolved["value"],
+        "color": resolved["color"],
+        "theme": resolved["theme"],
+        "icon_url": SCORE_CARD_ICONS["hydration"],
+        "visible": True,
+    }
+
+
 def _resolve_sentiment_highlight_value(group: Any) -> Optional[str]:
     if not isinstance(group, dict):
         return None
@@ -1198,6 +1238,8 @@ def _build_score_card(
         return _build_preservatives_card(ctx)
     if build_type == "glycemic_index":
         return _build_glycemic_index_card(ctx)
+    if build_type == "hydration":
+        return _build_hydration_card(ctx)
     if build_type == "calories":
         return _build_calories_card(ctx)
     if build_type == "sentiment_highlight":

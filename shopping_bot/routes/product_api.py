@@ -142,6 +142,70 @@ def _parse_optional_float(value: Any) -> Optional[float]:
         return None
 
 
+def _to_bool(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return None
+
+
+def _derive_in_stock_from_availability(
+    raw: Dict[str, Any],
+    effective_pincode: str,
+    fallback_in_stock: bool,
+) -> bool:
+    """
+    Derive stock from availability.<pincode> and fall back when signal is absent.
+
+    Rule mirrors unified search:
+      - in_stock when any provider reports true OR flean.quantity > 0
+      - if no usable availability signal exists, keep fallback_in_stock
+    """
+    if not effective_pincode:
+        return fallback_in_stock
+
+    availability = raw.get("availability")
+    if not isinstance(availability, dict):
+        return fallback_in_stock
+
+    pincode_entry = availability.get(effective_pincode)
+    if not isinstance(pincode_entry, dict):
+        return fallback_in_stock
+
+    has_signal = False
+    provider_in_stock = False
+
+    for provider in ("zepto", "blinkit"):
+        provider_data = pincode_entry.get(provider)
+        if not isinstance(provider_data, dict):
+            continue
+        in_stock_value = _to_bool(provider_data.get("in_stock"))
+        if in_stock_value is None:
+            continue
+        has_signal = True
+        provider_in_stock = provider_in_stock or in_stock_value
+
+    flean_data = pincode_entry.get("flean")
+    flean_in_stock = False
+    if isinstance(flean_data, dict) and "quantity" in flean_data:
+        has_signal = True
+        try:
+            flean_in_stock = float(flean_data.get("quantity") or 0) > 0
+        except (TypeError, ValueError):
+            flean_in_stock = False
+
+    if has_signal:
+        return provider_in_stock or flean_in_stock
+    return fallback_in_stock
+
+
 def _is_soft_visibility(visibility: Any) -> bool:
     """Match the Flutter CTA visibility check (trim + lowercase == soft)."""
     return str(visibility or "").strip().lower() == "soft"
@@ -276,10 +340,17 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
 
         if canonical_pincode:
             cache_in_stock = _get_cached_in_stock_override(pid, canonical_pincode)
-            if cache_in_stock is not None:
-                product_info = pdp_data.get("product_info")
-                if isinstance(product_info, dict):
+            product_info = pdp_data.get("product_info")
+            if isinstance(product_info, dict):
+                if cache_in_stock is not None:
                     product_info["in_stock"] = bool(cache_in_stock)
+                else:
+                    fallback_in_stock = bool(product_info.get("in_stock", True))
+                    product_info["in_stock"] = _derive_in_stock_from_availability(
+                        raw=raw_src,
+                        effective_pincode=canonical_pincode,
+                        fallback_in_stock=fallback_in_stock,
+                    )
 
         product_info = pdp_data.get("product_info")
         flean_badge = pdp_data.get("flean_badge")

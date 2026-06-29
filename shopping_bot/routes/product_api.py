@@ -41,6 +41,7 @@ bp = Blueprint("product_api", __name__)
 Cfg = get_config()
 
 DATA_DIR = Path(__file__).parent.parent / "data" / "home"
+DEFAULT_SEARCH_PINCODE = "201303"
 
 CTA_TYPE_BETTER_OPTIONS = "better_options"
 CTA_TYPE_SIMILAR_OPTIONS = "similar_options"
@@ -325,32 +326,38 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
             log.warning(f"PDP_NOT_FOUND | id={pid}")
             return _error_response("PRODUCT_NOT_FOUND", f"Product with ID '{pid}' not found", 404)
 
-        # Optional pincode for Redis-backed availability override.
+        # Resolve effective pincode (fail-open to default for missing/placeholder/unmapped).
         request_pincode = (request.args.get("pincode", "") or "").strip()
-        canonical_pincode = try_resolve_canonical_pincode(request_pincode) or ""
-        if canonical_pincode:
+        resolved_pincode = try_resolve_canonical_pincode(request_pincode)
+        effective_pincode = resolved_pincode or DEFAULT_SEARCH_PINCODE
+        if resolved_pincode:
             log.info(
                 "PDP_PINCODE_CANONICAL_RESOLVED | request_pincode=%s | canonical_pincode=%s",
                 request_pincode,
-                canonical_pincode,
+                resolved_pincode,
+            )
+        else:
+            log.info(
+                "PDP_PINCODE_DEFAULT_FALLBACK | request_pincode=%s | effective_pincode=%s",
+                request_pincode,
+                effective_pincode,
             )
 
         # Transform to sectioned PDP format
         pdp_data = transform_to_pdp(raw_src)
 
-        if canonical_pincode:
-            cache_in_stock = _get_cached_in_stock_override(pid, canonical_pincode)
-            product_info = pdp_data.get("product_info")
-            if isinstance(product_info, dict):
-                if cache_in_stock is not None:
-                    product_info["in_stock"] = bool(cache_in_stock)
-                else:
-                    fallback_in_stock = bool(product_info.get("in_stock", True))
-                    product_info["in_stock"] = _derive_in_stock_from_availability(
-                        raw=raw_src,
-                        effective_pincode=canonical_pincode,
-                        fallback_in_stock=fallback_in_stock,
-                    )
+        cache_in_stock = _get_cached_in_stock_override(pid, effective_pincode)
+        product_info = pdp_data.get("product_info")
+        if isinstance(product_info, dict):
+            if cache_in_stock is not None:
+                product_info["in_stock"] = bool(cache_in_stock)
+            else:
+                fallback_in_stock = bool(product_info.get("in_stock", True))
+                product_info["in_stock"] = _derive_in_stock_from_availability(
+                    raw=raw_src,
+                    effective_pincode=effective_pincode,
+                    fallback_in_stock=fallback_in_stock,
+                )
 
         product_info = pdp_data.get("product_info")
         flean_badge = pdp_data.get("flean_badge")

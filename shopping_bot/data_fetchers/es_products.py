@@ -477,11 +477,11 @@ SCORE_CARD_ICONS: Dict[str, str] = {
     "preservatives": "https://img.flean.ai/assets/Pdp-Icons/preservatives1.svg",
     "additives": "https://img.flean.ai/assets/Pdp-Icons/additives1.svg",
     "natural_sugar": "https://img.flean.ai/assets/Pdp-Icons/03.svg",
-    "glycemic_index": "https://img.flean.ai/assets/Pdp-Icons/glycemic.svg",
-    "hydration": "https://img.flean.ai/assets/Pdp-Icons/hydration.svg",
-    "vitamins_minerals": "https://img.flean.ai/assets/Pdp-Icons/vitamin.svg",
-    "antioxidants": "https://img.flean.ai/assets/Pdp-Icons/antioxidant.svg",
-    "gut_health": "https://img.flean.ai/assets/Pdp-Icons/gut-health.svg",
+    "glycemic_index": "https://img.flean.ai/assets/Pdp-Icons/gi1.svg",
+    "hydration": "https://img.flean.ai/assets/Pdp-Icons/hydration1.svg",
+    "vitamins_minerals": "https://img.flean.ai/assets/Pdp-Icons/vitamin1.svg",
+    "antioxidants": "https://img.flean.ai/assets/Pdp-Icons/antioxidant1.svg",
+    "gut_health": "https://img.flean.ai/assets/Pdp-Icons/gut1.svg",
 }
 
 _LEGACY_HIGHLIGHT_TAGS: Dict[str, str] = {

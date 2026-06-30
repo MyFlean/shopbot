@@ -11,7 +11,15 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Tuple
+
+# Make the sibling `search/` package tree importable.
+# This must happen before any shopping_bot import so that search_gateway and
+# search_v2 are available when create_app() wires the SearchGateway.
+_SEARCH_ROOT = Path(__file__).resolve().parent.parent / "search"
+if str(_SEARCH_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SEARCH_ROOT))
 
 from dotenv import load_dotenv
 from flask import request
@@ -106,10 +114,17 @@ def validate_environment(strict: bool) -> None:
     - If strict=False: log a warning (WSGI path) so the pod can come up and emit a health page, etc.
     """
     required = {
-        "ANTHROPIC_API_KEY": "Anthropic API integration",
         "REDIS_HOST": "Session storage",
     }
     missing = [f"{k} (required for {v})" for k, v in required.items() if not os.getenv(k)]
+
+    # ANTHROPIC_API_KEY is needed for chatbot conversational features but NOT for
+    # product search (which uses Search V2 exclusively).  Warn but do not block startup.
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        logging.getLogger(__name__).warning(
+            "ANTHROPIC_API_KEY not set — chatbot conversation features will be unavailable; "
+            "product search (/rs/api/v1/products/search) continues to work via Search V2"
+        )
 
     if missing:
         msg = "Missing required environment variables: " + ", ".join(missing)

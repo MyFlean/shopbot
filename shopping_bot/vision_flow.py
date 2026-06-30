@@ -9,7 +9,7 @@ import mimetypes
 import traceback
 
 from .config import get_config
-from .data_fetchers.es_products import get_es_fetcher
+from .data_fetchers.es_products import get_es_fetcher, get_search_gateway
 from .models import UserContext
 
 Cfg = get_config()
@@ -172,8 +172,9 @@ async def process_image_query(ctx: UserContext, image_url: str) -> Dict[str, Any
                     "fields": ["name^5", "description^2", "combined_text"],
                 }
             })
-        # Prepare fetcher and loop before any sync offloading
+        # Prepare fetcher (for brand suggestion) and gateway (for search)
         fetcher = get_es_fetcher()
+        gateway = get_search_gateway()
         import asyncio as _a
         loop = _a.get_running_loop()
 
@@ -223,7 +224,7 @@ async def process_image_query(ctx: UserContext, image_url: str) -> Dict[str, Any
         if flavor_tokens:
             params["must_keywords"] = flavor_tokens
 
-        result = await loop.run_in_executor(None, lambda: fetcher.search(params))
+        result = await loop.run_in_executor(None, lambda: gateway.search(params))
 
         products = (result or {}).get("products", [])
         product_ids: List[str] = [str(p.get("id")).strip() for p in products[:3] if str(p.get("id") or "").strip()]

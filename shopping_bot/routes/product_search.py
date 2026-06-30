@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from flask import Blueprint, jsonify, request
 
-from ..data_fetchers.es_products import get_es_fetcher
+from ..data_fetchers.es_products import get_es_fetcher, get_search_gateway
 
 log = logging.getLogger(__name__)
 bp = Blueprint("product_search", __name__)
@@ -150,9 +150,9 @@ def _validate_request(data: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[st
         if isinstance(avoid, list):
             valid_avoid = [str(ing).strip().lower() for ing in avoid if ing and str(ing).strip()]
             if valid_avoid:
-                params["avoid_ingredients"] = valid_avoid[:6]  # Max 6 ingredients
+                params["excluded_ingredients"] = valid_avoid[:6]  # Max 6 ingredients
         elif isinstance(avoid, str):
-            params["avoid_ingredients"] = [avoid.strip().lower()]
+            params["excluded_ingredients"] = [avoid.strip().lower()]
         else:
             errors.append("'avoid_ingredients' must be a string or array of strings")
     
@@ -458,11 +458,8 @@ def product_search() -> tuple[Dict[str, Any], int]:
         
         log.info(f"PRODUCT_SEARCH_VALIDATED | params={params}")
         
-        # Get ES fetcher
-        fetcher = get_es_fetcher()
-        
-        # Perform search
-        result = fetcher.search(params)
+        # Route through the gateway (handles V1/V2/auto based on SEARCH_ENGINE env var)
+        result = get_search_gateway().search(params)
         
         # Extract data
         products = result.get("products", [])
@@ -502,23 +499,23 @@ def product_search() -> tuple[Dict[str, Any], int]:
 
 @bp.get("/api/v1/products/health")
 def product_search_health() -> tuple[Dict[str, Any], int]:
-    """Health check for the product search API."""
+    """Health check for the product search API — probes SearchGateway (V2)."""
     try:
-        fetcher = get_es_fetcher()
-        # Quick test query
-        result = fetcher.search({"q": "test", "size": 1})
-        es_ok = result.get("meta", {}).get("query_successful", False)
-        
+        gateway = get_search_gateway()
+        result = gateway.search({"q": "test", "size": 1})
+        ok = result.get("meta", {}).get("query_successful", False)
+        engine = result.get("meta", {}).get("engine", "unknown")
+
         return jsonify({
-            "status": "healthy" if es_ok else "degraded",
-            "elasticsearch": "connected" if es_ok else "error",
+            "status": "healthy" if ok else "degraded",
+            "search_engine": engine,
             "version": "1.0.0"
-        }), 200 if es_ok else 503
-        
+        }), 200 if ok else 503
+
     except Exception as e:
         return jsonify({
             "status": "unhealthy",
-            "elasticsearch": "disconnected",
+            "search_engine": "disconnected",
             "error": str(e)
         }), 503
 

@@ -86,8 +86,29 @@ def create_app() -> Flask:
         log.error(f"INIT_REDIS_ERROR | error={e}", exc_info=True)
         raise RuntimeError(f"Failed to initialize Redis: {e}")
 
-    # ────────────────────────────────────────────────────────  
-    # STEP 2: Initialize Bot Core (includes 4-intent + UX generation)
+    # ────────────────────────────────────────────────────────
+    # STEP 2: Initialize SearchGateway + embedding warmup
+    # ────────────────────────────────────────────────────────
+    # Default to v2 so Search V2 is the sole product search engine.
+    # An explicit SEARCH_ENGINE env var overrides this default.
+    os.environ.setdefault("SEARCH_ENGINE", "v2")
+    try:
+        log.info("INIT_SEARCH_GATEWAY | initializing search gateway singleton")
+        from .data_fetchers.es_products import get_search_gateway
+        gateway = get_search_gateway()
+        app.extensions["search_gateway"] = gateway
+
+        # Pre-load the V2 embedding model so the first user request is not
+        # penalised by model load time.  No-op when SEARCH_ENGINE=v1.
+        gateway.warmup()
+        log.info("INIT_SEARCH_GATEWAY_SUCCESS | engine=%s", os.getenv("SEARCH_ENGINE", "auto"))
+    except Exception as e:
+        # Gateway init failure must not prevent the app from starting — V1 is
+        # always available as fallback and the gateway will retry on first use.
+        log.warning("INIT_SEARCH_GATEWAY_WARNING | gateway init failed at startup, will retry on first request | error=%s", e)
+
+    # ────────────────────────────────────────────────────────
+    # STEP 3: Initialize Bot Core (includes 4-intent + UX generation)
     # ────────────────────────────────────────────────────────
     try:
         log.info("INIT_BOT_CORE | initializing with 4-intent classification and UX generation")
@@ -97,11 +118,17 @@ def create_app() -> Flask:
         log.info("INIT_BOT_CORE_SUCCESS | 4-intent classification enabled | UX generation enabled")
         
     except Exception as e:
-        log.error(f"INIT_BOT_CORE_ERROR | error={e}", exc_info=True)
-        raise RuntimeError(f"Failed to initialize bot core: {e}")
+        # BotCore failure must not prevent startup — product search (/rs/api/v1/products/search)
+        # routes directly through SearchGateway and has no dependency on LLMService.
+        # The chatbot endpoint (/rs/chat) will return 500 until the key is supplied.
+        log.warning(
+            "INIT_BOT_CORE_WARNING | chatbot features unavailable | error=%s | "
+            "hint: set a valid ANTHROPIC_API_KEY to enable /rs/chat", e
+        )
+        app.extensions["bot_core"] = None
 
     # ────────────────────────────────────────────────────────
-    # STEP 3: Register Routes
+    # STEP 4: Register Routes
     # ────────────────────────────────────────────────────────
     try:
         log.info("REGISTER_ROUTES | registering simplified routes")

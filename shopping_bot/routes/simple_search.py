@@ -15,7 +15,7 @@ from typing import Any, Dict
 
 from flask import Blueprint, jsonify, request
 
-from ..data_fetchers.es_products import get_es_fetcher
+from ..data_fetchers.es_products import get_search_gateway
 
 log = logging.getLogger(__name__)
 bp = Blueprint("simple_search", __name__)
@@ -117,17 +117,14 @@ def simple_search() -> tuple[Dict[str, Any], int]:
         query = query.strip()
         log.info(f"SIMPLE_SEARCH_REQUEST | query='{query}'")
         
-        # Get ES fetcher instance
-        fetcher = get_es_fetcher()
-        
         # Build simple params - only the query, no filters
         params = {
             "q": query,
             "size": 20  # Default to 20 results
         }
-        
-        # Perform ES search
-        result = fetcher.search(params)
+
+        # Route through the gateway (handles V1/V2/auto based on SEARCH_ENGINE env var)
+        result = get_search_gateway().search(params)
         
         # Extract products and meta from ES response
         es_products = result.get("products", [])

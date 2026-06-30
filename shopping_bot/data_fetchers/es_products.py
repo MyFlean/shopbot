@@ -1878,9 +1878,74 @@ def _normalize_params(base_params: Dict[str, Any], llm_params: Dict[str, Any]) -
     # Clean up None values
     return {k: v for k, v in final_params.items() if v is not None}
 
+def _build_v2_params_from_context(ctx) -> Dict[str, Any]:
+    """Build Search V2 params directly from session context — no LLM call.
+
+    Search V2's process_search_request() handles NL filter extraction (price,
+    category, dietary terms), so we only need to pass the raw composite query
+    and any slot-level overrides that the conversational pipeline already
+    resolved (budget slot, brand slot).
+    """
+    session = ctx.session or {}
+    assessment = session.get("assessment") or {}
+
+    base_query = str(assessment.get("original_query") or session.get("last_query") or "").strip()
+    current_text = _get_current_user_text(ctx).strip()
+
+    # Combine base query with current turn delta so V2 NL extraction has full context.
+    # e.g. base="protein powder" + current="under 500" → "protein powder under 500"
+    if current_text and current_text.lower() != base_query.lower():
+        q = f"{base_query} {current_text}".strip() if base_query else current_text
+    else:
+        q = current_text or base_query or "snacks"
+
+    product_intent = str(session.get("product_intent") or "show_me_options")
+    params: Dict[str, Any] = {
+        "q": q,
+        "size": 1 if product_intent == "is_this_good" else 20,
+        "product_intent": product_intent,
+        "protein_weight": 1.5,
+    }
+
+    # Explicit price filters from follow-up slot patches.
+    # bot_core._apply_follow_up_patch writes whatever slot keys the LLM emits, so
+    # the price may land in session["price_min"/"price_max"] or session["budget"] dict.
+    for price_key in ("price_min", "price_max"):
+        val = session.get(price_key)
+        if val is not None:
+            try:
+                params[price_key] = float(val)
+            except (TypeError, ValueError):
+                pass
+    # Fallback: budget dict format (e.g. session["budget"] = {"min": 200, "max": 500})
+    budget = session.get("budget", {})
+    if isinstance(budget, dict):
+        for budget_key, param_key in (("min", "price_min"), ("max", "price_max")):
+            if budget_key in budget and param_key not in params:
+                try:
+                    params[param_key] = float(budget[budget_key])
+                except (TypeError, ValueError):
+                    pass
+
+    # Explicit brand filter from session slot
+    brands = session.get("brands")
+    if brands:
+        if isinstance(brands, list) and brands:
+            params["brands"] = brands
+        elif isinstance(brands, str) and brands.strip():
+            params["brands"] = [brands.strip()]
+
+    return params
+
+
 async def build_search_params(ctx) -> Dict[str, Any]:
     """Build final search parameters - unified LLM source of truth with minimal fallback"""
-    
+
+    # V2-native fast path: Search V2's NL pipeline handles all query understanding,
+    # so we skip the LLM call and build params directly from session context.
+    if os.getenv("SEARCH_ENGINE", "v2").lower() == "v2":
+        return _build_v2_params_from_context(ctx)
+
     # Branch for personal care/skin domain to use skin-specific planner
     try:
         domain = str((ctx.session or {}).get("domain") or "").strip()
@@ -2011,6 +2076,8 @@ async def build_search_params(ctx) -> Dict[str, Any]:
 
 # Global fetcher instance
 _es_fetcher: Optional[ElasticsearchProductsFetcher] = None
+_search_gateway = None       # type: ignore[assignment]
+_search_gateway_lock = None  # type: ignore[assignment]
 
 def get_es_fetcher() -> ElasticsearchProductsFetcher:
     """Get singleton ES fetcher instance"""
@@ -2018,6 +2085,40 @@ def get_es_fetcher() -> ElasticsearchProductsFetcher:
     if _es_fetcher is None:
         _es_fetcher = ElasticsearchProductsFetcher()
     return _es_fetcher
+
+
+import threading as _threading
+
+_search_gateway_lock = _threading.Lock()
+
+
+def get_search_gateway():
+    """
+    Return the process-level SearchGateway singleton.
+
+    The gateway is created lazily on first call.  All ShopBot search entry
+    points must call this function instead of get_es_fetcher().search() so
+    that every search request flows through the configured routing policy
+    (SEARCH_ENGINE=v1|v2|auto).
+
+    Thread-safe: the double-checked lock mirrors the pattern used in the
+    V2 client itself.
+    """
+    global _search_gateway
+    if _search_gateway is None:
+        with _search_gateway_lock:
+            if _search_gateway is None:
+                from search_gateway import SearchGateway
+                _search_gateway = SearchGateway(v1_fn=get_es_fetcher().search)
+                # Pre-load V2 embedding model in background so the first user
+                # request is not penalised by model load time (~8 s cold start).
+                # warmup() is a no-op when SEARCH_ENGINE=v1 and catches all
+                # exceptions internally, so this thread is always safe to fire.
+                _warmup_thread = _threading.Thread(
+                    target=_search_gateway.warmup, daemon=True, name="v2-warmup"
+                )
+                _warmup_thread.start()
+    return _search_gateway
 
 # Async handlers for different functions
 async def search_products_handler(ctx) -> Dict[str, Any]:
@@ -2032,11 +2133,11 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
         pass
 
     params = await build_search_params(ctx)
-    fetcher = get_es_fetcher()
-    
-    # Run in thread to avoid blocking
+    gateway = get_search_gateway()
+
+    # Run in thread to avoid blocking the async event loop
     loop = asyncio.get_running_loop()
-    results = await loop.run_in_executor(None, lambda: fetcher.search(params))
+    results = await loop.run_in_executor(None, lambda: gateway.search(params))
     
     # Additional quality check: if we got results but they're all low quality
     if results.get('products'):
@@ -2098,7 +2199,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
                 p_pc1 = _drop_price_pc(params)
                 if p_pc1 is not params:
                     print("DEBUG: PC_FALLBACK[1] PRICE_ANY")
-                    alt_pc1 = await loop.run_in_executor(None, lambda: fetcher.search(p_pc1))
+                    alt_pc1 = await loop.run_in_executor(None, lambda: gateway.search(p_pc1))
                     alt_pc1_total = int(((alt_pc1.get('meta') or {}).get('total_hits')) or 0)
                     if alt_pc1_total > 0:
                         alt_pc1['meta']['fallback_applied'] = 'pc_price_any'
@@ -2110,7 +2211,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
             try:
                 p_pc2 = _relax_reviews_pc(params)
                 print("DEBUG: PC_FALLBACK[2] RELAX_REVIEWS")
-                alt_pc2 = await loop.run_in_executor(None, lambda: fetcher.search(p_pc2))
+                alt_pc2 = await loop.run_in_executor(None, lambda: gateway.search(p_pc2))
                 alt_pc2_total = int(((alt_pc2.get('meta') or {}).get('total_hits')) or 0)
                 if alt_pc2_total > 0:
                     alt_pc2['meta']['fallback_applied'] = 'pc_relax_reviews'
@@ -2122,7 +2223,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
             try:
                 p_pc3 = _drop_hard_soft_pc(params)
                 print("DEBUG: PC_FALLBACK[3] DROP_HARD_SOFT")
-                alt_pc3 = await loop.run_in_executor(None, lambda: fetcher.search(p_pc3))
+                alt_pc3 = await loop.run_in_executor(None, lambda: gateway.search(p_pc3))
                 alt_pc3_total = int(((alt_pc3.get('meta') or {}).get('total_hits')) or 0)
                 if alt_pc3_total > 0:
                     alt_pc3['meta']['fallback_applied'] = 'pc_drop_hard_soft'
@@ -2135,7 +2236,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
                 p_pc4 = dict(params)
                 p_pc4['size'] = max(20, int(p_pc4.get('size', 20) or 20), 30)
                 print("DEBUG: PC_FALLBACK[4] EXPAND_SIZE_30")
-                alt_pc4 = await loop.run_in_executor(None, lambda: fetcher.search(p_pc4))
+                alt_pc4 = await loop.run_in_executor(None, lambda: gateway.search(p_pc4))
                 alt_pc4_total = int(((alt_pc4.get('meta') or {}).get('total_hits')) or 0)
                 if alt_pc4_total > 0:
                     alt_pc4['meta']['fallback_applied'] = 'pc_expand_size_30'
@@ -2182,7 +2283,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
             p1 = _drop_price(params)
             if p1 is not params:
                 print("DEBUG: FALLBACK[1] PRICE_ANY")
-                alt1 = await loop.run_in_executor(None, lambda: fetcher.search(p1))
+                alt1 = await loop.run_in_executor(None, lambda: gateway.search(p1))
                 alt1_total = int(((alt1.get('meta') or {}).get('total_hits')) or 0)
                 if alt1_total > 0:
                     alt1['meta']['fallback_applied'] = 'price_any'
@@ -2194,7 +2295,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
         try:
             p2 = _drop_hard_soft(params)
             print("DEBUG: FALLBACK[2] DROP_HARD_SOFT_KEEP_CATEGORY")
-            alt2 = await loop.run_in_executor(None, lambda: fetcher.search(p2))
+            alt2 = await loop.run_in_executor(None, lambda: gateway.search(p2))
             alt2_total = int(((alt2.get('meta') or {}).get('total_hits')) or 0)
             if alt2_total > 0:
                 alt2['meta']['fallback_applied'] = 'drop_hard_soft_keep_category'
@@ -2212,7 +2313,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
                 p3.pop('category_paths', None)
                 p3['category_path'] = sibling_l2
                 print(f"DEBUG: FALLBACK[3] SIBLING_L2_FULL | path={p3['category_path']}")
-                alt3 = await loop.run_in_executor(None, lambda: fetcher.search(p3))
+                alt3 = await loop.run_in_executor(None, lambda: gateway.search(p3))
                 alt3_total = int(((alt3.get('meta') or {}).get('total_hits')) or 0)
                 if alt3_total > 0:
                     alt3['meta']['fallback_applied'] = 'sibling_l2_full'
@@ -2227,7 +2328,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
                 p4.pop('category_paths', None)
                 p4['category_path'] = sibling_l2
                 print(f"DEBUG: FALLBACK[4] SIBLING_L2_PRICE_ANY | path={p4['category_path']}")
-                alt4 = await loop.run_in_executor(None, lambda: fetcher.search(p4))
+                alt4 = await loop.run_in_executor(None, lambda: gateway.search(p4))
                 alt4_total = int(((alt4.get('meta') or {}).get('total_hits')) or 0)
                 if alt4_total > 0:
                     alt4['meta']['fallback_applied'] = 'sibling_l2_price_any'
@@ -2242,7 +2343,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
                 p5.pop('category_paths', None)
                 p5['category_path'] = sibling_l2
                 print(f"DEBUG: FALLBACK[5] SIBLING_L2_DROP_HARD_SOFT | path={p5['category_path']}")
-                alt5 = await loop.run_in_executor(None, lambda: fetcher.search(p5))
+                alt5 = await loop.run_in_executor(None, lambda: gateway.search(p5))
                 alt5_total = int(((alt5.get('meta') or {}).get('total_hits')) or 0)
                 if alt5_total > 0:
                     alt5['meta']['fallback_applied'] = 'sibling_l2_drop_hard_soft'
@@ -2267,7 +2368,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
                 p6a.pop('category_paths', None)
                 p6a['category_path'] = truncated
                 print(f"DEBUG: FALLBACK[6A] DROP_CATEGORY_L4_TO_L3 | path={p6a['category_path']}")
-                alt6a = await loop.run_in_executor(None, lambda: fetcher.search(p6a))
+                alt6a = await loop.run_in_executor(None, lambda: gateway.search(p6a))
                 alt6a_total = int(((alt6a.get('meta') or {}).get('total_hits')) or 0)
                 if alt6a_total > 0:
                     alt6a['meta']['fallback_applied'] = 'drop_category_l4_to_l3'
@@ -2285,7 +2386,7 @@ async def search_products_handler(ctx) -> Dict[str, Any]:
                 dropped = True
             if dropped:
                 print("DEBUG: FALLBACK[6B] DROP_CATEGORY_L3 (remove category_path(s))")
-                alt6b = await loop.run_in_executor(None, lambda: fetcher.search(p6b))
+                alt6b = await loop.run_in_executor(None, lambda: gateway.search(p6b))
                 alt6b_total = int(((alt6b.get('meta') or {}).get('total_hits')) or 0)
                 if alt6b_total > 0:
                     alt6b['meta']['fallback_applied'] = 'drop_category_l3'

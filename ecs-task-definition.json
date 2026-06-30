@@ -109,6 +109,10 @@
         {
           "name": "HEALTH_THRESHOLD_PERCENTILE",
           "value": "70"
+        },
+        {
+          "name": "SEARCH_ENGINE",
+          "value": "v2"
         }
       ],
       "secrets": [

@@ -8,7 +8,7 @@ This module provides API endpoints for the Flutter app's home page:
 3. GET /api/v1/home/best-selling - Best selling products (category-path score based)
 4. GET|POST /api/v1/home/curated - Legacy home curated strip (up to 8 from ES)
 5. GET|POST /api/v1/home/curated/all - Legacy See All (up to 12 per collection from ES)
-6. GET|POST /api/v1/home/flean-picks - Flean Picks collections (all or source-specific)
+6. GET|POST /api/v1/home/flean-picks - Flean Picks collections (GET accepts same query params as POST body)
 7. GET /api/v1/home/flean-picks/<collection_key> - Single Flean Picks collection (legacy)
 8. GET /api/v1/home/why-flean - Value proposition cards
 9. GET /api/v1/home/collaborations - Partner brand names
@@ -45,7 +45,7 @@ from ..utils.pincode_mapping import (
     is_placeholder_pincode,
     try_resolve_canonical_pincode,
 )
-from .product_api import _validate_filters
+from .product_api import _build_filters_from_query_args, _normalize_filter_aliases, _validate_filters
 
 log = logging.getLogger(__name__)
 bp = Blueprint("home_page", __name__)
@@ -1602,16 +1602,50 @@ def _unified_flean_picks_logic(
     return response_data
 
 
+def _validate_user_filters(raw_filters: Any) -> Optional[Dict[str, Any]]:
+    """Validate user personalization filters; invalid filters are ignored."""
+    if not raw_filters:
+        return None
+    normalized = _normalize_filter_aliases(raw_filters)
+    validated, err = _validate_filters(normalized)
+    if err:
+        log.warning(f"FLEAN_PICKS_FILTER_ERR | {err}")
+        return None
+    return validated
+
+
+def _parse_flean_picks_request() -> tuple[str, Optional[Dict[str, Any]]]:
+    """Parse source and user filters from GET query params or POST JSON body."""
+    if request.method == "GET":
+        source = request.args.get("source", "see_all")
+        raw_filters = _build_filters_from_query_args()
+        user_filters = _validate_user_filters(raw_filters) if raw_filters else None
+    else:
+        body = request.get_json(force=True, silent=True) or {}
+        source = body.get("source", "see_all")
+        user_filters = _validate_user_filters(body.get("filters"))
+    return source, user_filters
+
+
 @bp.route("/api/v1/home/flean-picks", methods=["POST", "GET"])
 def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
     """
     Unified Flean Picks endpoint.
 
-    GET:
-        Query param ``source`` (default ``home``). No JSON body; ``user_filters`` are not used.
-        Use ``?source=see_all`` for the collections shape (same as POST see_all).
-    POST:
-        JSON body: ``source`` (default ``see_all``), optional ``filters`` for personalization
+    GET and POST share the same behavior when equivalent params are supplied.
+
+    GET query params:
+        ``source`` (default ``see_all``), optional filter params matching POST ``filters``:
+        ``price_range``, ``flean_score``, ``food_type``,
+        ``preferences`` / ``ingredient_preferences`` (comma-separated),
+        ``dietary`` / ``dietary_preferences`` (comma-separated),
+        ``nutrition_profiles`` (comma-separated),
+        ``protein``, ``carbs``, ``fat`` (assembled into nutrition sliders),
+        ``pincode`` (or ``X-Pincode`` header).
+        Invalid filter params are ignored; only base filters apply.
+
+    POST JSON body:
+        ``source`` (default ``see_all``), optional ``filters`` for personalization
         (validated; invalid ``filters`` are ignored and only base filters apply).
         Supported filter shape includes numeric ``nutrition`` sliders and
         flag-based ``nutrition_profiles`` (e.g. ``["high_protein", "low_sugar"]``).
@@ -1620,7 +1654,7 @@ def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
 
     ``source == "home"``:
         Response data includes flat ``products`` (up to 8: 2 top picks per subcategory).
-    Any other ``source`` (including omitted on POST, or ``see_all`` on GET):
+    Any other ``source`` (including omitted, or ``see_all``):
         Response data includes ``collections`` (4 subcategories, up to 12 products each).
 
     Base personalization filters are merged with validated user filters (see ``_merge_filters``).
@@ -1630,23 +1664,7 @@ def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
     If no products match after tier3, response remains HTTP 200 and includes ``message``.
     """
     try:
-        if request.method == "GET":
-            source = request.args.get("source", "home")
-            user_filters = None
-        else:
-            body = request.get_json(force=True, silent=True) or {}
-            source = body.get("source", "see_all")
-            raw_filters = body.get("filters")
-            if raw_filters:
-                validated, err = _validate_filters(raw_filters)
-                if err:
-                    log.warning(f"FLEAN_PICKS_FILTER_ERR | {err}")
-                    user_filters = None
-                else:
-                    user_filters = validated
-            else:
-                user_filters = None
-
+        source, user_filters = _parse_flean_picks_request()
         effective_pincode = _resolve_canonical_request_pincode()
         result = _unified_flean_picks_logic(source, user_filters, effective_pincode=effective_pincode)
 

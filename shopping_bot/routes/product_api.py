@@ -928,13 +928,76 @@ VALID_NUTRITION_KEYS = {"protein", "carbs", "fat"}
 VALID_NUTRITION_PROFILES = {
     "high_protein",
     "high_fiber",
-    "low_carbs",
+    "low_carb",
     "low_sugar",
     "low_sodium",
     "low_fat",
 }
 NUTRITION_MAX = {"protein": 40, "carbs": 100, "fat": 100}
 NUTRITION_STEP = {"protein": 10, "carbs": 25, "fat": 25}
+
+
+def _build_filters_from_query_args() -> Dict[str, Any]:
+    """Build a filters dict from GET query params (shared by search and home endpoints)."""
+    raw_filters: Dict[str, Any] = {}
+    if request.args.get("price_range"):
+        raw_filters["price_range"] = request.args["price_range"]
+    if request.args.get("flean_score"):
+        raw_filters["flean_score"] = request.args["flean_score"]
+
+    prefs = request.args.get("preferences") or request.args.get("ingredient_preferences")
+    if prefs:
+        raw_filters["preferences"] = [p.strip() for p in prefs.split(",") if p.strip()]
+
+    diet = request.args.get("dietary") or request.args.get("dietary_preferences")
+    if diet:
+        raw_filters["dietary"] = [d.strip() for d in diet.split(",") if d.strip()]
+
+    if request.args.get("food_type"):
+        raw_filters["food_type"] = request.args["food_type"]
+
+    nutrition_params: Dict[str, Any] = {}
+    for key in ("protein", "carbs", "fat"):
+        value = request.args.get(key)
+        if value is not None:
+            nutrition_params[key] = value
+    if nutrition_params:
+        raw_filters["nutrition"] = nutrition_params
+
+    nutrition_profiles = request.args.get("nutrition_profiles")
+    if nutrition_profiles:
+        raw_filters["nutrition_profiles"] = [
+            profile.strip() for profile in nutrition_profiles.split(",") if profile.strip()
+        ]
+    return raw_filters
+
+
+def _normalize_filter_aliases(filters: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    Accept both simple_search-style keys (preferences, dietary) and
+    product_api-style keys (ingredient_preferences, dietary_preferences) so
+    _validate_filters can handle the result.
+
+    Returns a new dict (never mutates the caller's). Returns None if input is None.
+    """
+    if not filters:
+        return None
+    if not isinstance(filters, dict):
+        return filters  # let _validate_filters surface the type error
+
+    normalized: Dict[str, Any] = dict(filters)
+
+    if "preferences" in normalized and "ingredient_preferences" not in normalized:
+        normalized["ingredient_preferences"] = normalized.pop("preferences")
+    else:
+        normalized.pop("preferences", None)
+
+    if "dietary" in normalized and "dietary_preferences" not in normalized:
+        normalized["dietary_preferences"] = normalized.pop("dietary")
+    else:
+        normalized.pop("dietary", None)
+
+    return normalized
 
 
 def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -1104,28 +1167,7 @@ def get_products_unified() -> Tuple[Dict[str, Any], int]:
 
             sort_by = request.args.get("sort_by", "relevance")
 
-            raw_filters: Dict[str, Any] = {}
-            if request.args.get("price_range"):
-                raw_filters["price_range"] = request.args["price_range"]
-            if request.args.get("flean_score"):
-                raw_filters["flean_score"] = request.args["flean_score"]
-            if request.args.get("preferences"):
-                raw_filters["preferences"] = [
-                    p.strip() for p in request.args["preferences"].split(",") if p.strip()
-                ]
-            if request.args.get("dietary"):
-                raw_filters["dietary"] = [
-                    d.strip() for d in request.args["dietary"].split(",") if d.strip()
-                ]
-            if request.args.get("food_type"):
-                raw_filters["food_type"] = request.args["food_type"]
-            nutrition_params: Dict[str, Any] = {}
-            for key in ("protein", "carbs", "fat"):
-                v = request.args.get(key)
-                if v is not None:
-                    nutrition_params[key] = v
-            if nutrition_params:
-                raw_filters["nutrition"] = nutrition_params
+            raw_filters = _build_filters_from_query_args()
         else:
             body = request.get_json(force=True, silent=True) or {}
 
@@ -1168,7 +1210,8 @@ def get_products_unified() -> Tuple[Dict[str, Any], int]:
             )
 
         # Validate filters
-        validated_filters, filter_error = _validate_filters(raw_filters if raw_filters else None)
+        normalized_filters = _normalize_filter_aliases(raw_filters if raw_filters else None)
+        validated_filters, filter_error = _validate_filters(normalized_filters)
         if filter_error:
             return _error_response("INVALID_FILTERS", filter_error, 400)
 

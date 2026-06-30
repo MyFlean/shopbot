@@ -1790,7 +1790,7 @@ NUTRITION_PROFILE_FILTERS = {
         "field": "stats.fiber_percentiles.global_percentile",
         "range": {"gte": 75},
     },
-    "low_carbs": {
+    "low_carb": {
         "field": "stats.carbs_penalty_percentiles.global_percentile",
         "range": {"lte": 50},
     },

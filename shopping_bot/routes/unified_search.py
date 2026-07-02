@@ -46,7 +46,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Blueprint, jsonify, request
 
-from ..data_fetchers.es_products import get_es_fetcher, transform_to_product_card
+from ..data_fetchers.es_products import get_es_fetcher, get_search_gateway, transform_to_product_card
 from ..utils.pincode_mapping import try_resolve_canonical_pincode
 from .product_api import (
     VALID_SORT_OPTIONS,
@@ -69,6 +69,10 @@ V2_SUGGEST_SIZE = 100
 DEFAULT_SEARCH_PINCODE = "201303"
 
 
+def _search_engine() -> str:
+    return os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+
+
 # ---------------------------------------------------------------------------
 # Sort aliases (catalogue compatibility)
 # ---------------------------------------------------------------------------
@@ -77,6 +81,75 @@ SORT_ALIASES = {
     "flean_score": "flean_score_desc",
     "price": "price_asc",
 }
+
+# ---------------------------------------------------------------------------
+# V1 → V2 filter translation
+# ---------------------------------------------------------------------------
+
+_PRICE_RANGE_BOUNDS: Dict[str, Tuple[Optional[float], Optional[float]]] = {
+    "below_99":  (None,   99.0),
+    "100_249":   (100.0, 249.0),
+    "250_499":   (250.0, 499.0),
+    "above_500": (500.0,  None),
+}
+
+_FLEAN_SCORE_TO_PERCENTILE: Dict[str, float] = {
+    "10":     90.0,
+    "9_plus": 70.0,
+    "8_plus": 50.0,
+    "7_plus": 30.0,
+}
+
+
+def _v1_filters_to_gw_params(vf: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate validated_filters to SearchFilters.from_dict()-compatible params."""
+    out: Dict[str, Any] = {}
+
+    pr = vf.get("price_range")
+    if pr:
+        bounds = _PRICE_RANGE_BOUNDS.get(str(pr))
+        if bounds:
+            pmin, pmax = bounds
+            if pmin is not None:
+                out["price_min"] = pmin
+            if pmax is not None:
+                out["price_max"] = pmax
+
+    fs = vf.get("flean_score")
+    if fs:
+        pct = _FLEAN_SCORE_TO_PERCENTILE.get(str(fs))
+        if pct is not None:
+            out["min_flean_percentile"] = pct
+
+    dietary = vf.get("dietary")
+    if dietary:
+        out["dietary_labels"] = dietary
+
+    nutrition = vf.get("nutrition")
+    if nutrition and isinstance(nutrition, dict):
+        mfs: List[Dict[str, Any]] = []
+        if nutrition.get("protein"):
+            mfs.append({"nutrient": "protein_g", "operator": "gte", "value": float(nutrition["protein"])})
+        if nutrition.get("fat"):
+            mfs.append({"nutrient": "fat_g", "operator": "lte", "value": float(nutrition["fat"])})
+        if nutrition.get("carbs"):
+            mfs.append({"nutrient": "carbs_g", "operator": "lte", "value": float(nutrition["carbs"])})
+        if mfs:
+            out["macro_filters"] = mfs
+
+    preferences = vf.get("preferences")
+    if preferences:
+        out["ingredient_tags"] = list(preferences)
+
+    food_type = vf.get("food_type")
+    if food_type:
+        out["food_type"] = food_type
+
+    nutrition_profiles = vf.get("nutrition_profiles")
+    if nutrition_profiles:
+        out["nutrition_profiles"] = list(nutrition_profiles)
+
+    return out
 
 
 def _resolve_sort(raw: Optional[str], has_query: bool = False) -> str:
@@ -362,21 +435,66 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             f"| effective_pincode={effective_pincode}"
         )
 
-        try:
-            fetcher = get_es_fetcher()
-        except RuntimeError as exc:
-            # Misconfiguration (e.g. Elastic Cloud URL with IAM, missing API key)
-            log.error(f"UNIFIED_SEARCH_CONFIG_ERROR | error={exc}", exc_info=True)
-            return _error_response("INTERNAL_ERROR", str(exc), 500)
+        result: Optional[Dict[str, Any]] = None
 
-        result = fetcher.search_products_unified(
-            query=query,
-            subcategory=subcategory,
-            page=page,
-            size=size,
-            sort_by=resolved_sort,
-            filters=validated_filters,
-        )
+        if _search_engine() != "v1" and query:
+            # Search V2 path
+            try:
+                gateway = get_search_gateway()
+                gw_params: Dict[str, Any] = {
+                    "q": query,
+                    "size": size,
+                    "offset": page * size,
+                    "sort_by": resolved_sort,
+                    "subcategory": subcategory,
+                }
+                gw_params.update(_v1_filters_to_gw_params(validated_filters or {}))
+                gw_result = gateway.search(gw_params)
+                gw_meta = gw_result.get("meta", {}) or {}
+                gw_products = gw_result.get("products", [])
+                returned = len(gw_products)
+                result = {
+                    "products": gw_products,
+                    "meta": {
+                        "total": gw_meta.get("total_hits", returned),
+                        "page": page,
+                        "size": size,
+                        "total_pages": page + (2 if returned == size else 1),
+                        "has_next": returned == size,
+                        "has_prev": page > 0,
+                        "query": query,
+                        "subcategory": subcategory,
+                        "sort_by": resolved_sort,
+                        "filters_applied": validated_filters,
+                        "took_ms": gw_meta.get("took_ms", 0),
+                        "fuzzy_fallback_used": False,
+                        "prefix_fallback_used": False,
+                        "phonetic_used": False,
+                        "engine": "v2",
+                    },
+                }
+            except Exception as exc:
+                if _search_engine() == "v2":
+                    log.error("UNIFIED_SEARCH_V2_ERROR | error=%s", exc, exc_info=True)
+                    return _error_response("INTERNAL_ERROR", str(exc), 500)
+                log.warning("UNIFIED_SEARCH_V2_FALLBACK | error=%s", exc)
+
+        if result is None:
+            # Legacy V1 path
+            try:
+                fetcher = get_es_fetcher()
+            except RuntimeError as exc:
+                log.error("UNIFIED_SEARCH_CONFIG_ERROR | error=%s", exc, exc_info=True)
+                return _error_response("INTERNAL_ERROR", str(exc), 500)
+
+            result = fetcher.search_products_unified(
+                query=query,
+                subcategory=subcategory,
+                page=page,
+                size=size,
+                sort_by=resolved_sort,
+                filters=validated_filters,
+            )
 
         meta = result.get("meta", {}) or {}
         if meta.get("error"):

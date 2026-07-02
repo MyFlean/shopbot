@@ -261,19 +261,55 @@ def create_app(config_name: str = 'production') -> Flask:
             log.error(f"INIT_REDIS_ERROR | error={e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize Redis: {e}")
 
-    # ────────────────────────────────────────────────────────  
-    # STEP 2: Initialize Bot Core (includes 4-intent + UX generation)
+    # ────────────────────────────────────────────────────────
+    # STEP 2: Initialize Search V2 Gateway
+    # ────────────────────────────────────────────────────────
+    if config_name == 'lambda':
+        # Lambda: gateway initializes lazily on first search request.
+        # get_search_gateway() in es_products.py handles double-checked locking.
+        log.info("INIT_SEARCH_GATEWAY | Lambda mode - will initialize on first request")
+        app.extensions["search_gateway"] = None
+    else:
+        try:
+            log.info("INIT_SEARCH_GATEWAY | initializing Search V2 gateway")
+            from .data_fetchers.es_products import get_search_gateway
+            gateway = get_search_gateway()
+            app.extensions["search_gateway"] = gateway
+
+            # warmup() pre-builds the V2 pipeline (OpenSearchClient, corrector).
+            gateway.warmup()
+
+            # Preload SentenceTransformer weights in the master gunicorn process
+            # so workers inherit them via copy-on-write (avoids N×500 MB memory).
+            try:
+                from search_v2.embedding.embedding_service import get_embedding_service
+                from search_v2.config.settings import SETTINGS as _s2
+                get_embedding_service(_s2.EMBEDDING_MODEL_KEY).preload()
+                log.info("INIT_EMBEDDING_PRELOAD | model=%s", _s2.EMBEDDING_MODEL_KEY)
+            except Exception as _pe:
+                log.warning("INIT_EMBEDDING_PRELOAD_WARNING | first query will be slow | error=%s", _pe)
+
+            log.info("INIT_SEARCH_GATEWAY_SUCCESS")
+        except Exception as e:
+            # Gateway failure must not prevent startup — the gateway retries on
+            # first request via lazy _build_search() inside SearchGateway._get_fn().
+            log.warning(
+                "INIT_SEARCH_GATEWAY_WARNING | init failed at startup, will retry on first request | error=%s", e
+            )
+
+    # ────────────────────────────────────────────────────────
+    # STEP 3: Initialize Bot Core (includes 4-intent + UX generation)
     # ────────────────────────────────────────────────────────
     try:
         log.info("INIT_BOT_CORE | initializing with 4-intent classification and UX generation")
-        
+
         # For Lambda, bot_core will be initialized lazily when first accessed
         if config_name == 'lambda':
             app.extensions["bot_core"] = None  # Will be initialized on first access
         else:
             bot_core = ShoppingBotCore(ctx_mgr)
             app.extensions["bot_core"] = bot_core
-        
+
         log.info("INIT_BOT_CORE_SUCCESS | 4-intent classification enabled | UX generation enabled")
         
     except Exception as e:
@@ -281,7 +317,7 @@ def create_app(config_name: str = 'production') -> Flask:
         raise RuntimeError(f"Failed to initialize bot core: {e}")
 
     # ────────────────────────────────────────────────────────
-    # STEP 3: Register Routes
+    # STEP 4: Register Routes
     # ────────────────────────────────────────────────────────
     # 
     # IMPORTANT: Route Registration Convention

@@ -12,6 +12,7 @@ Enhanced with:
 from __future__ import annotations
 
 import asyncio
+import threading as _threading
 from dataclasses import dataclass
 from logging import log
 import os
@@ -5692,6 +5693,32 @@ def get_es_fetcher() -> ElasticsearchProductsFetcher:
     if _es_fetcher is None:
         _es_fetcher = ElasticsearchProductsFetcher()
     return _es_fetcher
+
+
+# Search V2 gateway singleton
+_search_gateway = None
+_search_gateway_lock = _threading.Lock()
+
+
+def get_search_gateway():
+    """Return the process-level SearchGateway singleton (always Search V2).
+
+    Thread-safe double-checked locking. Warmup runs in a background daemon
+    thread so startup is not blocked by model load time.
+    """
+    global _search_gateway
+    if _search_gateway is None:
+        with _search_gateway_lock:
+            if _search_gateway is None:
+                from search_gateway import SearchGateway
+                _search_gateway = SearchGateway()
+                _warmup_thread = _threading.Thread(
+                    target=_search_gateway.warmup,
+                    daemon=True,
+                    name="v2-warmup",
+                )
+                _warmup_thread.start()
+    return _search_gateway
 
 # Async handlers for different functions
 async def search_products_handler(ctx) -> Dict[str, Any]:

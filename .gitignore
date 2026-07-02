@@ -108,3 +108,4 @@ shopbot.zip
 
 # Local installers / large binaries
 AWSCLIV2.pkg
+.env

@@ -21,3 +21,17 @@ hypercorn>=0.16            # ASGI (async) – use if you need full async through
 cryptography
 requests
 aiohttp>=3.8.0
+
+# ── Search V2 retrieval pipeline (moved into this repo) ────
+# Embedding model inference — bge-base-en-v1.5 (768-dim, ~420 MB on disk)
+sentence-transformers>=2.6.0
+torch>=2.0.0
+
+# OpenSearch HTTP client (used by search_v2/retrieval/opensearch_client.py)
+# Must be opensearch-py, NOT elasticsearch-py 8.x — the ES 8 client sends a
+# vnd.elasticsearch+json Accept header that OpenSearch rejects with HTTP 406.
+opensearch-py>=2.4.0
+
+# AWS SigV4 request signing for Amazon OpenSearch Service / AOSS (production)
+requests-aws4auth>=1.2.0
+boto3>=1.26.0

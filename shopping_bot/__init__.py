@@ -98,9 +98,23 @@ def create_app() -> Flask:
         gateway = get_search_gateway()
         app.extensions["search_gateway"] = gateway
 
-        # Pre-load the V2 embedding model so the first user request is not
-        # penalised by model load time.  No-op when SEARCH_ENGINE=v1.
+        # Build V2 search closure (OpenSearchClient, EmbeddingService, corrector).
+        # No-op when SEARCH_ENGINE=v1.
         gateway.warmup()
+
+        # Load SentenceTransformer weights into the master process so that
+        # gunicorn --preload workers inherit them via copy-on-write instead of
+        # each independently loading ~500 MB.  Without this, 4 workers × 500 MB
+        # exceeds the 2048 MB ECS task limit.  No-op when SEARCH_ENGINE=v1.
+        if os.getenv("SEARCH_ENGINE", "v2") != "v1":
+            try:
+                from search_v2.embedding.embedding_service import get_embedding_service
+                from search_v2.config.settings import SETTINGS as _s2
+                get_embedding_service(_s2.EMBEDDING_MODEL_KEY).preload()
+                log.info("INIT_EMBEDDING_PRELOAD | model=%s", _s2.EMBEDDING_MODEL_KEY)
+            except Exception as _pe:
+                log.warning("INIT_EMBEDDING_PRELOAD_WARNING | first query will be slow | error=%s", _pe)
+
         log.info("INIT_SEARCH_GATEWAY_SUCCESS | engine=%s", os.getenv("SEARCH_ENGINE", "auto"))
     except Exception as e:
         # Gateway init failure must not prevent the app from starting — V1 is

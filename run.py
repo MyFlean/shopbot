@@ -14,12 +14,9 @@ import sys
 from pathlib import Path
 from typing import Tuple
 
-# Make the sibling `search/` package tree importable.
-# This must happen before any shopping_bot import so that search_gateway and
-# search_v2 are available when create_app() wires the SearchGateway.
-_SEARCH_ROOT = Path(__file__).resolve().parent.parent / "search"
-if str(_SEARCH_ROOT) not in sys.path:
-    sys.path.insert(0, str(_SEARCH_ROOT))
+# search_v2, search_gateway and indexing_es_client now live inside this
+# repository (shopbot/search_v2/, shopbot/search_gateway/,
+# shopbot/indexing_es_client.py).  No sys.path manipulation needed.
 
 from dotenv import load_dotenv
 from flask import request

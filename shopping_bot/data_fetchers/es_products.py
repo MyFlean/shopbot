@@ -2109,7 +2109,7 @@ def get_search_gateway():
         with _search_gateway_lock:
             if _search_gateway is None:
                 from search_gateway import SearchGateway
-                _search_gateway = SearchGateway(v1_fn=get_es_fetcher().search)
+                _search_gateway = SearchGateway(v1_fn=lambda params: get_es_fetcher().search(params))
                 # Pre-load V2 embedding model in background so the first user
                 # request is not penalised by model load time (~8 s cold start).
                 # warmup() is a no-op when SEARCH_ENGINE=v1 and catches all

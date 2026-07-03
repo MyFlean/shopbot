@@ -146,6 +146,14 @@ class SearchV2Settings:
     # ── Fuzzy / typo ─────────────────────────────────────────────────
     FUZZINESS: str = field(default_factory=lambda: _str("SEARCH_V2_FUZZINESS", "AUTO"))
     TYPO_MAX_EDIT_DISTANCE: int = field(default_factory=lambda: _int("SEARCH_V2_TYPO_MAX_EDIT_DISTANCE", 2))
+    VOCAB_URL: str = field(
+        default_factory=lambda: _str(
+            "SEARCH_V2_VOCAB_URL", "https://api.flean.ai/ui/app-config/vocabulary"
+        )
+    )
+    VOCAB_TIMEOUT_SEC: float = field(
+        default_factory=lambda: _float("SEARCH_V2_VOCAB_TIMEOUT_SEC", 2.0)
+    )
 
     # ── Business ranking bounds (see ranking/business_ranking.py) ───
     # Calibrated so business ranking can influence at most ~8 rank positions in either

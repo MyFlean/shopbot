@@ -12,6 +12,8 @@ import threading
 import time
 from typing import Any, Callable, Dict, Optional
 
+import requests
+
 _log = logging.getLogger("search_gateway")
 
 
@@ -112,6 +114,35 @@ def _to_v1_product(item: Any, rank: int) -> Dict[str, Any]:
     }
 
 
+def _coerce_vocabulary_payload(payload: Any) -> Dict[str, int]:
+    """Validate and coerce API payload into {token: positive_int_frequency}."""
+    if not isinstance(payload, dict):
+        raise ValueError("vocabulary payload must be a JSON object")
+
+    vocab: Dict[str, int] = {}
+    for raw_token, raw_freq in payload.items():
+        token = str(raw_token).strip().lower()
+        if not token:
+            continue
+        try:
+            freq = int(raw_freq)
+        except (TypeError, ValueError):
+            continue
+        if freq > 0:
+            vocab[token] = freq
+
+    if not vocab:
+        raise ValueError("vocabulary payload has no valid token-frequency pairs")
+    return vocab
+
+
+def _fetch_vocabulary_from_api(url: str, timeout_sec: float) -> Dict[str, int]:
+    """Fetch vocabulary from app-config endpoint."""
+    resp = requests.get(url, timeout=timeout_sec)
+    resp.raise_for_status()
+    return _coerce_vocabulary_payload(resp.json())
+
+
 def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
     """
     Initialise V2 clients once and return a params→dict callable.
@@ -134,10 +165,41 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
     corrector: Optional[VocabularyCorrector] = None
     if SETTINGS.ENABLE_TYPO_CORRECTION:
         try:
-            generated = load_vocabulary(VOCABULARY_PATH)
-            vocab = generated if generated else seed_vocabulary()
+            vocab_source = "seed"
+            try:
+                vocab = _fetch_vocabulary_from_api(
+                    SETTINGS.VOCAB_URL, SETTINGS.VOCAB_TIMEOUT_SEC
+                )
+                vocab_source = "api"
+            except Exception as api_exc:
+                _log.warning(
+                    "gateway: failed to fetch vocabulary from api (%s); "
+                    "falling back to local vocabulary.json",
+                    api_exc,
+                )
+                try:
+                    generated = load_vocabulary(VOCABULARY_PATH)
+                    if generated:
+                        vocab = generated
+                        vocab_source = "local"
+                    else:
+                        vocab = seed_vocabulary()
+                        vocab_source = "seed"
+                except Exception as local_exc:
+                    _log.warning(
+                        "gateway: failed to load local vocabulary.json (%s); "
+                        "falling back to seed vocabulary",
+                        local_exc,
+                    )
+                    vocab = seed_vocabulary()
+                    vocab_source = "seed"
+
             corrector = VocabularyCorrector(vocab)
-            _log.info("gateway: typo corrector loaded (%d terms)", len(vocab))
+            _log.info(
+                "gateway: typo corrector loaded from %s (%d terms)",
+                vocab_source,
+                len(vocab),
+            )
         except Exception:
             _log.exception("gateway: failed to build typo corrector — typo correction disabled")
 

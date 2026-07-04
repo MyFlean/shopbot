@@ -23,6 +23,11 @@ _AVAILABILITY_IN_STOCK_PATHS = [
 ]
 
 # ── Nutritional field map ─────────────────────────────────────────────────────
+# Single source of truth for every nutrition dimension the schema exposes —
+# query_processing/nl_filter_extractor.py derives its NL parsing vocabulary
+# from this map rather than maintaining its own separate list, so adding a
+# new nutrient here automatically makes it understood in natural-language
+# queries too (see nl_filter_extractor.py's _NUTRIENT_ALIASES).
 NUTRIENT_FIELD_MAP: Dict[str, str] = {
     "protein_g": "category_data.nutritional.nutri_breakdown_updated.protein_g",
     "sugar_g": "category_data.nutritional.nutri_breakdown_updated.sugar_g",
@@ -33,15 +38,43 @@ NUTRIENT_FIELD_MAP: Dict[str, str] = {
     "carbs_g": "category_data.nutritional.nutri_breakdown_updated.carbs_g",
     "saturated_fat_g": "category_data.nutritional.nutri_breakdown_updated.saturated_fat_g",
     "trans_fat_g": "category_data.nutritional.nutri_breakdown_updated.trans_fat_g",
-    # Aliases
+    # Aliases — every surface word a user or product-name might use for the
+    # same field, all pointing at the same ES path as their canonical key.
     "calories": "category_data.nutritional.nutri_breakdown_updated.energy_kcal",
+    "calorie": "category_data.nutritional.nutri_breakdown_updated.energy_kcal",
+    "kcal": "category_data.nutritional.nutri_breakdown_updated.energy_kcal",
+    "cal": "category_data.nutritional.nutri_breakdown_updated.energy_kcal",
+    "cals": "category_data.nutritional.nutri_breakdown_updated.energy_kcal",
+    "energy": "category_data.nutritional.nutri_breakdown_updated.energy_kcal",
     "protein": "category_data.nutritional.nutri_breakdown_updated.protein_g",
+    "proteins": "category_data.nutritional.nutri_breakdown_updated.protein_g",
     "sugar": "category_data.nutritional.nutri_breakdown_updated.sugar_g",
+    "sugars": "category_data.nutritional.nutri_breakdown_updated.sugar_g",
     "fat": "category_data.nutritional.nutri_breakdown_updated.fat_g",
+    "fats": "category_data.nutritional.nutri_breakdown_updated.fat_g",
     "fiber": "category_data.nutritional.nutri_breakdown_updated.fiber_g",
     "fibre": "category_data.nutritional.nutri_breakdown_updated.fiber_g",
     "sodium": "category_data.nutritional.nutri_breakdown_updated.sodium_mg",
+    "salt": "category_data.nutritional.nutri_breakdown_updated.sodium_mg",
+    "carbs": "category_data.nutritional.nutri_breakdown_updated.carbs_g",
+    "carb": "category_data.nutritional.nutri_breakdown_updated.carbs_g",
+    "carbohydrate": "category_data.nutritional.nutri_breakdown_updated.carbs_g",
+    "carbohydrates": "category_data.nutritional.nutri_breakdown_updated.carbs_g",
+    "saturated_fat": "category_data.nutritional.nutri_breakdown_updated.saturated_fat_g",
+    "saturated fat": "category_data.nutritional.nutri_breakdown_updated.saturated_fat_g",
+    "trans_fat": "category_data.nutritional.nutri_breakdown_updated.trans_fat_g",
+    "trans fat": "category_data.nutritional.nutri_breakdown_updated.trans_fat_g",
 }
+
+# Canonical keys — the subset of NUTRIENT_FIELD_MAP that MacroFilter.nutrient
+# should actually be set to (the *_g/_mg/_kcal keys, not their aliases).
+# Derived automatically: any key whose ES field path isn't already pointed to
+# by a "shorter-named" key is treated as canonical — in practice this is
+# simply the *_g/_mg/_kcal-suffixed keys, computed here rather than hardcoded
+# a second time so this list can never drift from NUTRIENT_FIELD_MAP itself.
+CANONICAL_NUTRIENT_KEYS: List[str] = [
+    k for k in NUTRIENT_FIELD_MAP if k.endswith(("_g", "_mg", "_kcal"))
+]
 
 # ── Dietary label normalization ────────────────────────────────────────────────
 DIETARY_LABEL_ALIASES: Dict[str, str] = {
@@ -95,6 +128,16 @@ def normalize_dietary_label(label: str) -> str:
 # Uses subcategory_percentile (consistent with V2 scoring rules).
 # Thresholds mirror V1: top-quartile for "high" profiles (≥75th),
 # bottom-half for "low" profiles (≤50th).
+# ── Product Intent Identification boost (see SearchFilters.product_type*) ────
+# Scale chosen relative to lexical_query_builder.py's own boost ladder
+# (name.exact_normalized=15.0, leaf_category commodity=8.0,
+# category_hierarchies=0.8) — strong enough that a medium-confidence product
+# type match meaningfully outranks generic term overlap, without approaching
+# an exact full-name match. The category-leaf fallback is weighted half as
+# much: it's a coarser, taxonomy-level signal, not a phrase-level match.
+PRODUCT_TYPE_BOOST: float = 12.0
+PRODUCT_TYPE_CATEGORY_BOOST: float = 6.0
+
 _NUTRITION_PROFILE_CLAUSES: Dict[str, Dict[str, Any]] = {
     "high_protein": {"range": {"stats.protein_percentiles.subcategory_percentile":           {"gte": 75}}},
     "high_fiber":   {"range": {"stats.fiber_percentiles.subcategory_percentile":             {"gte": 75}}},
@@ -177,6 +220,35 @@ class SearchFilters:
 
     # Percentile-based nutrition profile filters (see _NUTRITION_PROFILE_CLAUSES)
     nutrition_profiles: Optional[List[str]] = None
+
+    # Product Intent Identification (query_processing/product_intent_extractor.py).
+    # product_type          — the resolved head-noun phrase ("yogurt", "chips", ...).
+    # product_type_mode     — "filter" (hard-gate retrieval to this product type,
+    #                          high confidence) or "boost" (strong should-clause,
+    #                          medium confidence, never excludes anything).
+    # product_type_category — the term's dominant category_hierarchies leaf, used
+    #                          as a secondary OR signal alongside the exact
+    #                          product_type match (catches relevant products whose
+    #                          name doesn't literally contain the resolved phrase).
+    # None/None/None (the default) is a complete no-op — existing callers that
+    # never set these fields get byte-for-byte the same clauses as before.
+    product_type: Optional[str] = None
+    product_type_mode: Optional[str] = None
+    product_type_category: Optional[str] = None
+
+    # Fresh Produce Identification (query_processing/canonical_produce.py).
+    # Set ONLY when the cleaned query exactly matched a curated vernacular
+    # produce alias or canonical name (e.g. "aam", "aloo", "bhindi",
+    # "mango"). Unlike product_type (a text signal matched against an
+    # indexed field), this is a hard, authoritative allowlist of real
+    # catalog product ids belonging to that produce family — see
+    # build_filter_clauses() below, which uses it INSTEAD OF the
+    # product_type wildcard/category clause whenever it's set, and
+    # hybrid_search_orchestrator.py, which never relaxes it away on zero
+    # results (a genuine "no fresh X in stock" should stay empty, not fall
+    # back to processed foods containing the same word). None (the default)
+    # is a complete no-op.
+    product_ids: Optional[List[str]] = None
 
     # Pagination / sort
     sort_by: Optional[str] = None
@@ -439,6 +511,99 @@ def build_filter_clauses(sf: SearchFilters) -> FilterClauses:
             if clause:
                 fc.append(clause)
 
+    # ── Product Intent Identification (see SearchFilters.product_type*) ──────
+    # "filter" mode (high confidence) gates admission to the candidate pool
+    # via an OR of two independent signals — either is sufficient:
+    #
+    # (a) SUBSTRING match against product_type. Each product's own indexed
+    #     product_type comes from resolve_head_term() picking THAT product's
+    #     own highest-confidence trailing n-gram, which is frequently a more
+    #     specific compound than the query's own resolved term (query "chips"
+    #     resolves to "chips"; a product literally named "...Hot Chips Spicy"
+    #     resolves to "chips spicy", a DIFFERENT string, because that 2-gram
+    #     has higher confidence for that specific name — see
+    #     indexing/product_type_lexicon_builder.py's resolve_head_term()
+    #     docstring). An exact term match would silently exclude every real
+    #     flavor/variant/pack-size product this catalog has. A substring
+    #     match recovers those without weakening precision (wildcard queries
+    #     against a keyword field are an existing pattern in this codebase —
+    #     see lexical_query_builder.py's _wildcard_clause()).
+    #
+    # (b) name CONTAINS the resolved term as a phrase, AND category leaf ==
+    #     the resolved dominant_category — needed because product_type's own
+    #     resolution window is bounded (MAX_NGRAM_WORDS=3 trailing tokens —
+    #     see product_type_lexicon_builder.py). A name with 4+ words trailing
+    #     the true head noun ("Granola Bar Assorted Nutrition Bar" — 3 words
+    #     follow "granola bar") never gets a chance to resolve to it at all,
+    #     regardless of confidence; product_type ends up something unrelated
+    #     ("nutrition bar") even though the product plainly IS a granola bar.
+    #     (b) recovers these using fields ALREADY indexed (name,
+    #     category_hierarchies) — no reindex, no lexicon regeneration.
+    #     Requiring BOTH name-phrase AND category-leaf (not just category
+    #     leaf alone) is deliberate and load-bearing: a category-leaf-only
+    #     fallback was tried and reverted because it let CATALOG MISTAGGING
+    #     through (a bread/jerky/rice-cake product wrongly tagged under a
+    #     "chips_and_crisps" leaf, with no relation to "chips" in its name at
+    #     all, matched on category alone). AND-ing a genuine name-phrase hit
+    #     back in closes that hole — verified against the real catalog that
+    #     none of those previously-wrong documents contain the query phrase
+    #     in their name, so they still can't get in through (b) either.
+    #
+    # "boost" mode (medium confidence) is unaffected — the category-leaf
+    # fallback there only ever adds relevance SCORE via a should-clause, never
+    # controls admission, so it doesn't have either failure mode.
+    # ── Fresh Produce Identification (see SearchFilters.product_ids) ─────────
+    # A hard, authoritative id allowlist — takes priority over and REPLACES
+    # the product_type wildcard/category clause below entirely (does not AND
+    # with it): a genuine family member's own indexed product_type field can
+    # be a vernacular word the wildcard wouldn't match (e.g. "Onion (Pyaz)"
+    # indexes as product_type="pyaz", not "onion") — ANDing the two would
+    # wrongly exclude real family members that the id allowlist already
+    # correctly includes.
+    if sf.product_ids:
+        fc.append({"terms": {"id": list(sf.product_ids)}})
+    elif sf.product_type and sf.product_type_mode in ("filter", "boost"):
+        if sf.product_type_mode == "filter":
+            filter_should: List[Dict[str, Any]] = [
+                {"wildcard": {"product_type": {"value": f"*{sf.product_type}*", "case_insensitive": True}}},
+            ]
+            if sf.product_type_category:
+                filter_should.append({
+                    "bool": {
+                        "must": [
+                            {"match_phrase": {"name": sf.product_type}},
+                            {
+                                "nested": {
+                                    "path": "category_hierarchies",
+                                    "query": {"term": {"category_hierarchies.segments": sf.product_type_category}},
+                                    "score_mode": "max",
+                                }
+                            },
+                        ]
+                    }
+                })
+            fc.append({"bool": {"should": filter_should, "minimum_should_match": 1}})
+        else:
+            boosted_should: List[Dict[str, Any]] = [
+                {"term": {"product_type": {"value": sf.product_type, "boost": PRODUCT_TYPE_BOOST}}}
+            ]
+            if sf.product_type_category:
+                boosted_should.append({
+                    "nested": {
+                        "path": "category_hierarchies",
+                        "query": {
+                            "term": {
+                                "category_hierarchies.segments": {
+                                    "value": sf.product_type_category,
+                                    "boost": PRODUCT_TYPE_CATEGORY_BOOST,
+                                }
+                            }
+                        },
+                        "score_mode": "max",
+                    }
+                })
+            sh.append({"bool": {"should": boosted_should, "minimum_should_match": 1}})
+
     # ── Must-not clauses ──────────────────────────────────────────────────────
 
     if sf.food_type == "veg":
@@ -576,6 +741,10 @@ def merge_filters(base: SearchFilters, overlay: SearchFilters) -> SearchFilters:
         ingredient_tags=_merge_list(base.ingredient_tags, overlay.ingredient_tags),
         food_type=overlay.food_type or base.food_type,
         nutrition_profiles=_merge_list(base.nutrition_profiles, overlay.nutrition_profiles),
+        product_type=overlay.product_type or base.product_type,
+        product_type_mode=overlay.product_type_mode or base.product_type_mode,
+        product_type_category=overlay.product_type_category or base.product_type_category,
+        product_ids=overlay.product_ids or base.product_ids,
         sort_by=overlay.sort_by or base.sort_by,
         offset=overlay.offset if overlay.offset else base.offset,
     )

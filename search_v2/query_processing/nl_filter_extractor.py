@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from search_v2.retrieval.filters import (
+    CANONICAL_NUTRIENT_KEYS,
     DIETARY_LABEL_ALIASES,
+    NUTRIENT_FIELD_MAP,
     MacroFilter,
     SearchFilters,
 )
@@ -64,16 +66,91 @@ _DIETARY_PATTERNS: List[Tuple[re.Pattern, str]] = sorted(
     key=lambda x: -len(x[0].pattern),
 )
 
-# ── Macro constraint patterns ─────────────────────────────────────────────────
-# (compiled_pattern, nutrient_key, operator)
-_MACRO_PATTERNS: List[Tuple[re.Pattern, str, str]] = [
-    (re.compile(r"\b(?:high|rich\s+in|good\s+source\s+of)\s+protein\b", re.IGNORECASE), "protein_g", "gte"),
-    (re.compile(r"\b(?:low|less|no|zero|without|sugar[\-\s]free)\s+sugar\b", re.IGNORECASE), "sugar_g", "lte"),
-    (re.compile(r"\b(?:low|less|no|zero)\s+fat\b", re.IGNORECASE), "fat_g", "lte"),
-    (re.compile(r"\b(?:low|less|no|zero)\s+(?:calorie[s]?|cal[s]?)\b", re.IGNORECASE), "energy_kcal", "lte"),
-    (re.compile(r"\b(?:high|rich\s+in|good\s+source\s+of)\s+(?:fiber|fibre)\b", re.IGNORECASE), "fiber_g", "gte"),
-    (re.compile(r"\b(?:low|less|no|zero)\s+(?:sodium|salt)\b", re.IGNORECASE), "sodium_mg", "lte"),
+# ── Nutrient vocabulary (schema-driven, NOT product/catalog-specific) ────────
+# Derived from retrieval/filters.py's NUTRIENT_FIELD_MAP — the SINGLE source
+# of truth for every nutrition dimension the schema exposes — rather than
+# maintaining a second, parallel list here. Adding a new nutrient (or a new
+# surface synonym for an existing one) to NUTRIENT_FIELD_MAP is therefore
+# enough to make it understood in natural-language queries too; nothing in
+# this file needs to change. This is schema/grammar vocabulary (like
+# _CURRENCY/_PRICE_* above), not a per-product word list.
+#
+# Maps every alias word -> its CANONICAL nutrient key (protein_g, sugar_g,
+# ...) by finding which canonical key shares the same ES field path.
+_FIELD_PATH_TO_CANONICAL: Dict[str, str] = {
+    NUTRIENT_FIELD_MAP[key]: key for key in CANONICAL_NUTRIENT_KEYS
+}
+_NUTRIENT_ALIASES: Dict[str, str] = {
+    alias: _FIELD_PATH_TO_CANONICAL[field_path]
+    for alias, field_path in NUTRIENT_FIELD_MAP.items()
+    if field_path in _FIELD_PATH_TO_CANONICAL
+}
+# Nutrients whose users conventionally give in grams even though the stored
+# field is in a different unit (sodium_mg) — the numeric extractor below
+# converts g -> mg for these so "sodium under 0.5g" still resolves correctly
+# against the mg-native field. Empty by default effect for every other
+# nutrient (already gram/kcal-native, no conversion needed).
+_GRAMS_TO_STORED_UNIT_MULTIPLIER: Dict[str, float] = {"sodium_mg": 1000.0}
+
+_NUTRIENT_WORD = r"(?:" + "|".join(
+    re.escape(w) for w in sorted(_NUTRIENT_ALIASES, key=len, reverse=True)
+) + r")"
+
+# ── Numeric nutrient constraints — "under 200 calories", "protein under 20g" ──
+# Comparison-operator vocabulary is grammatical/functional, not catalog-
+# specific (same category as the price operator words above) — matches ANY
+# nutrient dimension generically via _NUTRIENT_WORD, no per-nutrient phrasing.
+_NUM_RAW = r"\d+(?:\.\d+)?"
+_NUTRIENT_UNIT = r"(?:g|grams?|mg|milligrams?|kcal|cals?|calories?)?"
+_OP_GTE = r"(?:more\s+than|greater\s+than|at\s+least|minimum\s+of|minimum|min|over|above)"
+_OP_LTE = r"(?:less\s+than|no\s+more\s+than|at\s+most|maximum\s+of|maximum|max|under|below|up\s*to)"
+
+_NUMERIC_NUTRIENT_PATTERNS: List[Tuple[re.Pattern, str]] = []
+for _op, _op_key in ((_OP_GTE, "gte"), (_OP_LTE, "lte")):
+    # "<operator> <number><unit> <nutrient>" — e.g. "under 200 calories"
+    _NUMERIC_NUTRIENT_PATTERNS.append((
+        re.compile(
+            rf"\b{_op}\b\s*(?P<num>{_NUM_RAW})\s*(?P<unit>{_NUTRIENT_UNIT})\s*(?P<nutrient>{_NUTRIENT_WORD})\b",
+            re.IGNORECASE,
+        ),
+        _op_key,
+    ))
+    # "<nutrient> <operator> <number><unit>" — e.g. "sugar under 10g"
+    _NUMERIC_NUTRIENT_PATTERNS.append((
+        re.compile(
+            rf"\b(?P<nutrient>{_NUTRIENT_WORD})\b\s*{_op}\b\s*(?P<num>{_NUM_RAW})\s*(?P<unit>{_NUTRIENT_UNIT})\b",
+            re.IGNORECASE,
+        ),
+        _op_key,
+    ))
+
+# ── Qualitative macro constraint patterns ("high protein", "low sugar") ──────
+# Data-driven over the SAME nutrient vocabulary above — one (direction,
+# threshold-setting) pair per nutrient the business has defined a threshold
+# for (see config/settings.py). Adding a new nutrient's qualitative threshold
+# is a one-line settings addition, not new regex/parsing code.
+# (nutrient_key, operator, settings_attr, default_threshold)
+_QUALITATIVE_MACRO_DIRECTIONS: List[Tuple[str, str, str, float]] = [
+    ("protein_g", "gte", "MACRO_HIGH_PROTEIN_G", 15.0),
+    ("sugar_g", "lte", "MACRO_LOW_SUGAR_G", 5.0),
+    ("fat_g", "lte", "MACRO_LOW_FAT_G", 3.0),
+    ("energy_kcal", "lte", "MACRO_LOW_CAL_KCAL", 100.0),
+    ("fiber_g", "gte", "MACRO_HIGH_FIBER_G", 6.0),
+    ("sodium_mg", "lte", "MACRO_LOW_SODIUM_MG", 140.0),
+    ("carbs_g", "lte", "MACRO_LOW_CARBS_G", 15.0),
 ]
+_QUALITATIVE_HIGH = r"(?:high|rich\s+in|good\s+source\s+of)"
+_QUALITATIVE_LOW = r"(?:low|less|no|zero|without|free\s+from)"
+
+_MACRO_PATTERNS: List[Tuple[re.Pattern, str, str]] = []
+for _nutrient_key, _operator, _setting_attr, _default in _QUALITATIVE_MACRO_DIRECTIONS:
+    _word = r"(?:" + "|".join(
+        re.escape(w) for w, key in _NUTRIENT_ALIASES.items() if key == _nutrient_key
+    ) + r")"
+    _qual = _QUALITATIVE_HIGH if _operator == "gte" else _QUALITATIVE_LOW
+    _MACRO_PATTERNS.append((
+        re.compile(rf"\b{_qual}\s+{_word}\b", re.IGNORECASE), _nutrient_key, _operator,
+    ))
 
 # ── Ingredient exclusion patterns ─────────────────────────────────────────────
 _EXCL_WITHOUT = re.compile(r"\b(?:without|no\b|free\s+from)\s+([\w][\w\s]{2,29})", re.IGNORECASE)
@@ -122,7 +199,30 @@ class NLFilterExtractor:
         macro_filters: List[MacroFilter] = []
         excluded_ingredients: List[str] = []
 
-        # ── 1. Price (BETWEEN first — most specific) ─────────────────────────
+        # ── 1. Numeric nutrient constraints — MUST run before price. Patterns
+        #     like "under 200 calories" share operator words ("under") with
+        #     the price patterns below, but are disambiguated by requiring a
+        #     nutrient word immediately adjacent to the number, which the
+        #     price patterns don't check — so running this first means a
+        #     genuine nutrient query never gets misread as a price filter.
+        seen_nutrients: set = set()
+        for _pattern, _operator in _NUMERIC_NUTRIENT_PATTERNS:
+            m = _pattern.search(remaining)
+            if not m:
+                continue
+            nutrient_key = _NUTRIENT_ALIASES.get(m.group("nutrient").lower())
+            if nutrient_key is None or nutrient_key in seen_nutrients:
+                continue
+            value = float(m.group("num"))
+            unit = (m.group("unit") or "").lower()
+            if unit in ("g", "gram", "grams"):
+                value *= _GRAMS_TO_STORED_UNIT_MULTIPLIER.get(nutrient_key, 1.0)
+            macro_filters.append(MacroFilter(nutrient=nutrient_key, operator=_operator, value=value))
+            seen_nutrients.add(nutrient_key)
+            remaining = remaining[:m.start()] + remaining[m.end():]
+            signals.append(f"macro={nutrient_key}{_operator}{value}")
+
+        # ── 2. Price (BETWEEN first — most specific) ─────────────────────────
         m = _PRICE_BETWEEN.search(remaining)
         if m:
             price_min = _parse_num(m.group(1))
@@ -151,27 +251,28 @@ class NLFilterExtractor:
                 remaining = remaining[:m.start()] + remaining[m.end():]
                 signals.append(f"price_max_currency={price_max}")
 
-        # ── 2. Macro constraints (before dietary — macro patterns are more specific) ─
+        # ── 3. Qualitative macro constraints ("high protein", "low sugar") ───
+        # Threshold per (nutrient, direction) sourced from settings — same
+        # table drives both this loop and _MACRO_PATTERNS' construction above.
         s = self._settings
         threshold_map = {
-            ("protein_g", "gte"): getattr(s, "MACRO_HIGH_PROTEIN_G", 15.0),
-            ("sugar_g", "lte"): getattr(s, "MACRO_LOW_SUGAR_G", 5.0),
-            ("fat_g", "lte"): getattr(s, "MACRO_LOW_FAT_G", 3.0),
-            ("energy_kcal", "lte"): getattr(s, "MACRO_LOW_CAL_KCAL", 100.0),
-            ("fiber_g", "gte"): getattr(s, "MACRO_HIGH_FIBER_G", 6.0),
-            ("sodium_mg", "lte"): getattr(s, "MACRO_LOW_SODIUM_MG", 140.0),
+            (nutrient_key, operator): getattr(s, setting_attr, default)
+            for nutrient_key, operator, setting_attr, default in _QUALITATIVE_MACRO_DIRECTIONS
         }
 
         for pattern, nutrient, operator in _MACRO_PATTERNS:
+            if nutrient in seen_nutrients:
+                continue  # already captured with an explicit number in step 1
             m = pattern.search(remaining)
             if m:
                 threshold = threshold_map.get((nutrient, operator))
                 if threshold is not None:
                     macro_filters.append(MacroFilter(nutrient=nutrient, operator=operator, value=threshold))
+                    seen_nutrients.add(nutrient)
                     remaining = remaining[:m.start()] + remaining[m.end():]
                     signals.append(f"macro={nutrient}{operator}{threshold}")
 
-        # ── 3. Dietary labels (after macros — avoids double-capturing "high protein") ─
+        # ── 4. Dietary labels (after macros — avoids double-capturing "high protein") ─
         for pattern, canonical in _DIETARY_PATTERNS:
             m = pattern.search(remaining)
             if m:
@@ -180,7 +281,7 @@ class NLFilterExtractor:
                     remaining = remaining[:m.start()] + remaining[m.end():]
                     signals.append(f"dietary={canonical}")
 
-        # ── 4. Ingredient exclusions ──────────────────────────────────────────
+        # ── 5. Ingredient exclusions ──────────────────────────────────────────
         for m in list(_EXCL_WITHOUT.finditer(remaining)):
             raw_ingredient = m.group(1).strip()
             # Remove trailing 's' for mild singularization (preservatives → preservative)
@@ -198,7 +299,7 @@ class NLFilterExtractor:
             remaining = remaining[:m.start()] + remaining[m.end():]
             signals.append(f"exclude={ingredient}")
 
-        # ── 5. Clean remaining query text ─────────────────────────────────────
+        # ── 6. Clean remaining query text ─────────────────────────────────────
         clean = " ".join(remaining.split()).strip()
         clean = re.sub(r"^(?:and|or|,)+\s*|\s*(?:and|or|,)+$", "", clean).strip()
         if not clean:

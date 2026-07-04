@@ -85,6 +85,11 @@ FIELD_WEIGHTS = {
     "name.phonetic": 0.8,
     "brand": 2.0,
     "brand.camel": 1.0,
+    # Same relative weight as name.phonetic (0.8/3.0 of name's weight),
+    # scaled to brand's own weight — the mapping/analyzer already exist and
+    # are already populated (auto-derived multi-field, same mechanism as
+    # name.phonetic), this was just never queried.
+    "brand.phonetic": 0.5,
     "vernacular_synonyms": 2.5,  # an exact vernacular term hit ("seb") is a strong, precise signal
     "description": 1.0,
 }
@@ -109,7 +114,44 @@ def _es_fuzziness(enable_fuzzy: bool) -> Optional[str]:
     return SETTINGS.FUZZINESS if enable_fuzzy else None
 
 
-def _field_match_clauses(text: str, settings: SearchV2Settings) -> List[Dict[str, Any]]:
+def _minimum_should_match_for(text: str) -> Optional[str]:
+    """How many of the query's own terms a document must contain to count as
+    a match, as a function of query LENGTH only — no per-word logic, so this
+    applies uniformly across the whole catalog rather than special-casing any
+    product/category.
+
+    Why this exists: plain multi_match `best_fields` with no
+    minimum_should_match uses OR semantics — a document matching just ONE of
+    several query terms is already "a match" and competes on equal footing
+    with one matching all of them. For a query like "gluten free chips" or
+    "protein chips", that lets a product which only shares the MODIFIER
+    ("gluten", "free", "protein" — common, high-frequency words spread across
+    many unrelated products) rank alongside or above a product that actually
+    contains the head noun ("chips") the user is asking for, because BM25
+    scores term overlap, not query-intent coverage. Requiring most/all query
+    terms to be present forces candidates to satisfy the query's FULL intent
+    (modifier AND noun) rather than any single token of it.
+
+    One- and two-word queries require every term (a two-word query like
+    "peanut butter" or "greek yogurt" only means something as the pair).
+    Longer queries relax slightly to 75% so one incidental/filler word
+    doesn't zero out otherwise-strong matches.
+    """
+    n = len(text.split())
+    if n <= 1:
+        return None  # nothing to require coverage of
+    if n <= 3:
+        return "100%"
+    return "75%"
+
+
+def _field_match_clauses(
+    text: str, settings: SearchV2Settings, include_bool_prefix: bool = True
+) -> List[Dict[str, Any]]:
+    """`include_bool_prefix=False` omits the bool_prefix/_2gram/_3gram clause
+    below — see build_query()'s docstring for why this exists (a rare,
+    cluster-side query-construction failure for certain query text, not a
+    feature toggle for normal use)."""
     fuzziness = _es_fuzziness(settings.ENABLE_FUZZY)
     multi_match: Dict[str, Any] = {
         "query": text,
@@ -119,25 +161,34 @@ def _field_match_clauses(text: str, settings: SearchV2Settings) -> List[Dict[str
     }
     if fuzziness:
         multi_match["fuzziness"] = fuzziness
+    min_should_match = _minimum_should_match_for(text)
+    if min_should_match:
+        multi_match["minimum_should_match"] = min_should_match
 
     clauses: List[Dict[str, Any]] = [{"multi_match": multi_match}]
 
     # Phrase queries — rewards the query appearing as a contiguous phrase,
-    # which plain best_fields multi_match doesn't specifically reward.
-    clauses.append({"match_phrase": {"name": {"query": text, "boost": 4.0}}})
+    # which plain best_fields multi_match doesn't specifically reward. A
+    # small slop tolerates a descriptor word landing between the query's
+    # terms in the indexed name (e.g. query "gluten free chips" against a
+    # product named "... Gluten Free Potato Chips" — without slop, that
+    # extra "Potato" token makes this exact-order phrase clause never fire
+    # at all for almost any real multi-word grocery query).
+    clauses.append({"match_phrase": {"name": {"query": text, "boost": 4.0, "slop": 2}}})
 
     # phrase_prefix — supports "as you type" partial phrase queries.
-    clauses.append({"match_phrase_prefix": {"name": {"query": text, "boost": 2.0}}})
+    clauses.append({"match_phrase_prefix": {"name": {"query": text, "boost": 2.0, "slop": 2}}})
 
     # bool_prefix — the purpose-built query type for search_as_you_type fields.
-    clauses.append({
-        "multi_match": {
-            "query": text,
-            "type": "bool_prefix",
-            "fields": ["name", "name._2gram", "name._3gram"],
-            "boost": 1.5,
-        }
-    })
+    if include_bool_prefix:
+        clauses.append({
+            "multi_match": {
+                "query": text,
+                "type": "bool_prefix",
+                "fields": ["name", "name._2gram", "name._3gram"],
+                "boost": 1.5,
+            }
+        })
 
     # Exact-match boosting — the single biggest lever for derivative-product
     # ranking (see DERIVATIVE_MARKER_TERMS for the complementary demotion side).
@@ -208,7 +259,9 @@ def _wildcard_clause(text: str) -> Optional[Dict[str, Any]]:
     return {"wildcard": {"name.exact_normalized": {"value": f"*{token}*", "boost": 0.3, "case_insensitive": True}}}
 
 
-def _variant_dis_max(query: ProcessedQuery, settings: SearchV2Settings) -> Dict[str, Any]:
+def _variant_dis_max(
+    query: ProcessedQuery, settings: SearchV2Settings, include_bool_prefix: bool = True
+) -> Dict[str, Any]:
     """dis_max across every query variant (original text + any typo-corrected /
     segmentation-repaired text) — see query_pipeline.py for why both are kept
     rather than committing to one rewrite. Each variant's own clause set is
@@ -216,7 +269,7 @@ def _variant_dis_max(query: ProcessedQuery, settings: SearchV2Settings) -> Dict[
     that variant's confidence."""
     variant_queries = []
     for variant in query.variants:
-        inner_clauses = _field_match_clauses(variant.text, settings)
+        inner_clauses = _field_match_clauses(variant.text, settings, include_bool_prefix=include_bool_prefix)
         if settings.ENABLE_FUZZY:
             wc = _wildcard_clause(variant.text)
             if wc:
@@ -289,17 +342,35 @@ def build_query(
     settings: Optional[SearchV2Settings] = None,
     sort_by: Optional[str] = None,
     offset: int = 0,
+    include_bool_prefix: bool = True,
 ) -> Dict[str, Any]:
     """The main entry point. Returns a complete OpenSearch request body.
 
     `filters` accepts either the legacy Dict form (backward compatible) or a
     SearchFilters object. When SearchFilters is passed, must_not exclusions and
     personal-care should clauses are threaded through automatically.
-    """
+
+    `include_bool_prefix=False` omits the bool_prefix/_2gram/_3gram clause
+    from every variant's match clauses. This is NOT a normal-use toggle — it
+    exists purely as a fallback for a narrow, cluster-side query-construction
+    failure: for some query text, OpenSearch's search-time synonym_graph
+    filter combined with the _2gram/_3gram shingle analysis that bool_prefix
+    needs can produce a token graph exceeding Lucene's internal
+    CachingTokenFilter buffer (>100 cached tokens), which OpenSearch rejects
+    with a 400 ("Too many cached tokens"). This isn't specific to any one
+    query string — it depends on how large that text's merged synonym
+    equivalence group happens to be, a property of the catalog's synonym
+    data, not of the code. hybrid_search_orchestrator.py detects exactly
+    this error and retries once with include_bool_prefix=False rather than
+    failing the request; every other clause (multi_match with fuzziness,
+    match_phrase, match_phrase_prefix — i.e. all of typo correction's and
+    synonym expansion's actual matching power) is completely unaffected,
+    since none of them individually trigger this (verified against the
+    live cluster — see the retry site for the specific queries checked)."""
     settings = settings or SETTINGS
     size = size if size is not None else settings.DEFAULT_RESULT_SIZE
 
-    positive_query = _variant_dis_max(query, settings)
+    positive_query = _variant_dis_max(query, settings, include_bool_prefix=include_bool_prefix)
 
     # Resolve filter clauses — support both legacy dict and SearchFilters
     filter_clauses: List[Dict[str, Any]] = []

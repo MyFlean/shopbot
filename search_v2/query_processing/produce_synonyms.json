@@ -1,0 +1,2487 @@
+[
+  {
+    "id": "01KVJN67GZ60JF0VX5STXVV45M",
+    "synonyms": [
+      "Dhaniya",
+      "Dhania",
+      "Cilantro",
+      "Kothimbir",
+      "Kotmir",
+      "Malli",
+      "Kothimalli"
+    ],
+    "name": "Coriander Bunch (Dhaniya Patta)"
+  },
+  {
+    "id": "01KVJN67GZ7BPBN143QYC5DSB9",
+    "synonyms": [
+      "Hari Mirch",
+      "Hari Mirchi",
+      "Haldi Mirch",
+      "Marcha"
+    ],
+    "name": "Green Chilli (Hari Mirch)"
+  },
+  {
+    "id": "01KVJN67GZQ84W4278J3Q8MA3A",
+    "synonyms": [
+      "Pyaz",
+      "Piyaz",
+      "Kanda",
+      "Vengayam",
+      "Ulli",
+      "Dungli"
+    ],
+    "name": "Onion (Pyaz)"
+  },
+  {
+    "id": "01KVJN67GZA3CHB7C4JDJH1QCG",
+    "synonyms": [
+      "Nimbu",
+      "Limbu",
+      "Elumichai",
+      "Nimboo",
+      "Libu"
+    ],
+    "name": "Lemon"
+  },
+  {
+    "id": "01KVJN67GZHEC02WS3ESGRTMBB",
+    "synonyms": [
+      "Gajar",
+      "Gajjar",
+      "Carrot"
+    ],
+    "name": "Orange Carrot (Gajar)"
+  },
+  {
+    "id": "01KVJN67GZ2VVGPK2T6C9G33CN",
+    "synonyms": [
+      "Tamatar",
+      "Tomate",
+      "Vilayati Baingan"
+    ],
+    "name": "Hybrid Tomato (Tamatar)"
+  },
+  {
+    "id": "01KVJN67GZ7QGVN97JEP69BVK6",
+    "synonyms": [
+      "Kheera",
+      "Khira",
+      "Kakdi"
+    ],
+    "name": "English Cucumber (Kheera)"
+  },
+  {
+    "id": "01KVJN67GZ1MWCH63Y9GZKMFYB",
+    "synonyms": [
+      "Aloo",
+      "Aalu",
+      "Aalo",
+      "Alo",
+      "Batata"
+    ],
+    "name": "Potato (Aloo)"
+  },
+  {
+    "id": "01KVJN67GZ0N0GYE1JPDS83RY6",
+    "synonyms": [
+      "Shimla Mirch",
+      "Simla Mirchi",
+      "Bell Pepper",
+      "Capsicum"
+    ],
+    "name": "Green Capsicum (Shimla Mirch)"
+  },
+  {
+    "id": "01KVJN67GZGWJS16J44NMD3KFP",
+    "synonyms": [
+      "Kheera",
+      "Khira",
+      "Kakdi"
+    ],
+    "name": "Green Cucumber (Kheera)"
+  },
+  {
+    "id": "01KVJN67GZNE3SKXY5X3EXFZFE",
+    "synonyms": [
+      "Tamatar",
+      "Tomate",
+      "Desi Tamatar"
+    ],
+    "name": "Desi Tomato (Tamatar)"
+  },
+  {
+    "id": "01KVJN67GZYNBXD0Y1S25WPG35",
+    "synonyms": [
+      "Lauki",
+      "Doodhi",
+      "Ghiya",
+      "Dudhi",
+      "Lau"
+    ],
+    "name": "Bottle Gourd (Lauki)"
+  },
+  {
+    "id": "01KVJN67GZVSW776H8HP626YZ5",
+    "synonyms": [
+      "Phool Gobhi",
+      "Phool Gobi",
+      "Gobhi",
+      "Fulkopi"
+    ],
+    "name": "Cauliflower (Phool Gobhi)"
+  },
+  {
+    "id": "01KVJN67GZMTNGM8M2HBJEXMRS",
+    "synonyms": [
+      "Kadi Patta",
+      "Karuveppilai",
+      "Meetha Neem",
+      "Curry Patta",
+      "Karibevu"
+    ],
+    "name": "Curry Leaves (Kadi Patta)"
+  },
+  {
+    "id": "01KVJN67GZY2JB8WZZH5NT557X",
+    "synonyms": [
+      "Farasbi",
+      "French Beans",
+      "Pharasbi",
+      "Fansi"
+    ],
+    "name": "French Beans - 250 g"
+  },
+  {
+    "id": "01KVJN67GZX1XWRD20FRSXR9WJ",
+    "synonyms": [
+      "Adrak",
+      "Aada",
+      "Sunth",
+      "Ale"
+    ],
+    "name": "Organically Grown Ginger (Adrak)"
+  },
+  {
+    "id": "01KVJN67GZZHJMS9QX64DF7G72",
+    "synonyms": [
+      "Dhaniya",
+      "Dhania",
+      "Cilantro",
+      "Kothimbir",
+      "Kotmir",
+      "Malli",
+      "Kothimalli"
+    ],
+    "name": "Coriander (Without Roots) (Dhaniya)"
+  },
+  {
+    "id": "01KVJN67GZRS1VAA8WTY4X23AS",
+    "synonyms": [
+      "Bhindi",
+      "Bendakaya",
+      "Vendakkai",
+      "Okra",
+      "Ramturai"
+    ],
+    "name": "Lady Finger (Bhindi)"
+  },
+  {
+    "id": "01KVJN67GZW9DPS029HY4NFWBF",
+    "synonyms": [
+      "Lehsun",
+      "Lasun",
+      "Vellulli",
+      "Lasan",
+      "Rasun"
+    ],
+    "name": "Garlic (Lehsun)"
+  },
+  {
+    "id": "01KVJN67GZYQHNGP6A8WP732X0",
+    "synonyms": [
+      "Tamatar",
+      "Tomate"
+    ],
+    "name": "Organically Grown Tomato (Hybrid) (Tamatar)"
+  },
+  {
+    "id": "01KVJN67GZ2PVTRDW6E3NF1KCC",
+    "synonyms": [
+      "Parwal",
+      "Parval",
+      "Potol",
+      "Padwal"
+    ],
+    "name": "Pointed Gourd (250 g) (Parwal)"
+  },
+  {
+    "id": "01KVJN67GZVCJ7EKYZ0VBY7WM5",
+    "synonyms": [
+      "Bhindi",
+      "Bendakaya",
+      "Vendakkai",
+      "Okra",
+      "Ramturai"
+    ],
+    "name": "Organically Grown- Lady Finger (Bhindi)"
+  },
+  {
+    "id": "01KVJN67GZSQNG7DP12T51JJE6",
+    "synonyms": [
+      "Baingan",
+      "Vangi",
+      "Kathirikai",
+      "Begun",
+      "Ringna"
+    ],
+    "name": "Brinjal - Bharta (Baingan)"
+  },
+  {
+    "id": "01KVJN67GZWJAY7TKMVH04ZRQA",
+    "synonyms": [
+      "Lal Shimla Mirch",
+      "Shimla Mirch",
+      "Simla Mirchi",
+      "Red Bell Pepper",
+      "Capsicum"
+    ],
+    "name": "Red Bell Pepper"
+  },
+  {
+    "id": "01KVJN67GZJ4XKEXCSBC3PQMF1",
+    "synonyms": [
+      "Palak",
+      "Palaak",
+      "Saag"
+    ],
+    "name": "Spinach (Palak)"
+  },
+  {
+    "id": "01KVJN67GZXXC7C6WBVSDJ5A7B",
+    "synonyms": [
+      "Aloo",
+      "Aalu",
+      "Aalo",
+      "Alo",
+      "Batata"
+    ],
+    "name": "Organically Grown Potato (Aloo)"
+  },
+  {
+    "id": "01KVJN67GZCDWVH9CB2AFG4XAM",
+    "synonyms": [
+      "Peeli Shimla Mirch",
+      "Shimla Mirch",
+      "Simla Mirchi",
+      "Yellow Bell Pepper",
+      "Capsicum"
+    ],
+    "name": "Yellow Bell Pepper"
+  },
+  {
+    "id": "01KVJN67GZBVXA8EDPYDRBGGXX",
+    "synonyms": [
+      "Broccoli"
+    ],
+    "name": "Broccoli"
+  },
+  {
+    "id": "01KVJN67GZTKHRA6AH07SY35QS",
+    "synonyms": [
+      "Aloo",
+      "Aalu",
+      "Lal Aloo",
+      "Batata"
+    ],
+    "name": "Red Potato (Aloo)"
+  },
+  {
+    "id": "01KVJN67GZBS4DPGEDMNHTXA2A",
+    "synonyms": [
+      "Karela",
+      "Kareli",
+      "Pavakkai",
+      "Kakarakaya"
+    ],
+    "name": "Bitter Gourd (Karela)"
+  },
+  {
+    "id": "01KVJN67GZWZ0ENF60F1B3TGWG",
+    "synonyms": [
+      "Hari Pyaz",
+      "Hara Pyaaz",
+      "Hare Pyaz",
+      "Hari Dungri"
+    ],
+    "name": "Spring Onion (Hari Pyaz)"
+  },
+  {
+    "id": "01KVJN67GZY3226NJFBWJZ6HXE",
+    "synonyms": [
+      "Pyaz",
+      "Piyaz",
+      "Kanda",
+      "Vengayam",
+      "Ulli",
+      "Dungli"
+    ],
+    "name": "Organically Grown - Onion (Pyaz)"
+  },
+  {
+    "id": "01KVJN67GZYQ9GHQAX2FDQ5W4Q",
+    "synonyms": [
+      "Patta Gobhi",
+      "Bandh Gobi",
+      "Gobi",
+      "Kobij"
+    ],
+    "name": "Cabbage (Patta Gobhi)"
+  },
+  {
+    "id": "01KVJN67GZWNNH9BKSDC7TK5TK",
+    "synonyms": [
+      "Chukandar",
+      "Chukunder",
+      "Chakunder"
+    ],
+    "name": "Beetroot (Chukandar)"
+  },
+  {
+    "id": "01KVJN67GZV1RTC31XZ7DVTQZC",
+    "synonyms": [
+      "Palak",
+      "Palaak",
+      "Saag"
+    ],
+    "name": "Spinach (without roots) (Palak)"
+  },
+  {
+    "id": "01KVJN67GZ20M7R3CTNHAABE6H",
+    "synonyms": [
+      "Hari Mirch",
+      "Hari Mirchi",
+      "Mirch",
+      "Mirchi"
+    ],
+    "name": "Organically Grown Chilli (Hari Mirch)"
+  },
+  {
+    "id": "01KVJN67GZXQVVSHCC0J65F0BB",
+    "synonyms": [
+      "Matar",
+      "Hara Matar",
+      "Vatana",
+      "Motor"
+    ],
+    "name": "Green Peas (Matar)"
+  },
+  {
+    "id": "01KVJN67GZ7SPW5QRCM52R1CHZ",
+    "synonyms": [
+      "Lehsun",
+      "Lasun",
+      "Vellulli",
+      "Lasan",
+      "Rasun"
+    ],
+    "name": "Organically Grown Garlic (Lehsun)"
+  },
+  {
+    "id": "01KVJN67GZ5NTG7XXGD5FF8YR1",
+    "synonyms": [
+      "Kheera",
+      "Khira",
+      "Kakdi"
+    ],
+    "name": "Organically Grown Green Cucumber (Khira, Kheera)"
+  },
+  {
+    "id": "01KVJN67GZGXWRW3KBB87D3PR9",
+    "synonyms": [
+      "Lehsun",
+      "Lasun",
+      "Chhila Lehsun",
+      "Vellulli",
+      "Lasan"
+    ],
+    "name": "Peeled Garlic"
+  },
+  {
+    "id": "01KVJN67GZJTCK1RDKDD3E15M9",
+    "synonyms": [
+      "Bhutta",
+      "Makka",
+      "Makkai",
+      "Cholam"
+    ],
+    "name": "Sweet Corn - Packet"
+  },
+  {
+    "id": "01KVJN67GZS1NGHGGWGJXVSMBH",
+    "synonyms": [
+      "Baingan",
+      "Vangi",
+      "Kathirikai",
+      "Begun",
+      "Ringna"
+    ],
+    "name": "Small-Purple Brinjal (Baingan)"
+  },
+  {
+    "id": "01KVJN67GZN5WBYHZVV197V5RR",
+    "synonyms": [
+      "Jamun",
+      "Black Plum",
+      "Jambul",
+      "Neredu",
+      "Naval"
+    ],
+    "name": "Jamun"
+  },
+  {
+    "id": "01KVJN67GZZ92N8XV7DRT3E0EP",
+    "synonyms": [
+      "Salad Patta",
+      "Salad Ka Patta",
+      "Lettuce"
+    ],
+    "name": "Green Lettuce"
+  },
+  {
+    "id": "01KVJN67GZV4H91R6Z8TC2B9H0",
+    "synonyms": [
+      "Nimbu",
+      "Limbu",
+      "Elumichai",
+      "Nimboo",
+      "Libu"
+    ],
+    "name": "Organically Grown Lemon"
+  },
+  {
+    "id": "01KVJN67GZWF02B0WK1J4JNN2N",
+    "synonyms": [
+      "Kundru",
+      "Tindora",
+      "Tendli",
+      "Dondakaya"
+    ],
+    "name": "Ivy Gourd (Kundru)"
+  },
+  {
+    "id": "01KVJN67GZFA05YA70W1H0D96Q",
+    "synonyms": [
+      "Gwar Phali",
+      "Gavar",
+      "Guvar Phali",
+      "Kothavarangai"
+    ],
+    "name": "Cluster Beans (Gwar Phali)"
+  },
+  {
+    "id": "01KVJN67GZ3B6Q47TXD1V4MBDT",
+    "synonyms": [
+      "Phool Gobhi",
+      "Phool Gobi",
+      "Gobhi",
+      "Fulkopi"
+    ],
+    "name": "Organically Grown Cauliflower (Phool Gobhi)"
+  },
+  {
+    "id": "01KVJN67GZY57KQ09E1KZTN1YA",
+    "synonyms": [
+      "Arvi",
+      "Colocasia",
+      "Ghuiyan",
+      "Arbi",
+      "Kachalu"
+    ],
+    "name": "Arvi"
+  },
+  {
+    "id": "01KVJN67GZP3M3WRMHR54G1ZJD",
+    "synonyms": [
+      "Kaddu",
+      "Kashi Phal",
+      "Bhopla",
+      "Sitaphal",
+      "Lal Kaddu"
+    ],
+    "name": "Portion Pumpkin"
+  },
+  {
+    "id": "01KVJN67GZ52XNK7KHKK0Q6BZA",
+    "synonyms": [
+      "Hara Kaddu",
+      "Kaddu",
+      "Bhopla",
+      "Sitaphal"
+    ],
+    "name": "Green Pumpkin (Hara Kaddu)"
+  },
+  {
+    "id": "01KVJN67GZTJCZJTZWV4ATW2H6",
+    "synonyms": [
+      "Tamatar",
+      "Desi Tamatar",
+      "Tomate"
+    ],
+    "name": "Organically Grown Tomato (Desi) (Tamatar)"
+  },
+  {
+    "id": "01KVJN67GZ3F3WSC8GEWSKCJVT",
+    "synonyms": [
+      "Aloo",
+      "Aalu",
+      "Chote Aloo",
+      "Batata"
+    ],
+    "name": "Baby Potato (Aloo)"
+  },
+  {
+    "id": "01KVJN67GZXX7PA1DSKYKW4PY1",
+    "synonyms": [
+      "Chukandar",
+      "Chukunder",
+      "Chakunder"
+    ],
+    "name": "Organically Grown Beetroot (Chukandar)"
+  },
+  {
+    "id": "01KVJN67GZQ5VM4R8CZ7BYXWX3",
+    "synonyms": [
+      "Amla",
+      "Indian Gooseberry",
+      "Avla",
+      "Nellikai",
+      "Avle"
+    ],
+    "name": "Amla (Amla)"
+  },
+  {
+    "id": "01KVJN67GZ7ZCM5D9SZARV5B1Y",
+    "synonyms": [
+      "Tinda",
+      "Tindsi",
+      "Tinde",
+      "Apple Gourd"
+    ],
+    "name": "Round Gourd (Tinda)"
+  },
+  {
+    "id": "01KVJN67GZ6SZKS0MZQ2JEGR7S",
+    "synonyms": [
+      "Kacha Aam",
+      "Kairi",
+      "Aam",
+      "Keri",
+      "Kanchi Maanga"
+    ],
+    "name": "Organically Grown Raw Mango"
+  },
+  {
+    "id": "01KVJN67GZ2FQHZXR2K2ZWK575",
+    "synonyms": [
+      "Shimla Mirch",
+      "Simla Mirchi",
+      "Bell Pepper",
+      "Capsicum"
+    ],
+    "name": "Organically Grown Green Capsicum"
+  },
+  {
+    "id": "01KVJN67GZV6M7HYV5DWJHJ72J",
+    "synonyms": [
+      "Tamatar",
+      "Cherry Tamatar"
+    ],
+    "name": "Cherry Tomatoes"
+  },
+  {
+    "id": "01KVJN67GZC1HAYFRE43YZW7XT",
+    "synonyms": [
+      "Kathal",
+      "Panasa",
+      "Fanas",
+      "Chakka"
+    ],
+    "name": "Jackfruit (Cut) (Kathal)"
+  },
+  {
+    "id": "01KVJN67GZ4VEFK226TMCNC2R4",
+    "synonyms": [
+      "Torai",
+      "Turai",
+      "Tori",
+      "Beerakaaya"
+    ],
+    "name": "Ridge Gourd (Torai)"
+  },
+  {
+    "id": "01KVJN67GZR2324D53P6SZ1KYV",
+    "synonyms": [
+      "Farasbi",
+      "French Beans",
+      "Pharasbi",
+      "Fansi"
+    ],
+    "name": "Organically Grown French Beans"
+  },
+  {
+    "id": "01KVJN67GZ0Q08ZR2ECSRPZ98M",
+    "synonyms": [
+      "Karela",
+      "Kareli",
+      "Pavakkai",
+      "Kakarakaya"
+    ],
+    "name": "Organically Grown Bitter Gourd (Karela)"
+  },
+  {
+    "id": "01KVJN67GZQ4HAG0SQXJW6B67M",
+    "synonyms": [
+      "Mooli",
+      "Muli",
+      "Mullangi",
+      "Mula"
+    ],
+    "name": "Radish (Mooli)"
+  },
+  {
+    "id": "01KVJN67GZ6W6BA5BCA5DGXQJ0",
+    "synonyms": [
+      "Shakarkandi",
+      "Shakarkand",
+      "Meetha Aloo",
+      "Ratalu"
+    ],
+    "name": "Organically Grown Sweet Potato"
+  },
+  {
+    "id": "01KVJN67GZKMY3RMJQB2JBPPSR",
+    "synonyms": [
+      "Zucchini",
+      "Hara Zucchini",
+      "Turai"
+    ],
+    "name": "Green Zucchini"
+  },
+  {
+    "id": "01KVJN67GZ0VZ2GXETWQNGAJ18",
+    "synonyms": [
+      "Sahjan",
+      "Saijan",
+      "Munga",
+      "Munaga",
+      "Shevga"
+    ],
+    "name": "Drumstick (Sahjan)"
+  },
+  {
+    "id": "01KVJN67GZ4APZTJHHJMRWQDGY",
+    "synonyms": [
+      "Bhutta",
+      "Makka",
+      "Makkai",
+      "Cholam"
+    ],
+    "name": "American Sweet Corn Cob (Bhutta)"
+  },
+  {
+    "id": "01KVJN67GZAB0Z9MDBEE4AWKMP",
+    "synonyms": [
+      "Patta Gobhi",
+      "Bandh Gobi",
+      "Gobi",
+      "Kobij"
+    ],
+    "name": "Organically Grown Cabbage (Patta Gobhi)"
+  },
+  {
+    "id": "01KVJN67GZQ90X7TZPJSJZTT6M",
+    "synonyms": [
+      "Moong Sprouts",
+      "Mug",
+      "Hari Moong",
+      "Ankurit Moong"
+    ],
+    "name": "Green Moong Sprouts"
+  },
+  {
+    "id": "01KVJN67GZKTNN6JS0TDNNS1R0",
+    "synonyms": [
+      "Lobia",
+      "Chavli",
+      "Lobiya",
+      "Rongi",
+      "Bora"
+    ],
+    "name": "Cowpea Beans (Lobia Phali)"
+  },
+  {
+    "id": "01KVJN67GZV9XY5Q5K2M7YPKYX",
+    "synonyms": [
+      "Aloo",
+      "Aalu",
+      "Aalo",
+      "Alo",
+      "Batata"
+    ],
+    "name": "Potato Carisma (Lower Glycemic Index)"
+  },
+  {
+    "id": "01KVJN67GZH284J14SNFF556J4",
+    "synonyms": [
+      "Broccoli"
+    ],
+    "name": "Broccoli Florets"
+  },
+  {
+    "id": "01KVJN67GZGGGVJSWSC7SA6XFJ",
+    "synonyms": [
+      "Baby Makka",
+      "Baby Bhutta",
+      "Baby Makkai"
+    ],
+    "name": "Baby Corn - Packet"
+  },
+  {
+    "id": "01KVJN67GZ4R178C8MKTPKXGSS",
+    "synonyms": [
+      "Bael",
+      "Bel",
+      "Kaitha",
+      "Bela",
+      "Bilva"
+    ],
+    "name": "Organically Grown Wood Apple"
+  },
+  {
+    "id": "01KVJN67GZD65JBF3NJ0E4Q6NE",
+    "synonyms": [
+      "Achari Mirch",
+      "Mirch",
+      "Mirchi",
+      "Laal Mirch"
+    ],
+    "name": "Picador Chilli (Achari Mirch)"
+  },
+  {
+    "id": "01KVJN67GZPZX9VKM32Q2ZAR1S",
+    "synonyms": [
+      "Kheera",
+      "Khira",
+      "Kakdi"
+    ],
+    "name": "Organically Grown - English Cucumber (Khira, Kheera)"
+  },
+  {
+    "id": "01KVJN67GZYBSVCJ7TYAVJG92T",
+    "synonyms": [
+      "Bajji Mirch",
+      "Mirch",
+      "Mirchi",
+      "Bhavnagri Mirch"
+    ],
+    "name": "Bajji Chilli"
+  },
+  {
+    "id": "01KVJN67GZYQ6JY17JDGNE75JB",
+    "synonyms": [
+      "Salad Patta",
+      "Salad Ka Patta",
+      "Lettuce"
+    ],
+    "name": "Iceberg Lettuce"
+  },
+  {
+    "id": "01KVJN67GZGSZVSKE0FR7AQG5X",
+    "synonyms": [
+      "Kaddu",
+      "Kashi Phal",
+      "Bhopla",
+      "Sitaphal"
+    ],
+    "name": "Pumpkin (Cut)"
+  },
+  {
+    "id": "01KVJN67H07WG6E74ZA15YV3CH",
+    "synonyms": [
+      "Parsley",
+      "Ajmod Patta",
+      "Prajmoda"
+    ],
+    "name": "Parsley"
+  },
+  {
+    "id": "01KVJN67H08G6QW52M0210QN5E",
+    "synonyms": [
+      "Lehsun",
+      "Lasun",
+      "Sabut Lehsun",
+      "Vellulli",
+      "Lasan"
+    ],
+    "name": "Unpeeled Garlic Cloves"
+  },
+  {
+    "id": "01KVJN67H03VPDPE6BE7SAY5GZ",
+    "synonyms": [
+      "Arvi",
+      "Colocasia",
+      "Ghuiyan",
+      "Arbi",
+      "Kachalu"
+    ],
+    "name": "Organically Grown Colocasia"
+  },
+  {
+    "id": "01KVJN67H0H29KCWJQES3H12Y5",
+    "synonyms": [
+      "Sirka Pyaz",
+      "Chinna Vengayam",
+      "Chhoti Pyaz",
+      "Pearl Onion"
+    ],
+    "name": "Baby Onion (Sirka Pyaz)"
+  },
+  {
+    "id": "01KVJN67H0DHS1GXBDQ5S8YHV7",
+    "synonyms": [
+      "Matar",
+      "Hara Matar",
+      "Vatana",
+      "Motor"
+    ],
+    "name": "Organically Grown Green Peas"
+  },
+  {
+    "id": "01KVJN67H0S1HB4W9BNW2785DH",
+    "synonyms": [
+      "Sahjan",
+      "Saijan",
+      "Munga",
+      "Munaga",
+      "Shevga"
+    ],
+    "name": "Organically Grown Drumstick"
+  },
+  {
+    "id": "01KVJN67H0ZESC8PCS9ACQB7DZ",
+    "synonyms": [
+      "Tamatar",
+      "Cherry Tamatar"
+    ],
+    "name": "Mix Cherry Tomatoes"
+  },
+  {
+    "id": "01KVJN67H0XVBPSWZKBG20SRH0",
+    "synonyms": [
+      "Sambhar Onion",
+      "Chinna Vengayam",
+      "Madras Onion",
+      "Chhoti Pyaz"
+    ],
+    "name": "Organically Grown Sambhar Onion"
+  },
+  {
+    "id": "01KVJN67H0A1BVSVQ2MZ0S9TZ2",
+    "synonyms": [
+      "Haldi",
+      "Kachhi Haldi",
+      "Kaccha Haldi",
+      "Arishina"
+    ],
+    "name": "Raw Turmeric (Kachhi Haldi)"
+  },
+  {
+    "id": "01KVJN67H06QM53Y8X8WHD6T4R",
+    "synonyms": [
+      "Zucchini",
+      "Peela Zucchini",
+      "Turai"
+    ],
+    "name": "Yellow Zucchini"
+  },
+  {
+    "id": "01KVJN67H050SP77WFNNBX0V45",
+    "synonyms": [
+      "Bok Choy",
+      "Chinese Cabbage"
+    ],
+    "name": "Bok Choy"
+  },
+  {
+    "id": "01KVJN67H0CHHSEA1K73WET6XK",
+    "synonyms": [
+      "Baingan",
+      "Vangi",
+      "Kathirikai",
+      "Begun",
+      "Ringna"
+    ],
+    "name": "Long Purple Brinjal (Baingan)"
+  },
+  {
+    "id": "01KVJN67H04N0ZV018V09Q865X",
+    "synonyms": [
+      "Matar",
+      "Hara Matar",
+      "Chhile Matar",
+      "Vatana"
+    ],
+    "name": "Green Peas (Peeled)"
+  },
+  {
+    "id": "01KVJN67H0GKP8MTPJ0EMTDQ5Q",
+    "synonyms": [
+      "Palak",
+      "Palaak",
+      "Baby Palak"
+    ],
+    "name": "Baby Spinach"
+  },
+  {
+    "id": "01KVJN67H0QGFMMEGXTPA4JZFB",
+    "synonyms": [
+      "Rosemary"
+    ],
+    "name": "Fresh Rosemary"
+  },
+  {
+    "id": "01KVJN67H0CX8TBRJX22FYVZXE",
+    "synonyms": [
+      "Kukurmutta",
+      "Dhingri",
+      "Khumb"
+    ],
+    "name": "Cremini Mushroom"
+  },
+  {
+    "id": "01KVJN67H0B8G5K1J90TP1RCSA",
+    "synonyms": [
+      "Kundru",
+      "Tindora",
+      "Tendli",
+      "Dondakaya"
+    ],
+    "name": "Organically Grown Ivy Gourd (Kundru)"
+  },
+  {
+    "id": "01KVJN67H0F23W0M1BF35AHZ6H",
+    "synonyms": [
+      "Mix Sabzi"
+    ],
+    "name": "Pulao Veggie Mix"
+  },
+  {
+    "id": "01KVJN67H0Y59WB2CMFFH39ADW",
+    "synonyms": [
+      "Aloo",
+      "Aalu",
+      "Aalo",
+      "Alo",
+      "Batata"
+    ],
+    "name": "Captain Punch Potato (Aloo)"
+  },
+  {
+    "id": "01KVJN67H0BX98H33RXQG1MCPA",
+    "synonyms": [
+      "Thai Basil",
+      "Sabja Patta",
+      "Basil Patta"
+    ],
+    "name": "Thai Sweet Basil Leaves"
+  },
+  {
+    "id": "01KVJN67H007MEZ3PTA0VFPRNW",
+    "synonyms": [
+      "Aloo",
+      "Aalu",
+      "Chote Aloo",
+      "Batata"
+    ],
+    "name": "Organically Grown Baby Potato"
+  },
+  {
+    "id": "01KVJN67H0PAG0CKZYY06QDEWG",
+    "synonyms": [
+      "Palak",
+      "Palaak",
+      "Saag"
+    ],
+    "name": "Spinach - Chopped"
+  },
+  {
+    "id": "01KVJN67H0DERKM7WS41R8ABA8",
+    "synonyms": [
+      "Celery",
+      "Ajmoda",
+      "Ajmod"
+    ],
+    "name": "Celery"
+  },
+  {
+    "id": "01KVJN67H0K6DQCRAPJYA7EAAZ",
+    "synonyms": [
+      "Torai",
+      "Turai",
+      "Tori",
+      "Beerakaaya"
+    ],
+    "name": "Organically Grown Ridge Gourd"
+  },
+  {
+    "id": "01KVJN67H02JS4WRSBPTKCWPQF",
+    "synonyms": [
+      "Lal Patta Gobhi",
+      "Lal Gobhi",
+      "Patta Gobhi",
+      "Bandh Gobi"
+    ],
+    "name": "Red Cabbage"
+  },
+  {
+    "id": "01KVJN67H05DJFB25FBMHHZ6WX",
+    "synonyms": [
+      "Salad Patta",
+      "Salad Ka Patta",
+      "Lettuce"
+    ],
+    "name": "Romaine Lettuce"
+  },
+  {
+    "id": "01KVJN67H0SHGY09A7ACE76R61",
+    "synonyms": [
+      "Laal Thai Mirch",
+      "Thai Mirch",
+      "Mirch",
+      "Mirchi"
+    ],
+    "name": "Thai Bird Eye Chilli - Red (Laal Thai Mirch)"
+  },
+  {
+    "id": "01KVJN67H0R9JYQK360XE8Z61E",
+    "synonyms": [
+      "Kukurmutta",
+      "Dhingri",
+      "Khumb"
+    ],
+    "name": "Shiitake Mushroom"
+  },
+  {
+    "id": "01KVJN67H0KBFCTRDXPKW7EH7D",
+    "synonyms": [
+      "Bhutta",
+      "Makka",
+      "Makkai",
+      "Cholam"
+    ],
+    "name": "Organically Grown American Corn Cob"
+  },
+  {
+    "id": "01KVJN67H095NMQJW84WPPGHQQ",
+    "synonyms": [
+      "Asparagus",
+      "Shatavari",
+      "Shatmuli"
+    ],
+    "name": "Asparagus Bunch"
+  },
+  {
+    "id": "01KVJN67H0Z0JE45WASJRNSG84",
+    "synonyms": [
+      "Gondhoraj Lime",
+      "Gondhoraj Nimbu",
+      "Gandharaj Nimbu",
+      "Gondhoraj Lebu"
+    ],
+    "name": "Gondhoraj Lime"
+  },
+  {
+    "id": "01KVJN67H0VZRXTHTTZQSF3N57",
+    "synonyms": [
+      "Kukurmutta",
+      "Dhingri",
+      "Khumb"
+    ],
+    "name": "Shimeji Mix Mushroom"
+  },
+  {
+    "id": "01KVJN67H0NN1N0Q75BCBAGH70",
+    "synonyms": [
+      "Lobia",
+      "Chavli",
+      "Lobiya",
+      "Rongi",
+      "Bora"
+    ],
+    "name": "Organically Grown Cowpea Beans (Chavli)"
+  },
+  {
+    "id": "01KVJN67H0134W91SDSH4DQ1JW",
+    "synonyms": [
+      "Kukurmutta",
+      "Dhingri",
+      "Khumb"
+    ],
+    "name": "Pink Oyster Mushroom (Kukurmutta)"
+  },
+  {
+    "id": "01KVJN67H0WZYAQFSKNBM6NB8J",
+    "synonyms": [
+      "Kukurmutta",
+      "Dhingri",
+      "Khumb"
+    ],
+    "name": "King Oyster Mushroom"
+  },
+  {
+    "id": "01KVJN67H0Z7JR878V9NBQBNRN",
+    "synonyms": [
+      "Butternut Squash",
+      "Kaddu",
+      "Petha Kaddu"
+    ],
+    "name": "Butternut Squash"
+  },
+  {
+    "id": "01KVJN67H05SFSAKHBPRTA7HFB",
+    "synonyms": [
+      "Kukurmutta",
+      "Dhingri",
+      "Khumb"
+    ],
+    "name": "Button Mushroom"
+  },
+  {
+    "id": "01KVJN67H0Z16SSXTK4TEMG9VJ",
+    "synonyms": [
+      "Tori",
+      "Nenua",
+      "Gilki",
+      "Ghisoda",
+      "Torai"
+    ],
+    "name": "Sponge Gourd (Tori)"
+  },
+  {
+    "id": "01KVJN67H0VP8950YY1JXACPE8",
+    "synonyms": [
+      "Dhaniya",
+      "Dhania",
+      "Cilantro",
+      "Kothimbir",
+      "Kotmir",
+      "Malli",
+      "Kothimalli"
+    ],
+    "name": "Organically Grown Coriander (without Roots) (Dhaniya Patta)"
+  },
+  {
+    "id": "01KVJN67H0DH6EM9WXHDKCYV4T",
+    "synonyms": [
+      "Lauki",
+      "Doodhi",
+      "Ghiya",
+      "Dudhi",
+      "Lau"
+    ],
+    "name": "Organically Grown Bottle Gourd (Lauki)"
+  },
+  {
+    "id": "01KVJN67H0H165E4KKMYY61BSK",
+    "synonyms": [
+      "Sprouts",
+      "Ankurit Dal",
+      "Ankurit Anaj"
+    ],
+    "name": "Mixed Sprouts"
+  },
+  {
+    "id": "01KVJN67H0AYTYJBNBCPHKRWB1",
+    "synonyms": [
+      "Baingan",
+      "Vangi",
+      "Kathirikai",
+      "Begun",
+      "Ringna"
+    ],
+    "name": "Organically Grown Small Brinjal"
+  },
+  {
+    "id": "01KVJN67H08WNZT5HFXK6ZBF45",
+    "synonyms": [
+      "Salad Patta",
+      "Salad Ka Patta",
+      "Lettuce"
+    ],
+    "name": "Lettuce Mix"
+  },
+  {
+    "id": "01KVJN67H0B5BNNHTHPDNCF38Y",
+    "synonyms": [
+      "Parwal",
+      "Parval",
+      "Potol",
+      "Padwal"
+    ],
+    "name": "Organically Grown Pointed Gourd"
+  },
+  {
+    "id": "01KVJN67H0V4K0VN1PWA3RAXP7",
+    "synonyms": [
+      "Pudina",
+      "Podina",
+      "Mentha",
+      "Fudina"
+    ],
+    "name": "Premium Mint Leaves (Without Roots) (Pudina)"
+  },
+  {
+    "id": "01KVJN67H0ZZP3Y27T43HQY0P8",
+    "synonyms": [
+      "Sprouts",
+      "Ankurit Dal",
+      "Ankurit Chana"
+    ],
+    "name": "Brown Chana Sprouts"
+  },
+  {
+    "id": "01KVJN67H09C543KSPWWCCEQCM",
+    "synonyms": [
+      "Shimla Mirch",
+      "Simla Mirchi",
+      "Cocktail Bell Pepper",
+      "Capsicum"
+    ],
+    "name": "Hydroponic Sweet Bell Pepper (Cocktail)"
+  },
+  {
+    "id": "01KVJN67H09W9EK7KGZYTDYAG4",
+    "synonyms": [
+      "Gajar",
+      "Gajjar",
+      "Carrot"
+    ],
+    "name": "Organically Grown Orange Carrot"
+  },
+  {
+    "id": "01KVJN67H0X348ZJJJV1ENK6CN",
+    "synonyms": [
+      "Chaulai",
+      "Tandulsa",
+      "Rajgira Patta",
+      "Hari Chaulai"
+    ],
+    "name": "Green Amaranthus Leaves (Tandulsa) (Hari Chaulai)"
+  },
+  {
+    "id": "01KVJN67H0M6PXV7PEWA7B86R0",
+    "synonyms": [
+      "Kantola",
+      "Kakrol",
+      "Kankda",
+      "Kartoli",
+      "Teasel Gourd"
+    ],
+    "name": "Spine Gourd (Kantola)"
+  },
+  {
+    "id": "01KVJN67H0EHNE673B9G299EJ5",
+    "synonyms": [
+      "Arugula"
+    ],
+    "name": "Rocket Leaves (Arugula)"
+  },
+  {
+    "id": "01KVJN67H0P8ZPWVNXHWTY6S0V",
+    "synonyms": [
+      "Kakdi",
+      "Kheera",
+      "Khira"
+    ],
+    "name": "Kakdi"
+  },
+  {
+    "id": "01KVJN67H0H9X9122WM5SFRPGJ",
+    "synonyms": [
+      "Gwar Phali",
+      "Gavar",
+      "Guvar Phali",
+      "Kothavarangai"
+    ],
+    "name": "Organically Grown Cluster Beans"
+  },
+  {
+    "id": "01KVJN67H019ENWE8E8EH24YP2",
+    "synonyms": [
+      "Jalapeno",
+      "Hari Mirch",
+      "Videshi Mirch"
+    ],
+    "name": "Fresh Green Jalapeno"
+  },
+  {
+    "id": "01KVJN67H09J6K8G66T0BH0AWC",
+    "synonyms": [
+      "Suran",
+      "Jimikand",
+      "Senai",
+      "Ol",
+      "Elephant Yam"
+    ],
+    "name": "Yam (Portion)"
+  },
+  {
+    "id": "01KVJN67H0BTSETFFPGN17Z5AV",
+    "synonyms": [
+      "Nimbu",
+      "Limbu",
+      "Elumichai",
+      "Nimboo",
+      "Libu"
+    ],
+    "name": "Lemon - Imported"
+  },
+  {
+    "id": "01KVJN67H03E2H7967YHVNR0AQ",
+    "synonyms": [
+      "Chaulai",
+      "Tandulsa",
+      "Lal Chaulai",
+      "Rajgira Patta"
+    ],
+    "name": "Red Amaranthus Leaves (Lal Chaulai)"
+  },
+  {
+    "id": "01KVJN67H0XR5G26J21QE4ZB0K",
+    "synonyms": [
+      "Baingan",
+      "Vangi",
+      "Kathirikai",
+      "Begun",
+      "Ringna"
+    ],
+    "name": "Long Green Brinjal (Baingan)"
+  },
+  {
+    "id": "01KVJN67H00N1QXD9RRKS4MD96",
+    "synonyms": [
+      "Haldi",
+      "Kachhi Haldi",
+      "Kaccha Haldi",
+      "Arishina"
+    ],
+    "name": "Organically Grown Raw Turmeric"
+  },
+  {
+    "id": "01KVJN67H0T9NVXCB5F0DTW857",
+    "synonyms": [
+      "Kakdi",
+      "Kheera",
+      "Khira"
+    ],
+    "name": "Organically Grown Kakdi"
+  },
+  {
+    "id": "01KVJN67H082F9C6JYJR6VN58A",
+    "synonyms": [
+      "Baingan",
+      "Vangi",
+      "Kathirikai",
+      "Begun",
+      "Ringna"
+    ],
+    "name": "Organically Grown Brinjal Bharta (Baingan)"
+  },
+  {
+    "id": "01KVJN67H04B74TJTSNYZS21MB",
+    "synonyms": [
+      "Tamatar",
+      "Cherry Tamatar"
+    ],
+    "name": "Organically Grown Cherry Tomato"
+  },
+  {
+    "id": "01KVJN67H0Z6P9RVGFAQDPBZ5W",
+    "synonyms": [
+      "Lehsun",
+      "Lasun",
+      "Pahadi Lehsun",
+      "Vellulli",
+      "Lasan"
+    ],
+    "name": "Organically Grown Jumbo Hill Garlic"
+  },
+  {
+    "id": "01KVJN67H0DK7S6ZW2B30EAPQJ",
+    "synonyms": [
+      "Hari Mirch",
+      "Hari Mirchi",
+      "Bullet Mirch"
+    ],
+    "name": "Bullet Green Chilli"
+  },
+  {
+    "id": "01KVJN67H0RMJGSYKBANWH9HC5",
+    "synonyms": [
+      "Imli",
+      "Puli",
+      "Chinch",
+      "Tentul"
+    ],
+    "name": "Sweet Tamarind"
+  },
+  {
+    "id": "01KVJN67H0TDE2AFRJM6H6FM4B",
+    "synonyms": [
+      "Kukurmutta",
+      "Dhingri",
+      "Khumb"
+    ],
+    "name": "White Oyster Mushroom (Kukurmutta)"
+  },
+  {
+    "id": "01KVJN67H0E65AF1FWY444XNV4",
+    "synonyms": [
+      "Lasoda",
+      "Gunda",
+      "Lasode",
+      "Slimy Berry"
+    ],
+    "name": "Losoda/ Glue Berries"
+  },
+  {
+    "id": "01KVJN67H02PCZQHAWDEMQBNKF",
+    "synonyms": [
+      "Adrak",
+      "Aada",
+      "Sunth",
+      "Ale"
+    ],
+    "name": "Organically Grown Ginger (Adrak)"
+  },
+  {
+    "id": "01KVJN67H0VZMKDH2J563JK4H5",
+    "synonyms": [
+      "Kela",
+      "Vazhakkai",
+      "Kelaa",
+      "Kadali"
+    ],
+    "name": "Banana"
+  },
+  {
+    "id": "01KVJN67H0P1DFB8MC8WKNR25T",
+    "synonyms": [
+      "Baby Kela",
+      "Kela",
+      "Yelakki Kela"
+    ],
+    "name": "Baby Banana"
+  },
+  {
+    "id": "01KVJN67H0AD3VYGNS884E1THB",
+    "synonyms": [
+      "Nariyal Pani",
+      "Nariyal",
+      "Daab",
+      "Hara Nariyal"
+    ],
+    "name": "Tender Coconut (Nariyal)"
+  },
+  {
+    "id": "01KVJN67H0MC6YRW4KFQZJ40HQ",
+    "synonyms": [
+      "Madhu Kharbuja",
+      "Kharbuja",
+      "Kharbooja",
+      "Sarda"
+    ],
+    "name": "Madhu Muskmelon (Kharabooja)"
+  },
+  {
+    "id": "01KVJN67H08T53YC01SDQBYFE4",
+    "synonyms": [
+      "Kiran Tarbuj",
+      "Tarbuj",
+      "Tarbooz",
+      "Tarbuja"
+    ],
+    "name": "Kiran - Watermelon (Tarbuj)"
+  },
+  {
+    "id": "01KVJN67H003BRE6KK90PD9PE9",
+    "synonyms": [
+      "Hass Avocado",
+      "Makhanphal",
+      "Butter Fruit",
+      "Avocado"
+    ],
+    "name": "Avocado Hass - Tanzania"
+  },
+  {
+    "id": "01KVJN67H0RBAGB90N78BVXA7J",
+    "synonyms": [
+      "Kacha Aam",
+      "Kairi",
+      "Aam",
+      "Keri",
+      "Kanchi Maanga"
+    ],
+    "name": "Raw Mango (Kacha Aam)"
+  },
+  {
+    "id": "01KVJN67H039VJ57AAR98R4YV9",
+    "synonyms": [
+      "Kesar Aam",
+      "Gir Kesar",
+      "Kesar",
+      "Aam"
+    ],
+    "name": "Kutch Kesar Mango"
+  },
+  {
+    "id": "01KVJN67H0GKT8NBQ17W3FP3YX",
+    "synonyms": [
+      "Alphonso Aam",
+      "Hapus Aam",
+      "Hapoos Aam",
+      "Haphus Aam",
+      "Aam",
+      "Hapoos"
+    ],
+    "name": "Alphonso Mango Ratnagiri"
+  },
+  {
+    "id": "01KVJN67H0JQFJSE3571DPRNJJ",
+    "synonyms": [
+      "Nariyal",
+      "Khopra",
+      "Narikel",
+      "Sookha Nariyal"
+    ],
+    "name": "Brown Coconut"
+  },
+  {
+    "id": "01KVJN67H03A4P8NCZXQ3BTFB5",
+    "synonyms": [
+      "Hara Angoor",
+      "Angoor",
+      "Draksh"
+    ],
+    "name": "Green Grapes - Seedless"
+  },
+  {
+    "id": "01KVJN67H06EB0Q2NFDBZ57H8H",
+    "synonyms": [
+      "Anaar",
+      "Anar",
+      "Dadam"
+    ],
+    "name": "Peeled Pomegranate - Snack Pack"
+  },
+  {
+    "id": "01KVJN67H0H6SW2TPT87MH4X11",
+    "synonyms": [
+      "Shimla Seb",
+      "Seb",
+      "Safarchand"
+    ],
+    "name": "Small Shimla Apple (Seb)"
+  },
+  {
+    "id": "01KVJN67H059PTH99G5PNTV03J",
+    "synonyms": [
+      "Blueberry",
+      "Neel Bairi"
+    ],
+    "name": "Blueberry - Imported"
+  },
+  {
+    "id": "01KVJN67H0XJ70B747METY7P7A",
+    "synonyms": [
+      "Papita",
+      "Papaya",
+      "Papai",
+      "Parangi"
+    ],
+    "name": "Papaya (Papita)"
+  },
+  {
+    "id": "01KVJN67H0B079HNT6PYRRH5YV",
+    "synonyms": [
+      "Washington Seb",
+      "Red Delicious Seb",
+      "Seb",
+      "Safarchand"
+    ],
+    "name": "Washington Red Delicious Apple"
+  },
+  {
+    "id": "01KVJN67H0X2ER0V15YGPSWVGX",
+    "synonyms": [
+      "Anaar",
+      "Anar",
+      "Dadam"
+    ],
+    "name": "Pomegranate - 2 pieces (350-450 g)"
+  },
+  {
+    "id": "01KVJN67H0KMVVQJPWCPTN3H33",
+    "synonyms": [
+      "Kinnaur Seb",
+      "Seb",
+      "Safarchand"
+    ],
+    "name": "Kinnaur Apple (Seb)"
+  },
+  {
+    "id": "01KVJN67H07TVPB6BNGNK0DA3E",
+    "synonyms": [
+      "Mini Santra",
+      "Santra",
+      "Narangi",
+      "Kamala"
+    ],
+    "name": "Mini Orange (Imported)"
+  },
+  {
+    "id": "01KVJN67H095PAS41V6KCZ0774",
+    "synonyms": [
+      "Bobby Kharbuja",
+      "Kharbuja",
+      "Kharbooja"
+    ],
+    "name": "Bobby Muskmelon (Kharbuja)"
+  },
+  {
+    "id": "01KVJN67H0XFMNPEHBQ4NJQYGV",
+    "synonyms": [
+      "Green Kiwi",
+      "Kiwi",
+      "Kivi"
+    ],
+    "name": "Green Kiwi"
+  },
+  {
+    "id": "01KVJN67H065RRFB257EVDCWVJ",
+    "synonyms": [
+      "Langra Aam",
+      "Langda Aam",
+      "Langra",
+      "Aam"
+    ],
+    "name": "Langra Mango"
+  },
+  {
+    "id": "01KVJN67H0P8N1EJ6H7HXJ9EVT",
+    "synonyms": [
+      "Crimson Angoor",
+      "Angoor",
+      "Draksh"
+    ],
+    "name": "Crimson Red Grapes - Indian"
+  },
+  {
+    "id": "01KVJN67H0DRQZY8QJ3PDW0QFS",
+    "synonyms": [
+      "Ananas",
+      "Anannnas",
+      "Pineapple"
+    ],
+    "name": "Pineapple Cut"
+  },
+  {
+    "id": "01KVJN67H0Z426NKVQEZQRG57M",
+    "synonyms": [
+      "Kinnaur Seb",
+      "Seb",
+      "Safarchand"
+    ],
+    "name": "Kinnaur Apple"
+  },
+  {
+    "id": "01KVJN67H04DJ6QNED98A2HJAN",
+    "synonyms": [
+      "Anaar",
+      "Anar",
+      "Dadam"
+    ],
+    "name": "Pomegranate - 1 piece (175-225 g)"
+  },
+  {
+    "id": "01KVJN67H0WNTY7TXS8E9GRAFH",
+    "synonyms": [
+      "Dasheri Aam",
+      "Dashari Aam",
+      "Dussehri Aam",
+      "Aam"
+    ],
+    "name": "Dasheri Mango"
+  },
+  {
+    "id": "01KVJN67H04T1SVCEY8TGTBE6N",
+    "synonyms": [
+      "Valencia Santra",
+      "Santra",
+      "Narangi",
+      "Kamala"
+    ],
+    "name": "Valencia Navel Orange"
+  },
+  {
+    "id": "01KVJN67H06PZ1R6YH8T3J0M9P",
+    "synonyms": [
+      "Red Cherry",
+      "Cherry",
+      "Gilash"
+    ],
+    "name": "Red Cherry - Indian"
+  },
+  {
+    "id": "01KVJN67H0ZNWGB5YHXMD7Z1FA",
+    "synonyms": [
+      "Mosambi",
+      "Mausami",
+      "Mousami",
+      "Sathukudi"
+    ],
+    "name": "Sweet Lime (Mosambi)"
+  },
+  {
+    "id": "01KVJN67H00WNJHS87S0W45ZR9",
+    "synonyms": [
+      "Dasheri Aam",
+      "Dashari Aam",
+      "Dussehri Aam",
+      "Aam"
+    ],
+    "name": "Premium Golden Dasheri Mango"
+  },
+  {
+    "id": "01KVJN67H0HH1CEY6XEW8B740F",
+    "synonyms": [
+      "Valencia Santra",
+      "Santra",
+      "Narangi",
+      "Kamala"
+    ],
+    "name": "Valencia Navel Orange (Imported)"
+  },
+  {
+    "id": "01KVJN67H05QGV3P82NY3VF5E6",
+    "synonyms": [
+      "Safeda Aam",
+      "Banganapalli Aam",
+      "Benishan Aam",
+      "Aam"
+    ],
+    "name": "Organically Grown Safeda Mango"
+  },
+  {
+    "id": "01KVJN67H0KZ3Y1TGDXY2S3FGG",
+    "synonyms": [
+      "Ananas",
+      "Pineapple"
+    ],
+    "name": "Pineapple - Peeled"
+  },
+  {
+    "id": "01KVJN67H06Y7N5AH1WXD4WR24",
+    "synonyms": [
+      "Kharbuja",
+      "Kharabooja",
+      "Kharbooja",
+      "Sarda"
+    ],
+    "name": "Organically-Grown Muskmelon"
+  },
+  {
+    "id": "01KVJN67H1RY9AGVGJ7MDXJRQ7",
+    "synonyms": [
+      "Shimla Seb",
+      "Seb",
+      "Safarchand"
+    ],
+    "name": "Shimla Apple"
+  },
+  {
+    "id": "01KVJN67H10HF4FPAX4WR32CBX",
+    "synonyms": [
+      "Khumani",
+      "Jardalu",
+      "Zardalu",
+      "Khubani"
+    ],
+    "name": "Fresh Apricots (Khumani)"
+  },
+  {
+    "id": "01KVJN67H1AKER4W31FNXAAZFM",
+    "synonyms": [
+      "Beauty Nashpati",
+      "Nashpati",
+      "Naashpati"
+    ],
+    "name": "Pear Beauty - South Africa"
+  },
+  {
+    "id": "01KVJN67H1915BV66475E4Y8DW",
+    "synonyms": [
+      "Packham Nashpati",
+      "Nashpati",
+      "Naashpati"
+    ],
+    "name": "Packham Pear - South Africa"
+  },
+  {
+    "id": "01KVJN67H1ZZDH49J3Q9Y7EVQF",
+    "synonyms": [
+      "Thai Pink Amrud",
+      "Amrud",
+      "Amrood",
+      "Perala",
+      "Jamphal"
+    ],
+    "name": "Thai Pink Guava (Amrud)"
+  },
+  {
+    "id": "01KVJN67H1F8KTYX6YF566SAST",
+    "synonyms": [
+      "Sungold Kiwi",
+      "Kiwi",
+      "Kivi"
+    ],
+    "name": "Zespri Sungold Kiwi"
+  },
+  {
+    "id": "01KVJN67H1QSEZXCT2AQ5G3AMJ",
+    "synonyms": [
+      "Nariyal",
+      "Khopra",
+      "Narikel",
+      "Sookha Nariyal"
+    ],
+    "name": "Organically Grown Brown Coconut"
+  },
+  {
+    "id": "01KVJN67H1TANZ2Q91956J5PJ6",
+    "synonyms": [
+      "Langra Aam",
+      "Langda Aam",
+      "Langra",
+      "Aam"
+    ],
+    "name": "Organically Grown Langra Mango"
+  },
+  {
+    "id": "01KVJN67H1F8YGVC6WSK7ZMYXX",
+    "synonyms": [
+      "Dasheri Aam",
+      "Dashari Aam",
+      "Dussehri Aam",
+      "Aam"
+    ],
+    "name": "Organically Grown Dasheri Mango"
+  },
+  {
+    "id": "01KVJN67H14A9QHBR1PT99Z83D",
+    "synonyms": [
+      "Ananas",
+      "Pineapple"
+    ],
+    "name": "Pineapple (Ananas)"
+  },
+  {
+    "id": "01KVJN67H1VS9MEG8QSHEYCDW6",
+    "synonyms": [
+      "Thai Amrud",
+      "Amrud",
+      "Amrood",
+      "Perala",
+      "Jamphal"
+    ],
+    "name": "Thai Guava"
+  },
+  {
+    "id": "01KVJN67H12BWMVB6TEZSRECV2",
+    "synonyms": [
+      "Indian Aloo Bukhara",
+      "Aloo Bukhara",
+      "Aloo Bukhara Desi"
+    ],
+    "name": "Indian Plum"
+  },
+  {
+    "id": "01KVJN67H1YHZKRHNC0J7G893B",
+    "synonyms": [
+      "Royal Gala Seb",
+      "Seb",
+      "Safarchand"
+    ],
+    "name": "Washington Royal Gala Apple (Seb)"
+  },
+  {
+    "id": "01KVJN67H1DGEKTCTZE3XC5YWG",
+    "synonyms": [
+      "Kashmir Cherry",
+      "Cherry",
+      "Gilash"
+    ],
+    "name": "Kashmir Cherry"
+  },
+  {
+    "id": "01KVJN67H1FHQWKT9AKZ849M3F",
+    "synonyms": [
+      "Mallika Aam",
+      "Aam"
+    ],
+    "name": "Mallika Mango (Aam)"
+  },
+  {
+    "id": "01KVJN67H11V181JH5J42XGDP3",
+    "synonyms": [
+      "Pink Lady Seb",
+      "Seb",
+      "Safarchand"
+    ],
+    "name": "Pink Lady Apple 2 pieces (300 - 400) g"
+  },
+  {
+    "id": "01KVJN67H16B5FQ5BJXQKF4WAD",
+    "synonyms": [
+      "Seb",
+      "Safarchand",
+      "Everyday Seb"
+    ],
+    "name": "Everyday Apple"
+  },
+  {
+    "id": "01KVJN67H1G4MXP0MEAX094YGE",
+    "synonyms": [
+      "Mosambi",
+      "Mausami",
+      "Mousami",
+      "Sathukudi"
+    ],
+    "name": "Organically Grown Sweet Lime"
+  },
+  {
+    "id": "01KVJN67H17G8S0D3Z4QKSMWQ8",
+    "synonyms": [
+      "Royal Gala Seb",
+      "Seb",
+      "Safarchand"
+    ],
+    "name": "New Zealand Royal Gala Apple"
+  },
+  {
+    "id": "01KVJN67H17P2SAZPGPGB9WV6T",
+    "synonyms": [
+      "Aloo Bukhara",
+      "Aloo Bukara",
+      "Plum"
+    ],
+    "name": "Plum Imported"
+  },
+  {
+    "id": "01KVJN67H1S2WKH4X9Y1ZP7H8Q",
+    "synonyms": [
+      "Ganna",
+      "Ikshu",
+      "Ikh",
+      "Gane"
+    ],
+    "name": "Sugarcane Cubes"
+  },
+  {
+    "id": "01KVJN67H1WPB8N9M2H2N5JK78",
+    "synonyms": [
+      "Royal Gala Seb",
+      "Seb",
+      "Safarchand"
+    ],
+    "name": "Royal Gala South African Apple"
+  },
+  {
+    "id": "01KVJN67H1PNZBEMPY3CXMZDY4",
+    "synonyms": [
+      "Sarda",
+      "Kharbuja",
+      "Kharbooja",
+      "Sun Melon"
+    ],
+    "name": "Sun Melon (Sarda)"
+  },
+  {
+    "id": "01KVJN67H1KYWSN19MG8AE6Q8J",
+    "synonyms": [
+      "Totapuri Aam",
+      "Aam",
+      "Ginimoothi Aam",
+      "Collector Aam"
+    ],
+    "name": "Totapuri Mango"
+  },
+  {
+    "id": "01KVJN67H1RNDN7A5MQFFAT0FA",
+    "synonyms": [
+      "Granny Smith Seb",
+      "Seb",
+      "Safarchand"
+    ],
+    "name": "Granny Smith Apple - USA"
+  },
+  {
+    "id": "01KVJN67H1JRBVKCQEAPRQHNKV",
+    "synonyms": [
+      "Epli Seb",
+      "Seb",
+      "Safarchand"
+    ],
+    "name": "Epli Apple (Seb)"
+  },
+  {
+    "id": "01KVJN67H1H366EWB9G0VD80TR",
+    "synonyms": [
+      "Red Globe Angoor",
+      "Angoor",
+      "Draksh"
+    ],
+    "name": "Red-Globe Grapes"
+  },
+  {
+    "id": "01KVJN67H1H0NCFH7867ZGYGEF",
+    "synonyms": [
+      "Aadu",
+      "Aroo",
+      "Aadoo",
+      "Shaftalu"
+    ],
+    "name": "Peach"
+  },
+  {
+    "id": "01KVJN67H1NXTHTT9DC3BAC65P",
+    "synonyms": [
+      "American Cherry",
+      "Cherry",
+      "Gilash"
+    ],
+    "name": "American Cherry"
+  },
+  {
+    "id": "01KVJN67H1BBEKPJ2NRPRBYY44",
+    "synonyms": [
+      "Chakotara",
+      "Chakotra",
+      "Chakotera"
+    ],
+    "name": "Grapefruit (Chakotara)"
+  },
+  {
+    "id": "01KVJN67H1XC54P907G3R60H1P",
+    "synonyms": [
+      "Shine Muscat Angoor",
+      "Angoor",
+      "Draksh"
+    ],
+    "name": "Shine Muscat Green Grapes"
+  },
+  {
+    "id": "01KVJN67H1D6GX1S5GW553B107",
+    "synonyms": [
+      "Malda Aam",
+      "Aam",
+      "Himsagar Aam"
+    ],
+    "name": "Organically Grown Malda Mango"
+  },
+  {
+    "id": "01KVJN67H1YP8K6B8TRYCRQGDW",
+    "synonyms": [
+      "Banganapalli Aam",
+      "Safeda Aam",
+      "Benishan Aam",
+      "Aam"
+    ],
+    "name": "Safeda / Banganapalli Mango"
+  },
+  {
+    "id": "01KVJN67H1KMR0FW5KTP6MM17A",
+    "synonyms": [
+      "Banganapalli Aam",
+      "Safeda Aam",
+      "Benishan Aam",
+      "Aam"
+    ],
+    "name": "Safeda / Banganapalli Mango"
+  },
+  {
+    "id": "01KVJN67H17GPA89V7CMJ8K1J9",
+    "synonyms": [
+      "Lychee",
+      "Litchi",
+      "Lichee",
+      "Lichu"
+    ],
+    "name": "Litchi 500 g"
+  },
+  {
+    "id": "01KVJN67H1M1NT5CXYQYRMJ139",
+    "synonyms": [
+      "Muzaffarpur Lychee",
+      "Lychee",
+      "Litchi",
+      "Lichu"
+    ],
+    "name": "Muzaffarpur Litchi"
+  },
+  {
+    "id": "01KVJN67H1CHYQSSWZ5XVVFS3N",
+    "synonyms": [
+      "Kesar Aam",
+      "Gir Kesar",
+      "Kesar",
+      "Aam"
+    ],
+    "name": "Kesar Mango (Kesar Aam)"
+  },
+  {
+    "id": "01KVJN67H1Y7CZJ0HHJYATW8F6",
+    "synonyms": [
+      "Hass Avocado",
+      "Makhanphal",
+      "Butter Fruit",
+      "Avocado"
+    ],
+    "name": "Avocado Hass (Tanzania)"
+  },
+  {
+    "id": "01KVJN67H19G9YRZ3P5GCRW7VE",
+    "synonyms": [
+      "Dragon Fruit",
+      "Kamalam",
+      "Pitaya"
+    ],
+    "name": "Dragon Fruit"
+  },
+  {
+    "id": "01KVJN67H1C7YB6QWFCKZPAM55",
+    "synonyms": [
+      "Yellaki Kela",
+      "Kela",
+      "Yelakki Kela",
+      "Elaichi Kela"
+    ],
+    "name": "Yellaki Banana"
+  },
+  {
+    "id": "01KVJN67H1HFGQTZMB7ZGD8PMC",
+    "synonyms": [
+      "Nariyal",
+      "Khopra",
+      "Narikel"
+    ],
+    "name": "Brown Coconut Chunks"
+  },
+  {
+    "id": "01KVJN67H1Z2QH6QMVD1PA285Y",
+    "synonyms": [
+      "Blueberry",
+      "Neel Bairi"
+    ],
+    "name": "Relish Indian Blueberry"
+  },
+  {
+    "id": "01KVJN67H1V6V6W5FM2F38J5SJ",
+    "synonyms": [
+      "Lychee",
+      "Litchi",
+      "Lichee",
+      "Lichu"
+    ],
+    "name": "Litchi (Without Stem)"
+  },
+  {
+    "id": "01KVJN67H1JPGFP5B6MXFVVNTX",
+    "synonyms": [
+      "Chikoo",
+      "Sapodilla",
+      "Cheeku",
+      "Sapota",
+      "Sapodilla"
+    ],
+    "name": "Sapota (Chikoo)"
+  },
+  {
+    "id": "01KVJN67H1XS1858YYK039WPAS",
+    "synonyms": [
+      "Jannat Tarbuj",
+      "Tarbuj",
+      "Tarbooz",
+      "Tarbuja"
+    ],
+    "name": "Jannat Watermelon"
+  },
+  {
+    "id": "01KVJN67H15C6HVW770KTXJ9GW",
+    "synonyms": [
+      "Sindhura Aam",
+      "Sinduri Aam",
+      "Aam"
+    ],
+    "name": "Sindhura Mango (Sinduri Aam)"
+  },
+  {
+    "id": "01KVJN67H11RETMM1SMY7JE3H6",
+    "synonyms": [
+      "Westfalia Avocado",
+      "Makhanphal",
+      "Butter Fruit",
+      "Avocado"
+    ],
+    "name": "Westfalia Premium Avocado"
+  },
+  {
+    "id": "01KVJN67H10Q2H3AB0CMW90BQ5",
+    "synonyms": [
+      "Phalsa",
+      "Falsa",
+      "Pharsa",
+      "Sharbati"
+    ],
+    "name": "Phalsa"
+  },
+  {
+    "id": "01KVJN67H19ENCNGVEH1CSERAS",
+    "synonyms": [
+      "Indian Cherry",
+      "Cherry",
+      "Gilash"
+    ],
+    "name": "Jumbo Indian Cherry"
+  },
+  {
+    "id": "01KVJN67H1K77AK8743FQ62D53",
+    "synonyms": [
+      "Kajri Kharbuja",
+      "Kharbuja",
+      "Kharbooja"
+    ],
+    "name": "Kajri Muskmelon (Striped)"
+  },
+  {
+    "id": "01KVJN67H1Y0K142BRHWP9F39F",
+    "synonyms": [
+      "Royal Gala Seb",
+      "Seb",
+      "Safarchand"
+    ],
+    "name": "Royal Gala Apple (Italy / Poland) (Seb)"
+  },
+  {
+    "id": "01KVJN67H1FSEZZAT5QXQ7EK3Q",
+    "synonyms": [
+      "Safeda Aam",
+      "Banganapalli Aam",
+      "Benishan Aam",
+      "Aam"
+    ],
+    "name": "Premium Golden Safeda Mango"
+  },
+  {
+    "id": "01KVJN67H1RZV6J79HG391JJPS",
+    "synonyms": [
+      "Red Delicious Seb",
+      "Seb",
+      "Safarchand"
+    ],
+    "name": "Red Delicious Apple - Italy/New Zealand (Seb)"
+  },
+  {
+    "id": "01KVJN67H10EG4KZ418EFR2FYZ",
+    "synonyms": [
+      "Tarbuj",
+      "Tarbooz",
+      "Tarbuja"
+    ],
+    "name": "Watermelon (Sliced)"
+  },
+  {
+    "id": "01KVJN67H12YFEKJ882BFAG3XS",
+    "synonyms": [
+      "Imam Pasand Aam",
+      "Hamam Aam",
+      "Aam",
+      "Himayuddin Aam"
+    ],
+    "name": "Imam Pasand Mango (Hamam)"
+  },
+  {
+    "id": "01KVJN67H197HFHN6XHD1RHRZS",
+    "synonyms": [
+      "Kajri Kharbuja",
+      "Kharbuja",
+      "Kharbooja"
+    ],
+    "name": "Organically Grown Muskmelon (Kajri)"
+  },
+  {
+    "id": "01KVJN67H1TT12E0FB2A56HD8H",
+    "synonyms": [
+      "Mini Santra",
+      "Santra",
+      "Narangi",
+      "Kamala"
+    ],
+    "name": "Premium Mini Orange"
+  },
+  {
+    "id": "01KVJN67H1AWXKT3TZTXD05AKT",
+    "synonyms": [
+      "Aadu",
+      "Aroo",
+      "Aadoo",
+      "Shaftalu"
+    ],
+    "name": "Organically Grown Peach"
+  },
+  {
+    "id": "01KVJN67H12NB3JWX6BDPM9B38",
+    "synonyms": [
+      "Alphonso Aam",
+      "Hapus Aam",
+      "Hapoos Aam",
+      "Haphus Aam",
+      "Aam",
+      "Hapoos"
+    ],
+    "name": "Organically Grown Alphonso Mango"
+  },
+  {
+    "id": "01KVJN67H10KM92GHS78C1F0MB",
+    "synonyms": [
+      "Papita",
+      "Papaya",
+      "Papai",
+      "Parangi"
+    ],
+    "name": "Papaya"
+  },
+  {
+    "id": "01KVJN67H1RFAGFXC0PB141NK9",
+    "synonyms": [
+      "Blueberry",
+      "Neel Bairi"
+    ],
+    "name": "Blueberry"
+  },
+  {
+    "id": "01KVJN67H1EJ95VNPGTAWDCQBR",
+    "synonyms": [
+      "Kesar Aam",
+      "Gir Kesar",
+      "Kesar",
+      "Aam"
+    ],
+    "name": "Organically Grown Kesar Mango"
+  },
+  {
+    "id": "01KVJN67H1GBNEHHFG3DQ56SNV",
+    "synonyms": [
+      "Kala Angoor",
+      "Angoor",
+      "Draksh"
+    ],
+    "name": "Black Grapes -Seedless"
+  },
+  {
+    "id": "01KVJN67H1MA5ZPV50C0R9H60Q",
+    "synonyms": [
+      "Dragon Fruit",
+      "Kamalam",
+      "Pitaya"
+    ],
+    "name": "Dragon Fruit - Red Flesh"
+  },
+  {
+    "id": "01KVJN67H1DV71ZBRV8T8MZETZ",
+    "synonyms": [
+      "Uttarakhand Aadu",
+      "Aadu",
+      "Aroo",
+      "Shaftalu"
+    ],
+    "name": "Peach - Uttarakhand"
+  },
+  {
+    "id": "01KVJN67H1Y1YFDA4CEFC0MF82",
+    "synonyms": [
+      "Imli",
+      "Puli",
+      "Chinch",
+      "Tentul"
+    ],
+    "name": "Sweet Tamarind Box (Imli)"
+  },
+  {
+    "id": "01KVJN67H1F753RT0WQSHDYYR0",
+    "synonyms": [
+      "Sonaka Angoor",
+      "Angoor",
+      "Draksh"
+    ],
+    "name": "Grapes Sonaka (Angoor)"
+  },
+  {
+    "id": "01KVJN67H1E7QNXWF3CF24950Q",
+    "synonyms": [
+      "Kiran Tarbuj",
+      "Tarbuj",
+      "Tarbooz"
+    ],
+    "name": "Organically Grown Kiran Watermelon"
+  },
+  {
+    "id": "01KVJN67H1H15PYP782ZBH1RGA",
+    "synonyms": [
+      "Papita",
+      "Papaya",
+      "Papai",
+      "Parangi"
+    ],
+    "name": "Organically Grown Papaya (Papita)"
+  },
+  {
+    "id": "01KVJN67H1SGRZ0H8Y6MMDZNG4",
+    "synonyms": [
+      "Peela Tarbuj",
+      "Tarbuj",
+      "Tarbooz"
+    ],
+    "name": "Yellow Flesh Watermelon"
+  },
+  {
+    "id": "01KVJN67H1S670XM4JBFPTMJDH",
+    "synonyms": [
+      "Badam",
+      "Hara Badam",
+      "Kacha Badam"
+    ],
+    "name": "Green Almonds"
+  },
+  {
+    "id": "01KVJN67H113GZGXR13RKQ30HN",
+    "synonyms": [
+      "Anaar",
+      "Anar",
+      "Dadam"
+    ],
+    "name": "Organically Grown Pomegranate (Anaar)"
+  }
+]

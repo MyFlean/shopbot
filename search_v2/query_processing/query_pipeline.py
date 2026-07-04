@@ -32,6 +32,7 @@ from search_v2.query_processing.typo_correction import QueryCorrectionResult, Vo
 
 if TYPE_CHECKING:
     from search_v2.retrieval.filters import SearchFilters
+    from search_v2.query_processing.product_intent_extractor import ProductIntentExtractor, ProductIntentResult
 
 
 @dataclass
@@ -68,10 +69,19 @@ class SearchRequest:
     filters         — unified SearchFilters combining:
                         • structured filters from the caller (UI, ShopBot, API)
                         • filters extracted deterministically from natural language
+                        • the product-type filter/boost resolved by Product
+                          Intent Identification (see product_intent below)
                       Both lexical and semantic builders consume this one object.
+    product_intent  — the raw ProductIntentResult (primary_product, modifiers,
+                      confidence, tier), kept alongside `filters` purely for
+                      observability/debugging (logging, playground display) —
+                      retrieval itself only ever reads `filters`. None when
+                      Product Intent Identification is disabled, its lexicon
+                      is unavailable, or nothing in the query resolved.
     """
     processed_query: ProcessedQuery
     filters: "SearchFilters"
+    product_intent: Optional["ProductIntentResult"] = None
 
 
 def process_query(
@@ -89,16 +99,21 @@ def process_query(
     if enable_typo_correction and corrector is not None and normalized:
         correction_result = corrector.correct_query(normalized)
 
-        if correction_result.corrections:
+        if correction_result.has_any_correction():
+            # corrected_tokens() already folds in BOTH per-token corrections
+            # AND segmentation repairs (merged-span replacements) into one
+            # coherent token list — see typo_correction.py. A single variant
+            # built from it preserves every other token in the query (unlike
+            # previously emitting a segmentation repair's merged token alone,
+            # which silently dropped the rest of the query, e.g. "gluten free
+            # chips" -> just "glutenfree").
             corrected_text = " ".join(correction_result.corrected_tokens())
             if corrected_text != normalized:
-                max_dist = max(c.distance for c in correction_result.corrections.values())
+                distances = [c.distance for c in correction_result.corrections.values()]
+                distances += [r.distance for r in correction_result.segmentation_repairs]
+                max_dist = max(distances) if distances else 0
                 confidence = {0: 1.0, 1: 0.85, 2: 0.65}.get(max_dist, 0.5)
                 variants.append(QueryVariant(text=corrected_text, is_correction=True, confidence=confidence))
-
-        for repair in correction_result.segmentation_repairs:
-            confidence = {0: 1.0, 1: 0.8, 2: 0.6}.get(repair.distance, 0.5)
-            variants.append(QueryVariant(text=repair.corrected, is_correction=True, confidence=confidence))
 
     return ProcessedQuery(
         raw_query=raw_query,
@@ -114,18 +129,43 @@ def process_search_request(
     corrector: Optional[VocabularyCorrector] = None,
     enable_typo_correction: bool = True,
     enable_nl_filters: bool = True,
+    product_intent_extractor: Optional["ProductIntentExtractor"] = None,
     settings=None,
 ) -> SearchRequest:
     """
     Full query-processing pipeline entry point.
 
     1. Run NL filter extraction on raw_query (deterministic, no LLMs).
-    2. Merge extracted filters with any explicit_filters from the caller.
-    3. Process the clean query through normalization + typo correction.
-    4. Return SearchRequest(processed_query, merged_filters).
+    2. Process the clean query through normalization + typo correction.
+    3. If typo correction changed the query, re-run NL filter extraction on
+       the corrected text and merge in anything newly found (see below).
+    4. Product Intent Identification: resolve the head product term out of
+       the fully cleaned/corrected text and fold it into filters as either a
+       hard filter (high confidence) or a should-boost (medium confidence) —
+       see below.
+    5. Merge extracted filters with any explicit_filters from the caller.
+    6. Return SearchRequest(processed_query, merged_filters, product_intent).
 
     The gateway and every other client should call this function — it ensures
     all clients benefit from the same query understanding pipeline.
+
+    Why step 3 exists: NL filter extraction is regex-based and only matches
+    correctly-spelled phrases. A misspelled dietary/macro/price phrase (e.g.
+    "glutten free chips", "suger free cookies", "protien bars") fails those
+    regexes on the raw text, so step 1 alone would silently miss the filter a
+    correctly-spelled version of the same query gets — the modifier would
+    survive only as free text instead of becoming a real filter. Re-running
+    extraction once more on the corrected text closes that gap generically,
+    for every dietary label / macro-nutrient / price phrase the extractor
+    already knows how to recognize, not just specific words.
+
+    Why step 4 runs where it does: it needs text that's already typo-corrected
+    AND has had dietary/macro/price phrases stripped out by NL filter
+    extraction — otherwise a misspelled or filter-phrase word could get
+    mistaken for (or crowd out) the actual product head term. See
+    query_processing/product_intent_extractor.py for the resolution algorithm
+    and indexing/product_type_lexicon_builder.py (search repo) for how the
+    lexicon it reads is built.
 
     Parameters
     ----------
@@ -138,6 +178,9 @@ def process_search_request(
     enable_typo_correction : Whether to run typo/segmentation correction.
     enable_nl_filters : Whether to run NL filter extraction. Defaults to True
                         (controlled by SETTINGS.ENABLE_NL_FILTER_EXTRACTION).
+    product_intent_extractor : Optional ProductIntentExtractor. None (the
+                        default) makes step 4 a complete no-op — identical
+                        behavior to before this feature existed.
     settings         : SearchV2Settings instance; falls back to module SETTINGS.
     """
     from search_v2.retrieval.filters import SearchFilters, merge_filters
@@ -146,24 +189,72 @@ def process_search_request(
         from search_v2.config.settings import SETTINGS
         settings = SETTINGS
 
-    # Step 1: NL filter extraction
+    nl_filters_enabled = enable_nl_filters and getattr(settings, "ENABLE_NL_FILTER_EXTRACTION", True)
+
+    # Step 1: NL filter extraction on the raw query
     clean_query = raw_query
     nl_filters = SearchFilters()
-    if enable_nl_filters and getattr(settings, "ENABLE_NL_FILTER_EXTRACTION", True) and raw_query.strip():
+    if nl_filters_enabled and raw_query.strip():
         from search_v2.query_processing.nl_filter_extractor import NLFilterExtractor
         nl_result = NLFilterExtractor(settings).extract(raw_query)
         clean_query = nl_result.clean_query
         nl_filters = nl_result.filters
 
-    # Step 2: Merge explicit + NL-extracted filters (explicit takes precedence)
-    base = explicit_filters or SearchFilters()
-    merged = merge_filters(nl_filters, base)   # base values win on overlap
-
-    # Step 3: Text pipeline on the clean query
+    # Step 2: Text pipeline (normalization + typo correction) on the clean query
     processed = process_query(
         clean_query,
         corrector=corrector,
         enable_typo_correction=enable_typo_correction,
     )
 
-    return SearchRequest(processed_query=processed, filters=merged)
+    # Step 3: Re-run NL filter extraction on the corrected text, if typo
+    # correction actually changed anything. Merge any newly-found filters in
+    # (pass-1 findings win on scalar overlap — they came from the user's
+    # literal text, not a guessed correction). If the second pass strips
+    # more text out (the newly-recognized modifier), rebuild `processed` on
+    # that further-cleaned text so retrieval gets a clean head-term variant.
+    if nl_filters_enabled and processed.has_corrections():
+        from search_v2.query_processing.nl_filter_extractor import NLFilterExtractor
+        corrected_text = processed.primary_text()
+        nl_result_2 = NLFilterExtractor(settings).extract(corrected_text)
+        nl_filters = merge_filters(nl_result_2.filters, nl_filters)
+        if nl_result_2.clean_query != corrected_text:
+            processed = process_query(
+                nl_result_2.clean_query,
+                corrector=corrector,
+                enable_typo_correction=enable_typo_correction,
+            )
+
+    # Step 4: Product Intent Identification — operates on the final cleaned,
+    # typo-corrected head-term text. High confidence becomes a hard retrieval
+    # filter; medium confidence becomes a strong should-boost only; low/no
+    # match leaves filters untouched (today's behavior).
+    product_intent = None
+    intent_enabled = getattr(settings, "ENABLE_PRODUCT_INTENT", True)
+    if intent_enabled and product_intent_extractor is not None:
+        head_text = processed.primary_text()
+        if head_text.strip():
+            product_intent = product_intent_extractor.extract(head_text)
+            if product_intent.primary_product and product_intent.tier in ("high", "medium"):
+                intent_filters = SearchFilters(
+                    product_type=product_intent.primary_product,
+                    product_type_mode="filter" if product_intent.tier == "high" else "boost",
+                    product_type_category=product_intent.dominant_category,
+                    # Fresh Produce Identification (see canonical_produce.py
+                    # / SearchFilters.product_ids) — only ever non-empty
+                    # alongside tier=="high", set by an exact curated
+                    # vernacular produce match. Hard-restricts retrieval to
+                    # this family's real catalog ids, replacing the
+                    # text-based product_type clause entirely.
+                    product_ids=(
+                        list(product_intent.fresh_produce_ids)
+                        if product_intent.fresh_produce_ids else None
+                    ),
+                )
+                nl_filters = merge_filters(intent_filters, nl_filters)
+
+    # Step 5: Merge explicit + NL/intent-extracted filters (explicit wins)
+    base = explicit_filters or SearchFilters()
+    merged = merge_filters(nl_filters, base)   # base values win on overlap
+
+    return SearchRequest(processed_query=processed, filters=merged, product_intent=product_intent)

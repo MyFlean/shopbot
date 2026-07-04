@@ -127,6 +127,24 @@ class SearchV2Settings:
     EMBEDDING_MODEL_KEY: str = field(default_factory=lambda: _str("SEARCH_V2_EMBEDDING_MODEL", "bge-base-en-v1.5"))
     EMBEDDING_DIM: int = field(default_factory=lambda: _int("SEARCH_V2_EMBEDDING_DIM", 768))
 
+    # ── Semantic confidence floor ────────────────────────────────────────────
+    # A minimum raw kNN score a semantic hit must clear to be fed into fusion
+    # at all (0 = disabled, the default — no behavior change out of the box).
+    # RRF fuses purely on RANK, never looking at the raw score (see
+    # fusion.py's module docstring on why) — which means a semantic hit with
+    # a genuinely weak/unconfident similarity score still gets full RRF
+    # credit for whatever rank position it happened to land in. This knob is
+    # the one place that raw score CAN matter: for embeddings normalized to
+    # unit length (see embedding_service.py's normalize_embeddings=True) under
+    # OpenSearch's "cosinesimil" space, score = (1 + cosine_similarity) / 2,
+    # i.e. ~0.5 = orthogonal/unrelated, 1.0 = identical — but this depends on
+    # the actual space_type configured on the live index/mapping, which
+    # wasn't independently re-verified here. Left at 0 (off) until calibrated
+    # against real query/score distributions on the live cluster — turning it
+    # on with a wrong guess at the scale risks silently dropping legitimate
+    # weak-but-real semantic matches, which is worse than doing nothing.
+    SEMANTIC_MIN_SCORE: float = field(default_factory=lambda: _float("SEARCH_V2_SEMANTIC_MIN_SCORE", 0.0))
+
     # ── Fusion strategy: "rrf" | "weighted" | "native_hybrid" ──────
     # Default is RRF — see retrieval/fusion.py's module docstring for the full
     # reasoning. Short version: rank-based fusion sidesteps the BM25-vs-cosine
@@ -135,7 +153,16 @@ class SearchV2Settings:
     # on OpenSearch 2.15, which lacks native RRF support — that only shipped
     # in 2.19). "native_hybrid" remains available and is what Search V1 used.
     FUSION_STRATEGY: str = field(default_factory=lambda: _str("SEARCH_V2_FUSION_STRATEGY", "rrf"))
-    FUSION_WEIGHTS: List[float] = field(default_factory=lambda: _list("SEARCH_V2_FUSION_WEIGHTS", [0.45, 0.55]))
+    # [lexical_weight, semantic_weight]. Lexical is weighted >= semantic:
+    # lexical enforces query-term coverage (see lexical_query_builder.py's
+    # minimum_should_match — a product must contain most/all of the query's
+    # own words), while kNN/semantic similarity has no equivalent mechanism
+    # and can drift toward a merely topically-related product (e.g. "protein
+    # chips" pulling toward protein-powder embeddings) even when lexical has
+    # correctly identified the literal intended product. Previously semantic
+    # was weighted higher (0.55 vs 0.45), letting that drift outrank a
+    # correct, fully-covering lexical match in RRF.
+    FUSION_WEIGHTS: List[float] = field(default_factory=lambda: _list("SEARCH_V2_FUSION_WEIGHTS", [0.6, 0.4]))
     RRF_RANK_CONSTANT: int = field(default_factory=lambda: _int("SEARCH_V2_RRF_RANK_CONSTANT", 60))
 
     # ── Retrieval window sizes ──────────────────────────────────────
@@ -148,13 +175,21 @@ class SearchV2Settings:
     TYPO_MAX_EDIT_DISTANCE: int = field(default_factory=lambda: _int("SEARCH_V2_TYPO_MAX_EDIT_DISTANCE", 2))
 
     # ── Business ranking bounds (see ranking/business_ranking.py) ───
-    # Calibrated so business ranking can influence at most ~8 rank positions in either
-    # direction (derivation: max_mult = (k+8+1)/(k+1) = 69/61 ≈ 1.131 with k=60).
+    # Calibrated so business ranking can influence at most ~9 rank positions in either
+    # direction (derivation: max_mult = (k+9+1)/(k+1) = 70/61 ≈ 1.148 with k=60).
     # Previous bounds [0.75, 1.35] allowed ~21-position swings, which let high-nutrition
     # packaged products (e.g. protein bars) overtake more-relevant products (e.g. whey
-    # proteins) for queries where RRF had already produced the correct ordering.
-    BUSINESS_MIN_MULTIPLIER: float = field(default_factory=lambda: _float("SEARCH_V2_BUSINESS_MIN_MULTIPLIER", 0.90))
-    BUSINESS_MAX_MULTIPLIER: float = field(default_factory=lambda: _float("SEARCH_V2_BUSINESS_MAX_MULTIPLIER", 1.12))
+    # proteins) for queries where RRF had already produced the correct ordering — do not
+    # widen past here without re-deriving this the same way.
+    # [0.90, 1.12] (~8 positions) was previously so tight that flean_nutrition_rule's own
+    # base term (spanning 1.0-1.15 pre-widening) saturated against BUSINESS_MAX_MULTIPLIER
+    # for any product above roughly the 80th percentile, giving ZERO differentiation among
+    # 80th-100th percentile products — widened slightly to [0.85, 1.15] so the Flean signal
+    # (now made symmetric and full-range in flean_nutrition_rule) has real headroom to
+    # differentiate across the WHOLE percentile range, still comfortably short of the
+    # bounds that caused the original incident.
+    BUSINESS_MIN_MULTIPLIER: float = field(default_factory=lambda: _float("SEARCH_V2_BUSINESS_MIN_MULTIPLIER", 0.85))
+    BUSINESS_MAX_MULTIPLIER: float = field(default_factory=lambda: _float("SEARCH_V2_BUSINESS_MAX_MULTIPLIER", 1.15))
 
     # ── Business ranking: per-rule weights ───────────────────────────
     # Maps rule function name → scalar weight in [0.0, 1.0].
@@ -202,9 +237,47 @@ class SearchV2Settings:
     MACRO_LOW_CAL_KCAL: float = field(default_factory=lambda: _float("SEARCH_V2_MACRO_LOW_CAL_KCAL", 100.0))
     MACRO_HIGH_FIBER_G: float = field(default_factory=lambda: _float("SEARCH_V2_MACRO_HIGH_FIBER_G", 6.0))
     MACRO_LOW_SODIUM_MG: float = field(default_factory=lambda: _float("SEARCH_V2_MACRO_LOW_SODIUM_MG", 140.0))
+    MACRO_LOW_CARBS_G: float = field(default_factory=lambda: _float("SEARCH_V2_MACRO_LOW_CARBS_G", 15.0))
 
     # ── NL filter extraction: enable flag ────────────────────────────────────
     ENABLE_NL_FILTER_EXTRACTION: bool = field(default_factory=lambda: _bool("SEARCH_V2_ENABLE_NL_FILTERS", True))
+
+    # ── Product Intent Identification ─────────────────────────────────────────
+    # See query_processing/product_intent_extractor.py and
+    # indexing/product_type_lexicon_builder.py (search repo). Confidence for a
+    # resolved head term is a continuous, catalog-derived score in [0, 1]
+    # (purity * head_position_ratio * frequency_reliability) — these two
+    # thresholds are the only hand-set numbers in the whole mechanism, and
+    # they're generic cutoffs applied uniformly to every term, never a
+    # per-product/per-phrase special case.
+    #   >= HIGH_CONFIDENCE   -> hard-filter retrieval to this product type
+    #   [LOW, HIGH)          -> strong should-boost only, nothing excluded
+    #   <  LOW_CONFIDENCE    -> ignored entirely, retrieval unchanged
+    ENABLE_PRODUCT_INTENT: bool = field(default_factory=lambda: _bool("SEARCH_V2_ENABLE_PRODUCT_INTENT", True))
+    PRODUCT_INTENT_HIGH_CONFIDENCE: float = field(default_factory=lambda: _float("SEARCH_V2_PRODUCT_INTENT_HIGH_CONFIDENCE", 0.55))
+    PRODUCT_INTENT_LOW_CONFIDENCE: float = field(default_factory=lambda: _float("SEARCH_V2_PRODUCT_INTENT_LOW_CONFIDENCE", 0.25))
+    # Safety-net: if a high-confidence hard filter returns zero hits (lexicon
+    # miss on an otherwise-valid query), retry once with the filter removed
+    # rather than showing an empty page. See hybrid_search_orchestrator.py.
+    ENABLE_PRODUCT_INTENT_RELAXATION: bool = field(default_factory=lambda: _bool("SEARCH_V2_ENABLE_PRODUCT_INTENT_RELAXATION", True))
+    # Business policy override: when True, a genuinely zero-result
+    # product-type-gated query returns ZERO products — ENABLE_PRODUCT_INTENT_
+    # RELAXATION is ignored entirely, no retry, no fallback into
+    # unrelated/unfiltered results (e.g. "granola bar under 5 calories" — a
+    # real, correctly-empty answer — returning chocolate/drinks/oats instead
+    # is worse than an empty page for a strict, unambiguous product query).
+    # Default False preserves EXACTLY today's relaxation behavior; flip via
+    # env with no code change, no reindex, no lexicon change — this only
+    # gates the existing runtime relaxation retry in
+    # hybrid_search_orchestrator.py, nothing about how filters/confidence/
+    # product_type are computed.
+    STRICT_ZERO_RESULTS: bool = field(default_factory=lambda: _bool("SEARCH_V2_STRICT_ZERO_RESULTS", False))
+    # Retrieval pool ceiling used ONLY when a high-confidence product-type
+    # filter is active — decoupled from RETRIEVAL_K so "20 genuinely relevant
+    # products" or "100 genuinely relevant products" aren't truncated at the
+    # ordinary 75-candidate floor. Unfiltered/ambiguous queries are completely
+    # unaffected (still governed by RETRIEVAL_K as before).
+    PRODUCT_INTENT_MAX_POOL_SIZE: int = field(default_factory=lambda: _int("SEARCH_V2_PRODUCT_INTENT_MAX_POOL_SIZE", 300))
 
 
 SETTINGS = SearchV2Settings()

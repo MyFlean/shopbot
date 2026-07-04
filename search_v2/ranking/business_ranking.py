@@ -96,6 +96,20 @@ def get_rules_for_subcategory(subcategory: str, rules_data: Optional[Dict[str, A
 
 # ── Individual rules ─────────────────────────────────────────────────────
 
+def _symmetric_deviation_multiplier(deviation: float, settings: SearchV2Settings) -> float:
+    """Map a deviation-from-neutral in [-1.0, +1.0] to a multiplier using the
+    FULL configured business-ranking headroom on each side
+    (BUSINESS_MAX_MULTIPLIER above neutral, BUSINESS_MIN_MULTIPLIER below) —
+    settings-driven, not a hardcoded fraction of it, so the signal always
+    uses exactly the headroom the team has vetted as safe (see
+    apply_business_ranking()'s relevance-first guarantee), no more and no
+    less, regardless of how those bounds are tuned later."""
+    deviation = max(-1.0, min(1.0, deviation))
+    if deviation >= 0:
+        return 1.0 + deviation * (settings.BUSINESS_MAX_MULTIPLIER - 1.0)
+    return 1.0 + deviation * (1.0 - settings.BUSINESS_MIN_MULTIPLIER)
+
+
 def flean_nutrition_rule(source: Dict[str, Any], subcategory: str, settings: SearchV2Settings) -> float:
     """Reuses the real existing bonuses/penalties from
     shopping_bot/scoring_config.py (see scoring_rules_importer.py). Same
@@ -103,22 +117,33 @@ def flean_nutrition_rule(source: Dict[str, Any], subcategory: str, settings: Sea
     halfway toward 1.0 so several stacking bonuses/penalties can't blow past
     the overall clamp before clamping even applies.
 
+    Base term is SYMMETRIC around the 50th percentile (neutral) and spans
+    the full configured clamp range in both directions — a product at the
+    100th percentile gets the full BUSINESS_MAX_MULTIPLIER, a product at the
+    0th percentile gets the full BUSINESS_MIN_MULTIPLIER, matching V1's
+    scoring_config.py intent of Flean score being a first-class ranking
+    signal, not one that saturates against the clamp halfway through the
+    percentile range and never differentiates below-median products at all
+    (the previous 1.0-to-1.15-only formula did both).
+
     Fallback: when stats.adjusted_score_percentiles.subcategory_percentile is
     absent (common for fresh produce which has a Flean score but no computed
-    subcategory percentile), falls back to flean_score.adjusted_score.
-    flean_score.adjusted_score is in [0, 1]; the formula 1 + 0.15 * v maps it
-    to [1.0, 1.15] — identical output range to the percentile formula.
+    subcategory percentile), falls back to flean_score.adjusted_score (native
+    Mongo-sourced field, read as-is — no recomputation), treating 0.5 as
+    neutral over its native [0, 1] range.
     """
     rules = get_rules_for_subcategory(subcategory)
     multiplier = 1.0
 
     flean_pct = _get_nested(source, "stats.adjusted_score_percentiles.subcategory_percentile")
     if isinstance(flean_pct, (int, float)):
-        multiplier *= 1.0 + 0.15 * (max(0.0, min(100.0, flean_pct)) / 100.0)
+        deviation = (max(0.0, min(100.0, flean_pct)) - 50.0) / 50.0
+        multiplier *= _symmetric_deviation_multiplier(deviation, settings)
     else:
         adjusted = _get_nested(source, "flean_score.adjusted_score")
         if isinstance(adjusted, (int, float)):
-            multiplier *= 1.0 + 0.15 * max(0.0, min(1.0, float(adjusted)))
+            deviation = (max(0.0, min(1.0, float(adjusted))) - 0.5) * 2.0
+            multiplier *= _symmetric_deviation_multiplier(deviation, settings)
 
     for bonus in rules.get("bonuses", []):
         pct = _get_nested(source, bonus["field"])
@@ -220,11 +245,45 @@ DEFAULT_RULES: List[RuleFn] = [
 ]
 
 
+def _is_exact_product_type_match(
+    source: Dict[str, Any], product_type: Optional[str], product_type_category: Optional[str]
+) -> bool:
+    """True if `source` is an exact Product Intent Identification match for
+    the query's resolved product_type — i.e. the SAME admission test
+    retrieval/filters.py already uses for a high-confidence hard filter
+    (product_type substring match, or category-leaf match), just evaluated
+    here in Python against a document already in hand rather than as an ES
+    clause. Reusing that exact definition (not inventing a second one) is
+    deliberate: "exact match" means the same thing everywhere in this
+    pipeline, whether or not the query's confidence was high enough to
+    invoke a hard filter at retrieval time.
+
+    Generic and catalog-derived — reads only fields Product Intent
+    Identification already populated (product_type, category_hierarchies) —
+    no product name, category, or word ever appears in this function."""
+    if not product_type:
+        return False
+    doc_product_type = str(source.get("product_type") or "").lower()
+    if product_type.lower() in doc_product_type:
+        return True
+    if product_type_category:
+        for segment in source.get("category_hierarchies") or []:
+            if not isinstance(segment, dict):
+                continue
+            segments = segment.get("segments") or []
+            if segments and str(segments[-1]) == product_type_category:
+                return True
+    return False
+
+
 def apply_business_ranking(
     items: List[Any],
     subcategory: str = "_default",
     rules: Optional[List[RuleFn]] = None,
     settings: Optional[SearchV2Settings] = None,
+    resort: bool = True,
+    product_type: Optional[str] = None,
+    product_type_category: Optional[str] = None,
 ) -> List[RankedItem]:
     """
     `items`: anything with `.doc_id`, `.source`, `.fused_score` (and
@@ -233,6 +292,52 @@ def apply_business_ranking(
     rather than an import (keeping this module's only dependency on
     retrieval-side code be the CALLER's, not this file's — see module
     docstring on independence).
+
+    Relevance-first guarantee (Flean/business signals are a SECONDARY,
+    tie-breaking signal, never a primary one): `final_score = relevance_score
+    * multiplier`, with `multiplier` clamped to
+    [BUSINESS_MIN_MULTIPLIER, BUSINESS_MAX_MULTIPLIER] (0.90-1.12 by
+    default). Because the multiplier is a bounded *ratio* of each item's own
+    relevance_score — not an absolute add-on — it can shift final_score by at
+    most ~20% relative to that item's own relevance. Two items whose
+    relevance differs by MORE than that can never be reordered by business
+    ranking alone, regardless of which retrieval/fusion strategy produced
+    relevance_score (RRF, weighted, or raw lexical BM25 all have this
+    property preserved automatically, since it's scale-relative, not
+    scale-specific). Items close enough in relevance to be "comparably
+    relevant" (within that ~20% band) CAN be reordered — which is exactly
+    the desired behavior: prefer higher Flean score among near-ties, never
+    let it override a real relevance gap. Do not widen the clamp bounds
+    without re-verifying this property (see settings.py's own note on the
+    incident that narrowed them from [0.75, 1.35]).
+
+    `product_type` / `product_type_category` (optional — pass
+    req.filters.product_type / .product_type_category from Product Intent
+    Identification; None for either is a complete no-op, byte-identical to
+    before this parameter existed): when set, resorting is done in TWO tiers
+    — every item that is an exact product-type match (see
+    _is_exact_product_type_match()) is ranked ahead of every item that
+    isn't, with final_score ordering preserved WITHIN each tier. This closes
+    a specific gap the bounded-multiplier guarantee above does not cover on
+    its own: that guarantee only protects against a LARGE relevance gap
+    being overturned, but for a small product family (e.g. only 4 "eggs"
+    documents exist) an exact match's relevance can legitimately be close
+    enough to a same-word-but-different-product lexical match (e.g. "egg
+    mayonnaise", "egg-less rusk") that the existing bound allows reordering
+    — mathematically consistent with the bound, but wrong from a search
+    standpoint: a document that IS the product family a user asked for
+    should never rank below one that merely mentions the word. The tiering
+    only ever affects ORDER; it does not change relevance_score,
+    business_multiplier, or final_score for any item, and a query with no
+    resolved product_type (product_type=None) behaves exactly as before.
+
+    `resort`: when False, `business_multiplier`/`final_score` are still
+    computed and returned (so callers can display/debug them), but the
+    incoming item ORDER is preserved rather than re-sorted by final_score.
+    Set this to False when the caller already applied an explicit,
+    non-relevance sort the user asked for (e.g. price_asc, protein_desc) —
+    Flean/business signals are a relevance tie-breaker, not a replacement for
+    an explicit user-requested sort, so they must never re-shuffle it.
     """
     settings = settings or SETTINGS
     rules = rules if rules is not None else DEFAULT_RULES
@@ -271,7 +376,22 @@ def apply_business_ranking(
             semantic_score=getattr(item, "semantic_score", None),
         ))
 
-    ranked.sort(key=lambda r: r.final_score, reverse=True)
+    if resort:
+        if product_type:
+            # Tier 0 (exact product-type match) sorts entirely ahead of tier 1
+            # (everything else); final_score still governs order WITHIN each
+            # tier. See product_type/product_type_category in the docstring
+            # above. Ascending sort on (tier, -final_score) == descending
+            # final_score within an ascending tier order — ties within a tier
+            # keep their input order (Python's sort is stable).
+            ranked.sort(
+                key=lambda r: (
+                    0 if _is_exact_product_type_match(r.source, product_type, product_type_category) else 1,
+                    -r.final_score,
+                )
+            )
+        else:
+            ranked.sort(key=lambda r: r.final_score, reverse=True)
     return ranked
 
 

@@ -59,8 +59,30 @@ SORT_SPECS: Dict[str, List[Dict[str, Any]]] = {
         },
         {"_score": "desc"},
     ],
+    "fiber": [
+        {
+            "stats.fiber_percentiles.subcategory_percentile": {
+                "order": "desc",
+                "missing": "_last",
+            }
+        },
+        {"_score": "desc"},
+    ],
+    "fat": [
+        {
+            "stats.total_fat_penalty_percentiles.subcategory_percentile": {
+                "order": "asc",
+                "missing": "_last",
+            }
+        },
+        {"_score": "desc"},
+    ],
 }
 
+# NOTE: "protein_desc"/"fiber_desc"/"fat_asc"/"flean_score_desc" are the
+# ACTUAL sort_by values the public API accepts (see
+# shopping_bot/routes/product_api.py's VALID_SORT_OPTIONS) — kept in sync
+# with hybrid_search_orchestrator.py's _apply_post_fusion_sort aliases.
 _ALIASES: Dict[str, str] = {
     "price": "price_asc",
     "price_low_to_high": "price_asc",
@@ -69,6 +91,11 @@ _ALIASES: Dict[str, str] = {
     "highest_protein": "protein",
     "lowest_sugar": "low_sugar",
     "newest": "relevance",
+    "protein_desc": "protein",
+    "fiber_desc": "fiber",
+    "fibre_desc": "fiber",
+    "fat_asc": "fat",
+    "flean_score_desc": "quality",
 }
 
 

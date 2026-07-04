@@ -79,6 +79,12 @@ except Exception as exc:
 # Importing from the production module ensures CLI and HTTP are always in sync.
 from shopping_bot.routes.unified_search import _search_engine  # noqa: E402
 
+# Same product-card transform /rs/v1/search applies to every result before it
+# reaches the client (see unified_search.py's unified_search()) — used below
+# to display the real user-facing Flean score, not gateway.py's raw 0-100
+# adjusted_score.
+from shopping_bot.data_fetchers.es_products import transform_to_product_card  # noqa: E402
+
 # ── Step 5: initialize engines according to SEARCH_ENGINE ────────────────────
 _engine_setting = _search_engine()
 
@@ -240,12 +246,24 @@ def _print(result: dict, raw_q: str, engine_label: str) -> None:
         brand = p.get("brand") or "—"
         price = p.get("price")
         score = p.get("score")
+        # The user-facing Flean score (X/10) — NOT p["flean_score"], which is
+        # the raw 0-100 adjusted_score gateway.py attaches. The production
+        # app never shows that raw number: /rs/v1/search (unified_search.py)
+        # pipes every result through transform_to_product_card() before it
+        # reaches the client, and THAT function is what actually derives the
+        # displayed 0-10 score (prefers a stored badge label, else
+        # adjusted_score/10, half-up rounded — see es_products.py). Calling
+        # the real function here (not reimplementing its formula) guarantees
+        # this always matches the app, including if that logic ever changes.
+        card = transform_to_product_card(p)
+        flean = card.get("flean_score") if card else None
+        flean_display = f"{flean}/10" if flean is not None else "None"
         pid   = p.get("id") or "—"
         cats  = p.get("category") or "—"
         rating = p.get("avg_rating")
         print(f"  {i:>2}. {name}")
         print(f"      id={pid}  brand={brand}  price=₹{price}  "
-              f"score={score}  rating={rating}  category={cats}")
+              f"score={score}  flean_score={flean_display}  rating={rating}  category={cats}")
     print()
 
 

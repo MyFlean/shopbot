@@ -40,6 +40,34 @@ _WORD_RE = re.compile(r"[a-zA-Z]+")
 # there is exactly one place to change if the file ever moves.
 VOCABULARY_PATH: Path = Path(__file__).resolve().parent / "vocabulary.json"
 
+# ── Noise controls (generic — length/count-based, no product/brand names) ───
+# A single "word" longer than this is essentially never a real token typed by
+# a user or found in a dictionary — it's almost always an indexing artifact
+# (e.g. a run-on OCR'd ingredient string). Applies uniformly to every token
+# from every field, not just the compound-generation path below.
+MAX_TOKEN_LENGTH = 24
+
+# Compound generation (joining adjacent words into one token, e.g. "rite" +
+# "bite" -> "ritebite") exists ONLY to let typo_correction.py's segmentation
+# repair catch a real 2-3 word brand/compound term that a user typed with an
+# errant space (see repair_segmentation()'s docstring). It is NOT meant to
+# concatenate an entire multi-word product name into one token — "Aaha Desi
+# Handmade Plain Mathri" becoming a single 25-character token is noise, not a
+# compound-word candidate (no realistic typo collapses 5 words into one, and
+# such full-name compounds are near-universally unique — see MIN_KEEP_FREQUENCY
+# below for why that matters). Bounding the word count catches the intended
+# case while excluding this one.
+MIN_COMPOUND_WORDS = 2
+MAX_COMPOUND_WORDS = 3
+
+# Tokens that appear only once anywhere in the ENTIRE catalog and aren't
+# otherwise trusted (seed vocabulary / synonym-derived) are overwhelmingly
+# noise — misspellings, OCR artifacts, or one-off compound names — rather
+# than real vocabulary. See prune_noise(), applied once after merging all
+# sources, not per-field here (a legitimate rare term can still accumulate
+# frequency across MULTIPLE products/fields before pruning runs).
+MIN_KEEP_FREQUENCY = 2
+
 
 def load_vocabulary(path: Path = VOCABULARY_PATH) -> Dict[str, int]:
     """Load the generated vocabulary from disk.  Returns an empty dict when the
@@ -139,6 +167,28 @@ def merge_vocabularies(*vocabs: Dict[str, int]) -> Dict[str, int]:
     return dict(merged)
 
 
+def prune_noise(
+    vocab: Dict[str, int],
+    trusted_terms: Optional[Iterable[str]] = None,
+    min_frequency: int = MIN_KEEP_FREQUENCY,
+) -> Dict[str, int]:
+    """Drop tokens occurring fewer than `min_frequency` times across the
+    WHOLE catalog, unless already trusted (present in the curated seed
+    vocabulary or synonym-derived vocabulary — correct by construction
+    regardless of how rarely they occur). Frequency-1 catalog-derived tokens
+    are overwhelmingly noise: misspellings, OCR/data-entry artifacts, or
+    one-off compound names — this is where the indexing pipeline removes the
+    bulk of that noise AT THE SOURCE, rather than relying solely on runtime
+    safeguards in typo_correction.py (MIN_SEGMENTATION_FREQUENCY there is a
+    second, independent layer of defense — this is the first)."""
+    trusted = set(trusted_terms or ())
+    return {
+        term: freq
+        for term, freq in vocab.items()
+        if freq >= min_frequency or term in trusted
+    }
+
+
 def build_and_write_vocabulary(
     mongo_uri: str,
     mongo_db: str,
@@ -150,13 +200,32 @@ def build_and_write_vocabulary(
     it to *path*.  This is the single call the indexer makes for full ``all``
     runs.  Also directly callable by tests without going through main().
     Returns the merged vocabulary so the caller can log ``len(merged)``."""
-    vocabs: list = [seed_vocabulary()]
+    seed = seed_vocabulary()
+    trusted = set(seed)
+    vocabs: list = [seed]
     if synonym_lines is not None:
-        vocabs.append(vocabulary_from_synonym_lines(synonym_lines))
-    vocabs.append(build_vocabulary_from_mongo(mongo_uri, mongo_db, mongo_collection))
+        synonym_vocab = vocabulary_from_synonym_lines(synonym_lines)
+        trusted.update(synonym_vocab)
+        vocabs.append(synonym_vocab)
+    mongo_vocab = build_vocabulary_from_mongo(mongo_uri, mongo_db, mongo_collection)
+    vocabs.append(prune_noise(mongo_vocab, trusted_terms=trusted))
     merged = merge_vocabularies(*vocabs)
     write_vocabulary(merged, path)
     return merged
+
+
+def _add_tokens(vocab: "Counter[str]", text: str, allow_compound: bool) -> None:
+    """Tokenize `text` and add its words (and, when allowed, a bounded
+    2-3-word compound) to `vocab`. Shared by both the scalar-field and
+    list-field branches below so the noise-control rules only live in ONE
+    place."""
+    words = [w for w in _WORD_RE.findall(text.lower()) if 2 <= len(w) <= MAX_TOKEN_LENGTH]
+    for word in words:
+        vocab[word] += 1
+    if allow_compound and MIN_COMPOUND_WORDS <= len(words) <= MAX_COMPOUND_WORDS:
+        compound = "".join(words)
+        if len(compound) >= 4 and len(compound) <= MAX_TOKEN_LENGTH:
+            vocab[compound] += 1
 
 
 def build_vocabulary_from_mongo(
@@ -189,7 +258,7 @@ def build_vocabulary_from_mongo(
     if limit:
         cursor = cursor.limit(limit)
 
-    # Brand and name fields get their concatenated multi-word form added as
+    # Brand and name fields get their concatenated 2-3-word form added as
     # well as individual tokens.  This lets the segmentation repair in
     # typo_correction.py catch queries like "muscle blaze" → "muscleblaze"
     # or "rite bite" → "ritebite" as exact-match (distance-0) repairs.
@@ -200,26 +269,13 @@ def build_vocabulary_from_mongo(
     for doc in cursor:
         for field_name in fields:
             value = doc.get(field_name)
+            allow_compound = field_name in _compound_fields
             if isinstance(value, str):
-                words = _WORD_RE.findall(value.lower())
-                for word in words:
-                    if len(word) >= 2:
-                        vocab[word] += 1
-                if field_name in _compound_fields and len(words) >= 2:
-                    compound = "".join(words)
-                    if len(compound) >= 4:
-                        vocab[compound] += 1
+                _add_tokens(vocab, value, allow_compound)
             elif isinstance(value, list):
                 for item in value:
                     if isinstance(item, str):
-                        words = _WORD_RE.findall(item.lower())
-                        for word in words:
-                            if len(word) >= 2:
-                                vocab[word] += 1
-                        if field_name in _compound_fields and len(words) >= 2:
-                            compound = "".join(words)
-                            if len(compound) >= 4:
-                                vocab[compound] += 1
+                        _add_tokens(vocab, item, allow_compound)
 
     client.close()
     return dict(vocab)
@@ -237,11 +293,16 @@ if __name__ == "__main__":
     parser.add_argument("--mongo-collection", default="products_master")
     args = parser.parse_args()
 
-    vocabs = [seed_vocabulary()]
+    seed = seed_vocabulary()
+    trusted = set(seed)
+    vocabs = [seed]
     if args.synonym_debug_json:
-        vocabs.append(vocabulary_from_synonym_groups(Path(args.synonym_debug_json)))
+        synonym_vocab = vocabulary_from_synonym_groups(Path(args.synonym_debug_json))
+        trusted.update(synonym_vocab)
+        vocabs.append(synonym_vocab)
     if args.mongo_uri:
-        vocabs.append(build_vocabulary_from_mongo(args.mongo_uri, args.mongo_db, args.mongo_collection))
+        mongo_vocab = build_vocabulary_from_mongo(args.mongo_uri, args.mongo_db, args.mongo_collection)
+        vocabs.append(prune_noise(mongo_vocab, trusted_terms=trusted))
 
     merged = merge_vocabularies(*vocabs)
     out_path = Path(args.out)

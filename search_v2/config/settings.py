@@ -174,6 +174,17 @@ class SearchV2Settings:
     FUZZINESS: str = field(default_factory=lambda: _str("SEARCH_V2_FUZZINESS", "AUTO"))
     TYPO_MAX_EDIT_DISTANCE: int = field(default_factory=lambda: _int("SEARCH_V2_TYPO_MAX_EDIT_DISTANCE", 2))
 
+    # ── Runtime artifact fetch (vocabulary.json / product_type_lexicon.json) ──
+    # Optional: fetched once at gateway startup (see gateway.py's _build_search())
+    # and, on success, overwritten onto the same local file the existing
+    # load_vocabulary()/load_product_type_lexicon() already read — those
+    # functions are unchanged. Empty URL = fetch skipped entirely, gateway
+    # falls back to whatever is already on the local file, exactly as before
+    # this feature existed.
+    VOCAB_URL: str = field(default_factory=lambda: _str("SEARCH_V2_VOCAB_URL", "https://api.flean.ai/ui/app-config/vocabulary"))
+    PRODUCT_TYPE_LEXICON_URL: str = field(default_factory=lambda: _str("SEARCH_V2_PRODUCT_TYPE_LEXICON_URL", "https://api.flean.ai/ui/app-config/product-type-lexicon"))
+    ARTIFACT_FETCH_TIMEOUT_SEC: float = field(default_factory=lambda: _float("SEARCH_V2_ARTIFACT_FETCH_TIMEOUT_SEC", 2.0))
+
     # ── Business ranking bounds (see ranking/business_ranking.py) ───
     # Calibrated so business ranking can influence at most ~9 rank positions in either
     # direction (derivation: max_mult = (k+9+1)/(k+1) = 70/61 ≈ 1.148 with k=60).

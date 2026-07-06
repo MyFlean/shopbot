@@ -7,9 +7,12 @@ gunicorn preload (copy-on-write shared model weights across workers).
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 _log = logging.getLogger("search_gateway")
@@ -18,6 +21,85 @@ _log = logging.getLogger("search_gateway")
 def _map_filters(params: Dict[str, Any]):
     from search_v2.retrieval.filters import SearchFilters
     return SearchFilters.from_dict(params)
+
+
+def _validate_vocabulary_payload(payload: Any) -> Optional[Dict[str, int]]:
+    """Return a cleaned {token: frequency} dict if `payload` looks like a
+    real vocabulary (mirrors what load_vocabulary()/seed_vocabulary() already
+    produce), else None. Never raises."""
+    if not isinstance(payload, dict) or not payload:
+        return None
+    vocab: Dict[str, int] = {}
+    for token, freq in payload.items():
+        if not isinstance(token, str) or not token.strip():
+            return None
+        try:
+            vocab[token] = int(freq)
+        except (TypeError, ValueError):
+            return None
+    return vocab
+
+
+def _validate_product_type_lexicon_payload(payload: Any) -> Optional[Dict[str, Any]]:
+    """Return `payload` unchanged if it looks like a real
+    {term: {confidence, ...}} lexicon, else None. Never raises."""
+    if not isinstance(payload, dict) or not payload:
+        return None
+    for term, entry in payload.items():
+        if not isinstance(term, str) or not isinstance(entry, dict) or "confidence" not in entry:
+            return None
+    return payload
+
+
+def _fetch_and_overwrite_artifact(
+    url: str,
+    timeout_sec: float,
+    local_path: Path,
+    validator: Callable[[Any], Optional[Any]],
+    artifact_label: str,
+) -> None:
+    """
+    Fetch `artifact_label`'s JSON from `url` and, if it downloads and
+    validates cleanly, atomically overwrite `local_path` with it — the SAME
+    file load_vocabulary()/load_product_type_lexicon() read immediately
+    after this call, unchanged. Those functions and everything downstream of
+    them (VocabularyCorrector, ProductIntentExtractor) never need to know
+    whether the file they read came from this fetch or was already there.
+
+    Never raises, and never touches `local_path`, on any failure — no URL
+    configured, network error, timeout, non-2xx status, invalid JSON, or a
+    payload that fails `validator`. On every one of those, the existing
+    local file is left exactly as it was and the caller's existing
+    load_*()/seed_vocabulary() fallback runs completely unchanged. There is
+    deliberately no fail-open/fail-closed setting here: a fetch that doesn't
+    produce a clean result is just "nothing new today," never a startup
+    error — gateway startup must never depend on this succeeding.
+    """
+    if not url:
+        return
+
+    import requests
+
+    try:
+        resp = requests.get(url, timeout=timeout_sec)
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as exc:
+        _log.warning("gateway: failed to fetch %s from %s (%s) — using local file", artifact_label, url, exc)
+        return
+
+    validated = validator(payload)
+    if validated is None:
+        _log.warning("gateway: %s payload from %s failed validation — using local file", artifact_label, url)
+        return
+
+    try:
+        tmp_path = local_path.with_suffix(local_path.suffix + ".tmp")
+        tmp_path.write_text(json.dumps(validated), encoding="utf-8")
+        os.replace(tmp_path, local_path)
+        _log.info("gateway: %s refreshed from %s (%d entries)", artifact_label, url, len(validated))
+    except Exception as exc:
+        _log.warning("gateway: failed to write fetched %s to %s (%s) — using local file", artifact_label, local_path, exc)
 
 
 def _to_v1_product(item: Any, rank: int) -> Dict[str, Any]:
@@ -140,6 +222,10 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
     corrector: Optional[VocabularyCorrector] = None
     if SETTINGS.ENABLE_TYPO_CORRECTION:
         try:
+            _fetch_and_overwrite_artifact(
+                SETTINGS.VOCAB_URL, SETTINGS.ARTIFACT_FETCH_TIMEOUT_SEC,
+                VOCABULARY_PATH, _validate_vocabulary_payload, "vocabulary.json",
+            )
             generated = load_vocabulary(VOCABULARY_PATH)
             vocab = generated if generated else seed_vocabulary()
             corrector = VocabularyCorrector(vocab)
@@ -156,6 +242,10 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
     product_intent_extractor: Optional[ProductIntentExtractor] = None
     if SETTINGS.ENABLE_PRODUCT_INTENT:
         try:
+            _fetch_and_overwrite_artifact(
+                SETTINGS.PRODUCT_TYPE_LEXICON_URL, SETTINGS.ARTIFACT_FETCH_TIMEOUT_SEC,
+                PRODUCT_TYPE_LEXICON_PATH, _validate_product_type_lexicon_payload, "product_type_lexicon.json",
+            )
             lexicon = load_product_type_lexicon(PRODUCT_TYPE_LEXICON_PATH)
             # Fresh Produce Identification — curated vernacular produce
             # aliases (aam -> mango family, aloo -> potato family, ...)

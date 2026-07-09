@@ -6,7 +6,7 @@ This module provides API endpoints for the Flutter app's home page:
 1. GET /api/v1/home/banners - Promotional banners/ads carousel
 2. GET /api/v1/home/categories - Product categories (4 by default, all with ?all=true)
 3. GET /api/v1/home/best-selling - Best selling products (category-path score based)
-4. GET|POST /api/v1/home/curated - Legacy home curated strip (up to 8 from ES)
+4. GET|POST /api/v1/home/curated - Legacy home curated strip (up to 12 from ES)
 5. GET|POST /api/v1/home/curated/all - Legacy See All (up to 12 per collection from ES)
 6. GET|POST /api/v1/home/flean-picks - Flean Picks collections (GET accepts same query params as POST body)
 7. GET /api/v1/home/flean-picks/<collection_key> - Single Flean Picks collection (legacy)
@@ -1185,7 +1185,7 @@ def get_supplements() -> tuple[Dict[str, Any], int]:
 
 @bp.route("/api/v1/home/curated", methods=["GET", "POST"])
 def get_curated_home() -> tuple[Dict[str, Any], int]:
-    """Legacy: home curated strip. Delegates to unified flean picks (``source=home``, up to 8 products)."""
+    """Legacy: home curated strip. Delegates to unified flean picks (``source=home``, up to 12 products)."""
     try:
         filters = _extract_curate_filters()
         effective_pincode = _resolve_canonical_request_pincode()
@@ -1243,7 +1243,7 @@ def _unified_flean_picks_logic(
     """Core logic shared by the new unified endpoint and legacy wrappers.
 
     source == "home":
-        Flat ``products`` list: up to 8 items (2 per Flean Picks subcategory),
+        Flat ``products`` list: up to 12 items (3 per Flean Picks subcategory),
         each bucket ordered by flean percentile descending in the ES query.
     source != "home" (e.g. ``see_all``):
         ``collections`` with 4 subcategories, up to 12 products each.
@@ -1258,7 +1258,7 @@ def _unified_flean_picks_logic(
     no_match_message = "No products matched your selected filters. Try relaxing your filters."
 
     force_legacy = (os.getenv("FLEAN_PICKS_FORCE_LEGACY") or "").strip().lower() in ("1", "true", "yes", "on")
-    needed = 2 if source == "home" else 12
+    needed = 3 if source == "home" else 12
     fetch_needed = (
         FLEAN_PICKS_HOME_FETCH_PER_SUBCATEGORY
         if source == "home"
@@ -1653,7 +1653,7 @@ def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
     Mode selection uses strict equality: only ``source == "home"`` selects home mode.
 
     ``source == "home"``:
-        Response data includes flat ``products`` (up to 8: 2 top picks per subcategory).
+        Response data includes flat ``products`` (up to 12: 3 top picks per subcategory).
     Any other ``source`` (including omitted, or ``see_all``):
         Response data includes ``collections`` (4 subcategories, up to 12 products each).
 

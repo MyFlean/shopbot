@@ -63,6 +63,72 @@ _WORD_RE = re.compile(r"[a-zA-Z]+")
 # has no indexing/ package at all).
 MAX_NGRAM_WORDS = 3
 
+# ── Broad Category fallback ──────────────────────────────────────────────────
+# Fixes broad/generic queries ("cheese", "milk", "vegetables", "fruits") that
+# resolve_head_term() correctly refuses to anchor on: a term that names an
+# entire catalog category is, by definition, spread across many differently-
+# named products rather than concentrated in one narrow family, so its own
+# purity-based confidence is (correctly) too low to clear PRODUCT_INTENT_LOW_
+# CONFIDENCE. That's the right call for "is this specific enough to filter/
+# boost as a distinct PRODUCT?" — but it throws away a different, simpler,
+# still-useful signal: "does the catalog have an entire CATEGORY by this
+# name?", which doesn't need a purity score at all.
+#
+# _known_categories (built in ProductIntentExtractor.__init__) is sourced
+# from the SAME product_type_lexicon.json every other resolution already
+# uses — no new artifact, no new fetch pipeline. It's just the set of every
+# dominant_category value the catalog-derived lexicon has ever assigned to
+# ANY term (68 real leaf categories at last count: "cheese", "veggies",
+# "fruits", "milk", "chips_and_crisps", ...). Because dominant_category only
+# ever comes from real product-name statistics (see
+# product_type_lexicon_builder.py), every value in this set is, by
+# construction, a real, currently-populated catalog category — never
+# invented, never hardcoded per query.
+#
+# This is checked ONLY as a fallback, after resolve_head_term() finds
+# nothing (see extract() below) — it never competes with, overrides, or
+# re-ranks an existing head-term resolution, so already-correct behavior for
+# compound queries ("mozzarella cheese", "whole wheat bread", "tomato
+# ketchup") is unaffected: those resolve via resolve_head_term() and never
+# reach this code path at all.
+CATEGORY_FALLBACK_CONFIDENCE = 0.4  # deliberately mid-"medium" — boost only, see filters.py's product_type_mode="boost"
+
+# A few common category words are colloquial contractions/synonyms that
+# don't derive from the catalog's own leaf name via simple pluralization
+# ("veggies" is not "vegetable" + "s"). This is a general English-vocabulary
+# equivalence, not a per-query special case — it applies to whichever leaf
+# category the alias's target resolves to, wherever (if anywhere) that leaf
+# actually exists in this catalog.
+_CATEGORY_ALIAS_OVERRIDES: Dict[str, str] = {
+    "vegetable": "veggies",
+    "vegetables": "veggies",
+    "veggie": "veggies",
+}
+
+
+def _build_category_alias_map(categories) -> Dict[str, str]:
+    """{normalized query phrase -> catalog dominant_category leaf}, derived
+    purely from the leaf names already present in the lexicon (see module
+    comment above) plus simple singular/plural normalization."""
+    alias_map: Dict[str, str] = {}
+    for cat in categories:
+        if not cat:
+            continue
+        label = cat.replace("_", " ").strip().lower()
+        if not label:
+            continue
+        forms = {label}
+        if label.endswith("s") and len(label) > 1:
+            forms.add(label[:-1])
+        else:
+            forms.add(label + "s")
+        for form in forms:
+            alias_map.setdefault(form, cat)
+    for alias, target_cat in _CATEGORY_ALIAS_OVERRIDES.items():
+        if target_cat in categories:
+            alias_map.setdefault(alias, target_cat)
+    return alias_map
+
 
 @dataclass
 class ProductIntentResult:
@@ -107,6 +173,7 @@ def resolve_head_term(
     tokens: List[str],
     lexicon: Dict[str, Dict[str, Any]],
     min_confidence: float = 0.0,
+    high_confidence: Optional[float] = None,
 ) -> Optional[Tuple[str, Dict[str, Any], int]]:
     """Find the TRAILING word phrase (up to MAX_NGRAM_WORDS) of `tokens` with
     the HIGHEST catalog-derived confidence among every trailing 1/2/3-word
@@ -141,6 +208,32 @@ def resolve_head_term(
     always stores its best-effort guess, deferring the tiering decision to
     query time).
 
+    `high_confidence` — when provided (query time only; index-time labeling
+    in document_transformer.py deliberately omits it, unaffected), resolves
+    a real over-narrowing failure mode: comparing raw confidence alone lets a
+    longer, coincidentally-high-purity compound (e.g. "whole wheat bread" at
+    0.87, because that exact string is a tightly-defined SKU family in the
+    catalog) beat a shorter candidate that is ALSO comfortably high-tier on
+    its own (e.g. "bread" at 0.69) — even though the query's actual intent
+    ("whole wheat" as a modifier on "bread") is better served by anchoring
+    retrieval on the broad term and letting the modifier influence ranking,
+    not hard-gate admission (see SearchV2Settings.PRODUCT_INTENT_HIGH_CONFIDENCE
+    and retrieval/filters.py's product_type "filter" mode, which excludes any
+    product whose own name/product_type doesn't contain the FULL resolved
+    phrase — "whole wheat bread" would wrongly exclude a plain "Multigrain
+    Bread" that's a perfectly good bread result). Once a candidate is already
+    confidently at the SAME tier (both >= high_confidence, or both in
+    [min_confidence, high_confidence)), a longer phrase's extra confidence
+    is not buying a meaningfully more reliable signal — it's just a tighter
+    substring match. So: among candidates reaching the same best tier as the
+    single highest-confidence match, prefer the SHORTEST (most general);
+    ties within that tier broken by highest confidence, deterministically.
+    This never changes which TIER wins (a genuinely medium-only best match
+    still loses to nothing, and a candidate that fails min_confidence is
+    never promoted) — it only changes which candidate is picked once a tier
+    is already decided, so it cannot make retrieval more permissive than
+    today, only less spuriously narrow.
+
     Returns (matched_term, lexicon_entry, split_index) where split_index is
     the token index the match starts at (tokens[:split_index] are the
     modifiers) — or None if nothing cleared `min_confidence` (or nothing in
@@ -150,7 +243,7 @@ def resolve_head_term(
     if n == 0 or not lexicon:
         return None
 
-    best: Optional[Tuple[float, str, Dict[str, Any], int]] = None
+    candidates: List[Tuple[float, str, Dict[str, Any], int, int]] = []  # (confidence, term, entry, split_idx, n_words)
     max_size = min(MAX_NGRAM_WORDS, n)
     for size in range(max_size, 0, -1):
         split_idx = n - size
@@ -172,11 +265,22 @@ def resolve_head_term(
             continue
 
         confidence = float(entry.get("confidence", 0.0))
-        if best is None or confidence > best[0]:
-            best = (confidence, matched_term, entry, split_idx)
+        candidates.append((confidence, matched_term, entry, split_idx, size))
 
-    if best is None or best[0] < min_confidence:
+    if not candidates:
         return None
+
+    best = max(candidates, key=lambda c: c[0])
+    if best[0] < min_confidence:
+        return None
+
+    if high_confidence is not None:
+        best_tier_floor = high_confidence if best[0] >= high_confidence else min_confidence
+        same_tier = [c for c in candidates if c[0] >= best_tier_floor]
+        # Shortest n_words wins; ties broken by highest confidence, then by
+        # `candidates`' own (deterministic, size-descending) iteration order.
+        best = min(same_tier, key=lambda c: (c[4], -c[0]))
+
     return best[1], best[2], best[3]
 
 
@@ -220,6 +324,41 @@ class ProductIntentExtractor:
         self._produce_aliases = produce_aliases or {}
         from search_v2.config.settings import SETTINGS as _SETTINGS
         self._settings = settings or _SETTINGS
+        known_categories = {
+            entry.get("dominant_category")
+            for entry in self._lexicon.values()
+            if entry.get("dominant_category")
+        }
+        self._category_alias_map = _build_category_alias_map(known_categories)
+
+    def _resolve_category_fallback(self, tokens: List[str]) -> Optional[ProductIntentResult]:
+        """Broad Category fallback — see module comment above CATEGORY_FALLBACK_
+        CONFIDENCE. Scans every contiguous token window (longest first, so a
+        multi-word category label like "chips and crisps" wins over any
+        shorter accidental overlap) looking for an exact match against a
+        known catalog category. Unmatched tokens on either side (e.g. "for
+        kids" in "vegetables for kids", "fresh" in "fresh vegetables") are
+        simply carried as modifiers — they don't block the match, since a
+        category fallback is intentionally a coarser, position-independent
+        signal than the head-final resolve_head_term() above it."""
+        if not self._category_alias_map:
+            return None
+        n = len(tokens)
+        for size in range(min(MAX_NGRAM_WORDS, n), 0, -1):
+            for start in range(0, n - size + 1):
+                phrase = " ".join(tokens[start:start + size])
+                cat = self._category_alias_map.get(phrase)
+                if cat is None:
+                    continue
+                modifiers = tokens[:start] + tokens[start + size:]
+                return ProductIntentResult(
+                    primary_product=cat,
+                    modifiers=modifiers,
+                    confidence=CATEGORY_FALLBACK_CONFIDENCE,
+                    tier="medium",
+                    dominant_category=cat,
+                )
+        return None
 
     def extract(self, clean_query: str) -> ProductIntentResult:
         text = (clean_query or "").strip().lower()
@@ -242,14 +381,21 @@ class ProductIntentExtractor:
         if self._produce_aliases:
             normalized = " ".join(tokens)
             family = self._produce_aliases.get(normalized)
-            if family is None:
-                # Exact match missed — try a small, length-scaled fuzzy
-                # match directly against the curated alias set. Covers
-                # "double typo" queries (e.g. "pyaaj") where generic
-                # single-pass typo correction (VocabularyCorrector) lands on
-                # a different, unrelated catalog token one edit away rather
-                # than the intended alias two edits away — see
-                # canonical_produce.fuzzy_match_produce_alias()'s docstring.
+            # Only ever attempt the fuzzy fallback when `normalized` is NOT
+            # already a real, catalog-attested term in its own right (i.e.
+            # not already a key in the product-type lexicon). Without this
+            # guard, an ordinary, correctly-spelled word can land within the
+            # length-scaled edit-distance budget of an unrelated curated
+            # alias purely by coincidence — e.g. "cheese" is 2 edits from the
+            # curated Hindi alias "cheeku" (sapota/chikoo), which used to
+            # hard-restrict a "cheese" search to sapota products (0 relevant
+            # results). A genuine typo of a produce alias (the feature this
+            # fallback exists for — see fuzzy_match_produce_alias()'s
+            # docstring) is, by definition, NOT itself a term the catalog's
+            # own product-name statistics already recognize, so this guard
+            # only ever blocks false-positive collisions, never the intended
+            # double-typo recovery case.
+            if family is None and normalized not in self._lexicon:
                 from search_v2.query_processing.canonical_produce import fuzzy_match_produce_alias
                 family = fuzzy_match_produce_alias(normalized, self._produce_aliases)
             if family is not None:
@@ -280,9 +426,14 @@ class ProductIntentExtractor:
         # min_confidence=low: a candidate that can't even clear the LOW bar
         # isn't worth surfacing as a resolved intent at all — retrieval is
         # meant to be completely unaffected in that case (see tier="none").
-        resolved = resolve_head_term(tokens, self._lexicon, min_confidence=low)
+        # high_confidence=high: query-time only (see resolve_head_term()'s
+        # docstring) — prevents anchoring on an unnecessarily narrow compound
+        # ("whole wheat bread") when the base term ("bread") is ALSO
+        # comfortably in the same confidence tier on its own.
+        resolved = resolve_head_term(tokens, self._lexicon, min_confidence=low, high_confidence=high)
         if resolved is None:
-            return ProductIntentResult()
+            category_result = self._resolve_category_fallback(tokens)
+            return category_result if category_result is not None else ProductIntentResult()
 
         term, entry, split_idx = resolved
         confidence = float(entry.get("confidence", 0.0))

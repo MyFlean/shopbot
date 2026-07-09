@@ -103,10 +103,27 @@ if _engine_setting != "v1":
     _gateway.warmup()
     print("done.")
 
-    print("Pre-loading embedding model weights...", end=" ", flush=True)
-    _emb_svc = get_embedding_service(_settings.EMBEDDING_MODEL_KEY)
-    _emb_svc.preload()
-    print("done.")
+    # No explicit model_key here, deliberately: get_embedding_service() picks
+    # Bedrock Titan vs. the local sentence-transformers path based on
+    # SETTINGS.EMBEDDING_BACKEND. Passing _settings.EMBEDDING_MODEL_KEY
+    # explicitly (as this used to) always selects the local path regardless
+    # of that setting — silently breaking this file's own stated contract
+    # ("CLI and HTTP endpoint always behave identically"), since production
+    # (search_gateway/gateway.py) was fixed to call this the same way.
+    # Wrapped in try/except, matching the same tolerance
+    # shopping_bot/__init__.py's ECS/non-Lambda init path already has for
+    # this exact scenario: a missing AWS_BEARER_TOKEN_BEDROCK must not
+    # prevent the CLI from starting — semantic search will fail per-query
+    # (caught below in _search(), same "auto" fallback production uses) and
+    # V1/lexical remain fully usable for local development without Bedrock
+    # credentials configured yet.
+    print("Pre-loading embedding model weights (no-op for Bedrock backend)...", end=" ", flush=True)
+    try:
+        _emb_svc = get_embedding_service()
+        _emb_svc.preload()
+        print("done.")
+    except Exception as _pe:
+        print(f"skipped ({_pe})")
 
 if _engine_setting != "v2":
     # V1 or auto: initialize V1 ElasticsearchProductsFetcher

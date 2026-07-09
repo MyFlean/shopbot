@@ -33,11 +33,23 @@ requests-aws4auth>=1.2.3  # SigV4 signing for OpenSearch Serverless (AOSS)
 aiohttp>=3.8.0
 
 # ── Search V2 retrieval pipeline ───────────────────────────────────────────
-# Embedding model inference — bge-base-en-v1.5 (768-dim, ~420 MB on disk)
-sentence-transformers>=2.6.0
-torch>=2.0.0
-
+# torch / sentence-transformers REMOVED (Bedrock migration): production query
+# embedding now comes from AWS Bedrock Titan Text Embeddings V2 via a plain
+# `requests` call (search_v2/embedding/bedrock_embedding_service.py) — no
+# local model, no GPU/CPU inference. This also removes their transitive
+# dependencies (numpy, scipy, scikit-learn, transformers, tokenizers,
+# huggingface-hub, safetensors, networkx, sympy — none of these are imported
+# independently anywhere in this repo, verified by direct grep).
+#
+# EMBEDDING_BACKEND=local (search_v2/config/settings.py) still exists as a
+# code path but is now NON-FUNCTIONAL without manually installing
+# sentence-transformers/torch yourself — this is a deliberate trade-off, not
+# an oversight: nothing in the reachable production/indexing/Lambda/
+# dev-CLI/test path uses it.
+#
 # OpenSearch HTTP client (must be opensearch-py, NOT elasticsearch-py 8.x —
 # the ES 8 client sends a vnd.elasticsearch+json Accept header that OpenSearch
-# rejects with HTTP 406)
-opensearch-py>=2.4.0
+# rejects with HTTP 406). Pinned below 3.0 to match requirements-lambda.txt —
+# see that file's comment for why (opensearch-py 3.x's hard grpcio/protobuf
+# dependency, unused by this codebase's plain HTTP/REST usage).
+opensearch-py>=2.4.0,<3.0.0

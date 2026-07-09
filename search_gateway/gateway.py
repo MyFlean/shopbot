@@ -217,7 +217,12 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
     from search_v2.retrieval.opensearch_client import OpenSearchClient
 
     client = OpenSearchClient(settings=SETTINGS)
-    emb_svc = get_embedding_service(SETTINGS.EMBEDDING_MODEL_KEY)
+    # No explicit model_key here, deliberately: get_embedding_service() picks
+    # Bedrock Titan vs. the local sentence-transformers path based on
+    # SETTINGS.EMBEDDING_BACKEND — passing SETTINGS.EMBEDDING_MODEL_KEY
+    # explicitly here would always select the local path regardless of that
+    # setting (see embedding_service.py's factory docstring).
+    emb_svc = get_embedding_service()
 
     corrector: Optional[VocabularyCorrector] = None
     if SETTINGS.ENABLE_TYPO_CORRECTION:
@@ -342,10 +347,12 @@ class SearchGateway:
     """
     Product search engine — always executes Search V2.
 
-    Drop-in replacement for ElasticsearchProductsFetcher.search() on the
-    /rs/api/v1/products/search route. Thread-safe lazy init with a warmup()
-    hook for gunicorn --preload: call warmup() in the master process so all
-    workers inherit the loaded model via copy-on-write, avoiding N×500 MB.
+    The single entry point unified_search.py routes /rs/v1/search through
+    (see search_v2/README.md §1 for the full routing table — every other
+    route still uses ElasticsearchProductsFetcher directly). Thread-safe
+    lazy init with a warmup() hook for gunicorn --preload: call warmup() in
+    the master process so all workers inherit the loaded model via
+    copy-on-write, avoiding N×500 MB.
     """
 
     def __init__(self) -> None:

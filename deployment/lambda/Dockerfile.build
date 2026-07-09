@@ -7,19 +7,38 @@ RUN microdnf install -y zip findutils && microdnf clean all
 # Set working directory
 WORKDIR /build
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+# Copy requirements first for better caching.
+# requirements-lambda.txt (NOT the root requirements.txt) — the slim,
+# Lambda-only dependency set with no local ML stack (torch/sentence-transformers/
+# transformers/scipy/scikit-learn/...). Runtime query embedding now comes from
+# AWS Bedrock Titan (search_v2/embedding/bedrock_embedding_service.py), a plain
+# HTTPS call via `requests`, already in requirements-lambda.txt.
+COPY requirements-lambda.txt .
 
 # Install dependencies to a temporary directory
-RUN pip install --no-cache-dir -r requirements.txt -t /build/package/
+RUN pip install --no-cache-dir -r requirements-lambda.txt -t /build/package/
 
-# Copy application code
+# Copy application code.
+# search_v2/ and search_gateway/ were previously MISSING here entirely — a
+# pre-existing bug found during the Bedrock migration: shopping_bot/__init__.py
+# and shopping_bot/data_fetchers/es_products.py both import from these two
+# top-level packages, so every Search V2 request would have raised
+# ModuleNotFoundError at runtime regardless of anything else in this file.
 COPY lambda_handler.py /build/package/
 COPY run.py /build/package/
 COPY shopping_bot/ /build/package/shopping_bot/
+COPY search_v2/ /build/package/search_v2/
+COPY search_gateway/ /build/package/search_gateway/
 
-# Clean up unnecessary files using Python (find command not available in minimal image)
-RUN python3.12 -c "import os, shutil; [shutil.rmtree(os.path.join(root, d)) for root, dirs, files in os.walk('/build/package') for d in dirs if d in ['__pycache__', '*.dist-info', '*.egg-info'] or (d == 'tests' and 'shopping_bot' in root)]" 2>/dev/null || true && \
+# Clean up unnecessary files using Python (find command not available in minimal image).
+# The dist-info/egg-info matching below was previously `d in ['__pycache__',
+# '*.dist-info', '*.egg-info']` — a plain list-membership check against a
+# LITERAL glob string, which can never match a real directory name like
+# `numpy-1.26.4.dist-info` (the `*` is not a wildcard in `in` membership
+# checks). That bug meant every installed package's dist-info/egg-info
+# directory (RECORD manifests, METADATA, licenses) shipped in the zip
+# unremoved. Fixed below to use real suffix matching.
+RUN python3.12 -c "import os, shutil; [shutil.rmtree(os.path.join(root, d)) for root, dirs, files in os.walk('/build/package') for d in dirs if d == '__pycache__' or d.endswith('.dist-info') or d.endswith('.egg-info') or (d == 'tests' and 'shopping_bot' in root)]" 2>/dev/null || true && \
     python3.12 -c "import os; [os.remove(os.path.join(root, f)) for root, dirs, files in os.walk('/build/package') for f in files if f.endswith('.pyc') or ('test' in f and f.endswith('.py') and 'shopping_bot' in root)]" 2>/dev/null || true
 
 # Create zip file
@@ -27,12 +46,3 @@ WORKDIR /build/package
 RUN zip -r /build/shopbot.zip . -q
 
 # The zip file will be copied out via volume mount
-
-
-
-
-
-
-
-
-

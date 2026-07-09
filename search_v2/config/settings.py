@@ -124,8 +124,30 @@ class SearchV2Settings:
     HYBRID_PIPELINE_NAME: str = field(default_factory=lambda: _str("SEARCH_V2_PIPELINE_NAME", "search-v2-hybrid-pipeline"))
 
     # ── Embedding model (see embedding/model_registry.py for the full candidate list) ──
+    # Production runtime default is now Bedrock Titan Text Embeddings V2 at
+    # 512 dimensions — see embedding/bedrock_embedding_service.py. The local
+    # sentence-transformers path (EmbeddingService) only runs when
+    # EMBEDDING_BACKEND=local, and only for the gunicorn preload step in
+    # shopping_bot/__init__.py — see get_embedding_service()'s docstring.
     EMBEDDING_MODEL_KEY: str = field(default_factory=lambda: _str("SEARCH_V2_EMBEDDING_MODEL", "bge-base-en-v1.5"))
-    EMBEDDING_DIM: int = field(default_factory=lambda: _int("SEARCH_V2_EMBEDDING_DIM", 768))
+    EMBEDDING_DIM: int = field(default_factory=lambda: _int("SEARCH_V2_EMBEDDING_DIM", 512))
+    # "bedrock" (production default) or "local" (sentence-transformers, dev override)
+    EMBEDDING_BACKEND: str = field(default_factory=lambda: _str("SEARCH_V2_EMBEDDING_BACKEND", "bedrock"))
+
+    # ── Bedrock (query-embedding calls only — this repo owns runtime query
+    # embedding independently of the Search repo's own indexing-time Titan
+    # calls; no code is shared between them, only the model/dimension
+    # contract). AWS_BEARER_TOKEN_BEDROCK is the SAME env var already read by
+    # shopping_bot/config.py's Cfg.AWS_BEARER_TOKEN_BEDROCK for the existing
+    # Claude integration — one secret, reused, not duplicated. ────────────
+    BEDROCK_REGION: str = field(default_factory=lambda: _str("BEDROCK_REGION", "ap-south-1"))
+    BEDROCK_EMBEDDING_MODEL_ID: str = field(default_factory=lambda: _str("BEDROCK_EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0"))
+
+    @property
+    def AWS_BEARER_TOKEN_BEDROCK(self) -> str:
+        """Read at access time, not import time, matching shopping_bot/config.py's
+        own accessor for this exact secret."""
+        return os.getenv("AWS_BEARER_TOKEN_BEDROCK", "")
 
     # ── Semantic confidence floor ────────────────────────────────────────────
     # A minimum raw kNN score a semantic hit must clear to be fed into fusion
@@ -181,8 +203,8 @@ class SearchV2Settings:
     # functions are unchanged. Empty URL = fetch skipped entirely, gateway
     # falls back to whatever is already on the local file, exactly as before
     # this feature existed.
-    VOCAB_URL: str = field(default_factory=lambda: _str("SEARCH_V2_VOCAB_URL", "https://api.flean.ai/ui/app-config/vocabulary"))
-    PRODUCT_TYPE_LEXICON_URL: str = field(default_factory=lambda: _str("SEARCH_V2_PRODUCT_TYPE_LEXICON_URL", "https://api.flean.ai/ui/app-config/product-type-lexicon"))
+    VOCAB_URL: str = field(default_factory=lambda: _str("SEARCH_V2_VOCAB_URL", ""))
+    PRODUCT_TYPE_LEXICON_URL: str = field(default_factory=lambda: _str("SEARCH_V2_PRODUCT_TYPE_LEXICON_URL", ""))
     ARTIFACT_FETCH_TIMEOUT_SEC: float = field(default_factory=lambda: _float("SEARCH_V2_ARTIFACT_FETCH_TIMEOUT_SEC", 2.0))
 
     # ── Business ranking bounds (see ranking/business_ranking.py) ───

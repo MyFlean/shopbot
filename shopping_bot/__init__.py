@@ -281,13 +281,19 @@ def create_app(config_name: str = 'production') -> Flask:
 
             # Preload SentenceTransformer weights in the master gunicorn process
             # so workers inherit them via copy-on-write (avoids N×500 MB memory).
-            try:
-                from search_v2.embedding.embedding_service import get_embedding_service
-                from search_v2.config.settings import SETTINGS as _s2
-                get_embedding_service(_s2.EMBEDDING_MODEL_KEY).preload()
-                log.info("INIT_EMBEDDING_PRELOAD | model=%s", _s2.EMBEDDING_MODEL_KEY)
-            except Exception as _pe:
-                log.warning("INIT_EMBEDDING_PRELOAD_WARNING | first query will be slow | error=%s", _pe)
+            # Only meaningful for the local backend — there are no weights to
+            # warm for a remote Bedrock call, and BedrockTitanEmbeddingService
+            # doesn't implement preload() at all (nothing to preload).
+            from search_v2.config.settings import SETTINGS as _s2
+            if _s2.EMBEDDING_BACKEND == "local":
+                try:
+                    from search_v2.embedding.embedding_service import get_embedding_service
+                    get_embedding_service(_s2.EMBEDDING_MODEL_KEY).preload()
+                    log.info("INIT_EMBEDDING_PRELOAD | model=%s", _s2.EMBEDDING_MODEL_KEY)
+                except Exception as _pe:
+                    log.warning("INIT_EMBEDDING_PRELOAD_WARNING | first query will be slow | error=%s", _pe)
+            else:
+                log.info("INIT_EMBEDDING_PRELOAD_SKIPPED | backend=%s (nothing to preload)", _s2.EMBEDDING_BACKEND)
 
             log.info("INIT_SEARCH_GATEWAY_SUCCESS")
         except Exception as e:

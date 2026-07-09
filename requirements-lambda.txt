@@ -1,0 +1,50 @@
+# requirements-lambda.txt
+# ────────────────────────────────────────────────────────────────────────────
+# Dependencies actually needed to RUN the Lambda function. This is the file
+# deployment/lambda/Dockerfile.build installs from — NOT the root
+# requirements.txt (which remains the full set for ECS / local dev, including
+# the local sentence-transformers path still used by dev/debug CLIs and the
+# ECS deployment target — see requirements-dev.txt for that superset).
+#
+# Deliberately excluded from this file, and why:
+#   - torch, sentence-transformers, transformers, huggingface-hub, tokenizers,
+#     scipy, scikit-learn, numpy, networkx, sympy — the entire local-embedding
+#     ML stack. Runtime query embedding now comes from AWS Bedrock Titan Text
+#     Embeddings V2 (search_v2/embedding/bedrock_embedding_service.py), a
+#     plain HTTPS call using the `requests` library already listed below —
+#     no local model, no GPU/CPU inference, nothing to load into memory.
+#   - pytest, pytest-asyncio — test-only, no runtime purpose in a deployed
+#     Lambda.
+#   - gunicorn, hypercorn — Lambda's WSGI adapter is `serverless-wsgi`
+#     (imported directly in lambda_handler.py); these are alternate
+#     production servers for the ECS deployment target only.
+#   - python-dotenv — Lambda gets configuration from environment variables
+#     set by Terraform/Secrets Manager, not a local .env file.
+
+# ── Web framework ──────────────────────────────────────────
+flask[async]>=2.3          # async-view support
+flask-cors>=4.0
+
+# ── Infrastructure clients ─────────────────────────────────
+redis>=5.0                 # Python client for Redis 7+
+
+# ── Lambda deployment ─────────────────────────────────────
+serverless-wsgi==3.1.0    # WSGI adapter for AWS Lambda (matches UserService)
+aws-lambda-powertools>=2.40.0  # AWS Lambda Powertools for logging, tracing, metrics
+aws-xray-sdk>=2.14.0      # AWS X-Ray SDK for distributed tracing
+boto3>=1.34.0             # AWS SDK for Secrets Manager access
+
+cryptography
+requests                  # also used by bedrock_embedding_service.py's Titan calls
+requests-aws4auth>=1.2.3  # SigV4 signing for OpenSearch Serverless (AOSS)
+aiohttp>=3.8.0            # used by shopping_bot/bedrock_client.py's Claude calls
+
+# OpenSearch HTTP client (must be opensearch-py, NOT elasticsearch-py 8.x —
+# the ES 8 client sends a vnd.elasticsearch+json Accept header that OpenSearch
+# rejects with HTTP 406). Pinned below 3.0: opensearch-py 3.x added a hard
+# (non-optional) dependency on opensearch-protobufs, which pulls in grpcio +
+# protobuf — ~17MB uncompressed, entirely unused since this codebase only
+# ever uses the plain HTTP/REST transport (OpenSearchClient), never the new
+# gRPC transport. Verified opensearch-py 2.8.0 against a live cluster with
+# no behavior change before pinning this.
+opensearch-py>=2.4.0,<3.0.0

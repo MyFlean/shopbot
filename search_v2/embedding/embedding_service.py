@@ -45,6 +45,10 @@ class EmbeddingService:
     def dim(self) -> int:
         return self.spec.dim
 
+    @property
+    def model_label(self) -> str:
+        return self.spec.key
+
     def _get_model(self):
         if self._model is not None:
             return self._model
@@ -90,15 +94,39 @@ class EmbeddingService:
 
 
 # ── Process-wide cache of loaded services, keyed by model_key ──────────────
-# Lets the playground hold multiple models loaded simultaneously for
-# side-by-side comparison (memory permitting — see playground docs) without
-# reloading on every request.
-_service_cache: Dict[str, EmbeddingService] = {}
+_service_cache: Dict[str, object] = {}
 _cache_lock = threading.Lock()
 
 
-def get_embedding_service(model_key: Optional[str] = None) -> EmbeddingService:
+def get_embedding_service(model_key: Optional[str] = None):
+    """Production runtime default is SETTINGS.EMBEDDING_BACKEND == "bedrock"
+    (Amazon Titan Text Embeddings V2, via bedrock_embedding_service.py) —
+    returns a BedrockTitanEmbeddingService.
+
+    Passing an explicit model_key always uses the LOCAL sentence-transformers
+    path regardless of EMBEDDING_BACKEND — the only caller that does this is
+    shopping_bot/__init__.py's gunicorn-preload step, itself gated behind
+    EMBEDDING_BACKEND == "local". Every other caller (search_gateway/gateway.py,
+    dev_search_cli.py) must call this with NO argument to get the configured
+    backend — passing SETTINGS.EMBEDDING_MODEL_KEY explicitly would silently
+    bypass Bedrock entirely.
+    """
     from search_v2.config.settings import SETTINGS
+
+    if model_key is None and SETTINGS.EMBEDDING_BACKEND == "bedrock":
+        cache_key = f"bedrock:{SETTINGS.BEDROCK_EMBEDDING_MODEL_ID}:{SETTINGS.EMBEDDING_DIM}"
+        if cache_key not in _service_cache:
+            with _cache_lock:
+                if cache_key not in _service_cache:
+                    from search_v2.embedding.bedrock_embedding_service import BedrockTitanEmbeddingService
+
+                    _service_cache[cache_key] = BedrockTitanEmbeddingService(
+                        bearer_token=SETTINGS.AWS_BEARER_TOKEN_BEDROCK,
+                        region=SETTINGS.BEDROCK_REGION,
+                        model_id=SETTINGS.BEDROCK_EMBEDDING_MODEL_ID,
+                        dim=SETTINGS.EMBEDDING_DIM,
+                    )
+        return _service_cache[cache_key]
 
     key = model_key or SETTINGS.EMBEDDING_MODEL_KEY
     if key not in _service_cache:

@@ -53,8 +53,19 @@ class BaseConfig:
 
     # Background Processing (simplified)
     ENABLE_ASYNC: bool = os.getenv("ENABLE_ASYNC", "false").lower() in {"1", "true", "yes", "on"}
+
     # Streaming (SSE/WebSocket) feature gate
-    ENABLE_STREAMING: bool = os.getenv("ENABLE_STREAMING", "false").lower() in {"1", "true", "yes", "on"}
+    @property
+    def ENABLE_STREAMING(self) -> bool:
+        """Read ENABLE_STREAMING from environment at access time (not at class-definition time).
+
+        Must stay a property, not a class attribute: shopping_bot/tests/ is a
+        subpackage of shopping_bot, so importing any test module forces Python
+        to import shopping_bot/__init__.py (and thus this module) first. A
+        class attribute would freeze this value at that import, before a
+        test's own os.environ assignment ever runs.
+        """
+        return os.getenv("ENABLE_STREAMING", "false").lower() in {"1", "true", "yes", "on"}
     
     # Search backend
     # Prefer ES_URL; fallback to legacy ELASTIC_BASE; normalize leading '@' and whitespace.

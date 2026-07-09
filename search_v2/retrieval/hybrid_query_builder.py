@@ -61,7 +61,14 @@ def build_native_hybrid_request(
     isolated follow-up.
     """
     settings = settings or SETTINGS
-    service = embedding_service or get_embedding_service(settings.EMBEDDING_MODEL_KEY)
+    # No explicit model_key on the fallback call, deliberately: passing
+    # settings.EMBEDDING_MODEL_KEY here would always select the local
+    # sentence-transformers path regardless of EMBEDDING_BACKEND, bypassing
+    # Bedrock even in production if this were ever reached without an
+    # explicit embedding_service (same bug class fixed in gateway.py this
+    # migration — not currently reachable via any production or test path,
+    # since gateway.py always passes a real embedding_service, but latent).
+    service = embedding_service or get_embedding_service()
     text = query.primary_text()
     if not text:
         return None

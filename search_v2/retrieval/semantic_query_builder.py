@@ -62,7 +62,11 @@ def build_query(
     if not settings.ENABLE_SEMANTIC or not settings.ENABLE_VECTOR_SEARCH:
         return None
 
-    service = embedding_service or get_embedding_service(settings.EMBEDDING_MODEL_KEY)
+    # No explicit model_key on the fallback call, deliberately — see
+    # hybrid_query_builder.py's build_native_hybrid_request() for the same
+    # fix and full rationale (latent, not currently reachable, but the same
+    # bug class as gateway.py's fixed call site this migration).
+    service = embedding_service or get_embedding_service()
     text = query.primary_text()
     if not text:
         return None

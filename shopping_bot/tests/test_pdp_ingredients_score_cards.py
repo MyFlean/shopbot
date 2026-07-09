@@ -1,6 +1,27 @@
 """Smoke tests for additives/preservatives PDP score cards and watch_outs."""
 
+import pytest
+
+from shopping_bot.data_fetchers import es_products
 from shopping_bot.data_fetchers.es_products import transform_to_pdp, transform_to_product_card
+
+
+@pytest.fixture(autouse=True)
+def _no_redis_cards_config(monkeypatch):
+    """Force the unrestricted (all-cards) build path used in these smoke tests.
+
+    transform_to_pdp only restricts which score cards get built when it
+    resolves a non-empty Redis-backed cards_config for the product's
+    subcategory (see get_subcategory_cards_config_for_path). That resolution
+    depends on an active Flask app context, which some other test files in
+    this suite leave pushed for the rest of the session via a
+    scope="session" test_client() fixture. When those tests run first,
+    has_app_context() is unexpectedly True here too, and a real (unrelated)
+    Redis config can suppress the additives/preservatives cards these tests
+    assert on. These tests are meant to check transform_to_pdp's pure
+    data-transform behavior, not Redis config gating, so pin that dependency.
+    """
+    monkeypatch.setattr(es_products, "get_subcategory_cards_config_for_path", lambda _path: [])
 
 
 def _base_src(**overrides):

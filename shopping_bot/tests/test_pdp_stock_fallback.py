@@ -17,13 +17,17 @@ def pdp_client():
     return app.test_client()
 
 
-def _base_raw_src(availability=None):
+def _base_raw_src(availability=None, lab_report_url=None):
+    category_data = {"tags": {"ingredient_tags": ["no_palm_oil"]}}
+    if lab_report_url is not None:
+        category_data["lab_reports"] = {"url": lab_report_url}
+
     return {
         "id": "prod-1",
         "name": "Test Product",
         "visibility": "visible",
         "availability": availability or {},
-        "category_data": {"tags": {"ingredient_tags": ["no_palm_oil"]}},
+        "category_data": category_data,
     }
 
 
@@ -237,3 +241,45 @@ def test_pdp_unmapped_pincode_defaults_to_201303(
     payload = resp.get_json()
     assert payload["data"]["product_info"]["in_stock"] is False
     mock_cache_override.assert_called_once_with("prod-1", "201303")
+
+
+@patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=None)
+@patch("shopping_bot.routes.product_api.try_resolve_canonical_pincode", return_value="201303")
+@patch("shopping_bot.routes.product_api.transform_to_pdp")
+@patch("shopping_bot.routes.product_api.get_es_fetcher")
+def test_pdp_returns_lab_report_url_when_present(
+    mock_get_fetcher,
+    mock_transform_to_pdp,
+    _mock_resolve_pincode,
+    _mock_cache_override,
+    pdp_client,
+):
+    raw_src = _base_raw_src(lab_report_url=" https://cdn.example.com/report.pdf ")
+    mock_get_fetcher.return_value = SimpleNamespace(get_product_by_id=lambda _pid: raw_src)
+    mock_transform_to_pdp.return_value = _base_pdp(in_stock=True, visibility="visible")
+
+    resp = pdp_client.get("/rs/api/v1/product/prod-1?pincode=201303")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["data"]["lab_report_url"] == "https://cdn.example.com/report.pdf"
+
+
+@patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=None)
+@patch("shopping_bot.routes.product_api.try_resolve_canonical_pincode", return_value="201303")
+@patch("shopping_bot.routes.product_api.transform_to_pdp")
+@patch("shopping_bot.routes.product_api.get_es_fetcher")
+def test_pdp_returns_null_lab_report_url_when_absent(
+    mock_get_fetcher,
+    mock_transform_to_pdp,
+    _mock_resolve_pincode,
+    _mock_cache_override,
+    pdp_client,
+):
+    raw_src = _base_raw_src()
+    mock_get_fetcher.return_value = SimpleNamespace(get_product_by_id=lambda _pid: raw_src)
+    mock_transform_to_pdp.return_value = _base_pdp(in_stock=True, visibility="visible")
+
+    resp = pdp_client.get("/rs/api/v1/product/prod-1?pincode=201303")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["data"]["lab_report_url"] is None

@@ -51,6 +51,7 @@ from ..utils.pincode_mapping import try_resolve_canonical_pincode
 from .product_api import (
     VALID_SORT_OPTIONS,
     _build_filters_from_query_args,
+    _extract_lab_report_url,
     _error_response,
     _has_palm_oil_ingredient,
     _normalize_filter_aliases,
@@ -396,6 +397,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 if card is not None:
                     card_in_stock = _derive_in_stock_from_availability(raw, effective_pincode)
                     card["in_stock"] = card_in_stock
+                    lab_report_url = _extract_lab_report_url(raw)
+                    card["has_lab_report"] = bool(lab_report_url)
                     card["cta"] = _resolve_pdp_cta(
                         product_info={
                             "in_stock": card_in_stock,

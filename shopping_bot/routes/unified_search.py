@@ -379,6 +379,25 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         )
 
         meta = result.get("meta", {}) or {}
+        # #region agent log
+        try:
+            import json as _json, time as _time
+            with open("/Users/anuj/shopbot/.cursor/debug-22fed7.log", "a") as _f:
+                _f.write(_json.dumps({
+                    "sessionId": "22fed7", "runId": "pre-fix", "hypothesisId": "A",
+                    "location": "unified_search.py:post_es",
+                    "message": "unified search es result",
+                    "data": {
+                        "query": query,
+                        "total": meta.get("total"),
+                        "returned": len(result.get("products", []) or []),
+                        "error": meta.get("error"),
+                    },
+                    "timestamp": int(_time.time() * 1000),
+                }) + "\n")
+        except Exception:
+            pass
+        # #endregion
         if meta.get("error"):
             log.error(f"UNIFIED_SEARCH_ES_ERROR | error={meta.get('error')}")
             return _error_response("SEARCH_ERROR", f"Search failed: {meta.get('error')}", 500)

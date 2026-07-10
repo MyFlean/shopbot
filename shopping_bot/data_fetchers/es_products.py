@@ -3342,6 +3342,51 @@ class ElasticsearchProductsFetcher:
         if self.use_iam_auth:
             kwargs["auth"] = self._build_aws_auth()
         return kwargs
+
+    def _post_es_with_retry(
+        self,
+        url: str,
+        body: Dict[str, Any],
+        *,
+        timeout: int = TIMEOUT,
+        max_retries: int = 3,
+        context: str = "es_search",
+    ) -> requests.Response:
+        """POST to OpenSearch with bounded retry on 429 rate limits."""
+        kwargs = self._request_kwargs()
+        last_response: Optional[requests.Response] = None
+        for attempt in range(max_retries + 1):
+            response = requests.post(url, json=body, timeout=timeout, **kwargs)
+            last_response = response
+            if response.status_code != 429 or attempt >= max_retries:
+                response.raise_for_status()
+                return response
+            retry_after = response.headers.get("Retry-After")
+            try:
+                sleep_s = float(retry_after) if retry_after else min(0.5 * (2 ** attempt), 4.0)
+            except (TypeError, ValueError):
+                sleep_s = min(0.5 * (2 ** attempt), 4.0)
+            print(
+                f"DEBUG: ES_RATE_LIMIT_RETRY | context={context} | attempt={attempt + 1} "
+                f"| sleep_s={sleep_s:.2f} | url={url}"
+            )
+            # #region agent log
+            try:
+                with open("/Users/anuj/shopbot/.cursor/debug-22fed7.log", "a") as _f:
+                    _f.write(json.dumps({
+                        "sessionId": "22fed7", "runId": "pre-fix", "hypothesisId": "A",
+                        "location": "es_products.py:_post_es_with_retry",
+                        "message": "es 429 retry",
+                        "data": {"context": context, "attempt": attempt + 1, "sleep_s": sleep_s},
+                        "timestamp": int(time.time() * 1000),
+                    }) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            time.sleep(sleep_s)
+        if last_response is not None:
+            last_response.raise_for_status()
+        raise RuntimeError(f"OpenSearch request failed after retries: {context}")
     
     def _ensure_mapping_hints(self) -> None:
         """Lazy-load index mapping to detect exact-match fields for search-critical fields."""
@@ -4832,13 +4877,11 @@ class ElasticsearchProductsFetcher:
             search_endpoint = f"{self.base_url}/{self.index}/_search"
             print(f"DEBUG: ES search_products_unified | query={query_text} | subcategory={subcat} | page={page} | size={size} | sort={sort_by}")
             
-            response = requests.post(
+            response = self._post_es_with_retry(
                 search_endpoint,
-                json=body,
-                timeout=TIMEOUT,
-                **self._request_kwargs(),
+                body,
+                context="search_products_unified_primary",
             )
-            response.raise_for_status()
             data = response.json() or {}
             
             hits = (data.get("hits", {}) or {}).get("hits", []) or []
@@ -4906,13 +4949,11 @@ class ElasticsearchProductsFetcher:
                     "sort": sort_config,
                     "min_score": max(dynamic_min_score or 0.0, 0.08),
                 }
-                fuzzy_fallback_response = requests.post(
+                fuzzy_fallback_response = self._post_es_with_retry(
                     search_endpoint,
-                    json=fuzzy_fallback_body,
-                    timeout=TIMEOUT,
-                    **self._request_kwargs(),
+                    fuzzy_fallback_body,
+                    context="search_products_unified_fuzzy",
                 )
-                fuzzy_fallback_response.raise_for_status()
                 fuzzy_fallback_data = fuzzy_fallback_response.json() or {}
                 fuzzy_hits = (fuzzy_fallback_data.get("hits", {}) or {}).get("hits", []) or []
                 fuzzy_total = (fuzzy_fallback_data.get("hits", {}) or {}).get("total", {})
@@ -4998,13 +5039,11 @@ class ElasticsearchProductsFetcher:
                         "query": fallback_query,
                         "sort": sort_config,
                     }
-                    fallback_response = requests.post(
+                    fallback_response = self._post_es_with_retry(
                         search_endpoint,
-                        json=fallback_body,
-                        timeout=TIMEOUT,
-                        **self._request_kwargs(),
+                        fallback_body,
+                        context="search_products_unified_prefix",
                     )
-                    fallback_response.raise_for_status()
                     fallback_data = fallback_response.json() or {}
                     fallback_hits = (fallback_data.get("hits", {}) or {}).get("hits", []) or []
                     fallback_total = (fallback_data.get("hits", {}) or {}).get("total", {})

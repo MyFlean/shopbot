@@ -371,8 +371,23 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
         # Critical endpoints: chat, search, product endpoints, scanner (uses Bedrock)
         request_path = event.get("requestContext", {}).get("http", {}).get("path", "")
         is_critical_endpoint = any(path in request_path for path in [
-            "/rs/chat", "/rs/search", "/rs/api/v1/products", "/rs/flow", "/rs/api/v1/scanner"
+            "/rs/chat", "/rs/search", "/rs/v1/search", "/rs/v2/search",
+            "/rs/api/v1/products", "/rs/api/v1/home", "/rs/flow", "/rs/api/v1/scanner",
         ])
+        # #region agent log
+        try:
+            import json as _json, time as _time
+            with open("/Users/anuj/shopbot/.cursor/debug-22fed7.log", "a") as _f:
+                _f.write(_json.dumps({
+                    "sessionId": "22fed7", "runId": "pre-fix", "hypothesisId": "B",
+                    "location": "lambda_handler.py:critical_gate",
+                    "message": "endpoint secrets gate",
+                    "data": {"path": request_path, "is_critical": is_critical_endpoint},
+                    "timestamp": int(_time.time() * 1000),
+                }) + "\n")
+        except Exception:
+            pass
+        # #endregion
         
         # For critical endpoints, wait for secrets (with timeout)
         # For non-critical endpoints, proceed without waiting

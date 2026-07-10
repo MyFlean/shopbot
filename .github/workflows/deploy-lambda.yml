@@ -64,19 +64,15 @@ jobs:
           AWS_REGION: ${{ env.AWS_REGION }}
           LAMBDA_FUNCTION_NAME: ${{ env.LAMBDA_FUNCTION_NAME }}
 
-      - name: Update Lambda environment for AOSS (optional)
+      - name: Sync Lambda environment from manifest
         env:
           ES_URL: ${{ secrets.ES_URL }}
           AWS_REGION: ${{ env.AWS_REGION }}
           LAMBDA_FUNCTION_NAME: ${{ env.LAMBDA_FUNCTION_NAME }}
           SEARCH_AWS_REGION: ${{ env.AWS_REGION }}
         run: |
-          if [ -z "${ES_URL:-}" ]; then
-            echo "Skipping env merge: ES_URL secret not set (Lambda keeps existing environment)."
-            exit 0
-          fi
-          chmod +x deployment/lambda/update-lambda-env-aoss.sh
-          ./deployment/lambda/update-lambda-env-aoss.sh
+          chmod +x deployment/lambda/update-lambda-env.sh
+          ./deployment/lambda/update-lambda-env.sh
 
       - name: Verify Lambda deployment
         run: |

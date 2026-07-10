@@ -3370,19 +3370,6 @@ class ElasticsearchProductsFetcher:
                 f"DEBUG: ES_RATE_LIMIT_RETRY | context={context} | attempt={attempt + 1} "
                 f"| sleep_s={sleep_s:.2f} | url={url}"
             )
-            # #region agent log
-            try:
-                with open("/Users/anuj/shopbot/.cursor/debug-22fed7.log", "a") as _f:
-                    _f.write(json.dumps({
-                        "sessionId": "22fed7", "runId": "pre-fix", "hypothesisId": "A",
-                        "location": "es_products.py:_post_es_with_retry",
-                        "message": "es 429 retry",
-                        "data": {"context": context, "attempt": attempt + 1, "sleep_s": sleep_s},
-                        "timestamp": int(time.time() * 1000),
-                    }) + "\n")
-            except Exception:
-                pass
-            # #endregion
             time.sleep(sleep_s)
         if last_response is not None:
             last_response.raise_for_status()

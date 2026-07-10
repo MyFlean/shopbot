@@ -242,6 +242,27 @@ def _has_palm_oil_ingredient(product_doc: Any) -> bool:
     return "no_palm_oil" not in normalized_tags
 
 
+def _extract_lab_report_url(product_doc: Any) -> Optional[str]:
+    """Return trimmed lab report URL when present under category_data.lab_reports.url."""
+    if not isinstance(product_doc, dict):
+        return None
+
+    category_data = product_doc.get("category_data")
+    if not isinstance(category_data, dict):
+        return None
+
+    lab_reports = category_data.get("lab_reports")
+    if not isinstance(lab_reports, dict):
+        return None
+
+    url = lab_reports.get("url")
+    if not isinstance(url, str):
+        return None
+
+    cleaned_url = url.strip()
+    return cleaned_url or None
+
+
 def _resolve_pdp_cta(
     product_info: Dict[str, Any],
     flean_badge: Dict[str, Any],
@@ -367,6 +388,7 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
                 flean_badge=flean_badge if isinstance(flean_badge, dict) else {},
                 has_palm_oil=_has_palm_oil_ingredient(raw_src),
             )
+        pdp_data["lab_report_url"] = _extract_lab_report_url(raw_src)
 
         log.info(f"PDP_SUCCESS | id={pid} | name={raw_src.get('name', '')[:30]}")
         return jsonify(_success_response(pdp_data)), 200

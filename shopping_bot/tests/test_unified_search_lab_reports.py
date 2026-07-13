@@ -51,15 +51,18 @@ def test_unified_search_sets_has_lab_report_per_product(
     def _card_for(raw):
         return {
             "id": raw["id"],
+            "parent_id": "parent-1",
             "name": raw["id"],
             "visibility": "visible",
             "flean_score": 8,
+            "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
         }
 
     mock_transform_to_product_card.side_effect = _card_for
 
     resp = unified_search_client.get("/rs/v1/search?query=chips")
     assert resp.status_code == 200
+    assert mock_get_fetcher.called
     payload = resp.get_json()
     products = payload["data"]["products"]
     assert len(products) == 2
@@ -67,3 +70,5 @@ def test_unified_search_sets_has_lab_report_per_product(
     by_id = {item["id"]: item for item in products}
     assert by_id["prod-with-report"]["has_lab_report"] is True
     assert by_id["prod-without-report"]["has_lab_report"] is False
+    assert by_id["prod-with-report"]["parent_id"] == "parent-1"
+    assert by_id["prod-with-report"]["variants"][0]["id"] == "variant-1"

@@ -150,6 +150,7 @@ def _to_v1_product(item: Any, rank: int) -> Dict[str, Any]:
         "rank": rank,
         "score": round(item.final_score, 6),
         "id": src.get("id", item.doc_id),
+        "parent_id": src.get("parent_id") or src.get("id", item.doc_id),
         "name": src.get("name"),
         "brand": src.get("brand"),
         "price": src.get("price"),
@@ -187,6 +188,7 @@ def _to_v1_product(item: Any, rank: int) -> Dict[str, Any]:
         "total_reviews": review.get("total_reviews"),
         "rating": avg_rating,
         "review_stats": review,
+        "variants": src.get("variants") or [],
         # Personal-care signals (not in current V2 index ALLOWLIST; parity with V1)
         "skin_compatibility": src.get("skin_compatibility", {}),
         "efficacy": src.get("efficacy", {}),

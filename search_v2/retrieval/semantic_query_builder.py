@@ -94,6 +94,7 @@ def build_query(
         "size": size if size is not None else settings.DEFAULT_RESULT_SIZE,
         "query": {"knn": knn},
         "_source": {"excludes": ["text_vector", "text_vector_source", "vernacular_synonyms"]},
+        "collapse": {"field": "parent_id"},
     }
 
 

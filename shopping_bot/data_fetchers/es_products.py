@@ -137,6 +137,7 @@ def _resolve_aws_region(base_url: str) -> str:
 ES_URL_ENV = os.getenv("ES_URL")
 ELASTIC_BASE_ENV = os.getenv("ELASTIC_BASE")
 ELASTIC_INDEX_ENV = os.getenv("ELASTIC_INDEX")
+SEARCH_V2_INDEX_NAME_ENV = os.getenv("SEARCH_V2_INDEX_NAME")
 ES_API_KEY_ENV = os.getenv("ES_API_KEY")
 ELASTIC_API_KEY_ENV = os.getenv("ELASTIC_API_KEY")
 ELASTIC_TIMEOUT_ENV = os.getenv("ELASTIC_TIMEOUT_SECONDS")
@@ -149,6 +150,7 @@ print("🔍🔍🔍 SEARCH ENV VARIABLES FETCHED 🔍🔍🔍")
 print(f"🌐 ES_URL: {ES_URL_ENV}")
 print(f"🌐 ELASTIC_BASE: {ELASTIC_BASE_ENV}")
 print(f"📇 ELASTIC_INDEX: {ELASTIC_INDEX_ENV}")
+print(f"📇 SEARCH_V2_INDEX_NAME: {SEARCH_V2_INDEX_NAME_ENV}")
 print(f"🔑 ES_API_KEY: {'***SET***' if ES_API_KEY_ENV else 'NOT SET'}")
 print(f"🔑 ELASTIC_API_KEY: {'***SET***' if ELASTIC_API_KEY_ENV else 'NOT SET'}")
 print(f"⏱️  ELASTIC_TIMEOUT_SECONDS: {ELASTIC_TIMEOUT_ENV}")
@@ -175,16 +177,39 @@ SEARCH_RELEVANCE_FLEAN_BOOST_WEIGHT = _get_float_env(
     maximum=0.5,
 )
 
+
+def _resolve_products_index(index_override: Optional[str] = None) -> str:
+    """Canonical index selection for product APIs."""
+    if index_override and str(index_override).strip():
+        return str(index_override).strip()
+    search_v2_index = str(os.getenv("SEARCH_V2_INDEX_NAME") or "").strip()
+    if search_v2_index:
+        return search_v2_index
+    legacy_index = str(os.getenv("ELASTIC_INDEX") or "").strip()
+    if legacy_index:
+        return legacy_index
+    return "products_master"
+
+
+RESOLVED_PRODUCT_INDEX = _resolve_products_index()
+
 # Debug search config on module load
 print("="*80)
 print("✅✅✅ SEARCH CONFIGURATION FINALIZED ✅✅✅")
 print(f"📍 RAW_ES_URL: {_RAW_ES_URL}")
 print(f"📍 ELASTIC_BASE (normalized): {ELASTIC_BASE}")
 print(f"📍 ELASTIC_INDEX: {ELASTIC_INDEX}")
+print(f"📍 SEARCH_V2_INDEX_NAME: {os.getenv('SEARCH_V2_INDEX_NAME')}")
+print(f"📍 RESOLVED_PRODUCT_INDEX: {RESOLVED_PRODUCT_INDEX}")
 print(f"🔑 API_KEY: {'***SET***' if ELASTIC_API_KEY else 'NOT SET'}")
 print(f"⏱️  TIMEOUT: {TIMEOUT}s")
 print(f"🧪 SEARCH_RELEVANCE_FLEAN_BOOST_ENABLED: {SEARCH_RELEVANCE_FLEAN_BOOST_ENABLED}")
 print(f"🧪 SEARCH_RELEVANCE_FLEAN_BOOST_WEIGHT: {SEARCH_RELEVANCE_FLEAN_BOOST_WEIGHT}")
+if SEARCH_V2_INDEX_NAME_ENV and ELASTIC_INDEX_ENV and SEARCH_V2_INDEX_NAME_ENV.strip() != ELASTIC_INDEX_ENV.strip():
+    print(
+        "⚠️ INDEX_MISMATCH: SEARCH_V2_INDEX_NAME and ELASTIC_INDEX differ; "
+        f"using SEARCH_V2_INDEX_NAME='{SEARCH_V2_INDEX_NAME_ENV.strip()}' for product fetcher."
+    )
 print("="*80)
 
 # Text cleaning
@@ -351,6 +376,31 @@ def _copy_if_present(src: Dict[str, Any], dest: Dict[str, Any], key: str) -> Non
         dest[key] = src.get(key)
 
 
+def _normalize_variant_entries(raw_variants: Any) -> List[Dict[str, Any]]:
+    if not isinstance(raw_variants, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in raw_variants:
+        if not isinstance(item, dict):
+            continue
+        variant_id = str(item.get("id") or "").strip()
+        if not variant_id:
+            continue
+        row: Dict[str, Any] = {"id": variant_id}
+        if item.get("price") is not None:
+            row["price"] = item.get("price")
+        if item.get("mrp") is not None:
+            row["mrp"] = item.get("mrp")
+        size = str(item.get("size") or "").strip()
+        if size:
+            row["size"] = size
+        image = str(item.get("image") or "").strip()
+        if image:
+            row["image"] = image
+        out.append(row)
+    return out
+
+
 def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Shared transformer: any product dict → standardized product card.
@@ -425,6 +475,7 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     card = {
         "id": src.get("id", ""),
+        "parent_id": src.get("parent_id") or src.get("id", ""),
         "name": _clean_text(src.get("name", "")) or "",
         "brand": src.get("brand", ""),
         "price": src.get("price"),
@@ -439,6 +490,7 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "flean_score": flean_score,
         "flean_percentile": flean_percentile,
         "in_stock": True,
+        "variants": _normalize_variant_entries(src.get("variants")),
     }
     _copy_if_present(src, card, "scheduled")
     return card
@@ -1329,6 +1381,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     # ── product_info ──
     product_info = {
         "id": src.get("id", ""),
+        "parent_id": src.get("parent_id") or src.get("id", ""),
         "name": _clean_text(src.get("name", "")) or "",
         "brand": src.get("brand", ""),
         "price": src.get("price"),
@@ -1343,6 +1396,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "in_stock": in_stock,
         "category": category_label,
         "subcategory": subcategory_label,
+        "variants": _normalize_variant_entries(src.get("variants")),
     }
     _copy_if_present(src, product_info, "scheduled")
 
@@ -3256,7 +3310,7 @@ class ElasticsearchProductsFetcher:
     
     def __init__(self, base_url: str = None, index: str = None, api_key: str = None):
         self.base_url = (base_url or ELASTIC_BASE)
-        self.index = index or ELASTIC_INDEX
+        self.index = _resolve_products_index(index)
         self.api_key = (api_key or ELASTIC_API_KEY)
         self._has_category_paths_keyword: Optional[bool] = None
         self._category_paths_exact_field: Optional[str] = None

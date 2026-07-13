@@ -421,6 +421,7 @@ def build_query(
         "size": size,
         "query": final_query,
         "_source": {"excludes": ["text_vector", "text_vector_source", "vernacular_synonyms"]},
+        "collapse": {"field": "parent_id"},
     }
 
     if _effective_offset:

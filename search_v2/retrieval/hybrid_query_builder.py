@@ -89,6 +89,7 @@ def build_native_hybrid_request(
         "size": size if size is not None else settings.DEFAULT_RESULT_SIZE,
         "query": {"hybrid": {"queries": [lexical_subquery, semantic_subquery]}},
         "_source": {"excludes": ["text_vector", "text_vector_source", "vernacular_synonyms"]},
+        "collapse": {"field": "parent_id"},
     }
     query_params = {"search_pipeline": settings.HYBRID_PIPELINE_NAME}
     return body, query_params

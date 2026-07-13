@@ -263,6 +263,12 @@ def _extract_lab_report_url(product_doc: Any) -> Optional[str]:
     return cleaned_url or None
 
 
+def _enrich_listing_card(card: Dict[str, Any], raw_src: Dict[str, Any]) -> Dict[str, Any]:
+    """Add listing fields shared across search, home, and PDP product cards."""
+    card["has_lab_report"] = bool(_extract_lab_report_url(raw_src))
+    return card
+
+
 def _resolve_pdp_cta(
     product_info: Dict[str, Any],
     flean_badge: Dict[str, Any],
@@ -546,8 +552,18 @@ def get_healthier_alternatives(product_id: str) -> Tuple[Dict[str, Any], int]:
         if not result.get("source_product"):
             return _error_response("PRODUCT_NOT_FOUND", f"Product '{pid}' not found", 404)
 
-        source_card = transform_to_product_card(result["source_product"])
-        alt_cards = [c for c in (transform_to_product_card(a) for a in result.get("alternatives", []) if a) if c is not None]
+        source_raw = result["source_product"]
+        source_card = transform_to_product_card(source_raw)
+        if source_card is not None:
+            _enrich_listing_card(source_card, source_raw)
+
+        alt_cards: List[Dict[str, Any]] = []
+        for alt_raw in result.get("alternatives", []) or []:
+            if not alt_raw:
+                continue
+            alt_card = transform_to_product_card(alt_raw)
+            if alt_card is not None:
+                alt_cards.append(_enrich_listing_card(alt_card, alt_raw))
 
         log.info(f"ALTERNATIVES_SUCCESS | id={pid} | found={len(alt_cards)}")
 

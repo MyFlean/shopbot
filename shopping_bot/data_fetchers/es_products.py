@@ -1736,6 +1736,49 @@ def _build_sort_config(sort_by: Optional[str]) -> List[Dict[str, Any]]:
     return [{"_score": "desc"}]
 
 
+def _build_relevance_sort_with_lab_report_priority() -> List[Dict[str, Any]]:
+    """Sort relevance results by lab-report presence first, then ES score."""
+    script_source = """
+        def src = params['_source'];
+        if (!(src instanceof Map)) {
+            return 0;
+        }
+
+        def categoryData = src['category_data'];
+        if (!(categoryData instanceof Map)) {
+            return 0;
+        }
+
+        def labReports = categoryData['lab_reports'];
+        if (!(labReports instanceof Map)) {
+            return 0;
+        }
+
+        def rawUrl = labReports['url'];
+        if (rawUrl == null) {
+            return 0;
+        }
+
+        if (rawUrl instanceof String) {
+            return rawUrl.trim().length() > 0 ? 1 : 0;
+        }
+        return 1;
+    """
+    return [
+        {
+            "_script": {
+                "type": "number",
+                "order": "desc",
+                "script": {
+                    "lang": "painless",
+                    "source": script_source,
+                },
+            }
+        },
+        {"_score": "desc"},
+    ]
+
+
 # ============================================================================
 # Filter Configuration for Simple Search API
 # ============================================================================
@@ -4550,8 +4593,10 @@ class ElasticsearchProductsFetcher:
             relevance_flean_boost_applied = False
             relevance_flean_boost_weight = 0.0
             
-            # Build sort configuration
+            # Build sort configuration.
             sort_config = _build_sort_config(sort_by if sort_by != "relevance" else None)
+            if query_text and sort_by == "relevance":
+                sort_config = _build_relevance_sort_with_lab_report_priority()
             
             # Build filter clauses from filters object
             filter_clauses: List[Dict[str, Any]] = [VISIBILITY_FILTER]
@@ -4849,6 +4894,7 @@ class ElasticsearchProductsFetcher:
                         "category_data.nutritional.qty",
                         "category_data.nutritional.raw_text",
                         "category_data.tags.ingredient_tags",
+                        "category_data.lab_reports.url",
                         "availability.*",
                         "size", "visibility", "scheduled",
                     ]

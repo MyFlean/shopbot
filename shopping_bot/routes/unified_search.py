@@ -395,10 +395,10 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             try:
                 card = transform_to_product_card(raw)
                 if card is not None:
+                    has_lab_report = bool(_extract_lab_report_url(raw))
                     card_in_stock = _derive_in_stock_from_availability(raw, effective_pincode)
                     card["in_stock"] = card_in_stock
-                    lab_report_url = _extract_lab_report_url(raw)
-                    card["has_lab_report"] = bool(lab_report_url)
+                    card["has_lab_report"] = has_lab_report
                     card["cta"] = _resolve_pdp_cta(
                         product_info={
                             "in_stock": card_in_stock,

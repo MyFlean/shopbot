@@ -101,6 +101,7 @@ BEST_SELLING_CATEGORY_PATHS: List[str] = [
 BEST_SELLING_PER_CATEGORY = 2
 BEST_SELLING_TOTAL_PRODUCTS = 6
 BEST_SELLING_FETCH_BUFFER = 13
+BEST_SELLING_PINNED_PRODUCT_ID = "01KXDD92YTPN4YF8VS2EBCAK25"
 SUPPLEMENTS_CATEGORY_PATHS: List[str] = [
     "f_and_b/supplements/performance/creatine",
     "f_and_b/supplements/amino_acids/bcaa",
@@ -474,6 +475,8 @@ def _get_best_selling_data(effective_pincode: Optional[str] = None) -> Dict[str,
     selected_products: List[Dict[str, Any]] = []
     selected_ids: set[str] = set()
     backfill_candidates: List[tuple[float, Dict[str, Any]]] = []
+    pinned_card: Optional[Dict[str, Any]] = None
+    pinned_score = -1.0
 
     force_legacy = (os.getenv("BEST_SELLING_FORCE_LEGACY") or "").strip().lower() in ("1", "true", "yes", "on")
 
@@ -543,6 +546,9 @@ def _get_best_selling_data(effective_pincode: Optional[str] = None) -> Dict[str,
         category_count = 0
         for score, card in scored_cards:
             product_id = card["id"]
+            if product_id == BEST_SELLING_PINNED_PRODUCT_ID and score > pinned_score:
+                pinned_card = card
+                pinned_score = score
             if product_id in selected_ids:
                 continue
             if category_count < BEST_SELLING_PER_CATEGORY:
@@ -563,8 +569,27 @@ def _get_best_selling_data(effective_pincode: Optional[str] = None) -> Dict[str,
             if len(selected_products) >= BEST_SELLING_TOTAL_PRODUCTS:
                 break
 
+    # If the pinned card was not present in category selections, fetch it directly by ID.
+    if pinned_card is None:
+        try:
+            pinned_sources = fetcher.search_by_ids([BEST_SELLING_PINNED_PRODUCT_ID])
+            if pinned_sources:
+                forced_card = transform_to_product_card(pinned_sources[0])
+                if forced_card and forced_card.get("id") == BEST_SELLING_PINNED_PRODUCT_ID:
+                    pinned_card = forced_card
+        except Exception:
+            # Fail-open: keep best-selling response even if pinned-product lookup fails.
+            pinned_card = None
+
     # Final response is consistently ordered by Flean score descending.
     selected_products.sort(key=_get_card_flean_sort_key, reverse=True)
+
+    # Keep the requested product at the top when it is available in fetched candidates.
+    if pinned_card is not None:
+        selected_products = [
+            card for card in selected_products if card.get("id") != BEST_SELLING_PINNED_PRODUCT_ID
+        ]
+        selected_products.insert(0, pinned_card)
 
     try:
         log.info(

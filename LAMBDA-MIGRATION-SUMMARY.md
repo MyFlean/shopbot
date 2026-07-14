@@ -159,7 +159,7 @@ if config_name == 'lambda':
 
 ### Secrets Manager
 The following secrets should be stored in AWS Secrets Manager:
-- `ANTHROPIC_API_KEY`: Anthropic API key for Claude
+- `AWS_BEARER_TOKEN_BEDROCK`: Bedrock bearer token for Claude
 - `ES_API_KEY` or `ELASTIC_API_KEY`: Elasticsearch API key (if required)
 - `REDIS_PASSWORD`: Redis password (if required)
 - Any other API keys or sensitive configuration
@@ -215,7 +215,7 @@ terraform apply
 Ensure the secret `flean-services/shopbot` contains:
 ```json
 {
-  "ANTHROPIC_API_KEY": "sk-ant-...",
+  "AWS_BEARER_TOKEN_BEDROCK": "ABSK...",
   "ES_API_KEY": "...",
   "REDIS_PASSWORD": "..."
 }

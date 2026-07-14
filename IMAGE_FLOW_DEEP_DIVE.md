@@ -79,12 +79,12 @@ except Exception as e:
 
 **Location**: `shopping_bot/vision_flow.py:83-162`
 
-The first LLM call uses **Anthropic's vision model** with structured tool calling:
+The first LLM call uses the **Bedrock-backed Claude vision model** with structured tool calling:
 
 ```python
 async def process_image_query(ctx: UserContext, image_url: str) -> Dict[str, Any]:
     media_type, b64_data = _normalize_b64_input(image_url)
-    extractor = anthropic.AsyncAnthropic(api_key=Cfg.ANTHROPIC_API_KEY)
+    extractor = anthropic.AsyncAnthropic(api_key=Cfg.AWS_BEARER_TOKEN_BEDROCK)
 
     TOOL = {
         "name": "parse_product_from_image",

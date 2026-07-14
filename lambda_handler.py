@@ -170,9 +170,9 @@ def _load_secrets_async():
             _secrets_loaded = True
             _secrets_load_error = None
         logger.info("SECRETS_LOAD_ASYNC_SUCCESS")
-        # Verify ANTHROPIC_API_KEY was loaded
-        if not os.getenv('ANTHROPIC_API_KEY'):
-            logger.warning("ANTHROPIC_API_KEY not found in secrets, will fail on first request")
+        # Verify active LLM credential was loaded
+        if not os.getenv("AWS_BEARER_TOKEN_BEDROCK"):
+            logger.warning("AWS_BEARER_TOKEN_BEDROCK not found in secrets, chat/LLM routes will fail")
     except Exception as e:
         with _secrets_lock:
             _secrets_load_error = str(e)

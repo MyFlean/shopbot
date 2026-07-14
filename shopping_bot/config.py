@@ -32,16 +32,7 @@ class BaseConfig:
     BEDROCK_REGION: str = os.getenv("BEDROCK_REGION", "ap-south-1")
     BEDROCK_MODEL_ID: str = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0")
 
-    # ─────────────────────────────────────────────────────────────
-    # Anthropic Direct API (DEPRECATED - kept for backwards compatibility)
-    # Use AWS Bedrock instead via AWS_BEARER_TOKEN_BEDROCK
-    # ─────────────────────────────────────────────────────────────
-    @property
-    def ANTHROPIC_API_KEY(self):
-        """Read ANTHROPIC_API_KEY from environment at access time (DEPRECATED)"""
-        return os.getenv("ANTHROPIC_API_KEY", "")
-
-    # LLM Settings (used by both Bedrock and legacy Anthropic)
+    # LLM Settings (used by Bedrock clients)
     LLM_MODEL: str = os.getenv("LLM_MODEL", "us.anthropic.claude-3-5-sonnet-20241022-v2:0")
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "1000"))
@@ -138,28 +129,15 @@ def get_config() -> BaseConfig:
     config_class = mapping.get(env, DevelopmentConfig)
     cfg = config_class()
     
-    # Validate AWS_BEARER_TOKEN_BEDROCK (primary) or ANTHROPIC_API_KEY (legacy)
-    # Only validate if we're not in Lambda or if the key is actually set
+    # Validate Bedrock token format when provided.
+    # If missing, chat/LLM routes will fail at runtime, but startup is allowed.
     if not os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
-        try:
-            # Check for Bedrock token first (preferred)
-            bedrock_token = cfg.AWS_BEARER_TOKEN_BEDROCK
-            anthropic_key = cfg.ANTHROPIC_API_KEY
-            
-            if bedrock_token:
-                # Bedrock API keys typically start with ABSK
-                if not bedrock_token.startswith("ABSK"):
-                    import logging
-                    logging.getLogger(__name__).warning(
-                        "AWS_BEARER_TOKEN_BEDROCK format may be invalid (expected ABSK prefix)"
-                    )
-            elif anthropic_key:
-                # Legacy Anthropic key validation
-                if not anthropic_key.startswith("sk-ant-"):
-                    raise ValueError("ANTHROPIC_API_KEY appears to be invalid (should start with 'sk-ant-')")
-            # If neither is set, that's okay - will fail at runtime when LLM is needed
-        except ValueError:
-            raise
+        bedrock_token = cfg.AWS_BEARER_TOKEN_BEDROCK
+        if bedrock_token and not bedrock_token.startswith("ABSK"):
+            import logging
+            logging.getLogger(__name__).warning(
+                "AWS_BEARER_TOKEN_BEDROCK format may be invalid (expected ABSK prefix)"
+            )
 
     # Optional local override to emulate production flag behavior exactly.
     # Enable by running with: LOCAL_USE_PROD_FLAGS=true

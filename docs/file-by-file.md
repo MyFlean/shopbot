@@ -8,8 +8,8 @@ For each file: purpose, key symbols, ingress/egress, notable logic, and risks. C
   - Purpose: Flask entrypoint; logging and env validation; starts server.
   - Key: `setup_smart_logging` (L24-L40), `validate_environment` (L43-L60), `create_application` (L62-L77), `main` (L119-L149).
   - Ingress: WSGI/CLI. Egress: `shopping_bot.create_app()`.
-  - Notes: Enforces presence/format of `ANTHROPIC_API_KEY`. Prints startup summary.
-  - Risks: Hard fail if missing env; depends on Redis availability at startup.
+  - Notes: Validates Redis env and warns if `AWS_BEARER_TOKEN_BEDROCK` is missing. Prints startup summary.
+  - Risks: Depends on Redis availability at startup; chat/LLM routes require Bedrock token at runtime.
 
 ### shopping_bot/
 
@@ -24,8 +24,8 @@ For each file: purpose, key symbols, ingress/egress, notable logic, and risks. C
   - Purpose: Central config and env parsing.
   - Key: `BaseConfig` (L13-L55), `get_config` (L70-L80).
   - Ingress: Imported widely. Egress: Config values to services.
-  - Notes: Validates Anthropic key presence/prefix; ES envs support legacy names.
-  - Risks: Strict key format requirement may block dev usage if not prefixed.
+  - Notes: Validates Bedrock token format when present; ES envs support legacy names.
+  - Risks: Missing Bedrock token breaks chat/LLM routes at runtime.
 
 - `bot_core.py`
   - Purpose: Orchestration; assessments; 4-intent flows; fetch and UX wiring.

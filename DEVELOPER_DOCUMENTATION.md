@@ -109,8 +109,8 @@ ES_API_KEY=your-elasticsearch-api-key
 REDIS_HOST=localhost
 REDIS_PORT=6379
 
-# Optional: Anthropic API (for chat features)
-ANTHROPIC_API_KEY=your-anthropic-key
+# Optional: Bedrock token (required for chat/LLM features)
+AWS_BEARER_TOKEN_BEDROCK=ABSK...
 
 # Server Configuration
 HOST=127.0.0.1

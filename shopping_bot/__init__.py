@@ -277,9 +277,16 @@ def create_app(config_name: str = 'production') -> Flask:
         log.info("INIT_BOT_CORE_SUCCESS | 4-intent classification enabled | UX generation enabled")
         
     except Exception as e:
-        log.error(f"INIT_BOT_CORE_ERROR | error={e}", exc_info=True)
-        raise RuntimeError(f"Failed to initialize bot core: {e}")
+        # Graceful local fallback: allow product/home/search APIs to run without LLM creds.
+        # Chat/LLM routes will return initialization errors until credentials are configured.
+        app.extensions["bot_core"] = None
 
+        log.warning(
+            "INIT_BOT_CORE_DEGRADED | bot core unavailable: %s | continuing startup in degraded mode "
+            "(product/home/search APIs available; chat/LLM routes disabled until credentials are set)",
+            str(e),
+            exc_info=True,
+        )
     # ────────────────────────────────────────────────────────
     # STEP 3: Register Routes
     # ────────────────────────────────────────────────────────

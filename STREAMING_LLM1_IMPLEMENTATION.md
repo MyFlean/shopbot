@@ -128,7 +128,7 @@ Uses two regex patterns:
 
 ```bash
 # Set environment variable
-export ANTHROPIC_API_KEY=your_key_here
+export AWS_BEARER_TOKEN_BEDROCK=ABSK...
 
 # Run test suite
 python test_llm1_streaming.py

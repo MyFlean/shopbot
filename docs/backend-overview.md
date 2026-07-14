@@ -75,8 +75,8 @@ This document provides a high-level view of the backend architecture, major comp
   - Uses `ELASTIC_*` envs; function_score driven ranking via `shopping_bot/scoring_config.py`.
   - Enrichment via `_mget` for top products to power UX persuasion.
 
-- **Anthropic** (LLM): `shopping_bot/llm_service.py`, `shopping_bot/ux_response_generator.py`, `shopping_bot/recommendation.py`
-  - All use `anthropic.AsyncAnthropic` and tool-use API.
+- **AWS Bedrock** (LLM): `shopping_bot/llm_service.py`, `shopping_bot/ux_response_generator.py`, `shopping_bot/recommendation.py`
+  - Uses `AWS_BEARER_TOKEN_BEDROCK` for runtime LLM calls.
 
 ### Lifecycle of a Typical User Query
 
@@ -113,7 +113,7 @@ This document provides a high-level view of the backend architecture, major comp
 
 ### Configuration & Secrets
 
-- `shopping_bot/config.py` reads env for Redis, Anthropic, and Elasticsearch; validates `ANTHROPIC_API_KEY` format and presence.
+- `shopping_bot/config.py` reads env for Redis, Bedrock, and Elasticsearch; startup warns on suspicious Bedrock token format.
 - ES base/index/API key may be set via `ES_URL`, `ES_API_KEY` (fallback to legacy `ELASTIC_*`).
 
 ### Assumptions & Notes
@@ -124,7 +124,7 @@ This document provides a high-level view of the backend architecture, major comp
 ### Verification Checklist
 
 - Start app locally with valid env:
-  - `ANTHROPIC_API_KEY`, `REDIS_HOST`, `ES_URL`, `ES_API_KEY`, `ELASTIC_INDEX`.
+  - `AWS_BEARER_TOKEN_BEDROCK`, `REDIS_HOST`, `ES_URL`, `ES_API_KEY`, `ELASTIC_INDEX`.
 - Smoke test health:
   - `curl http://localhost:8080/__system_health | jq .status`
   - `curl http://localhost:8080/health | jq .status`

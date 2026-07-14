@@ -479,7 +479,8 @@ SCORE_CARD_ICONS: Dict[str, str] = {
     "natural_sugar": "https://img.flean.ai/assets/Pdp-Icons/03.svg",
     "glycemic_index": "https://img.flean.ai/assets/Pdp-Icons/gi1.svg",
     "hydration": "https://img.flean.ai/assets/Pdp-Icons/hydration1.svg",
-    "vitamins_minerals": "https://img.flean.ai/assets/Pdp-Icons/vitamin1.svg",
+    "vitamins": "https://img.flean.ai/assets/Pdp-Icons/vitamin1.svg",
+    "minerals": "https://img.flean.ai/assets/Pdp-Icons/mineral1.svg",
     "antioxidants": "https://img.flean.ai/assets/Pdp-Icons/antioxidant1.svg",
     "gut_health": "https://img.flean.ai/assets/Pdp-Icons/gut1.svg",
 }
@@ -1141,6 +1142,12 @@ def _has_hydration_tag(group: Any) -> bool:
     return bool(_collect_ingredients_tag_ids(group) & _HYDRATION_TAG_IDS)
 
 
+def _has_positive_highlight_tags(group: Any) -> bool:
+    if not isinstance(group, dict):
+        return False
+    return bool(_highlight_tag_ids_from_group(group, "positive"))
+
+
 def _hydration_tier_for_value() -> Dict[str, str]:
     tier = _SCORE_TIER_BY_STATUS.get(_HYDRATION_STATUS) or _SCORE_TIER_BY_STATUS["average"]
     fields = _tier_to_card_fields(tier)
@@ -1168,6 +1175,34 @@ def _build_hydration_card(ctx: _ScoreCardBuildContext) -> Optional[Dict[str, Any
         "icon_url": SCORE_CARD_ICONS["hydration"],
         "visible": True,
     }
+
+
+def _build_positive_tag_high_card(
+    score_key: str,
+    ctx: _ScoreCardBuildContext,
+) -> Optional[Dict[str, Any]]:
+    group_key = _resolve_highlight_group_key(score_key, ctx.meta_by_key)
+    if not group_key:
+        return None
+    group = ctx.highlight_root.get(group_key) if isinstance(ctx.highlight_root, dict) else None
+    if not _has_positive_highlight_tags(group):
+        return None
+    resolved = _hydration_tier_for_value()
+    icon_url = SCORE_CARD_ICONS.get(score_key)
+    card: Dict[str, Any] = {
+        "title": _card_title(score_key, ctx.meta_by_key),
+        "value": resolved["value"],
+        "subtitle": "Efficiency",
+        "percentile": None,
+        "status": resolved["status"],
+        "status_label": resolved["value"],
+        "color": resolved["color"],
+        "theme": resolved["theme"],
+        "visible": True,
+    }
+    if icon_url:
+        card["icon_url"] = icon_url
+    return card
 
 
 def _resolve_sentiment_highlight_value(group: Any) -> Optional[str]:
@@ -1240,6 +1275,8 @@ def _build_score_card(
         return _build_glycemic_index_card(ctx)
     if build_type == "hydration":
         return _build_hydration_card(ctx)
+    if build_type == "positive_tag_high":
+        return _build_positive_tag_high_card(score_key, ctx)
     if build_type == "calories":
         return _build_calories_card(ctx)
     if build_type == "sentiment_highlight":

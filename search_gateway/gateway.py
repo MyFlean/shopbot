@@ -114,7 +114,7 @@ def _to_v1_product(item: Any, rank: int) -> Dict[str, Any]:
     stats = src.get("stats") or {}
 
     nutritional = ((src.get("category_data") or {}).get("nutritional") or {})
-    nutrition = nutritional.get("nutri_breakdown") or {}
+    nutrition = nutritional.get("nutri_breakdown_updated") or nutritional.get("nutri_breakdown") or {}
 
     claims = src.get("package_claims") or {}
     health_claims = claims.get("health_claims") or []
@@ -159,13 +159,14 @@ def _to_v1_product(item: Any, rank: int) -> Dict[str, Any]:
         "category_paths": src.get("category_paths") or [],
         "description": src.get("description"),
         # Nutrition flat fields (product_search.py, simple UX)
-        "protein_g": nutrition.get("protein_g"),
-        "carbs_g": nutrition.get("carbs_g"),
-        "fat_g": nutrition.get("fat_g"),
-        "fiber_g": nutrition.get("fiber_g"),
-        "calories": nutrition.get("energy_kcal"),
+        "protein_g": nutrition.get("protein_g") or nutrition.get("protein g"),
+        "carbs_g": nutrition.get("carbs_g") or nutrition.get("carbohydrates g") or nutrition.get("carbs g"),
+        "fat_g": nutrition.get("fat_g") or nutrition.get("total fat g") or nutrition.get("fat g"),
+        "fiber_g": nutrition.get("fiber_g") or nutrition.get("fiber g"),
+        "calories": nutrition.get("energy_kcal") or nutrition.get("energy kcal"),
         # qty is read by transform_to_product_card() pre-transformed path
         "qty": nutritional.get("qty", ""),
+        "size": src.get("size", ""),
         # Nutrition nested dict (llm_service.py XML prompt)
         "nutritional_breakdown": nutrition,
         "nutritional_qty": nutritional.get("qty", ""),
@@ -295,7 +296,8 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
         # (Flean score) needs that full pool to have any real candidates to
         # promote; pagination happens below, AFTER ranking.
         hybrid_result = hybrid_search(
-            client, req.processed_query, req.filters, size, SETTINGS, emb_svc
+            client, req.processed_query, req.filters, size, SETTINGS, emb_svc,
+            routing_context=req.routing_context,
         )
 
         sort_by = (req.filters.sort_by or "").strip().lower()
@@ -315,6 +317,7 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
             # None/None (no resolved product_type) is a complete no-op.
             product_type=req.filters.product_type,
             product_type_category=req.filters.product_type_category,
+            health_intent=req.health_intent,
         )
 
         offset = req.filters.offset or 0
@@ -339,6 +342,21 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
                 "tier": req.product_intent.tier,
                 "relaxed": hybrid_result.product_intent_relaxed,
                 "fresh_produce": bool(req.product_intent.fresh_produce_ids),
+            }
+        if req.health_intent is not None and req.health_intent.detected:
+            meta["health_intent"] = {
+                "categories": list(req.health_intent.categories),
+                "matched_phrases": list(req.health_intent.matched_phrases),
+                "primary_preferences": list(req.health_intent.primary_preferences),
+                "secondary_preferences": list(req.health_intent.secondary_preferences),
+            }
+        if req.routing_context is not None:
+            meta["routing"] = {
+                "product_intent_source": req.routing_context.product_intent_source,
+                "product_intent_confidence": round(req.routing_context.product_intent_confidence, 4),
+                "is_compound": req.routing_context.product_intent_is_compound,
+                "health_intent_detected": req.routing_context.health_intent_detected,
+                "decision": "LEXICAL_ONLY" if hybrid_result.fallback_reason == "query_router: LEXICAL_ONLY" else "HYBRID",
             }
         return {"meta": meta, "products": products}
 

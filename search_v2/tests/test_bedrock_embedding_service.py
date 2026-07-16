@@ -56,7 +56,7 @@ class TestConstruction:
 
 
 class TestEmbedQuerySuccess:
-    @patch("search_v2.embedding.bedrock_embedding_service.requests.post")
+    @patch("search_v2.embedding.bedrock_embedding_service.requests.Session.post")
     def test_returns_embedding_on_200(self, mock_post):
         mock_post.return_value = _mock_response(200, {"embedding": [0.1, 0.2, 0.3], "inputTextTokenCount": 4})
         svc = _service()
@@ -64,7 +64,7 @@ class TestEmbedQuerySuccess:
         assert vector == [0.1, 0.2, 0.3]
         assert mock_post.call_count == 1
 
-    @patch("search_v2.embedding.bedrock_embedding_service.requests.post")
+    @patch("search_v2.embedding.bedrock_embedding_service.requests.Session.post")
     def test_request_body_shape(self, mock_post):
         mock_post.return_value = _mock_response(200, {"embedding": [0.0] * 512})
         svc = _service()
@@ -75,7 +75,7 @@ class TestEmbedQuerySuccess:
         assert body == {"inputText": "greek yogurt", "dimensions": 512, "normalize": True}
         assert kwargs["headers"]["Authorization"] == "Bearer ABSK-fake-token-for-tests"
 
-    @patch("search_v2.embedding.bedrock_embedding_service.requests.post")
+    @patch("search_v2.embedding.bedrock_embedding_service.requests.Session.post")
     def test_empty_query_returns_none_without_calling_bedrock(self, mock_post):
         svc = _service()
         assert svc.embed_query("") is None
@@ -88,7 +88,7 @@ class TestEmbedQueryFailure_RaisesNotNone:
     returning None — this is what lets unified_search.py's existing V1
     fallback catch it, instead of degrading to lexical-only Search V2."""
 
-    @patch("search_v2.embedding.bedrock_embedding_service.requests.post")
+    @patch("search_v2.embedding.bedrock_embedding_service.requests.Session.post")
     def test_non_retryable_4xx_raises_immediately(self, mock_post):
         mock_post.return_value = _mock_response(403, text='{"Message":"Invalid API Key format"}')
         svc = _service()
@@ -96,7 +96,7 @@ class TestEmbedQueryFailure_RaisesNotNone:
             svc.embed_query("test query")
         assert mock_post.call_count == 1  # no retry burned on a non-retryable error
 
-    @patch("search_v2.embedding.bedrock_embedding_service.requests.post")
+    @patch("search_v2.embedding.bedrock_embedding_service.requests.Session.post")
     def test_throttle_retries_then_raises(self, mock_post):
         mock_post.return_value = _mock_response(429, text="Too many requests")
         svc = _service()
@@ -105,7 +105,7 @@ class TestEmbedQueryFailure_RaisesNotNone:
                 svc.embed_query("test query")
         assert mock_post.call_count == 2  # _MAX_ATTEMPTS
 
-    @patch("search_v2.embedding.bedrock_embedding_service.requests.post")
+    @patch("search_v2.embedding.bedrock_embedding_service.requests.Session.post")
     def test_throttle_then_success_recovers(self, mock_post):
         mock_post.side_effect = [
             _mock_response(429, text="Too many requests"),
@@ -117,7 +117,7 @@ class TestEmbedQueryFailure_RaisesNotNone:
         assert vector == [0.5] * 512
         assert mock_post.call_count == 2
 
-    @patch("search_v2.embedding.bedrock_embedding_service.requests.post")
+    @patch("search_v2.embedding.bedrock_embedding_service.requests.Session.post")
     def test_network_error_raises_not_none(self, mock_post):
         import requests as requests_module
         mock_post.side_effect = requests_module.ConnectionError("connection reset")
@@ -126,7 +126,7 @@ class TestEmbedQueryFailure_RaisesNotNone:
             with pytest.raises(BedrockEmbeddingError):
                 svc.embed_query("test query")
 
-    @patch("search_v2.embedding.bedrock_embedding_service.requests.post")
+    @patch("search_v2.embedding.bedrock_embedding_service.requests.Session.post")
     def test_malformed_200_response_raises(self, mock_post):
         mock_post.return_value = _mock_response(200, {"unexpected": "shape"})
         svc = _service()
@@ -146,12 +146,12 @@ class TestEmbedPassagesNotImplemented:
 
 
 class TestIsAvailable:
-    @patch("search_v2.embedding.bedrock_embedding_service.requests.post")
+    @patch("search_v2.embedding.bedrock_embedding_service.requests.Session.post")
     def test_is_available_true_on_success(self, mock_post):
         mock_post.return_value = _mock_response(200, {"embedding": [0.0] * 512})
         assert _service().is_available() is True
 
-    @patch("search_v2.embedding.bedrock_embedding_service.requests.post")
+    @patch("search_v2.embedding.bedrock_embedding_service.requests.Session.post")
     def test_is_available_false_on_failure(self, mock_post):
         mock_post.return_value = _mock_response(403, text="denied")
         assert _service().is_available() is False

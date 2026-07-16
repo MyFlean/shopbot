@@ -160,6 +160,11 @@ class ProductIntentResult:
                          retrieval hard-restricts to exactly these ids
                          (SearchFilters.product_ids) instead of any text
                          signal. Empty tuple (not None) when no such match.
+    source            — which resolution mechanism produced this result:
+                         "fresh_produce" | "category_fallback" | "head_term" |
+                         "none". Lets downstream consumers (e.g. the query
+                         router) key decisions off *how* a result was
+                         resolved rather than only its numeric confidence.
     """
     primary_product: Optional[str] = None
     modifiers: List[str] = field(default_factory=list)
@@ -167,17 +172,16 @@ class ProductIntentResult:
     tier: str = "none"
     dominant_category: Optional[str] = None
     fresh_produce_ids: Tuple[str, ...] = ()
+    source: str = "none"
 
 
 def resolve_head_term(
     tokens: List[str],
     lexicon: Dict[str, Dict[str, Any]],
     min_confidence: float = 0.0,
-    high_confidence: Optional[float] = None,
 ) -> Optional[Tuple[str, Dict[str, Any], int]]:
-    """Find the TRAILING word phrase (up to MAX_NGRAM_WORDS) of `tokens` with
-    the HIGHEST catalog-derived confidence among every trailing 1/2/3-word
-    candidate found in `lexicon`.
+    """Find the TRAILING word phrase (up to MAX_NGRAM_WORDS) of `tokens` that
+    is the MOST SPECIFIC candidate clearing `min_confidence`.
 
     English retail product names and shopping queries are head-final:
     modifiers precede the product ("greek yogurt", "protein chips", "low
@@ -185,65 +189,44 @@ def resolve_head_term(
     which is what correctly separates "greek" (modifier) from "yogurt"
     (head) without any per-word classification table.
 
-    Deliberately NOT "longest trailing phrase present in the lexicon" —
-    a longer phrase that happens to appear in the lexicon isn't necessarily
-    a BETTER product-type signal than a shorter one nested inside it (e.g. a
-    rare, coincidentally-catalogued "greek yogurt" bigram should lose to a
-    catalog-wide well-established "yogurt" unigram if the unigram's
-    confidence is actually higher). Comparing confidence directly is what
-    lets a genuinely distinct, well-supported longer phrase (e.g. "protein
-    bar" as its own product family, if the catalog's own statistics support
-    that) win over a shorter one — an emergent, data-driven distinction, not
-    a hardcoded preference for one length over another.
+    Specificity wins over raw confidence: candidates are tried LONGEST
+    first (MAX_NGRAM_WORDS words down to 1), and the first one whose own
+    catalog-derived confidence clears `min_confidence` is returned
+    immediately. A valid, well-supported specific compound ("greek yogurt",
+    "whole wheat bread", "green tea") is therefore never displaced by a
+    shorter, higher-confidence generic parent it happens to be nested
+    inside ("yogurt", "bread", "tea") — the specific term's OWN confidence
+    still governs its tier (see ProductIntentExtractor.extract()), only the
+    SELECTION among candidates changes. A candidate that fails to clear
+    `min_confidence` is never selected regardless of length, so a longer
+    phrase only wins when the catalog genuinely supports it as a real
+    signal — Broad Category fallback (see ProductIntentExtractor.
+    _resolve_category_fallback()) remains the only path for a generic
+    catalog category name to resolve a query, and only fires when nothing
+    at any length clears `min_confidence` here.
 
     Falls back to a light, generic singular/plural fold (mirrors the
     existing rstrip("s") mild singularization already used in
     nl_filter_extractor.py's ingredient-exclusion handling) so "chip" and
     "chips" resolve to whichever surface form the catalog actually uses.
 
-    `min_confidence` — if the single best candidate found doesn't clear this
-    floor, returns None instead (used by ProductIntentExtractor.extract() to
-    apply PRODUCT_INTENT_LOW_CONFIDENCE; index-time per-document assignment
-    in indexing/document_transformer.py calls this with the default 0.0 so it
-    always stores its best-effort guess, deferring the tiering decision to
-    query time).
-
-    `high_confidence` — when provided (query time only; index-time labeling
-    in document_transformer.py deliberately omits it, unaffected), resolves
-    a real over-narrowing failure mode: comparing raw confidence alone lets a
-    longer, coincidentally-high-purity compound (e.g. "whole wheat bread" at
-    0.87, because that exact string is a tightly-defined SKU family in the
-    catalog) beat a shorter candidate that is ALSO comfortably high-tier on
-    its own (e.g. "bread" at 0.69) — even though the query's actual intent
-    ("whole wheat" as a modifier on "bread") is better served by anchoring
-    retrieval on the broad term and letting the modifier influence ranking,
-    not hard-gate admission (see SearchV2Settings.PRODUCT_INTENT_HIGH_CONFIDENCE
-    and retrieval/filters.py's product_type "filter" mode, which excludes any
-    product whose own name/product_type doesn't contain the FULL resolved
-    phrase — "whole wheat bread" would wrongly exclude a plain "Multigrain
-    Bread" that's a perfectly good bread result). Once a candidate is already
-    confidently at the SAME tier (both >= high_confidence, or both in
-    [min_confidence, high_confidence)), a longer phrase's extra confidence
-    is not buying a meaningfully more reliable signal — it's just a tighter
-    substring match. So: among candidates reaching the same best tier as the
-    single highest-confidence match, prefer the SHORTEST (most general);
-    ties within that tier broken by highest confidence, deterministically.
-    This never changes which TIER wins (a genuinely medium-only best match
-    still loses to nothing, and a candidate that fails min_confidence is
-    never promoted) — it only changes which candidate is picked once a tier
-    is already decided, so it cannot make retrieval more permissive than
-    today, only less spuriously narrow.
+    `min_confidence` — a candidate that doesn't clear this floor is skipped
+    in favor of the next-shorter one; if nothing at any length clears it,
+    returns None (used by ProductIntentExtractor.extract() to apply
+    PRODUCT_INTENT_LOW_CONFIDENCE; index-time per-document assignment in the
+    indexing-pipeline repo's own independent copy of this file calls this
+    with the default 0.0 so it always stores its best-effort guess,
+    deferring the tiering decision to query time).
 
     Returns (matched_term, lexicon_entry, split_index) where split_index is
     the token index the match starts at (tokens[:split_index] are the
-    modifiers) — or None if nothing cleared `min_confidence` (or nothing in
-    the lexicon matched at all).
+    modifiers) — or None if nothing at any length clears `min_confidence`
+    (or nothing in the lexicon matched at all).
     """
     n = len(tokens)
     if n == 0 or not lexicon:
         return None
 
-    candidates: List[Tuple[float, str, Dict[str, Any], int, int]] = []  # (confidence, term, entry, split_idx, n_words)
     max_size = min(MAX_NGRAM_WORDS, n)
     for size in range(max_size, 0, -1):
         split_idx = n - size
@@ -265,23 +248,10 @@ def resolve_head_term(
             continue
 
         confidence = float(entry.get("confidence", 0.0))
-        candidates.append((confidence, matched_term, entry, split_idx, size))
+        if confidence >= min_confidence:
+            return matched_term, entry, split_idx
 
-    if not candidates:
-        return None
-
-    best = max(candidates, key=lambda c: c[0])
-    if best[0] < min_confidence:
-        return None
-
-    if high_confidence is not None:
-        best_tier_floor = high_confidence if best[0] >= high_confidence else min_confidence
-        same_tier = [c for c in candidates if c[0] >= best_tier_floor]
-        # Shortest n_words wins; ties broken by highest confidence, then by
-        # `candidates`' own (deterministic, size-descending) iteration order.
-        best = min(same_tier, key=lambda c: (c[4], -c[0]))
-
-    return best[1], best[2], best[3]
+    return None
 
 
 def load_product_type_lexicon(path: Path = PRODUCT_TYPE_LEXICON_PATH) -> Dict[str, Dict[str, Any]]:
@@ -357,6 +327,7 @@ class ProductIntentExtractor:
                     confidence=CATEGORY_FALLBACK_CONFIDENCE,
                     tier="medium",
                     dominant_category=cat,
+                    source="category_fallback",
                 )
         return None
 
@@ -415,6 +386,7 @@ class ProductIntentExtractor:
                     tier="high",
                     dominant_category=None,
                     fresh_produce_ids=family.member_ids,
+                    source="fresh_produce",
                 )
 
         if not self._lexicon:
@@ -426,11 +398,9 @@ class ProductIntentExtractor:
         # min_confidence=low: a candidate that can't even clear the LOW bar
         # isn't worth surfacing as a resolved intent at all — retrieval is
         # meant to be completely unaffected in that case (see tier="none").
-        # high_confidence=high: query-time only (see resolve_head_term()'s
-        # docstring) — prevents anchoring on an unnecessarily narrow compound
-        # ("whole wheat bread") when the base term ("bread") is ALSO
-        # comfortably in the same confidence tier on its own.
-        resolved = resolve_head_term(tokens, self._lexicon, min_confidence=low, high_confidence=high)
+        # tier is still classified below from the WINNING candidate's own
+        # confidence — resolve_head_term() only decides which candidate wins.
+        resolved = resolve_head_term(tokens, self._lexicon, min_confidence=low)
         if resolved is None:
             category_result = self._resolve_category_fallback(tokens)
             return category_result if category_result is not None else ProductIntentResult()
@@ -452,4 +422,5 @@ class ProductIntentExtractor:
             confidence=confidence,
             tier=tier,
             dominant_category=entry.get("dominant_category"),
+            source="head_term",
         )

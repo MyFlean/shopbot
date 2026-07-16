@@ -221,8 +221,11 @@ class SearchV2Settings:
     # (now made symmetric and full-range in flean_nutrition_rule) has real headroom to
     # differentiate across the WHOLE percentile range, still comfortably short of the
     # bounds that caused the original incident.
-    BUSINESS_MIN_MULTIPLIER: float = field(default_factory=lambda: _float("SEARCH_V2_BUSINESS_MIN_MULTIPLIER", 0.85))
-    BUSINESS_MAX_MULTIPLIER: float = field(default_factory=lambda: _float("SEARCH_V2_BUSINESS_MAX_MULTIPLIER", 1.15))
+    # Slight widening from [0.85, 1.15] (~9-position swing) to [0.82, 1.18]
+    # (~11-position swing) — still well short of the incident-causing
+    # [0.75, 1.35] (~21 positions) noted above.
+    BUSINESS_MIN_MULTIPLIER: float = field(default_factory=lambda: _float("SEARCH_V2_BUSINESS_MIN_MULTIPLIER", 0.82))
+    BUSINESS_MAX_MULTIPLIER: float = field(default_factory=lambda: _float("SEARCH_V2_BUSINESS_MAX_MULTIPLIER", 1.18))
 
     # ── Business ranking: per-rule weights ───────────────────────────
     # Maps rule function name → scalar weight in [0.0, 1.0].
@@ -311,6 +314,12 @@ class SearchV2Settings:
     # ordinary 75-candidate floor. Unfiltered/ambiguous queries are completely
     # unaffected (still governed by RETRIEVAL_K as before).
     PRODUCT_INTENT_MAX_POOL_SIZE: int = field(default_factory=lambda: _int("SEARCH_V2_PRODUCT_INTENT_MAX_POOL_SIZE", 300))
+    ENABLE_QUERY_ROUTER: bool = field(default_factory=lambda: _bool("SEARCH_V2_ENABLE_QUERY_ROUTER", True))
+    # Independent of PRODUCT_INTENT_HIGH_CONFIDENCE (0.55) — only gates the
+    # router's own head_term-source rule, never retrieval's hard-filter gate.
+    ROUTER_CONFIDENCE_THRESHOLD: float = field(default_factory=lambda: _float("SEARCH_V2_ROUTER_CONFIDENCE_THRESHOLD", 0.35))
+    ENABLE_HEALTH_INTENT: bool = field(default_factory=lambda: _bool("SEARCH_V2_ENABLE_HEALTH_INTENT", True))
+    ENABLE_HEALTH_PREFERENCE_RANKING: bool = field(default_factory=lambda: _bool("SEARCH_V2_ENABLE_HEALTH_PREFERENCE_RANKING", True))
 
 
 SETTINGS = SearchV2Settings()

@@ -210,6 +210,7 @@ def _hybrid_search_once(
     embedding_service: Optional[EmbeddingService] = None,
     sort_by: Optional[str] = None,
     offset: int = 0,
+    routing_context=None,
 ) -> HybridSearchResult:
     """
     One retrieval attempt — everything hybrid_search() used to do directly.
@@ -228,9 +229,11 @@ def _hybrid_search_once(
     # Extract sort/offset from SearchFilters if not overridden by kwargs
     _sort_by = sort_by
     _offset = offset
+    _is_search_filters = False
     if filters is not None:
         from search_v2.retrieval.filters import SearchFilters
-        if isinstance(filters, SearchFilters):
+        _is_search_filters = isinstance(filters, SearchFilters)
+        if _is_search_filters:
             if _sort_by is None:
                 _sort_by = filters.sort_by
             if _offset == 0:
@@ -242,6 +245,15 @@ def _hybrid_search_once(
             fallback_reason="hybrid/semantic disabled via settings",
             sort_by=_sort_by, offset=_offset,
         )
+
+    if getattr(settings, "ENABLE_QUERY_ROUTER", True) and routing_context is not None:
+        from search_v2.query_processing.query_router import route, LEXICAL_ONLY
+        if route(routing_context, settings) == LEXICAL_ONLY:
+            return _lexical_only(
+                client, query, filters, final_size, settings,
+                fallback_reason="query_router: LEXICAL_ONLY",
+                sort_by=_sort_by, offset=_offset,
+            )
 
     strategy = settings.FUSION_STRATEGY
     expanded_pool = _wants_expanded_pool(filters)
@@ -349,6 +361,7 @@ def hybrid_search(
     embedding_service: Optional[EmbeddingService] = None,
     sort_by: Optional[str] = None,
     offset: int = 0,
+    routing_context=None,
 ) -> HybridSearchResult:
     """
     Main hybrid-search entry point — thin wrapper around _hybrid_search_once()
@@ -379,7 +392,10 @@ def hybrid_search(
     that wasted round-trip explicitly.
     """
     settings = settings or SETTINGS
-    result = _hybrid_search_once(client, query, filters, size, settings, embedding_service, sort_by, offset)
+    result = _hybrid_search_once(
+        client, query, filters, size, settings, embedding_service, sort_by, offset,
+        routing_context=routing_context,
+    )
 
     from search_v2.retrieval.filters import SearchFilters
     has_product_ids = isinstance(filters, SearchFilters) and bool(filters.product_ids)

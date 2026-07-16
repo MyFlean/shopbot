@@ -211,6 +211,11 @@ class VocabularyCorrector:
         repairs: List[Tuple[int, int, CorrectionCandidate]] = []
         for i in range(len(tokens) - 1):
             for span in range(2, min(window, len(tokens) - i) + 1):
+                if all(
+                    (self.vocabulary.get(t) or 0) >= MIN_SEGMENTATION_FREQUENCY
+                    for t in tokens[i : i + span]
+                ):
+                    continue
                 merged = "".join(tokens[i : i + span])
                 merged_freq = self.vocabulary.get(merged)
                 if merged_freq is not None and merged_freq >= MIN_SEGMENTATION_FREQUENCY:

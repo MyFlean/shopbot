@@ -33,6 +33,8 @@ from search_v2.query_processing.typo_correction import QueryCorrectionResult, Vo
 if TYPE_CHECKING:
     from search_v2.retrieval.filters import SearchFilters
     from search_v2.query_processing.product_intent_extractor import ProductIntentExtractor, ProductIntentResult
+    from search_v2.query_processing.health_intent_classifier import HealthIntentResult
+    from search_v2.query_processing.routing_context import RoutingContext
 
 
 @dataclass
@@ -78,10 +80,18 @@ class SearchRequest:
                       retrieval itself only ever reads `filters`. None when
                       Product Intent Identification is disabled, its lexicon
                       is unavailable, or nothing in the query resolved.
+    health_intent   — HealthIntentResult from health_intent_classifier.py,
+                      computed independently of filters/product_intent.
+                      Never affects retrieval directly.
+    routing_context — RoutingContext, package of routing-only signals for
+                      query_router.py. Never affects retrieval; retrieval
+                      only ever reads `filters`.
     """
     processed_query: ProcessedQuery
     filters: "SearchFilters"
     product_intent: Optional["ProductIntentResult"] = None
+    health_intent: Optional["HealthIntentResult"] = None
+    routing_context: Optional["RoutingContext"] = None
 
 
 def process_query(
@@ -191,6 +201,16 @@ def process_search_request(
 
     nl_filters_enabled = enable_nl_filters and getattr(settings, "ENABLE_NL_FILTER_EXTRACTION", True)
 
+    # Step 0: Health Intent classification — runs on the RAW query text,
+    # independently of NL filter extraction/typo correction/Product Intent.
+    # Must run on raw_query specifically: NL filter extraction can strip a
+    # recognized macro phrase (e.g. "high protein") out of clean_query
+    # entirely, which would make it invisible to a classifier running later.
+    health_intent = None
+    if getattr(settings, "ENABLE_HEALTH_INTENT", True) and raw_query.strip():
+        from search_v2.query_processing.health_intent_classifier import classify_health_intent
+        health_intent = classify_health_intent(raw_query)
+
     # Step 1: NL filter extraction on the raw query
     clean_query = raw_query
     nl_filters = SearchFilters()
@@ -257,4 +277,13 @@ def process_search_request(
     base = explicit_filters or SearchFilters()
     merged = merge_filters(nl_filters, base)   # base values win on overlap
 
-    return SearchRequest(processed_query=processed, filters=merged, product_intent=product_intent)
+    from search_v2.query_processing.routing_context import build_routing_context
+    routing_context = build_routing_context(product_intent, health_intent, merged)
+
+    return SearchRequest(
+        processed_query=processed,
+        filters=merged,
+        product_intent=product_intent,
+        health_intent=health_intent,
+        routing_context=routing_context,
+    )

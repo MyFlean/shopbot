@@ -95,6 +95,7 @@ class BedrockTitanEmbeddingService:
         self.model_id = model_id
         self._dim = dim
         self.endpoint = f"https://bedrock-runtime.{region}.amazonaws.com/model/{model_id}/invoke"
+        self._session = requests.Session()
         logger.info(
             "BEDROCK_QUERY_EMBEDDING_INIT | region=%s | model=%s | dim=%d", region, model_id, dim,
         )
@@ -134,7 +135,7 @@ class BedrockTitanEmbeddingService:
         last_exc: Optional[Exception] = None
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             try:
-                resp = requests.post(
+                resp = self._session.post(
                     self.endpoint, data=body, headers=headers, timeout=_REQUEST_TIMEOUT_SEC,
                 )
             except requests.RequestException as exc:

@@ -253,6 +253,22 @@ def _print(result: dict, raw_q: str, engine_label: str) -> None:
           f"total_hits={meta.get('total_hits', meta.get('total', '?'))}  "
           f"took={meta.get('took_ms')} ms")
 
+    pi = meta.get("product_intent")
+    if pi:
+        print(f"  ProductIntent: {pi['primary_product']!r}  confidence={pi['confidence']}  tier={pi['tier']}")
+
+    hi = meta.get("health_intent")
+    if hi:
+        print(f"  HealthIntent: categories={hi['categories']}  "
+              f"primary={hi['primary_preferences']}  secondary={hi['secondary_preferences']}")
+
+    routing = meta.get("routing")
+    if routing:
+        print(f"  RoutingContext: source={routing['product_intent_source']}  "
+              f"confidence={routing['product_intent_confidence']}  is_compound={routing['is_compound']}  "
+              f"health_intent_detected={routing['health_intent_detected']}")
+        print(f"  Router decision: {routing['decision']}")
+
     if not products:
         print("  (no results)\n")
         return

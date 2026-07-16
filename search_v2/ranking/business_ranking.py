@@ -244,6 +244,53 @@ DEFAULT_RULES: List[RuleFn] = [
     stock_rule, freshness_rule, category_priority_rule,
 ]
 
+_HEALTH_PREFERENCE_FIELDS: Dict[str, tuple] = {
+    "high_protein": ("stats.protein_percentiles.subcategory_percentile", "high"),
+    "high_fiber": ("stats.fiber_percentiles.subcategory_percentile", "high"),
+    "low_carb": ("stats.carbs_penalty_percentiles.subcategory_percentile", "low"),
+    "low_sugar": ("stats.sugar_penalty_percentiles.subcategory_percentile", "low"),
+    "no_added_sugar": ("stats.sugar_penalty_percentiles.subcategory_percentile", "low"),
+    "low_sodium": ("stats.sodium_penalty_percentiles.subcategory_percentile", "low"),
+    "low_fat": ("stats.total_fat_penalty_percentiles.subcategory_percentile", "low"),
+    "low_saturated_fat": ("stats.saturated_fat_penalty_percentiles.subcategory_percentile", "low"),
+    "low_calorie": ("stats.calories_penalty_percentiles.subcategory_percentile", "low"),
+}
+
+_HEALTH_PRIMARY_WEIGHT = 0.06
+_HEALTH_SECONDARY_WEIGHT = 0.03
+
+
+def health_preference_rule(
+    source: Dict[str, Any],
+    primary_preferences: tuple,
+    secondary_preferences: tuple,
+) -> float:
+    seen_fields = set()
+    multiplier = 1.0
+
+    def _apply(pref: str, weight: float) -> None:
+        nonlocal multiplier
+        mapping = _HEALTH_PREFERENCE_FIELDS.get(pref)
+        if mapping is None:
+            return
+        field_path, direction = mapping
+        if field_path in seen_fields:
+            return
+        seen_fields.add(field_path)
+        pct = _get_nested(source, field_path)
+        if not isinstance(pct, (int, float)):
+            return
+        pct = max(0.0, min(100.0, float(pct)))
+        goodness = (pct - 50.0) / 50.0 if direction == "high" else (50.0 - pct) / 50.0
+        multiplier *= 1.0 + goodness * weight
+
+    for pref in primary_preferences:
+        _apply(pref, _HEALTH_PRIMARY_WEIGHT)
+    for pref in secondary_preferences:
+        _apply(pref, _HEALTH_SECONDARY_WEIGHT)
+
+    return multiplier
+
 
 def _is_exact_product_type_match(
     source: Dict[str, Any], product_type: Optional[str], product_type_category: Optional[str]
@@ -284,6 +331,7 @@ def apply_business_ranking(
     resort: bool = True,
     product_type: Optional[str] = None,
     product_type_category: Optional[str] = None,
+    health_intent: Optional[Any] = None,
 ) -> List[RankedItem]:
     """
     `items`: anything with `.doc_id`, `.source`, `.fused_score` (and
@@ -361,6 +409,20 @@ def apply_business_ranking(
                 effective = 1.0 + (component - 1.0) * weight
                 breakdown[rule.__name__] = round(effective, 4)
                 multiplier *= effective
+
+            if (
+                getattr(settings, "ENABLE_HEALTH_PREFERENCE_RANKING", True)
+                and health_intent is not None
+                and getattr(health_intent, "detected", False)
+            ):
+                component = health_preference_rule(
+                    source, health_intent.primary_preferences, health_intent.secondary_preferences,
+                )
+                weight = rule_weights.get("health_preference_rule", 1.0)
+                effective = 1.0 + (component - 1.0) * weight
+                breakdown["health_preference_rule"] = round(effective, 4)
+                multiplier *= effective
+
             multiplier = max(settings.BUSINESS_MIN_MULTIPLIER, min(settings.BUSINESS_MAX_MULTIPLIER, multiplier))
 
         ranked.append(RankedItem(

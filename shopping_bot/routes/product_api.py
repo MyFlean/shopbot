@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -944,7 +945,7 @@ VALID_SORT_OPTIONS = {
 VALID_PRICE_RANGES = {"below_99", "100_249", "250_499", "above_500"}
 VALID_FLEAN_SCORES = {"10", "9_plus", "8_plus", "7_plus"}
 VALID_PREFERENCES = {"no_palm_oil", "no_added_sugar", "no_harmful_additives", "preservative_free", "no_maida"}
-VALID_DIETARY = {"dairy_free", "gluten_free", "nut_free", "pcos_friendly"}
+VALID_DIETARY = {"dairy_free", "gluten_free", "nut_free"}
 VALID_FOOD_TYPES = {"veg", "nonveg"}
 VALID_NUTRITION_KEYS = {"protein", "carbs", "fat"}
 VALID_NUTRITION_PROFILES = {
@@ -957,6 +958,23 @@ VALID_NUTRITION_PROFILES = {
 }
 NUTRITION_MAX = {"protein": 40, "carbs": 100, "fat": 100}
 NUTRITION_STEP = {"protein": 10, "carbs": 25, "fat": 25}
+
+
+_DYNAMIC_PRICE_RANGE_PATTERN = re.compile(r"^\d+_\d+$")
+
+
+def _is_dynamic_price_range(value: Any) -> bool:
+    """Accept dynamic range keys like '500_999' emitted by dynamic facets."""
+    text = str(value or "").strip()
+    if not _DYNAMIC_PRICE_RANGE_PATTERN.fullmatch(text):
+        return False
+    left_s, right_s = text.split("_", 1)
+    try:
+        left = int(left_s)
+        right = int(right_s)
+    except (TypeError, ValueError):
+        return False
+    return 0 <= left <= right
 
 
 def _build_filters_from_query_args() -> Dict[str, Any]:
@@ -1033,7 +1051,7 @@ def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[
 
     price_range = filters.get("price_range")
     if price_range:
-        if price_range not in VALID_PRICE_RANGES:
+        if price_range not in VALID_PRICE_RANGES and not _is_dynamic_price_range(price_range):
             return None, f"Invalid price_range: '{price_range}'. Valid: {sorted(VALID_PRICE_RANGES)}"
         validated["price_range"] = price_range
 

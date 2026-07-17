@@ -94,11 +94,11 @@ _PRICE_RANGE_BOUNDS: Dict[str, Tuple[Optional[float], Optional[float]]] = {
     "above_500": (500.0,  None),
 }
 
-_FLEAN_SCORE_TO_PERCENTILE: Dict[str, float] = {
-    "10":     90.0,
-    "9_plus": 70.0,
-    "8_plus": 50.0,
-    "7_plus": 30.0,
+_FLEAN_SCORE_TO_MIN_BADGE: Dict[str, float] = {
+    "10": 10.0,
+    "9_plus": 9.0,
+    "8_plus": 8.0,
+    "7_plus": 7.0,
 }
 
 
@@ -106,9 +106,27 @@ def _v1_filters_to_gw_params(vf: Dict[str, Any]) -> Dict[str, Any]:
     """Translate validated_filters to SearchFilters.from_dict()-compatible params."""
     out: Dict[str, Any] = {}
 
+    def _dynamic_bounds(price_key: str) -> Optional[Tuple[float, float]]:
+        token = str(price_key or "").strip()
+        if "_" not in token:
+            return None
+        left_s, right_s = token.split("_", 1)
+        if not (left_s.isdigit() and right_s.isdigit()):
+            return None
+        left = int(left_s)
+        right = int(right_s)
+        if left < 0 or right < left:
+            return None
+        return float(left), float(right)
+
     pr = vf.get("price_range")
     if pr:
-        bounds = _PRICE_RANGE_BOUNDS.get(str(pr))
+        pr_key = str(pr)
+        bounds = _PRICE_RANGE_BOUNDS.get(pr_key)
+        if bounds is None:
+            dyn = _dynamic_bounds(pr_key)
+            if dyn is not None:
+                bounds = dyn
         if bounds:
             pmin, pmax = bounds
             if pmin is not None:
@@ -118,9 +136,9 @@ def _v1_filters_to_gw_params(vf: Dict[str, Any]) -> Dict[str, Any]:
 
     fs = vf.get("flean_score")
     if fs:
-        pct = _FLEAN_SCORE_TO_PERCENTILE.get(str(fs))
-        if pct is not None:
-            out["min_flean_percentile"] = pct
+        min_badge = _FLEAN_SCORE_TO_MIN_BADGE.get(str(fs))
+        if min_badge is not None:
+            out["min_flean_score"] = min_badge
 
     dietary = vf.get("dietary")
     if dietary:
@@ -453,9 +471,11 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 gw_result = gateway.search(gw_params)
                 gw_meta = gw_result.get("meta", {}) or {}
                 gw_products = gw_result.get("products", [])
+                gw_filters = gw_result.get("filters", []) if isinstance(gw_result, dict) else []
                 returned = len(gw_products)
                 result = {
                     "products": gw_products,
+                    "filters": gw_filters,
                     "meta": {
                         "total": gw_meta.get("total_hits", returned),
                         "page": page,
@@ -540,7 +560,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             f"total={meta.get('total', 0)} | returned={len(product_cards)}"
         )
 
-        return jsonify(_success_response({"products": product_cards}, meta=meta)), 200
+        dynamic_filters = result.get("filters", []) if isinstance(result, dict) else []
+        return jsonify(_success_response({"products": product_cards, "filters": dynamic_filters}, meta=meta)), 200
 
     except Exception as exc:
         log.error(f"UNIFIED_SEARCH_ERROR | error={exc}", exc_info=True)

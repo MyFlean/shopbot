@@ -124,6 +124,11 @@ def normalize_dietary_label(label: str) -> str:
     return DIETARY_LABEL_ALIASES.get(low, label.strip().upper())
 
 
+def _to_dietary_tag_key(label: str) -> str:
+    """Map canonical/alias dietary label text to tag-style key (e.g. GLUTEN FREE -> gluten_free)."""
+    return " ".join(str(label or "").strip().lower().split()).replace("-", "_").replace(" ", "_")
+
+
 # ── Nutrition profile filter → ES range clause ────────────────────────────────
 # Uses subcategory_percentile (consistent with V2 scoring rules).
 # Thresholds mirror V1: top-quartile for "high" profiles (≥75th),
@@ -199,6 +204,7 @@ class SearchFilters:
 
     # Quality threshold
     min_flean_percentile: Optional[float] = None
+    min_flean_score: Optional[float] = None
 
     # Nutritional / macro constraints
     macro_filters: Optional[List[MacroFilter]] = None
@@ -324,6 +330,7 @@ class SearchFilters:
         min_flean = _to_float(
             d.get("min_flean_percentile") or d.get("min_quality") or d.get("quality_threshold")
         )
+        min_flean_score = _to_float(d.get("min_flean_score"))
         if d.get("healthy_only") is True or str(d.get("healthy_only", "")).lower() in ("true", "1", "yes"):
             min_flean = max(float(min_flean or 0), 70.0)
 
@@ -385,6 +392,7 @@ class SearchFilters:
             health_claims=health_claims,
             excluded_ingredients=excluded_ingredients,
             min_flean_percentile=min_flean,
+            min_flean_score=min_flean_score,
             macro_filters=macro_filters,
             skin_types=skin_types,
             hair_types=hair_types,
@@ -473,7 +481,22 @@ def build_filter_clauses(sf: SearchFilters) -> FilterClauses:
         fc.append(_build_in_stock_filter())
 
     if sf.dietary_labels:
-        fc.append({"terms": {"package_claims.dietary_labels": sf.dietary_labels}})
+        # Dietary preferences are sourced from category_data.tags.dietary_tags.
+        for label in sf.dietary_labels:
+            tag_key = _to_dietary_tag_key(str(label).strip())
+            if not tag_key:
+                continue
+            fc.append(
+                {
+                    "bool": {
+                        "should": [
+                            {"term": {"category_data.tags.dietary_tags": tag_key}},
+                            {"term": {"category_data.tags.dietary_tags.keyword": tag_key}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                }
+            )
 
     if sf.min_flean_percentile is not None:
         fc.append({"range": {
@@ -481,6 +504,54 @@ def build_filter_clauses(sf: SearchFilters) -> FilterClauses:
                 "gte": sf.min_flean_percentile
             }
         }})
+
+    if sf.min_flean_score is not None:
+        fc.append({
+            "script": {
+                "script": {
+                    "lang": "painless",
+                    "source": """
+                        if (doc.containsKey('flean_score.adjusted_score_label')
+                            && !doc['flean_score.adjusted_score_label'].empty) {
+                            def rawBadge = doc['flean_score.adjusted_score_label'].value;
+                            double badge = -1.0;
+                            if (rawBadge instanceof Number) {
+                                badge = ((Number) rawBadge).doubleValue();
+                            } else {
+                                try {
+                                    badge = Double.parseDouble(rawBadge.toString());
+                                } catch (Exception ignored) {}
+                            }
+                            if (badge >= 0) {
+                                double roundedBadge = Math.floor(badge + 0.5);
+                                return roundedBadge >= params.min_badge;
+                            }
+                        }
+
+                        if (doc.containsKey('flean_score.adjusted_score')
+                            && !doc['flean_score.adjusted_score'].empty) {
+                            def rawAdjusted = doc['flean_score.adjusted_score'].value;
+                            double adjusted = -1.0;
+                            if (rawAdjusted instanceof Number) {
+                                adjusted = ((Number) rawAdjusted).doubleValue();
+                            } else {
+                                try {
+                                    adjusted = Double.parseDouble(rawAdjusted.toString());
+                                } catch (Exception ignored) {}
+                            }
+                            if (adjusted >= 0) {
+                                double score10 = adjusted / 10.0;
+                                double roundedScore10 = Math.floor(score10 + 0.5);
+                                return roundedScore10 >= params.min_badge;
+                            }
+                        }
+
+                        return false;
+                    """,
+                    "params": {"min_badge": float(sf.min_flean_score)},
+                }
+            }
+        })
 
     if sf.macro_filters:
         for mf in sf.macro_filters:
@@ -731,6 +802,10 @@ def merge_filters(base: SearchFilters, overlay: SearchFilters) -> SearchFilters:
         min_flean_percentile=(
             overlay.min_flean_percentile if overlay.min_flean_percentile is not None
             else base.min_flean_percentile
+        ),
+        min_flean_score=(
+            overlay.min_flean_score if overlay.min_flean_score is not None
+            else base.min_flean_score
         ),
         macro_filters=_merge_list(base.macro_filters, overlay.macro_filters),
         skin_types=_merge_list(base.skin_types, overlay.skin_types),

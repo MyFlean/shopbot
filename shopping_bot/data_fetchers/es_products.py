@@ -15,6 +15,7 @@ import asyncio
 import threading as _threading
 from dataclasses import dataclass
 from logging import log
+import math
 import os
 import re
 import time
@@ -36,6 +37,12 @@ from ..utils.cards_config import (
     apply_order_from_config,
     get_subcategory_cards_config_for_path,
     score_key_meta_from_config,
+)
+from .dynamic_search_filters import (
+    build_dynamic_price_ranges,
+    build_facet_aggregations,
+    build_price_bounds_aggregation,
+    parse_dynamic_filters_from_aggs,
 )
 
 # ES Configuration (env-only; robust normalization)
@@ -1832,7 +1839,6 @@ DIETARY_FILTERS = {
     "dairy_free": "dairy_free",
     "gluten_free": "gluten_free",
     "nut_free": "nut_free",
-    "pcos_friendly": "pcos_friendly",
 }
 
 # Nutrition profile filters - map request keys to percentile field and range.
@@ -1891,10 +1897,21 @@ def _build_filter_clauses(filters: Optional[Dict[str, Any]]) -> List[Dict[str, A
     
     # 1. Price Range Filter (mutually exclusive - only one allowed)
     price_range = filters.get("price_range")
-    if price_range and price_range in PRICE_RANGE_FILTERS:
-        filter_clauses.append({
-            "range": {"price": PRICE_RANGE_FILTERS[price_range]}
-        })
+    if price_range:
+        price_clause = PRICE_RANGE_FILTERS.get(str(price_range))
+        if price_clause is None:
+            token = str(price_range).strip()
+            if "_" in token:
+                left_s, right_s = token.split("_", 1)
+                if left_s.isdigit() and right_s.isdigit():
+                    left = int(left_s)
+                    right = int(right_s)
+                    if 0 <= left <= right:
+                        price_clause = {"gte": float(left), "lte": float(right)}
+        if price_clause:
+            filter_clauses.append({
+                "range": {"price": price_clause}
+            })
     
     # 2. Flean Score Filter (mutually exclusive - only one allowed)
     # Score-only filtering (no percentile fallback).
@@ -4562,7 +4579,61 @@ class ElasticsearchProductsFetcher:
                     "error": "At least one of 'query', 'subcategory', or 'filters' must be provided"
                 }
             }
-        
+
+        def _fetch_dynamic_filters_from_query(query_for_aggs: Dict[str, Any]) -> List[Dict[str, Any]]:
+            endpoint = f"{self.base_url}/{self.index}/_search"
+            try:
+                bounds_body: Dict[str, Any] = {
+                    "size": 0,
+                    "track_total_hits": False,
+                    "query": query_for_aggs,
+                    "aggs": build_price_bounds_aggregation(),
+                }
+                bounds_resp = requests.post(
+                    endpoint,
+                    json=bounds_body,
+                    timeout=TIMEOUT,
+                    **self._request_kwargs(),
+                )
+                bounds_resp.raise_for_status()
+                bounds_data = bounds_resp.json() or {}
+                bounds_aggs = bounds_data.get("aggregations", {}) or {}
+
+                price_min_raw = (bounds_aggs.get("price_min") or {}).get("value")
+                price_max_raw = (bounds_aggs.get("price_max") or {}).get("value")
+                price_min = (
+                    float(price_min_raw)
+                    if isinstance(price_min_raw, (int, float))
+                    and not (isinstance(price_min_raw, float) and math.isnan(price_min_raw))
+                    else None
+                )
+                price_max = (
+                    float(price_max_raw)
+                    if isinstance(price_max_raw, (int, float))
+                    and not (isinstance(price_max_raw, float) and math.isnan(price_max_raw))
+                    else None
+                )
+                price_ranges = build_dynamic_price_ranges(price_min, price_max, target_buckets=4)
+
+                facet_body: Dict[str, Any] = {
+                    "size": 0,
+                    "track_total_hits": False,
+                    "query": query_for_aggs,
+                    "aggs": build_facet_aggregations(price_ranges=price_ranges),
+                }
+                facet_resp = requests.post(
+                    endpoint,
+                    json=facet_body,
+                    timeout=TIMEOUT,
+                    **self._request_kwargs(),
+                )
+                facet_resp.raise_for_status()
+                facet_data = facet_resp.json() or {}
+                return parse_dynamic_filters_from_aggs(facet_data.get("aggregations", {}) or {})
+            except Exception as exc:
+                print(f"DEBUG: dynamic facet fetch failed | error={exc}")
+                return []
+
         try:
             # Normalize inputs
             query_text = " ".join(query.strip().split()) if has_query else None
@@ -4879,6 +4950,7 @@ class ElasticsearchProductsFetcher:
                 "query": query_body,
                 "sort": sort_config,
             }
+            final_query_for_facets: Dict[str, Any] = body["query"]
             
             # Add min_score for text queries to filter out irrelevant results
             if query_text and dynamic_min_score is not None:
@@ -4980,6 +5052,7 @@ class ElasticsearchProductsFetcher:
                     total_count = fuzzy_total_count
                     max_score = float((fuzzy_fallback_data.get("hits", {}) or {}).get("max_score") or 0.0)
                     fuzzy_fallback_used = True
+                    final_query_for_facets = fuzzy_fallback_query
                     print(
                         "DEBUG: ES search_products_unified fuzzy_fallback_hit "
                         f"| query={query_text} | total={fuzzy_total_count} | max_score={max_score:.3f}"
@@ -5071,6 +5144,7 @@ class ElasticsearchProductsFetcher:
                         hits = fallback_hits
                         total_count = fallback_total_count
                         fallback_used = True
+                        final_query_for_facets = fallback_query
                         print(
                             "DEBUG: ES search_products_unified fallback_hit "
                             f"| query={query_text} | token_count={len(fallback_tokens)} | total={fallback_total_count}"
@@ -5089,6 +5163,8 @@ class ElasticsearchProductsFetcher:
                     except (TypeError, ValueError):
                         pass
                 products.append(product_doc)
+
+            dynamic_filters = _fetch_dynamic_filters_from_query(final_query_for_facets)
             
             print(
                 f"DEBUG: ES search_products_unified | total={total_count} | "
@@ -5097,6 +5173,7 @@ class ElasticsearchProductsFetcher:
             
             return {
                 "products": products,
+                "filters": dynamic_filters,
                 "meta": {
                     "total": total_count,
                     "page": page,

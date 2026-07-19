@@ -24,6 +24,7 @@ synonym_graph search-time analyzer already wired into the mapping.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -35,6 +36,17 @@ if TYPE_CHECKING:
     from search_v2.query_processing.product_intent_extractor import ProductIntentExtractor, ProductIntentResult
     from search_v2.query_processing.health_intent_classifier import HealthIntentResult
     from search_v2.query_processing.routing_context import RoutingContext
+
+
+_MAX_MERGE_WORDS = 3
+
+
+def _merged_variant_text(normalized: str) -> Optional[str]:
+    words = [w for w in re.split(r"[\s\-]+", normalized) if w]
+    if not (2 <= len(words) <= _MAX_MERGE_WORDS):
+        return None
+    merged = "".join(words)
+    return merged if merged != normalized else None
 
 
 @dataclass
@@ -104,6 +116,10 @@ def process_query(
     filters separately. Prefer process_search_request() for new code."""
     normalized = normalize_text(raw_query)
     variants = [QueryVariant(text=normalized, is_correction=False, confidence=1.0)]
+
+    merged_variant = _merged_variant_text(normalized)
+    if merged_variant:
+        variants.append(QueryVariant(text=merged_variant, is_correction=False, confidence=1.0))
 
     correction_result: Optional[QueryCorrectionResult] = None
     if enable_typo_correction and corrector is not None and normalized:

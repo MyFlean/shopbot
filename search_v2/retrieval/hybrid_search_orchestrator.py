@@ -283,7 +283,9 @@ def _hybrid_search_once(
     if strategy in ("rrf", "weighted"):
         retrieval_k = _pool_size(settings, final_size, _offset, expanded=expanded_pool)
 
-        semantic_body = semantic_query_builder.build_query(query, filters, retrieval_k, settings, embedding_service)
+        semantic_body = semantic_query_builder.build_query(
+            query, filters, retrieval_k, settings, embedding_service, routing_context=routing_context
+        )
         if semantic_body is None:
             return _lexical_only(
                 client, query, filters, final_size, settings,

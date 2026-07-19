@@ -54,6 +54,7 @@ from .product_api import (
     _extract_lab_report_url,
     _error_response,
     _has_palm_oil_ingredient,
+    _load_category_mapping,
     _normalize_filter_aliases,
     _resolve_pdp_cta,
     _success_response,
@@ -100,6 +101,31 @@ _FLEAN_SCORE_TO_PERCENTILE: Dict[str, float] = {
     "8_plus": 50.0,
     "7_plus": 30.0,
 }
+
+
+def _resolve_subcategory_es_path(subcategory: str) -> Optional[str]:
+    """Resolve a `subcategory` value (bare leaf id, e.g. "baby_food", or an
+    already-full ES path) to the full ES path SearchFilters.category_paths
+    expects for prefix matching. Returns None (no filter applied — same as
+    today's behavior) when a bare leaf id can't be resolved unambiguously,
+    so this never narrows results incorrectly."""
+    if not subcategory:
+        return None
+    if "/" in subcategory:
+        return subcategory
+    try:
+        mapping = _load_category_mapping()
+    except Exception:
+        return None
+    matches = [
+        sub["es_path"]
+        for cat in mapping.get("categories", [])
+        for sub in cat.get("subcategories", [])
+        if sub.get("es_path", "").rsplit("/", 1)[-1] == subcategory
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def _v1_filters_to_gw_params(vf: Dict[str, Any]) -> Dict[str, Any]:
@@ -450,6 +476,10 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                     "subcategory": subcategory,
                 }
                 gw_params.update(_v1_filters_to_gw_params(validated_filters or {}))
+                if subcategory:
+                    resolved_path = _resolve_subcategory_es_path(subcategory)
+                    if resolved_path:
+                        gw_params["category_path_prefix"] = resolved_path
                 gw_result = gateway.search(gw_params)
                 gw_meta = gw_result.get("meta", {}) or {}
                 gw_products = gw_result.get("products", [])

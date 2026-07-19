@@ -244,20 +244,136 @@ DEFAULT_RULES: List[RuleFn] = [
     stock_rule, freshness_rule, category_priority_rule,
 ]
 
-_HEALTH_PREFERENCE_FIELDS: Dict[str, tuple] = {
-    "high_protein": ("stats.protein_percentiles.subcategory_percentile", "high"),
-    "high_fiber": ("stats.fiber_percentiles.subcategory_percentile", "high"),
-    "low_carb": ("stats.carbs_penalty_percentiles.subcategory_percentile", "low"),
-    "low_sugar": ("stats.sugar_penalty_percentiles.subcategory_percentile", "low"),
-    "no_added_sugar": ("stats.sugar_penalty_percentiles.subcategory_percentile", "low"),
-    "low_sodium": ("stats.sodium_penalty_percentiles.subcategory_percentile", "low"),
-    "low_fat": ("stats.total_fat_penalty_percentiles.subcategory_percentile", "low"),
-    "low_saturated_fat": ("stats.saturated_fat_penalty_percentiles.subcategory_percentile", "low"),
-    "low_calorie": ("stats.calories_penalty_percentiles.subcategory_percentile", "low"),
+_NUTRIENT_BUCKET_BOUNDARIES: Dict[str, List[float]] = {
+    "sugar_g": [5, 8, 12, 18],
+    "sodium_mg": [120, 200, 350, 600],
+    "saturated_fat_g": [1.5, 2.5, 3.5, 5],
+    "fat_g": [3, 7.8, 12.7, 17.5],
+    "trans_fat_g": [0, 0.2, 0.5, 1.0],
+    "energy_kcal": [100, 150, 250, 400],
+    "fiber_g": [1, 3, 6, 8],
+    "protein_g": [3, 6, 9, 15],
+    "potassium_mg": [150, 300, 500, 700],
+    "carbs_g": [15, 30, 45, 60],
 }
 
-_HEALTH_PRIMARY_WEIGHT = 0.06
-_HEALTH_SECONDARY_WEIGHT = 0.03
+_NUTRIENT_BUCKET_SCORES: Dict[str, List[float]] = {
+    "sugar_g": [1.0, 0.75, 0.5, 0.25, 0.0],
+    "sodium_mg": [1.0, 0.75, 0.5, 0.25, 0.0],
+    "saturated_fat_g": [1.0, 0.75, 0.5, 0.25, 0.0],
+    "trans_fat_g": [1.0, 0.7, 0.4, 0.15, 0.0],
+    "fat_g": [1.0, 0.75, 0.5, 0.25, 0.0],
+    "carbs_g": [1.0, 0.75, 0.5, 0.25, 0.0],
+    "energy_kcal": [1.0, 0.75, 0.5, 0.25, 0.0],
+    "fiber_g": [0.0, 0.25, 0.5, 0.75, 1.0],
+    "protein_g": [0.0, 0.25, 0.5, 0.75, 1.0],
+    "potassium_mg": [0.0, 0.25, 0.5, 0.75, 1.0],
+}
+
+TRANSITION_BAND_PERCENT = 0.05
+
+
+def _build_bucket_curve(boundaries: List[float], scores: List[float]) -> List[tuple]:
+    points: List[tuple] = []
+    for i, b in enumerate(boundaries):
+        band = b * TRANSITION_BAND_PERCENT
+        points.append((b - band, scores[i]))
+        points.append((b + band, scores[i + 1]))
+    return points
+
+
+_CLINICAL_NUTRIENT_CURVES: Dict[str, List[tuple]] = {
+    key: _build_bucket_curve(_NUTRIENT_BUCKET_BOUNDARIES[key], _NUTRIENT_BUCKET_SCORES[key])
+    for key in _NUTRIENT_BUCKET_BOUNDARIES
+}
+
+_HEALTH_PREFERENCE_NUTRIENT: Dict[str, str] = {
+    "high_protein": "protein_g",
+    "high_fiber": "fiber_g",
+    "low_carb": "carbs_g",
+    "low_sugar": "sugar_g",
+    "low_sodium": "sodium_mg",
+    "low_fat": "fat_g",
+    "low_saturated_fat": "saturated_fat_g",
+    "low_trans_fat": "trans_fat_g",
+    "low_calorie": "energy_kcal",
+    "high_potassium": "potassium_mg",
+}
+
+# Potassium only exists on the older, space-keyed nutri_breakdown object, not
+# nutri_breakdown_updated — see _read_nutrient().
+_LEGACY_NUTRIENT_PATH: Dict[str, str] = {
+    "potassium_mg": "category_data.nutritional.nutri_breakdown.potassium mg",
+}
+
+# Calibrated so a SINGLE primary-preference nutrient at its own clinical
+# extreme (deviation=+-1.0) reaches the full HEALTH_INTENT_MIN/MAX_MULTIPLIER
+# boundary on its own (0.18 = 1.18-1.0 = 1.0-0.82, settings.py's defaults) —
+# same "100th/0th percentile gets the full clamp" full-range philosophy
+# flean_nutrition_rule already uses, now that health_preference_rule has its
+# own dedicated headroom (see apply_business_ranking()) instead of sharing
+# the business clamp. Secondary keeps the original 2:1 primary:secondary
+# ratio. Multiple qualifying preferences compound multiplicatively and are
+# clamped afterward, so this is a per-nutrient calibration, not a promise
+# that every combination lands exactly on the boundary.
+_HEALTH_PRIMARY_WEIGHT = 0.18
+_HEALTH_SECONDARY_WEIGHT = 0.09
+_FLEAN_ADJUSTMENT_WEIGHT = 0.02
+
+
+def _interpolate_clinical_score(value: float, curve: List[tuple]) -> float:
+    if value <= curve[0][0]:
+        return curve[0][1]
+    if value >= curve[-1][0]:
+        return curve[-1][1]
+    for (x0, y0), (x1, y1) in zip(curve, curve[1:]):
+        if x0 <= value <= x1:
+            frac = (value - x0) / (x1 - x0) if x1 > x0 else 0.0
+            return y0 + (y1 - y0) * frac
+    return curve[-1][1]
+
+
+def _read_nutrient(source: Dict[str, Any], nutrient_key: str) -> Any:
+    value = _get_nested(source, f"category_data.nutritional.nutri_breakdown_updated.{nutrient_key}")
+    if isinstance(value, (int, float)):
+        return value
+    legacy_path = _LEGACY_NUTRIENT_PATH.get(nutrient_key)
+    if legacy_path:
+        return _get_nested(source, legacy_path)
+    return value
+
+
+def _read_no_added_sugar_score(source: Dict[str, Any]) -> Optional[float]:
+    ingredient_tags = _get_nested(source, "category_data.tags.ingredient_tags")
+    if isinstance(ingredient_tags, list) and "no_added_sugar" in ingredient_tags:
+        return 1.0
+    sweetener_tags = _get_nested(source, "category_data.tags.highlight_tags.sweetners_sugar_tags.positive")
+    if isinstance(sweetener_tags, list) and "no_added_sugar" in sweetener_tags:
+        return 1.0
+    return None
+
+
+def _flean_adjustment_score(source: Dict[str, Any]) -> float:
+    cd = source.get("category_data")
+    cd = cd if isinstance(cd, dict) else {}
+    processing_type = str(cd.get("processing_type") or "").strip().lower()
+    tags = cd.get("tags")
+    ingredients_tags = (tags.get("highlight_tags") or {}).get("ingredients_tags") if isinstance(tags, dict) else None
+    ingredients_tags = ingredients_tags if isinstance(ingredients_tags, dict) else {}
+    negative = ingredients_tags.get("negative") or []
+    positive = ingredients_tags.get("positive") or []
+
+    score = 0.0
+    if processing_type == "ultra_processed":
+        score -= 1.0
+    elif processing_type in ("unprocessed", "light_processed"):
+        score += 0.5
+    if negative:
+        score -= 1.0
+    if positive:
+        score += 0.5
+
+    return max(-1.0, min(1.0, score))
 
 
 def health_preference_rule(
@@ -265,29 +381,39 @@ def health_preference_rule(
     primary_preferences: tuple,
     secondary_preferences: tuple,
 ) -> float:
-    seen_fields = set()
+    seen_nutrients = set()
     multiplier = 1.0
 
     def _apply(pref: str, weight: float) -> None:
         nonlocal multiplier
-        mapping = _HEALTH_PREFERENCE_FIELDS.get(pref)
-        if mapping is None:
+        if pref == "no_added_sugar":
+            if "no_added_sugar" in seen_nutrients:
+                return
+            seen_nutrients.add("no_added_sugar")
+            clinical_score = _read_no_added_sugar_score(source)
+            if clinical_score is None:
+                return
+            multiplier *= 1.0 + (clinical_score - 0.5) * 2.0 * weight
             return
-        field_path, direction = mapping
-        if field_path in seen_fields:
+
+        nutrient_key = _HEALTH_PREFERENCE_NUTRIENT.get(pref)
+        if nutrient_key is None or nutrient_key in seen_nutrients:
             return
-        seen_fields.add(field_path)
-        pct = _get_nested(source, field_path)
-        if not isinstance(pct, (int, float)):
+        seen_nutrients.add(nutrient_key)
+        value = _read_nutrient(source, nutrient_key)
+        if not isinstance(value, (int, float)):
             return
-        pct = max(0.0, min(100.0, float(pct)))
-        goodness = (pct - 50.0) / 50.0 if direction == "high" else (50.0 - pct) / 50.0
-        multiplier *= 1.0 + goodness * weight
+        clinical_score = _interpolate_clinical_score(float(value), _CLINICAL_NUTRIENT_CURVES[nutrient_key])
+        deviation = (clinical_score - 0.5) * 2.0
+        multiplier *= 1.0 + deviation * weight
 
     for pref in primary_preferences:
         _apply(pref, _HEALTH_PRIMARY_WEIGHT)
     for pref in secondary_preferences:
         _apply(pref, _HEALTH_SECONDARY_WEIGHT)
+
+    if seen_nutrients:
+        multiplier *= 1.0 + _flean_adjustment_score(source) * _FLEAN_ADJUSTMENT_WEIGHT
 
     return multiplier
 
@@ -343,21 +469,33 @@ def apply_business_ranking(
 
     Relevance-first guarantee (Flean/business signals are a SECONDARY,
     tie-breaking signal, never a primary one): `final_score = relevance_score
-    * multiplier`, with `multiplier` clamped to
-    [BUSINESS_MIN_MULTIPLIER, BUSINESS_MAX_MULTIPLIER] (0.90-1.12 by
-    default). Because the multiplier is a bounded *ratio* of each item's own
-    relevance_score — not an absolute add-on — it can shift final_score by at
-    most ~20% relative to that item's own relevance. Two items whose
-    relevance differs by MORE than that can never be reordered by business
-    ranking alone, regardless of which retrieval/fusion strategy produced
-    relevance_score (RRF, weighted, or raw lexical BM25 all have this
-    property preserved automatically, since it's scale-relative, not
-    scale-specific). Items close enough in relevance to be "comparably
-    relevant" (within that ~20% band) CAN be reordered — which is exactly
-    the desired behavior: prefer higher Flean score among near-ties, never
-    let it override a real relevance gap. Do not widen the clamp bounds
-    without re-verifying this property (see settings.py's own note on the
-    incident that narrowed them from [0.75, 1.35]).
+    * multiplier`, where `multiplier` is the PRODUCT of two independently
+    clamped factors — the general business signals (Flean nutrition,
+    freshness, category priority, ...), clamped to [BUSINESS_MIN_MULTIPLIER,
+    BUSINESS_MAX_MULTIPLIER] (0.82-1.18 by default), and, only when Health
+    Intent is detected for the query, health_preference_rule's own factor,
+    clamped separately to [HEALTH_INTENT_MIN_MULTIPLIER,
+    HEALTH_INTENT_MAX_MULTIPLIER] (same 0.82-1.18 by default). They are kept
+    separate rather than sharing one clamp because a fresh-produce item's
+    Flean signal alone routinely saturates the business bound, which would
+    otherwise leave zero headroom for health_preference_rule to
+    differentiate a health-poor item from a health-friendly one — see
+    settings.py for the full reasoning. Because each factor is a bounded
+    *ratio* of the item's own relevance_score — not an absolute add-on — a
+    query with no detected Health Intent shifts final_score by at most ~20%
+    relative to that item's own relevance, exactly as before this change.
+    Two items whose relevance differs by MORE than that can never be
+    reordered by business ranking alone, regardless of which
+    retrieval/fusion strategy produced relevance_score (RRF, weighted, or
+    raw lexical BM25 all have this property preserved automatically, since
+    it's scale-relative, not scale-specific). Items close enough in
+    relevance to be "comparably relevant" CAN be reordered — which is
+    exactly the desired behavior: prefer higher Flean score (or, when Health
+    Intent is active, better alignment with the user's stated health
+    objective) among near-ties, never override a real relevance gap. Do not
+    widen either clamp's bounds without re-verifying this property (see
+    settings.py's own note on the incident that narrowed the business bound
+    from [0.75, 1.35]).
 
     `product_type` / `product_type_category` (optional — pass
     req.filters.product_type / .product_type_category from Product Intent
@@ -410,6 +548,12 @@ def apply_business_ranking(
                 breakdown[rule.__name__] = round(effective, 4)
                 multiplier *= effective
 
+            # Clamp the general business signals (Flean nutrition, freshness,
+            # category priority, ...) on their own BEFORE folding in health —
+            # see settings.py's HEALTH_INTENT_MIN/MAX_MULTIPLIER for why
+            # health_preference_rule must not share this headroom.
+            multiplier = max(settings.BUSINESS_MIN_MULTIPLIER, min(settings.BUSINESS_MAX_MULTIPLIER, multiplier))
+
             if (
                 getattr(settings, "ENABLE_HEALTH_PREFERENCE_RANKING", True)
                 and health_intent is not None
@@ -420,10 +564,11 @@ def apply_business_ranking(
                 )
                 weight = rule_weights.get("health_preference_rule", 1.0)
                 effective = 1.0 + (component - 1.0) * weight
+                effective = max(
+                    settings.HEALTH_INTENT_MIN_MULTIPLIER, min(settings.HEALTH_INTENT_MAX_MULTIPLIER, effective)
+                )
                 breakdown["health_preference_rule"] = round(effective, 4)
                 multiplier *= effective
-
-            multiplier = max(settings.BUSINESS_MIN_MULTIPLIER, min(settings.BUSINESS_MAX_MULTIPLIER, multiplier))
 
         ranked.append(RankedItem(
             doc_id=getattr(item, "doc_id", None),
@@ -455,6 +600,34 @@ def apply_business_ranking(
         else:
             ranked.sort(key=lambda r: r.final_score, reverse=True)
     return ranked
+
+
+def has_lab_report(source: Dict[str, Any]) -> bool:
+    return bool(_get_nested(source, "category_data.lab_reports.url"))
+
+
+def promote_lab_tested(
+    ranked: List[RankedItem],
+    product_type: Optional[str],
+    product_type_category: Optional[str],
+) -> List[RankedItem]:
+    """Deterministic priority rule, not a weighted score: every Lab Tested item
+    matching the query's resolved base product (reuses
+    _is_exact_product_type_match(), same test used elsewhere) moves ahead of
+    the rest, both groups keeping their existing relative order. Only
+    reorders `ranked` — never fetches anything else, so a different base
+    product's Lab Tested item (chips for a "cake" query) can't be promoted."""
+    if not product_type:
+        return ranked
+    promoted, rest = [], []
+    for item in ranked:
+        if has_lab_report(item.source) and _is_exact_product_type_match(
+            item.source, product_type, product_type_category
+        ):
+            promoted.append(item)
+        else:
+            rest.append(item)
+    return promoted + rest if promoted else ranked
 
 
 def register_rule(rules: List[RuleFn], rule: RuleFn, position: Optional[int] = None) -> List[RuleFn]:

@@ -51,6 +51,7 @@ def build_query(
     size: Optional[int] = None,
     settings: Optional[SearchV2Settings] = None,
     embedding_service: Optional[EmbeddingService] = None,
+    routing_context=None,
 ) -> Optional[Dict[str, Any]]:
     """
     Returns None (never raises) if the embedding model isn't available or the
@@ -78,16 +79,34 @@ def build_query(
     # Resolve filter clauses — support both legacy dict and SearchFilters
     filter_clauses: List[Dict[str, Any]] = []
     must_not_clauses: List[Dict[str, Any]] = []
+    product_type_category = None
+    product_type_mode = None
     if filters is not None:
         from search_v2.retrieval.filters import SearchFilters, build_filter_clauses
         if isinstance(filters, SearchFilters):
             fc = build_filter_clauses(filters)
             filter_clauses = fc.filter_clauses
             must_not_clauses = fc.must_not_clauses
+            product_type_category = filters.product_type_category
+            product_type_mode = filters.product_type_mode
         else:
             filter_clauses = build_filters(filters)
 
-    k = settings.RETRIEVAL_K
+    if (
+        product_type_mode == "boost"
+        and product_type_category
+        and routing_context is not None
+        and getattr(routing_context, "product_intent_source", None) in ("category_fallback", "head_term")
+    ):
+        filter_clauses = list(filter_clauses) + [{
+            "nested": {
+                "path": "category_hierarchies",
+                "query": {"term": {"category_hierarchies.segments": product_type_category}},
+                "score_mode": "max",
+            }
+        }]
+
+    k = size if size is not None else settings.RETRIEVAL_K
     knn = build_knn_clause(vector, k=k, filter_clauses=filter_clauses or None, must_not_clauses=must_not_clauses or None)
 
     return {

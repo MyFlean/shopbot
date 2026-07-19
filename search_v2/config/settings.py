@@ -227,6 +227,23 @@ class SearchV2Settings:
     BUSINESS_MIN_MULTIPLIER: float = field(default_factory=lambda: _float("SEARCH_V2_BUSINESS_MIN_MULTIPLIER", 0.82))
     BUSINESS_MAX_MULTIPLIER: float = field(default_factory=lambda: _float("SEARCH_V2_BUSINESS_MAX_MULTIPLIER", 1.18))
 
+    # health_preference_rule() used to be folded into the SAME product that
+    # gets clamped above, sharing headroom with flean_nutrition_rule/
+    # freshness_rule/category_priority_rule. For fresh produce in particular,
+    # flean_nutrition_rule alone routinely saturates BUSINESS_MAX_MULTIPLIER
+    # (Flean scores read 100 for most fresh fruit), which left ZERO headroom
+    # for health_preference_rule to differentiate a diabetes-poor fruit from
+    # a diabetes-friendly one — both clamped to the identical ceiling
+    # regardless of how differently health_preference_rule scored them.
+    # Health Intent is query-scoped (only active when the user's own query
+    # expresses a health objective), not a blanket nutrition-quality signal
+    # like the ones the incident above was about — so it gets its own
+    # independent headroom instead of sharing the business bound. Same
+    # magnitude as BUSINESS_MIN/MAX_MULTIPLIER by default (a vetted bound,
+    # not a new arbitrary one) — see apply_business_ranking().
+    HEALTH_INTENT_MIN_MULTIPLIER: float = field(default_factory=lambda: _float("SEARCH_V2_HEALTH_INTENT_MIN_MULTIPLIER", 0.82))
+    HEALTH_INTENT_MAX_MULTIPLIER: float = field(default_factory=lambda: _float("SEARCH_V2_HEALTH_INTENT_MAX_MULTIPLIER", 1.18))
+
     # ── Business ranking: per-rule weights ───────────────────────────
     # Maps rule function name → scalar weight in [0.0, 1.0].
     # A weight of 0.0 neutralises the rule (multiplies by 1.0) while keeping

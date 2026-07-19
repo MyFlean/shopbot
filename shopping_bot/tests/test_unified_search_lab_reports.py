@@ -72,3 +72,100 @@ def test_unified_search_sets_has_lab_report_per_product(
     assert by_id["prod-without-report"]["has_lab_report"] is False
     assert by_id["prod-with-report"]["parent_id"] == "parent-1"
     assert by_id["prod-with-report"]["variants"][0]["id"] == "variant-1"
+    assert payload["data"]["filters"] == []
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v1")
+@patch("shopping_bot.routes.unified_search.transform_to_product_card")
+@patch("shopping_bot.routes.unified_search.get_es_fetcher")
+def test_unified_search_returns_v1_dynamic_filters(
+    mock_get_fetcher,
+    mock_transform_to_product_card,
+    _mock_search_engine,
+    unified_search_client,
+):
+    raw_products = [{"id": "prod-1", "visibility": "visible", "category_data": {}}]
+    mock_get_fetcher.return_value = SimpleNamespace(
+        search_products_unified=lambda **_kwargs: {
+            "products": raw_products,
+            "filters": [
+                {
+                    "id": "filter_price",
+                    "title": "Price",
+                    "titleKey": "price_range",
+                    "items": [
+                        {
+                            "id": "price_0_100",
+                            "labelKey": "0_99",
+                            "label": "Below Rs 100",
+                            "value": "0-100",
+                            "count": 5,
+                            "isPreSelected": False,
+                        }
+                    ],
+                }
+            ],
+            "meta": {"total": 1},
+        }
+    )
+    mock_transform_to_product_card.return_value = {
+        "id": "prod-1",
+        "parent_id": "parent-1",
+        "name": "prod-1",
+        "visibility": "visible",
+        "flean_score": 8,
+        "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
+    }
+
+    resp = unified_search_client.get("/rs/v1/search?query=chips")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["data"]["filters"][0]["id"] == "filter_price"
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
+@patch("shopping_bot.routes.unified_search.transform_to_product_card")
+@patch("shopping_bot.routes.unified_search.get_search_gateway")
+def test_unified_search_returns_v2_dynamic_filters(
+    mock_get_gateway,
+    mock_transform_to_product_card,
+    _mock_search_engine,
+    unified_search_client,
+):
+    gateway = SimpleNamespace(
+        search=lambda _params: {
+            "products": [{"id": "prod-1", "visibility": "visible", "category_data": {}}],
+            "filters": [
+                {
+                    "id": "filter_flean_score",
+                    "title": "Flean Score",
+                    "titleKey": "flean_score",
+                    "items": [
+                        {
+                            "id": "9_plus",
+                            "labelKey": "9_plus",
+                            "label": "9+ (Excellent)",
+                            "value": 9,
+                            "count": 2,
+                            "isPreSelected": False,
+                        }
+                    ],
+                }
+            ],
+            "meta": {"total_hits": 1, "took_ms": 10},
+        }
+    )
+    mock_get_gateway.return_value = gateway
+    mock_transform_to_product_card.return_value = {
+        "id": "prod-1",
+        "parent_id": "parent-1",
+        "name": "prod-1",
+        "visibility": "visible",
+        "flean_score": 9,
+        "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
+    }
+
+    resp = unified_search_client.get("/rs/v1/search?query=chips")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["data"]["filters"][0]["id"] == "filter_flean_score"

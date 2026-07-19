@@ -15,6 +15,13 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from shopping_bot.data_fetchers.dynamic_search_filters import (
+    build_dynamic_price_ranges,
+    build_facet_aggregations,
+    build_price_bounds_aggregation,
+    parse_dynamic_filters_from_aggs,
+)
+
 _log = logging.getLogger("search_gateway")
 
 
@@ -217,6 +224,7 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
     )
     from search_v2.ranking.business_ranking import apply_business_ranking, promote_lab_tested
     from search_v2.retrieval.hybrid_search_orchestrator import hybrid_search
+    from search_v2.retrieval import lexical_query_builder
     from search_v2.retrieval.opensearch_client import OpenSearchClient
 
     client = OpenSearchClient(settings=SETTINGS)
@@ -360,7 +368,46 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
                 "health_intent_detected": req.routing_context.health_intent_detected,
                 "decision": "LEXICAL_ONLY" if hybrid_result.fallback_reason == "query_router: LEXICAL_ONLY" else "HYBRID",
             }
-        return {"meta": meta, "products": products}
+
+        dynamic_filters = []
+        try:
+            facet_query_body = lexical_query_builder.build_query(
+                req.processed_query,
+                filters=req.filters,
+                size=0,
+                settings=SETTINGS,
+                sort_by=None,
+                offset=0,
+            )
+            facet_query = facet_query_body.get("query", {"match_all": {}})
+
+            bounds_req = {
+                "size": 0,
+                "track_total_hits": False,
+                "query": facet_query,
+                "aggs": build_price_bounds_aggregation(),
+            }
+            bounds_resp = client.search(bounds_req)
+            bounds_aggs = (bounds_resp.get("aggregations") or {})
+            price_min_raw = (bounds_aggs.get("price_min") or {}).get("value")
+            price_max_raw = (bounds_aggs.get("price_max") or {}).get("value")
+
+            price_min = float(price_min_raw) if isinstance(price_min_raw, (int, float)) else None
+            price_max = float(price_max_raw) if isinstance(price_max_raw, (int, float)) else None
+            price_ranges = build_dynamic_price_ranges(price_min, price_max, target_buckets=4)
+
+            facets_req = {
+                "size": 0,
+                "track_total_hits": False,
+                "query": facet_query,
+                "aggs": build_facet_aggregations(price_ranges=price_ranges),
+            }
+            facets_resp = client.search(facets_req)
+            dynamic_filters = parse_dynamic_filters_from_aggs((facets_resp.get("aggregations") or {}))
+        except Exception as exc:
+            _log.warning("gateway: failed to compute dynamic search filters (%s)", exc)
+
+        return {"meta": meta, "products": products, "filters": dynamic_filters}
 
     return _search
 

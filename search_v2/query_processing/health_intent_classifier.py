@@ -19,7 +19,9 @@ HEALTH_INTENT_REGISTRY: Tuple[HealthIntentDefinition, ...] = (
     HealthIntentDefinition(
         category="fitness",
         triggers=(
-            "gym", "muscle gain", "bodybuilding", "high protein",
+            "gym", "muscle gain", "muscle building", "muscle mass",
+            "weight gain", "gain weight", "mass gain", "bulking",
+            "bodybuilding", "high protein",
             "pre workout", "pre-workout", "post workout", "post-workout",
             "recovery", "endurance",
         ),

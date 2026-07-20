@@ -37,7 +37,7 @@ No LLM anywhere in this file.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from search_v2.config.settings import SearchV2Settings, SETTINGS
 from search_v2.query_processing.query_pipeline import ProcessedQuery
@@ -95,6 +95,19 @@ FIELD_WEIGHTS = {
 }
 CATEGORY_HIERARCHIES_BOOST = 0.8
 
+_BRAND_FIELDS = {"brand", "brand.camel", "brand.phonetic"}
+_NAME_FIELDS = {"name", "name.camel", "name.phonetic"}
+
+
+def _core_text(text: str, health_intent_matched_phrases: Tuple[str, ...]) -> str:
+    if not health_intent_matched_phrases:
+        return text
+    descriptor_words = set()
+    for phrase in health_intent_matched_phrases:
+        descriptor_words.update(phrase.lower().split())
+    core_words = [w for w in text.split() if w.lower() not in descriptor_words]
+    return " ".join(core_words).strip()
+
 # General linguistic markers of a PROCESSED/DERIVATIVE product, not specific
 # to any one product. This is what makes "apple should rank fresh apple
 # before apple juice" a property of the pipeline rather than a hardcoded
@@ -145,27 +158,62 @@ def _minimum_should_match_for(text: str) -> Optional[str]:
     return "75%"
 
 
+def _bool_prefix_minimum_should_match_for(text: str) -> Optional[str]:
+    # Deliberately not _minimum_should_match_for()'s "100%"/"75%" — verified
+    # against the live cluster that those return ZERO hits here specifically
+    # (this clause's name._2gram/_3gram shingle fields change how Lucene
+    # counts should-clauses for percentage purposes). "50%" still closes the
+    # no-coverage-requirement gap without that failure mode.
+    n = len(text.split())
+    if n <= 1:
+        return None
+    return "50%"
+
+
 def _field_match_clauses(
-    text: str, settings: SearchV2Settings, include_bool_prefix: bool = True
+    text: str,
+    settings: SearchV2Settings,
+    include_bool_prefix: bool = True,
+    health_intent_matched_phrases: Tuple[str, ...] = (),
 ) -> List[Dict[str, Any]]:
     """`include_bool_prefix=False` omits the bool_prefix/_2gram/_3gram clause
     below — see build_query()'s docstring for why this exists (a rare,
     cluster-side query-construction failure for certain query text, not a
     feature toggle for normal use)."""
     fuzziness = _es_fuzziness(settings.ENABLE_FUZZY)
+    fuzzy_fields = [f for f in FIELD_WEIGHTS if f not in _BRAND_FIELDS]
+    min_should_match = _minimum_should_match_for(text)
+    core_text = _core_text(text, health_intent_matched_phrases)
+    core_word_count = len(core_text.split()) if core_text else 0
+
     multi_match: Dict[str, Any] = {
         "query": text,
         "type": "best_fields",
-        "fields": [f"{field}^{weight}" for field, weight in FIELD_WEIGHTS.items()],
+        "fields": [f"{field}^{FIELD_WEIGHTS[field]}" for field in fuzzy_fields],
         "tie_breaker": 0.3,
     }
     if fuzziness:
         multi_match["fuzziness"] = fuzziness
-    min_should_match = _minimum_should_match_for(text)
+        multi_match["prefix_length"] = settings.FUZZY_PREFIX_LENGTH
     if min_should_match:
         multi_match["minimum_should_match"] = min_should_match
 
     clauses: List[Dict[str, Any]] = [{"multi_match": multi_match}]
+
+    # Brand fields are proper nouns — ES-level edit-distance fuzziness there
+    # lets short, common query words coincidentally collide with unrelated
+    # brand names (e.g. "gain" is one edit from "Jain"), flooding results
+    # with an unrelated brand's whole catalog. Brand still gets exact,
+    # camelCase, and phonetic (sound-alike) matching, just not fuzzy.
+    brand_match: Dict[str, Any] = {
+        "query": text,
+        "type": "best_fields",
+        "fields": [f"{field}^{FIELD_WEIGHTS[field]}" for field in FIELD_WEIGHTS if field in _BRAND_FIELDS],
+        "tie_breaker": 0.3,
+    }
+    if min_should_match:
+        brand_match["minimum_should_match"] = min_should_match
+    clauses.append({"multi_match": brand_match})
 
     # Phrase queries — rewards the query appearing as a contiguous phrase,
     # which plain best_fields multi_match doesn't specifically reward. A
@@ -174,25 +222,52 @@ def _field_match_clauses(
     # product named "... Gluten Free Potato Chips" — without slop, that
     # extra "Potato" token makes this exact-order phrase clause never fire
     # at all for almost any real multi-word grocery query).
-    clauses.append({"match_phrase": {"name": {"query": text, "boost": 4.0, "slop": 2}}})
-
-    # phrase_prefix — supports "as you type" partial phrase queries.
-    clauses.append({"match_phrase_prefix": {"name": {"query": text, "boost": 2.0, "slop": 2}}})
+    #
+    # Health Intent descriptor words (e.g. "heart" in "heart healthy foods")
+    # are excluded from this and the exact-match clause below — a phrase or
+    # exact match on the product NAME is a much stronger signal than an
+    # ordinary term match, and a health-context word appearing in a name for
+    # unrelated reasons (a Valentine's "Heart Shaped" chocolate box) shouldn't
+    # earn it. Skipped entirely (not run against a 1-word residual) when
+    # fewer than 2 non-descriptor words remain, since a single-word "phrase"
+    # tests nothing the ordinary multi_match above doesn't already cover, and
+    # could otherwise match on pure coincidence (e.g. a brand name that
+    # happens to contain one leftover word) with no coverage requirement to
+    # guard it.
+    if core_word_count >= 2:
+        clauses.append({"match_phrase": {"name": {"query": core_text, "boost": 4.0, "slop": 2}}})
+        clauses.append({"match_phrase_prefix": {"name": {"query": core_text, "boost": 2.0, "slop": 2}}})
+    elif not health_intent_matched_phrases:
+        clauses.append({"match_phrase": {"name": {"query": text, "boost": 4.0, "slop": 2}}})
+        clauses.append({"match_phrase_prefix": {"name": {"query": text, "boost": 2.0, "slop": 2}}})
 
     # bool_prefix — the purpose-built query type for search_as_you_type fields.
+    # minimum_should_match matches the main multi_match's discipline above —
+    # without it, a single generic term (e.g. "foods") shared with a brand
+    # name embedded in the indexed name field (many catalog brands are named
+    # "___ Foods") can qualify a document for the whole multi-word query
+    # through this clause alone, bypassing the term-coverage requirement
+    # every other clause enforces. Unaffected by Health Intent — it's a
+    # prefix/autocomplete mechanism, not exact-match or phrase-match.
     if include_bool_prefix:
-        clauses.append({
-            "multi_match": {
-                "query": text,
-                "type": "bool_prefix",
-                "fields": ["name", "name._2gram", "name._3gram"],
-                "boost": 1.5,
-            }
-        })
+        bool_prefix_match: Dict[str, Any] = {
+            "query": text,
+            "type": "bool_prefix",
+            "fields": ["name", "name._2gram", "name._3gram"],
+            "boost": 1.5,
+        }
+        bool_prefix_msm = _bool_prefix_minimum_should_match_for(text)
+        if bool_prefix_msm:
+            bool_prefix_match["minimum_should_match"] = bool_prefix_msm
+        clauses.append({"multi_match": bool_prefix_match})
 
     # Exact-match boosting — the single biggest lever for derivative-product
     # ranking (see DERIVATIVE_MARKER_TERMS for the complementary demotion side).
-    clauses.append({"term": {"name.exact_normalized": {"value": text.lower(), "boost": 15.0}}})
+    # Uses core_text (Health Intent descriptor words removed) for the same
+    # reason as the phrase clauses above — see that comment.
+    exact_match_text = core_text if health_intent_matched_phrases else text
+    if exact_match_text:
+        clauses.append({"term": {"name.exact_normalized": {"value": exact_match_text.lower(), "boost": 15.0}}})
 
     # Category boosting — generic, not category-specific: an exact match
     # against any single category-path segment nudges relevant-category
@@ -260,7 +335,10 @@ def _wildcard_clause(text: str) -> Optional[Dict[str, Any]]:
 
 
 def _variant_dis_max(
-    query: ProcessedQuery, settings: SearchV2Settings, include_bool_prefix: bool = True
+    query: ProcessedQuery,
+    settings: SearchV2Settings,
+    include_bool_prefix: bool = True,
+    health_intent_matched_phrases: Tuple[str, ...] = (),
 ) -> Dict[str, Any]:
     """dis_max across every query variant (original text + any typo-corrected /
     segmentation-repaired text) — see query_pipeline.py for why both are kept
@@ -269,7 +347,10 @@ def _variant_dis_max(
     that variant's confidence."""
     variant_queries = []
     for variant in query.variants:
-        inner_clauses = _field_match_clauses(variant.text, settings, include_bool_prefix=include_bool_prefix)
+        inner_clauses = _field_match_clauses(
+            variant.text, settings, include_bool_prefix=include_bool_prefix,
+            health_intent_matched_phrases=health_intent_matched_phrases,
+        )
         if settings.ENABLE_FUZZY:
             wc = _wildcard_clause(variant.text)
             if wc:
@@ -343,6 +424,7 @@ def build_query(
     sort_by: Optional[str] = None,
     offset: int = 0,
     include_bool_prefix: bool = True,
+    health_intent_matched_phrases: Tuple[str, ...] = (),
 ) -> Dict[str, Any]:
     """The main entry point. Returns a complete OpenSearch request body.
 
@@ -370,7 +452,10 @@ def build_query(
     settings = settings or SETTINGS
     size = size if size is not None else settings.DEFAULT_RESULT_SIZE
 
-    positive_query = _variant_dis_max(query, settings, include_bool_prefix=include_bool_prefix)
+    positive_query = _variant_dis_max(
+        query, settings, include_bool_prefix=include_bool_prefix,
+        health_intent_matched_phrases=health_intent_matched_phrases,
+    )
 
     # Resolve filter clauses — support both legacy dict and SearchFilters
     filter_clauses: List[Dict[str, Any]] = []

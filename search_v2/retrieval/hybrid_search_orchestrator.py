@@ -154,6 +154,7 @@ def _search_lexical(
     filters,
     pool_size: int,
     settings: SearchV2Settings,
+    routing_context=None,
 ) -> Dict[str, Any]:
     """Build + execute the lexical query, with exactly one fallback retry:
     if OpenSearch rejects the query with "Too many cached tokens" (a
@@ -164,14 +165,18 @@ def _search_lexical(
     not on any particular query text, so it protects every query whose
     merged synonym expansion happens to be large enough to hit this,
     present or future, not just the one that surfaced it."""
-    body = lexical_query_builder.build_query(query, filters, pool_size, settings)
+    matched_phrases = getattr(routing_context, "health_intent_matched_phrases", ()) or ()
+    body = lexical_query_builder.build_query(
+        query, filters, pool_size, settings, health_intent_matched_phrases=matched_phrases
+    )
     try:
         return client.search(body)
     except Exception as exc:
         if not _is_too_many_cached_tokens_error(exc):
             raise
         fallback_body = lexical_query_builder.build_query(
-            query, filters, pool_size, settings, include_bool_prefix=False
+            query, filters, pool_size, settings, include_bool_prefix=False,
+            health_intent_matched_phrases=matched_phrases,
         )
         return client.search(fallback_body)
 
@@ -185,12 +190,15 @@ def _lexical_only(
     fallback_reason: Optional[str] = None,
     sort_by: Optional[str] = None,
     offset: int = 0,
+    routing_context=None,
 ) -> HybridSearchResult:
     """Returns the FULL candidate pool (see _pool_size) — NOT sliced to a
     page. Pagination is the caller's responsibility, applied AFTER business
     ranking (see module docstring and hybrid_search())."""
     pool_size = _pool_size(settings, size, offset, expanded=_wants_expanded_pool(filters))
-    response = _search_lexical(client, query, _retrieval_filters(filters), pool_size, settings)
+    response = _search_lexical(
+        client, query, _retrieval_filters(filters), pool_size, settings, routing_context=routing_context
+    )
     hits = extract_hits(response)
     items = [
         ResultItem(doc_id=doc_id, source=source, fused_score=score, lexical_rank=rank, lexical_score=score)
@@ -243,7 +251,7 @@ def _hybrid_search_once(
         return _lexical_only(
             client, query, filters, final_size, settings,
             fallback_reason="hybrid/semantic disabled via settings",
-            sort_by=_sort_by, offset=_offset,
+            sort_by=_sort_by, offset=_offset, routing_context=routing_context,
         )
 
     if getattr(settings, "ENABLE_QUERY_ROUTER", True) and routing_context is not None:
@@ -252,7 +260,7 @@ def _hybrid_search_once(
             return _lexical_only(
                 client, query, filters, final_size, settings,
                 fallback_reason="query_router: LEXICAL_ONLY",
-                sort_by=_sort_by, offset=_offset,
+                sort_by=_sort_by, offset=_offset, routing_context=routing_context,
             )
 
     strategy = settings.FUSION_STRATEGY
@@ -267,7 +275,7 @@ def _hybrid_search_once(
             return _lexical_only(
                 client, query, filters, final_size, settings,
                 fallback_reason="embedding model unavailable",
-                sort_by=_sort_by, offset=_offset,
+                sort_by=_sort_by, offset=_offset, routing_context=routing_context,
             )
         body, query_params = result
         response = client.search(body, query_params)
@@ -290,13 +298,15 @@ def _hybrid_search_once(
             return _lexical_only(
                 client, query, filters, final_size, settings,
                 fallback_reason="embedding model unavailable",
-                sort_by=_sort_by, offset=_offset,
+                sort_by=_sort_by, offset=_offset, routing_context=routing_context,
             )
 
         # Retrieval phase uses full retrieval_k, always in relevance order
         # (sort_by/offset are stripped via _retrieval_filters() and applied
         # exactly once, in-memory, after fusion — see module docstring).
-        lexical_response = _search_lexical(client, query, _retrieval_filters(filters), retrieval_k, settings)
+        lexical_response = _search_lexical(
+            client, query, _retrieval_filters(filters), retrieval_k, settings, routing_context=routing_context
+        )
         lexical_hits = extract_hits(lexical_response)
 
         semantic_response = client.search(semantic_body)

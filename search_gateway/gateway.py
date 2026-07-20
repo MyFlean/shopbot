@@ -331,6 +331,7 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
             ranked = promote_lab_tested(ranked, req.filters.product_type, req.filters.product_type_category)
 
         offset = req.filters.offset or 0
+
         page_items = ranked[offset: offset + size]
         products = [_to_v1_product(item, rank) for rank, item in enumerate(page_items, 1)]
         took_ms = round((time.monotonic() - t0) * 1000)

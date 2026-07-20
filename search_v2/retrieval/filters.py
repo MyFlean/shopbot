@@ -309,7 +309,9 @@ class SearchFilters:
         dietary_labels: Optional[List[str]] = None
         if dl_raw:
             if isinstance(dl_raw, list):
-                dietary_labels = [normalize_dietary_label(x) for x in dl_raw if x] or None
+                dietary_labels = list(dict.fromkeys(
+                    normalize_dietary_label(str(x)) for x in dl_raw if x
+                )) or None
             elif isinstance(dl_raw, str):
                 dietary_labels = [normalize_dietary_label(dl_raw)]
 

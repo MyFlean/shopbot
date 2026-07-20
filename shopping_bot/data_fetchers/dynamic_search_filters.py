@@ -188,7 +188,10 @@ def build_dynamic_price_ranges(
                 break
 
     while len(edges) - 1 < 3:
-        step = max(1.0, step / 2)
+        new_step = max(1.0, step / 2)
+        if new_step == step:
+            break
+        step = new_step
         start = math.floor(min_price / step) * step
         end = math.ceil(max_price / step) * step
         if end <= start:

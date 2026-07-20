@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Tuple
 
 if TYPE_CHECKING:
     from search_v2.query_processing.health_intent_classifier import HealthIntentResult
@@ -17,6 +17,7 @@ class RoutingContext:
     has_fresh_produce_match: bool = False
     health_intent_detected: bool = False
     has_nutritional_constraint: bool = False
+    health_intent_matched_phrases: Tuple[str, ...] = ()
 
 
 def build_routing_context(
@@ -37,4 +38,5 @@ def build_routing_context(
         has_fresh_produce_match=bool(product_intent.fresh_produce_ids) if product_intent else False,
         health_intent_detected=health_intent.detected if health_intent else False,
         has_nutritional_constraint=has_nutritional_constraint,
+        health_intent_matched_phrases=health_intent.matched_phrases if health_intent else (),
     )

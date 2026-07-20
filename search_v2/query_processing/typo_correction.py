@@ -29,15 +29,33 @@ precomputed-deletes SymSpell index — the public interface
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from functools import lru_cache
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 from search_v2.query_processing.text_normalization import normalize_text
 
 
-def damerau_levenshtein(a: str, b: str, max_distance: Optional[int] = None) -> int:
+_BLOCKED_SUBSTITUTION_COST = 1_000_000
+
+
+def damerau_levenshtein(
+    a: str, b: str, max_distance: Optional[int] = None, protect_prefix: int = 0
+) -> int:
     """Edit distance with transpositions counted as a single edit (so "muscel"
-    -> "muscle" is distance 1, not 2 — plain Levenshtein would say 2)."""
+    -> "muscle" is distance 1, not 2 — plain Levenshtein would say 2).
+
+    `protect_prefix`: when > 0, disallows SUBSTITUTION edits where either
+    character's position is within the first `protect_prefix` characters of
+    its string (insertion/deletion/transposition there remain free). This
+    targets one specific failure mode: a substitution in the first couple of
+    characters usually swaps the word's identity for a different real word
+    ("gain"->"jain", "bulking"->"baking" — both change what the word IS, not
+    just how it's spelled), whereas an insertion/deletion/transposition near
+    the start is typically an ordinary fast-typing slip ("ganola"->"granola",
+    "mlik"->"milk") that should still be correctable.
+    """
     if a == b:
         return 0
     la, lb = len(a), len(b)
@@ -52,14 +70,20 @@ def damerau_levenshtein(a: str, b: str, max_distance: Optional[int] = None) -> i
 
     for i in range(la):
         for j in range(lb):
-            cost = 0 if a[i] == b[j] else 1
+            if a[i] == b[j]:
+                cost = 0
+            elif protect_prefix and (i < protect_prefix or j < protect_prefix):
+                cost = _BLOCKED_SUBSTITUTION_COST
+            else:
+                cost = 1
             d[(i, j)] = min(
                 d[(i - 1, j)] + 1,        # deletion
                 d[(i, j - 1)] + 1,        # insertion
                 d[(i - 1, j - 1)] + cost,  # substitution
             )
             if i > 0 and j > 0 and a[i] == b[j - 1] and a[i - 1] == b[j]:
-                d[(i, j)] = min(d[(i, j)], d[(i - 2, j - 2)] + cost)  # transposition
+                transp_cost = 0 if a[i] == b[j] else 1
+                d[(i, j)] = min(d[(i, j)], d[(i - 2, j - 2)] + transp_cost)  # transposition
 
     return d[(la - 1, lb - 1)]
 
@@ -79,6 +103,38 @@ def damerau_levenshtein(a: str, b: str, max_distance: Optional[int] = None) -> i
 # occur far more than once across a ~6-8K product catalog, so this floor
 # costs essentially nothing for the cases the mechanism is meant to catch.
 MIN_SEGMENTATION_FREQUENCY = 3
+
+# Passed as `protect_prefix` to damerau_levenshtein() during candidate search —
+# see that function's docstring for why substitution (not insertion/deletion/
+# transposition) is what gets blocked in this many leading characters.
+MIN_CORRECTION_PREFIX_LENGTH = 2
+
+_AMBIGUOUS_ENGLISH_WORDS = frozenset({
+    "bulk", "bulky", "gains", "lean", "shred", "shredding", "shredded",
+    "tone", "toning", "ripped",
+})
+
+_WORD_TOKEN_RE = re.compile(r"[a-zA-Z]+")
+
+
+def _words_in(text: str):
+    return (w.lower() for w in _WORD_TOKEN_RE.findall(text))
+
+
+@lru_cache(maxsize=1)
+def _dynamic_protected_words() -> FrozenSet[str]:
+    words = set(_AMBIGUOUS_ENGLISH_WORDS)
+
+    from search_v2.query_processing.vocabulary_builder import SEED_TERMS
+    for term in SEED_TERMS:
+        words.update(_words_in(term))
+
+    from search_v2.query_processing.health_intent_classifier import HEALTH_INTENT_REGISTRY
+    for definition in HEALTH_INTENT_REGISTRY:
+        for trigger in definition.triggers:
+            words.update(_words_in(trigger))
+
+    return frozenset(words)
 
 
 def _auto_fuzziness_budget(length: int) -> int:
@@ -165,9 +221,14 @@ class VocabularyCorrector:
         if existing_freq is not None and existing_freq >= MIN_SEGMENTATION_FREQUENCY:
             return None  # a well-attested real word — nothing to correct
 
+        if token in _dynamic_protected_words():
+            return None
+
         budget = _auto_fuzziness_budget(len(token))
         if budget == 0:
             return None  # too short to safely guess at
+
+        protect_prefix = min(MIN_CORRECTION_PREFIX_LENGTH, len(token))
 
         best: List[CorrectionCandidate] = []
         for word, freq in self.vocabulary.items():
@@ -175,7 +236,7 @@ class VocabularyCorrector:
                 continue  # don't "correct" a token to itself
             if abs(len(word) - len(token)) > budget:
                 continue
-            dist = damerau_levenshtein(token, word, max_distance=budget)
+            dist = damerau_levenshtein(token, word, max_distance=budget, protect_prefix=protect_prefix)
             if dist <= budget:
                 best.append(CorrectionCandidate(original=token, corrected=word, distance=dist, frequency=freq))
 

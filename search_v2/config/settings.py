@@ -195,6 +195,7 @@ class SearchV2Settings:
     # ── Fuzzy / typo ─────────────────────────────────────────────────
     FUZZINESS: str = field(default_factory=lambda: _str("SEARCH_V2_FUZZINESS", "AUTO"))
     TYPO_MAX_EDIT_DISTANCE: int = field(default_factory=lambda: _int("SEARCH_V2_TYPO_MAX_EDIT_DISTANCE", 2))
+    FUZZY_PREFIX_LENGTH: int = field(default_factory=lambda: _int("SEARCH_V2_FUZZY_PREFIX_LENGTH", 2))
 
     # ── Runtime artifact fetch (vocabulary.json / product_type_lexicon.json) ──
     # Optional: fetched once at gateway startup (see gateway.py's _build_search())

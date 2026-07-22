@@ -4137,6 +4137,7 @@ class ElasticsearchProductsFetcher:
                     "includes": [
                         "id", "name", "brand", "price", "mrp", "description", "use",
                         "hero_image.*", "images", "package_claims.*", "category_group", "category_paths",
+                        "category_hierarchies",
                         "category_data.*", "ingredients.*", "tags_and_sentiments.*",
                         "flean_score.*", "stats.*", "availability.*", "cons_list",
                         "size", "visibility", "scheduled",

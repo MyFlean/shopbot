@@ -35,7 +35,7 @@ import traceback
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -45,7 +45,14 @@ from ..utils.pincode_mapping import (
     is_placeholder_pincode,
     try_resolve_canonical_pincode,
 )
-from .product_api import _build_filters_from_query_args, _normalize_filter_aliases, _validate_filters
+from .product_api import (
+    _build_filters_from_query_args,
+    _extract_lab_report_url,
+    _has_palm_oil_ingredient,
+    _normalize_filter_aliases,
+    _resolve_pdp_cta,
+    _validate_filters,
+)
 
 log = logging.getLogger(__name__)
 bp = Blueprint("home_page", __name__)
@@ -118,6 +125,17 @@ FLEAN_PICKS_SEE_ALL_FETCH_PER_SUBCATEGORY = 24
 HOME_VALIDATION_FILTER_ENABLED = True
 HOME_VALIDATION_FAIL_OPEN = True
 HOME_VALIDATION_ALLOWED_PINCODES = {"201303", "201304", "201305"}
+DEFAULT_SEARCH_PINCODE = "201303"
+ECOM_SERVICE_BASE_URL = os.getenv("ECOM_SERVICE_BASE_URL", "https://api.flean.ai/ecom/api/v1").rstrip("/")
+ECOM_SERVICE_API_KEY = (
+    os.getenv("ECOM_SERVICE_API_KEY")
+    or os.getenv("ECOM_API_KEY")
+    or ""
+).strip()
+APP_CONFIG_CATEGORIES_URL = os.getenv(
+    "APP_CONFIG_CATEGORIES_URL",
+    "https://api.flean.ai/ui/app-config/categories",
+).strip()
 
 # ============================================================================
 # Data Loading & Caching
@@ -387,6 +405,282 @@ def _fetch_products_by_ids(product_ids: List[str]) -> List[Dict[str, Any]]:
     except Exception as e:
         log.error(f"ES_FETCH_ERROR | error={e}", exc_info=True)
         return []
+
+
+def _resolve_requested_purchase_category() -> Optional[str]:
+    """Resolve optional category selector for single-endpoint drilldown mode."""
+    candidates: List[Optional[str]] = [request.args.get("category")]
+    if request.method in {"POST", "PUT", "PATCH"}:
+        body = request.get_json(force=True, silent=True) or {}
+        if isinstance(body, dict):
+            candidates.append(body.get("category"))
+
+    for value in candidates:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _fetch_purchased_product_ids() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """
+    Fetch user-specific purchased product IDs from ecom-service.
+
+    Returns:
+        (payload, error_message)
+    """
+    endpoint = f"{ECOM_SERVICE_BASE_URL}/orders/purchased-products"
+    headers: Dict[str, str] = {}
+    auth_header = str(request.headers.get("Authorization") or "").strip()
+    if auth_header:
+        headers["Authorization"] = auth_header
+    if ECOM_SERVICE_API_KEY:
+        headers["X-API-Key"] = ECOM_SERVICE_API_KEY
+
+    try:
+        response = requests.get(endpoint, headers=headers, timeout=10)
+    except Exception as exc:
+        log.error("HOME_PURCHASE_CATEGORIES_UPSTREAM_ERROR | error=%s", exc)
+        return None, "Failed to fetch purchased products"
+
+    if response.status_code != 200:
+        payload: Any = None
+        detail = ""
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                detail = str(payload.get("message") or payload.get("error", {}).get("message") or "").strip()
+        except Exception:
+            detail = ""
+        log.warning(
+            "HOME_PURCHASE_CATEGORIES_UPSTREAM_STATUS | user_id=%s | status=%s | detail=%s",
+            str((payload.get("user_id") if isinstance(payload, dict) else "") or "").strip(),
+            response.status_code,
+            detail,
+        )
+        return None, detail or "Purchased products unavailable"
+
+    payload = response.json() if response.content else {}
+    if not isinstance(payload, dict):
+        return None, "Invalid purchased products response"
+    if not payload.get("success"):
+        return None, str(payload.get("message") or "Purchased products unavailable")
+
+    raw_ids = payload.get("product_ids") or []
+    if not isinstance(raw_ids, list):
+        return None, "Invalid purchased product IDs payload"
+
+    normalized_ids: List[str] = []
+    seen: set[str] = set()
+    for raw_id in raw_ids:
+        product_id = str(raw_id or "").strip()
+        if not product_id or product_id in seen:
+            continue
+        seen.add(product_id)
+        normalized_ids.append(product_id)
+
+    total_count = payload.get("total_count")
+    try:
+        total_count_int = int(total_count)
+    except (TypeError, ValueError):
+        total_count_int = len(normalized_ids)
+
+    return {
+        "user_id": str(payload.get("user_id") or "").strip() if isinstance(payload, dict) else "",
+        "product_ids": normalized_ids,
+        "total_count": total_count_int,
+        "meta": payload.get("meta") if isinstance(payload.get("meta"), dict) else {},
+    }, None
+
+
+def _to_bool(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return None
+
+
+def _resolve_effective_search_pincode() -> str:
+    """Mirror unified-search fallback semantics for card in_stock derivation."""
+    raw_pincode = _resolve_request_pincode()
+    canonical = try_resolve_canonical_pincode(raw_pincode)
+    if canonical:
+        return canonical
+    return DEFAULT_SEARCH_PINCODE
+
+
+def _derive_in_stock_from_availability(raw: Dict[str, Any], effective_pincode: str) -> bool:
+    """Mirror unified-search listing stock derivation."""
+    visibility = str(raw.get("visibility", "visible") or "visible").strip().lower()
+    fallback_in_stock = visibility == "visible"
+
+    availability = raw.get("availability")
+    if not isinstance(availability, dict):
+        return fallback_in_stock
+
+    pincode_entry = availability.get(effective_pincode)
+    if not isinstance(pincode_entry, dict):
+        return fallback_in_stock
+
+    has_signal = False
+    provider_in_stock = False
+    for provider in ("zepto", "blinkit"):
+        provider_data = pincode_entry.get(provider)
+        if not isinstance(provider_data, dict):
+            continue
+        in_stock_value = _to_bool(provider_data.get("in_stock"))
+        if in_stock_value is None:
+            continue
+        has_signal = True
+        provider_in_stock = provider_in_stock or in_stock_value
+
+    flean_data = pincode_entry.get("flean")
+    flean_in_stock = False
+    if isinstance(flean_data, dict) and "quantity" in flean_data:
+        has_signal = True
+        try:
+            flean_in_stock = float(flean_data.get("quantity") or 0) > 0
+        except (TypeError, ValueError):
+            flean_in_stock = False
+
+    if has_signal:
+        return provider_in_stock or flean_in_stock
+    return fallback_in_stock
+
+
+def _extract_category_hierarchy_2(raw_product: Dict[str, Any]) -> Optional[str]:
+    """Return category grouping key from category_hierarchies[0].segments[2] only."""
+    hierarchies = raw_product.get("category_hierarchies")
+    if isinstance(hierarchies, list) and hierarchies:
+        first_hierarchy = hierarchies[0]
+        if isinstance(first_hierarchy, dict):
+            segments = first_hierarchy.get("segments")
+            if isinstance(segments, list) and len(segments) > 2:
+                category = str(segments[2] or "").strip()
+                if category:
+                    return category
+        elif isinstance(first_hierarchy, list) and len(first_hierarchy) > 2:
+            category = str(first_hierarchy[2] or "").strip()
+            if category:
+                return category
+
+    return None
+
+
+def _format_category_name(category_value: str) -> str:
+    leaf = str(category_value or "").strip().split("/")[-1]
+    if not leaf:
+        return ""
+    return leaf.replace("_", " ").title()
+
+
+def _get_purchase_category_name_map() -> Dict[str, str]:
+    try:
+        response = requests.get(APP_CONFIG_CATEGORIES_URL, timeout=5)
+        response.raise_for_status()
+        payload = response.json()
+        categories = payload if isinstance(payload, list) else []
+        by_id: Dict[str, str] = {}
+        for item in categories:
+            if not isinstance(item, dict):
+                continue
+            category_id = str(item.get("id") or "").strip()
+            category_name = str(item.get("name") or "").strip()
+            if category_id and category_name:
+                by_id[category_id] = category_name
+        return by_id
+    except Exception as exc:
+        log.warning("HOME_PURCHASE_CATEGORY_NAMES_FETCH_FAILED | error=%s", exc)
+    return {}
+
+
+def _resolve_purchase_category_name(category_value: str) -> str:
+    category_text = str(category_value or "").strip()
+    if not category_text:
+        return ""
+    category_leaf = category_text.split("/")[-1]
+    category_name_map = _get_purchase_category_name_map()
+    configured_name = (
+        category_name_map.get(category_text)
+        or category_name_map.get(category_leaf)
+    )
+    if configured_name:
+        return configured_name
+    return _format_category_name(category_text)
+
+
+def _build_search_identical_card(raw: Dict[str, Any], effective_pincode: str) -> Optional[Dict[str, Any]]:
+    card = transform_to_product_card(raw)
+    if card is None:
+        return None
+
+    card_in_stock = _derive_in_stock_from_availability(raw, effective_pincode)
+    card["in_stock"] = card_in_stock
+    card["has_lab_report"] = bool(_extract_lab_report_url(raw))
+    card["cta"] = _resolve_pdp_cta(
+        product_info={
+            "in_stock": card_in_stock,
+            "visibility": card.get("visibility"),
+        },
+        flean_badge={"score": card.get("flean_score")},
+        has_palm_oil=_has_palm_oil_ingredient(raw),
+    )
+    if raw.get("_score") is not None:
+        card["_score"] = raw.get("_score")
+    return card
+
+
+def _product_card_rank_key(card: Dict[str, Any]) -> tuple:
+    """Sort by flean_score desc, flean_percentile desc, name asc, id asc."""
+    try:
+        score = float(card.get("flean_score")) if card.get("flean_score") is not None else -1.0
+    except (TypeError, ValueError):
+        score = -1.0
+    try:
+        percentile = (
+            float(card.get("flean_percentile"))
+            if card.get("flean_percentile") is not None
+            else -1.0
+        )
+    except (TypeError, ValueError):
+        percentile = -1.0
+    name = str(card.get("name") or "").strip().lower()
+    product_id = str(card.get("id") or "").strip().lower()
+    return (-score, -percentile, name, product_id)
+
+
+def _build_category_product_pairs(product_ids: List[str]) -> List[Tuple[str, Dict[str, Any]]]:
+    """
+    Return list of (category_hierarchy_2, raw_product_source) pairs for visible products.
+    """
+    if not product_ids:
+        return []
+    try:
+        fetcher = get_es_fetcher()
+        raw_products = fetcher.search_by_ids(product_ids)
+    except Exception as exc:
+        log.error("HOME_PURCHASE_CATEGORIES_ES_FETCH_ERROR | error=%s", exc, exc_info=True)
+        return []
+
+    pairs: List[Tuple[str, Dict[str, Any]]] = []
+    for raw in raw_products:
+        if not isinstance(raw, dict):
+            continue
+        # Keep product visibility behavior identical to listing cards.
+        if transform_to_product_card(raw) is None:
+            continue
+        category = _extract_category_hierarchy_2(raw)
+        if not category:
+            continue
+        pairs.append((category, raw))
+    return pairs
 
 
 # ============================================================================
@@ -1114,6 +1408,119 @@ def get_categories() -> tuple[Dict[str, Any], int]:
     except Exception as e:
         log.error(f"HOME_CATEGORIES_ERROR | error={e}", exc_info=True)
         return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load categories")), 500
+
+
+@bp.route("/api/v1/home/purchase-categories", methods=["GET", "POST"])
+def get_purchase_categories() -> tuple[Dict[str, Any], int]:
+    """
+    Return user-specific category cards derived from previously purchased products.
+    Grouping key is exact category_hierarchies[0][2].
+    """
+    try:
+        selected_category = _resolve_requested_purchase_category()
+
+        purchased_payload, upstream_error = _fetch_purchased_product_ids()
+        if upstream_error or not purchased_payload:
+            return (
+                jsonify(
+                    _build_error_response(
+                        "PURCHASE_HISTORY_UNAVAILABLE",
+                        upstream_error or "Failed to fetch purchased products",
+                    )
+                ),
+                502,
+            )
+        user_id = str(purchased_payload.get("user_id") or "").strip()
+
+        purchased_ids = purchased_payload.get("product_ids", [])
+        if not purchased_ids:
+            if selected_category:
+                return jsonify(
+                    _build_success_response(
+                        {"category": selected_category, "products": []},
+                        meta={
+                            "user_id": user_id,
+                            "total_count": int(purchased_payload.get("total_count", 0)),
+                            "input_product_ids": 0,
+                            "matched_products": 0,
+                        },
+                    )
+                ), 200
+            return jsonify(
+                _build_success_response({"categories": []}, meta={
+                    "user_id": user_id,
+                    "total_count": int(purchased_payload.get("total_count", 0)),
+                    "matched_products": 0,
+                })
+            ), 200
+
+        pairs = _build_category_product_pairs(purchased_ids)
+        if selected_category:
+            raw_products_in_category = [
+                raw for item_category, raw in pairs if item_category == selected_category
+            ]
+
+            effective_pincode = _resolve_effective_search_pincode()
+            cards: List[Dict[str, Any]] = []
+            for raw in raw_products_in_category:
+                card = _build_search_identical_card(raw, effective_pincode)
+                if card is not None:
+                    cards.append(card)
+
+            cards.sort(key=_product_card_rank_key)
+
+            return jsonify(
+                _build_success_response(
+                    {"category": selected_category, "products": cards},
+                    meta={
+                        "user_id": user_id,
+                        "total_count": int(purchased_payload.get("total_count", 0)),
+                        "input_product_ids": len(purchased_ids),
+                        "matched_products": len(cards),
+                        "pincode": effective_pincode,
+                    },
+                )
+            ), 200
+
+        category_to_products: Dict[str, set[str]] = {}
+        for category, raw in pairs:
+            product_id = str(raw.get("id") or "").strip()
+            if not product_id:
+                continue
+            category_to_products.setdefault(category, set()).add(product_id)
+
+        categories = [
+            {
+                "name": _resolve_purchase_category_name(category),
+                "category": category,
+                "product_count": len(product_ids),
+            }
+            for category, product_ids in category_to_products.items()
+            if product_ids
+        ]
+        categories.sort(
+            key=lambda item: (
+                -int(item.get("product_count") or 0),
+                str(item.get("name") or "").lower(),
+                str(item.get("category") or "").lower(),
+            )
+        )
+
+        return jsonify(
+            _build_success_response(
+                {"categories": categories},
+                meta={
+                    "user_id": user_id,
+                    "total_count": int(purchased_payload.get("total_count", 0)),
+                    "input_product_ids": len(purchased_ids),
+                    "matched_products": sum(item["product_count"] for item in categories),
+                    "category_count": len(categories),
+                },
+            )
+        ), 200
+    except Exception as exc:
+        log.error("HOME_PURCHASE_CATEGORIES_ERROR | error=%s", exc, exc_info=True)
+        return jsonify(_build_error_response("INTERNAL_ERROR", "Failed to load purchase categories")), 500
 
 
 @bp.route("/api/v1/home/validation-candidates", methods=["GET"])

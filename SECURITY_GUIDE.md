@@ -15,7 +15,7 @@
 - `setup-github-secrets.md` - GitHub secrets configuration guide
 
 ### **API Keys and Tokens**
-- Any file containing `ANTHROPIC_API_KEY`
+- Any file containing `AWS_BEARER_TOKEN_BEDROCK`
 - Any file containing `AWS_ACCESS_KEY_ID`
 - Any file containing `AWS_SECRET_ACCESS_KEY`
 - Any file containing `ELASTIC_API_KEY`
@@ -82,7 +82,7 @@ id_ed25519
 ```python
 # ✅ Good - Use environment variables
 import os
-api_key = os.getenv('ANTHROPIC_API_KEY')
+api_key = os.getenv('AWS_BEARER_TOKEN_BEDROCK')
 
 # ❌ Bad - Hardcoded secrets
 api_key = "sk-ant-api03-EXAMPLE-KEY-DO-NOT-USE-REPLACE-WITH-YOUR-ACTUAL-KEY"

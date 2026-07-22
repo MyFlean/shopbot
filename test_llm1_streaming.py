@@ -252,8 +252,8 @@ async def main():
     
     # Verify config
     cfg = get_config()
-    if not cfg.ANTHROPIC_API_KEY:
-        log.error("❌ ANTHROPIC_API_KEY not set in environment")
+    if not cfg.AWS_BEARER_TOKEN_BEDROCK:
+        log.error("❌ AWS_BEARER_TOKEN_BEDROCK not set in environment")
         return False
     
     log.info(f"✅ Config loaded | Model: {cfg.LLM_MODEL}")

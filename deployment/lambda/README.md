@@ -19,7 +19,7 @@ Lambda Function (Python 3.12)
     ↓
 Redis (ElastiCache)
 Elasticsearch (External API)
-Anthropic API (External API)
+AWS Bedrock (External API)
 ```
 
 ## Quick Start
@@ -57,7 +57,7 @@ aws secretsmanager create-secret \
   --name flean-services/shopbot \
   --description "Shopbot service secrets" \
   --secret-string '{
-    "ANTHROPIC_API_KEY": "sk-ant-...",
+    "AWS_BEARER_TOKEN_BEDROCK": "ABSK...",
     "ES_API_KEY": "...",
     "REDIS_PASSWORD": "..."
   }'
@@ -184,7 +184,7 @@ The Lambda function retrieves secrets from AWS Secrets Manager. The secret shoul
 
 ```json
 {
-  "ANTHROPIC_API_KEY": "sk-ant-...",
+  "AWS_BEARER_TOKEN_BEDROCK": "ABSK...",
   "ES_API_KEY": "...",
   "ELASTIC_API_KEY": "...",
   "REDIS_PASSWORD": "..."
@@ -211,7 +211,7 @@ The Lambda function retrieves secrets from AWS Secrets Manager. The secret shoul
 Distributed tracing is enabled via AWS Lambda Powertools. Traces include:
 - API Gateway → Lambda
 - Lambda → Redis
-- Lambda → External APIs (Elasticsearch, Anthropic)
+- Lambda → External APIs (Elasticsearch, AWS Bedrock)
 
 ## Updating the Deployment
 

@@ -31,7 +31,7 @@ ENABLE_STREAMING=true
 
 Make sure you have these required variables set:
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
+export AWS_BEARER_TOKEN_BEDROCK="ABSK..."
 export REDIS_HOST="localhost"  # or your Redis host
 export REDIS_PORT="6379"       # default port
 ```
@@ -124,7 +124,7 @@ redis-cli ping
 ### Error: "Stream failed" or 400/500 errors
 **Solution**: 
 1. Check server logs for detailed error messages
-2. Verify `ANTHROPIC_API_KEY` is set correctly
+2. Verify `AWS_BEARER_TOKEN_BEDROCK` is set correctly
 3. Ensure all required services are running
 
 ### Chat doesn't load or shows empty page
@@ -151,7 +151,7 @@ All environment variables:
 
 ```env
 # Required
-ANTHROPIC_API_KEY=sk-ant-...
+AWS_BEARER_TOKEN_BEDROCK=ABSK...
 REDIS_HOST=localhost
 REDIS_PORT=6379
 

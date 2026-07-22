@@ -108,7 +108,6 @@ def validate_environment(strict: bool) -> None:
     - If strict=False: log a warning (WSGI path) so the pod can come up and emit a health page, etc.
     """
     required = {
-        "ANTHROPIC_API_KEY": "Anthropic API integration",
         "REDIS_HOST": "Session storage",
     }
     missing = [f"{k} (required for {v})" for k, v in required.items() if not os.getenv(k)]
@@ -120,6 +119,14 @@ def validate_environment(strict: bool) -> None:
             sys.exit(1)
         else:
             logging.getLogger(__name__).warning(msg)
+
+    # Bedrock credentials are optional for startup, but chat/LLM routes need them at runtime.
+    has_bedrock = bool(os.getenv("AWS_BEARER_TOKEN_BEDROCK"))
+    if not has_bedrock:
+        logging.getLogger(__name__).warning(
+            "No Bedrock credentials found (AWS_BEARER_TOKEN_BEDROCK). "
+            "Product/home/search APIs can still run, but chat/LLM routes will fail until it is configured."
+        )
 
 
 # --------------------------------------------------------------------------------------

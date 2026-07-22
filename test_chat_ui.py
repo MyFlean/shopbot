@@ -171,7 +171,7 @@ def test_environment_variables():
     print_header("Checking Environment Variables")
     
     required_vars = {
-        "ANTHROPIC_API_KEY": "Required for LLM functionality",
+        "AWS_BEARER_TOKEN_BEDROCK": "Required for LLM functionality",
         "REDIS_HOST": "Required for session management"
     }
     
@@ -287,7 +287,7 @@ def main():
         print("  1. Make sure server is running: python run.py")
         print("  2. Set ENABLE_STREAMING=true in environment")
         print("  3. Ensure Redis is running: redis-server")
-        print("  4. Check ANTHROPIC_API_KEY is set correctly")
+        print("  4. Check AWS_BEARER_TOKEN_BEDROCK is set correctly")
         return 1
 
 if __name__ == "__main__":

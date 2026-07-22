@@ -228,12 +228,20 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
     from search_v2.retrieval.opensearch_client import OpenSearchClient
 
     client = OpenSearchClient(settings=SETTINGS)
+    try:
+        client.search({"size": 0, "query": {"match_all": {}}})
+    except Exception:
+        _log.exception("gateway: OpenSearch warmup call failed")
     # No explicit model_key here, deliberately: get_embedding_service() picks
     # Bedrock Titan vs. the local sentence-transformers path based on
     # SETTINGS.EMBEDDING_BACKEND — passing SETTINGS.EMBEDDING_MODEL_KEY
     # explicitly here would always select the local path regardless of that
     # setting (see embedding_service.py's factory docstring).
     emb_svc = get_embedding_service()
+    try:
+        emb_svc.embed_query("warmup")
+    except Exception:
+        _log.exception("gateway: embedding warmup call failed")
 
     corrector: Optional[VocabularyCorrector] = None
     if SETTINGS.ENABLE_TYPO_CORRECTION:

@@ -11,12 +11,14 @@ rm -rf "$PACKAGE_DIR" "$ZIP_FILE"
 mkdir -p "$PACKAGE_DIR"
 
 echo "Installing dependencies..."
-pip install --target "$PACKAGE_DIR" --platform manylinux2014_x86_64 --python-version 3.12 -r requirements.txt --upgrade 2>/dev/null || \
-pip install --target "$PACKAGE_DIR" -r requirements.txt --upgrade
+pip install --target "$PACKAGE_DIR" --platform manylinux2014_x86_64 --python-version 3.12 -r requirements-lambda.txt --upgrade 2>/dev/null || \
+pip install --target "$PACKAGE_DIR" -r requirements-lambda.txt --upgrade
 
 echo "Copying application code..."
-cp lambda_handler.py run.py "$PACKAGE_DIR/"
+cp lambda_handler.py run.py indexing_es_client.py "$PACKAGE_DIR/"
 cp -r shopping_bot "$PACKAGE_DIR/"
+cp -r search_v2 "$PACKAGE_DIR/"
+cp -r search_gateway "$PACKAGE_DIR/"
 
 echo "Cleaning up..."
 find "$PACKAGE_DIR" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

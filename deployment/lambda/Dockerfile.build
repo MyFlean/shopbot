@@ -26,6 +26,7 @@ RUN pip install --no-cache-dir -r requirements-lambda.txt -t /build/package/
 # ModuleNotFoundError at runtime regardless of anything else in this file.
 COPY lambda_handler.py /build/package/
 COPY run.py /build/package/
+COPY indexing_es_client.py /build/package/
 COPY shopping_bot/ /build/package/shopping_bot/
 COPY search_v2/ /build/package/search_v2/
 COPY search_gateway/ /build/package/search_gateway/

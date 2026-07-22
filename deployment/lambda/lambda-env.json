@@ -1,0 +1,17 @@
+{
+  "SEARCH_ENGINE": "auto",
+  "ES_URL": "https://search-flean-products-nzem6mojpxpurbgit2z52mwiru.ap-south-1.es.amazonaws.com",
+  "SEARCH_V2_ES_URL": "https://search-flean-products-nzem6mojpxpurbgit2z52mwiru.ap-south-1.es.amazonaws.com",
+  "SEARCH_V2_INDEX_NAME": "products-search-v2",
+  "SEARCH_V2_ENABLE_PHONETIC": "true",
+  "SEARCH_V2_EMBEDDING_BACKEND": "bedrock",
+  "SEARCH_V2_EMBEDDING_DIM": "512",
+  "SEARCH_V2_STRICT_ZERO_RESULTS": "true",
+  "BEDROCK_REGION": "ap-south-1",
+  "BEDROCK_EMBEDDING_MODEL_ID": "amazon.titan-embed-text-v2:0",
+  "SEARCH_V2_VOCAB_URL": "https://api.flean.ai/ui/app-config/vocabulary",
+  "SEARCH_V2_PRODUCT_TYPE_LEXICON_URL": "https://api.flean.ai/ui/app-config/product-type-lexicon",
+  "SEARCH_V2_ARTIFACT_FETCH_TIMEOUT_SEC": "2.0",
+  "SEARCH_UNIFIED_PHONETIC_ENABLED": "true",
+  "SEARCH_SUGGEST_PHONETIC_ENABLED": "false"
+}

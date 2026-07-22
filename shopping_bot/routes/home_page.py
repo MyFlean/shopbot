@@ -479,11 +479,7 @@ def _fetch_purchased_product_ids() -> Tuple[Optional[Dict[str, Any]], Optional[s
         seen.add(product_id)
         normalized_ids.append(product_id)
 
-    total_count = payload.get("total_count")
-    try:
-        total_count_int = int(total_count)
-    except (TypeError, ValueError):
-        total_count_int = len(normalized_ids)
+    total_count_int = len(normalized_ids)
 
     return {
         "user_id": str(payload.get("user_id") or "").strip() if isinstance(payload, dict) else "",
@@ -614,6 +610,34 @@ def _resolve_purchase_category_name(category_value: str) -> str:
     if configured_name:
         return configured_name
     return _format_category_name(category_text)
+
+
+def _extract_primary_image_url(raw_product: Dict[str, Any]) -> Optional[str]:
+    """Extract a stable primary image URL from raw ES product source."""
+    images = raw_product.get("images")
+    if isinstance(images, list):
+        for image in images:
+            image_url = str(image or "").strip()
+            if image_url:
+                return image_url
+
+    hero_image = raw_product.get("hero_image")
+    if isinstance(hero_image, dict):
+        for key in ("url", "src", "image_url"):
+            image_url = str(hero_image.get(key) or "").strip()
+            if image_url:
+                return image_url
+
+    image_url = str(raw_product.get("image_url") or "").strip()
+    if image_url:
+        return image_url
+    return None
+
+
+def _raw_product_rank_key(raw: Dict[str, Any]) -> tuple:
+    """Sort by flean score desc, percentile desc, then name/id asc."""
+    card = transform_to_product_card(raw) or {}
+    return _product_card_rank_key(card)
 
 
 def _build_search_identical_card(raw: Dict[str, Any], effective_pincode: str) -> Optional[Dict[str, Any]]:
@@ -1430,17 +1454,15 @@ def get_purchase_categories() -> tuple[Dict[str, Any], int]:
                 ),
                 502,
             )
-        user_id = str(purchased_payload.get("user_id") or "").strip()
-
         purchased_ids = purchased_payload.get("product_ids", [])
+        unique_total_count = len(purchased_ids)
         if not purchased_ids:
             if selected_category:
                 return jsonify(
                     _build_success_response(
                         {"category": selected_category, "products": []},
                         meta={
-                            "user_id": user_id,
-                            "total_count": int(purchased_payload.get("total_count", 0)),
+                            "total_count": unique_total_count,
                             "input_product_ids": 0,
                             "matched_products": 0,
                         },
@@ -1448,8 +1470,7 @@ def get_purchase_categories() -> tuple[Dict[str, Any], int]:
                 ), 200
             return jsonify(
                 _build_success_response({"categories": []}, meta={
-                    "user_id": user_id,
-                    "total_count": int(purchased_payload.get("total_count", 0)),
+                    "total_count": unique_total_count,
                     "matched_products": 0,
                 })
             ), 200
@@ -1473,8 +1494,7 @@ def get_purchase_categories() -> tuple[Dict[str, Any], int]:
                 _build_success_response(
                     {"category": selected_category, "products": cards},
                     meta={
-                        "user_id": user_id,
-                        "total_count": int(purchased_payload.get("total_count", 0)),
+                        "total_count": unique_total_count,
                         "input_product_ids": len(purchased_ids),
                         "matched_products": len(cards),
                         "pincode": effective_pincode,
@@ -1482,21 +1502,33 @@ def get_purchase_categories() -> tuple[Dict[str, Any], int]:
                 )
             ), 200
 
-        category_to_products: Dict[str, set[str]] = {}
+        category_to_products: Dict[str, Dict[str, Dict[str, Any]]] = {}
         for category, raw in pairs:
             product_id = str(raw.get("id") or "").strip()
             if not product_id:
                 continue
-            category_to_products.setdefault(category, set()).add(product_id)
+            category_to_products.setdefault(category, {})
+            category_to_products[category][product_id] = raw
 
         categories = [
             {
                 "name": _resolve_purchase_category_name(category),
                 "category": category,
-                "product_count": len(product_ids),
+                "product_count": len(raw_products_by_id),
+                "image_urls": [
+                    image_url
+                    for image_url in (
+                        _extract_primary_image_url(raw_product)
+                        for raw_product in sorted(
+                            raw_products_by_id.values(),
+                            key=_raw_product_rank_key,
+                        )
+                    )
+                    if image_url
+                ][:2],
             }
-            for category, product_ids in category_to_products.items()
-            if product_ids
+            for category, raw_products_by_id in category_to_products.items()
+            if raw_products_by_id
         ]
         categories.sort(
             key=lambda item: (
@@ -1510,8 +1542,7 @@ def get_purchase_categories() -> tuple[Dict[str, Any], int]:
             _build_success_response(
                 {"categories": categories},
                 meta={
-                    "user_id": user_id,
-                    "total_count": int(purchased_payload.get("total_count", 0)),
+                    "total_count": unique_total_count,
                     "input_product_ids": len(purchased_ids),
                     "matched_products": sum(item["product_count"] for item in categories),
                     "category_count": len(categories),

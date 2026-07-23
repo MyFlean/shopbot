@@ -45,7 +45,12 @@ from ..utils.pincode_mapping import (
     is_placeholder_pincode,
     try_resolve_canonical_pincode,
 )
-from .product_api import _build_filters_from_query_args, _normalize_filter_aliases, _validate_filters
+from .product_api import (
+    _build_filters_from_query_args,
+    _enrich_listing_card,
+    _normalize_filter_aliases,
+    _validate_filters,
+)
 
 log = logging.getLogger(__name__)
 bp = Blueprint("home_page", __name__)
@@ -101,6 +106,7 @@ BEST_SELLING_CATEGORY_PATHS: List[str] = [
 BEST_SELLING_PER_CATEGORY = 2
 BEST_SELLING_TOTAL_PRODUCTS = 6
 BEST_SELLING_FETCH_BUFFER = 13
+BEST_SELLING_PINNED_PRODUCT_ID = "01KXDD92YTPN4YF8VS2EBCAK25"
 SUPPLEMENTS_CATEGORY_PATHS: List[str] = [
     "f_and_b/supplements/performance/creatine",
     "f_and_b/supplements/amino_acids/bcaa",
@@ -374,6 +380,14 @@ def _filter_cards_with_validation_cache(
 # Elasticsearch Product Fetching (uses shared transformer)
 # ============================================================================
 
+def _listing_card_from_src(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Transform raw ES source to a listing card with shared enrichment fields."""
+    card = transform_to_product_card(src)
+    if card is None:
+        return None
+    return _enrich_listing_card(card, src)
+
+
 def _fetch_products_by_ids(product_ids: List[str]) -> List[Dict[str, Any]]:
     """Fetch products from ES by IDs and return standardized product cards."""
     if not product_ids:
@@ -381,7 +395,7 @@ def _fetch_products_by_ids(product_ids: List[str]) -> List[Dict[str, Any]]:
     try:
         fetcher = get_es_fetcher()
         es_products = fetcher.search_by_ids(product_ids)
-        cards = [c for c in (transform_to_product_card(src) for src in es_products if src) if c is not None]
+        cards = [c for c in (_listing_card_from_src(src) for src in es_products if src) if c is not None]
         log.debug(f"ES_FETCH | requested={len(product_ids)} | returned={len(cards)}")
         return cards
     except Exception as e:
@@ -474,6 +488,8 @@ def _get_best_selling_data(effective_pincode: Optional[str] = None) -> Dict[str,
     selected_products: List[Dict[str, Any]] = []
     selected_ids: set[str] = set()
     backfill_candidates: List[tuple[float, Dict[str, Any]]] = []
+    pinned_card: Optional[Dict[str, Any]] = None
+    pinned_score = -1.0
 
     force_legacy = (os.getenv("BEST_SELLING_FORCE_LEGACY") or "").strip().lower() in ("1", "true", "yes", "on")
 
@@ -515,7 +531,7 @@ def _get_best_selling_data(effective_pincode: Optional[str] = None) -> Dict[str,
 
         scored_cards: List[tuple[float, Dict[str, Any]]] = []
         for src in raw_products:
-            card = transform_to_product_card(src)
+            card = _listing_card_from_src(src)
             if not card:
                 continue
             product_id = card.get("id")
@@ -543,6 +559,9 @@ def _get_best_selling_data(effective_pincode: Optional[str] = None) -> Dict[str,
         category_count = 0
         for score, card in scored_cards:
             product_id = card["id"]
+            if product_id == BEST_SELLING_PINNED_PRODUCT_ID and score > pinned_score:
+                pinned_card = card
+                pinned_score = score
             if product_id in selected_ids:
                 continue
             if category_count < BEST_SELLING_PER_CATEGORY:
@@ -563,8 +582,27 @@ def _get_best_selling_data(effective_pincode: Optional[str] = None) -> Dict[str,
             if len(selected_products) >= BEST_SELLING_TOTAL_PRODUCTS:
                 break
 
+    # If the pinned card was not present in category selections, fetch it directly by ID.
+    if pinned_card is None:
+        try:
+            pinned_sources = fetcher.search_by_ids([BEST_SELLING_PINNED_PRODUCT_ID])
+            if pinned_sources:
+                forced_card = _listing_card_from_src(pinned_sources[0])
+                if forced_card and forced_card.get("id") == BEST_SELLING_PINNED_PRODUCT_ID:
+                    pinned_card = forced_card
+        except Exception:
+            # Fail-open: keep best-selling response even if pinned-product lookup fails.
+            pinned_card = None
+
     # Final response is consistently ordered by Flean score descending.
     selected_products.sort(key=_get_card_flean_sort_key, reverse=True)
+
+    # Keep the requested product at the top when it is available in fetched candidates.
+    if pinned_card is not None:
+        selected_products = [
+            card for card in selected_products if card.get("id") != BEST_SELLING_PINNED_PRODUCT_ID
+        ]
+        selected_products.insert(0, pinned_card)
 
     try:
         log.info(
@@ -635,7 +673,7 @@ def _get_supplements_data(effective_pincode: Optional[str] = None) -> Dict[str, 
 
         scored_cards: List[tuple[float, Dict[str, Any]]] = []
         for src in raw_products:
-            card = transform_to_product_card(src)
+            card = _listing_card_from_src(src)
             if not card:
                 continue
             product_id = card.get("id")
@@ -771,7 +809,7 @@ def _search_curated_with_filters(filters: Dict[str, Any], size: int = 4) -> Dict
         filters=filters,
     )
     products = result.get("products", [])
-    cards = [transform_to_product_card(p) for p in products]
+    cards = [c for c in (_listing_card_from_src(p) for p in products if p) if c is not None]
     cards = [c for c in cards if c is not None]
     total = result.get("meta", {}).get("total", len(cards))
     return {
@@ -926,7 +964,7 @@ def _fetch_subcategory_products(
             exclude_ids=collected_ids or None,
         )
         for src in raw:
-            card = transform_to_product_card(src)
+            card = _listing_card_from_src(src)
             if card and card["id"] not in collected_ids:
                 collected.append(card)
                 collected_ids.append(card["id"])
@@ -1418,7 +1456,7 @@ def _unified_flean_picks_logic(
         agg_rounds_ok += 1
         for key in short_keys:
             for src in raw_map.get(key) or []:
-                card = transform_to_product_card(src)
+                card = _listing_card_from_src(src)
                 if not card:
                     continue
                 pid = card.get("id")

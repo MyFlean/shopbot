@@ -43,15 +43,17 @@ def test_allowed_score_keys_from_config_maps_produce_cards():
     config = [
         {"card": "Natural Sugar", "visible": True, "order": 1},
         {"card": "Glycemic Index", "visible": True, "order": 2},
-        {"card": "Vitamins & Minerals", "visible": True, "order": 3},
-        {"card": "Antioxidants", "visible": True, "order": 4},
-        {"card": "Gut Health", "visible": True, "order": 5},
+        {"card": "Vitamins", "visible": True, "order": 3},
+        {"card": "Minerals", "visible": True, "order": 4},
+        {"card": "Antioxidants", "visible": True, "order": 5},
+        {"card": "Gut Health", "visible": True, "order": 6},
     ]
     assert allowed_score_keys_from_config(config) == frozenset(
         {
             "natural_sugar",
             "glycemic_index",
-            "vitamins_minerals",
+            "vitamins",
+            "minerals",
             "antioxidants",
             "gut_health",
         }
@@ -133,7 +135,8 @@ def _veggies_src(**overrides):
                 "highlight_tags": {
                     "ns_tags": {"positive": ["low_natural_sugar"]},
                     "gi_tags": {"positive": ["low_gi"]},
-                    "vm_tags": {"positive": ["vitamin_c_rich"]},
+                    "v_tags": {"positive": ["vitamin_c_rich"]},
+                    "m_tags": {"positive": ["iron_rich"]},
                     "antioxidant_tags": {"positive": ["antioxidant_rich"]},
                     "gh_tags": {"positive": ["gut_friendly"]},
                 }
@@ -205,9 +208,10 @@ def test_transform_to_pdp_builds_produce_cards_from_stats(mock_get_config):
     mock_get_config.return_value = [
         {"card": "Natural Sugar", "highlight_tag": "ns_tags", "visible": True, "optional": True, "order": 1},
         {"card": "Glycemic Index", "highlight_tag": "gi_tags", "visible": True, "optional": True, "order": 2},
-        {"card": "Vitamins & Minerals", "highlight_tag": "vm_tags", "visible": True, "optional": True, "order": 3},
-        {"card": "Antioxidants", "highlight_tag": "antioxidant_tags", "visible": True, "optional": True, "order": 4},
-        {"card": "Gut Health", "highlight_tag": "gh_tags", "visible": True, "optional": True, "order": 5},
+        {"card": "Vitamins", "highlight_tag": "v_tags", "visible": True, "optional": True, "order": 3},
+        {"card": "Minerals", "highlight_tag": "m_tags", "visible": True, "optional": True, "order": 4},
+        {"card": "Antioxidants", "highlight_tag": "antioxidant_tags", "visible": True, "optional": True, "order": 5},
+        {"card": "Gut Health", "highlight_tag": "gh_tags", "visible": True, "optional": True, "order": 6},
     ]
     pdp = transform_to_pdp(_veggies_src())
     sc = pdp["score_cards"]
@@ -215,13 +219,89 @@ def test_transform_to_pdp_builds_produce_cards_from_stats(mock_get_config):
     assert sc["natural_sugar"]["value"] == "Low"
     assert sc["glycemic_index"]["value"] == "Low"
     assert sc["glycemic_index"]["percentile"] is None
-    assert sc["vitamins_minerals"]["percentile"] == 90.0
+    assert sc["vitamins"]["value"] == "High"
+    assert sc["vitamins"]["percentile"] is None
+    assert sc["minerals"]["value"] == "High"
+    assert sc["minerals"]["percentile"] is None
     assert "antioxidants" in sc
     assert "gut_health" in sc
     assert sc["antioxidants"]["value"] == "Good"
     assert sc["gut_health"]["value"] == "Good"
     assert sc["natural_sugar"]["subtitle_new"]
+    assert sc["vitamins"]["subtitle_new"]
+    assert sc["minerals"]["subtitle_new"]
     assert sc["antioxidants"]["percentile"] is None
+
+
+_VITAMINS_CONFIG = [
+    {
+        "card": "Vitamins",
+        "highlight_tag": "v_tags",
+        "visible": True,
+        "optional": True,
+        "order": 1,
+    },
+]
+
+_MINERALS_CONFIG = [
+    {
+        "card": "Minerals",
+        "highlight_tag": "m_tags",
+        "visible": True,
+        "optional": True,
+        "order": 1,
+    },
+]
+
+
+@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+def test_vitamins_card_shown_with_positive_v_tags(mock_get_config):
+    mock_get_config.return_value = _VITAMINS_CONFIG
+    src = _veggies_src()
+    src["category_data"]["tags"]["highlight_tags"] = {
+        "v_tags": {"positive": ["vitamin_c_rich"]},
+    }
+    pdp = transform_to_pdp(src)
+    card = pdp["score_cards"]["vitamins"]
+    assert card["value"] == "High"
+    assert card["subtitle_new"]
+    assert "minerals" not in pdp["score_cards"]
+
+
+@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+def test_minerals_card_shown_with_positive_m_tags(mock_get_config):
+    mock_get_config.return_value = _MINERALS_CONFIG
+    src = _veggies_src()
+    src["category_data"]["tags"]["highlight_tags"] = {
+        "m_tags": {"positive": ["iron_rich"]},
+    }
+    pdp = transform_to_pdp(src)
+    card = pdp["score_cards"]["minerals"]
+    assert card["value"] == "High"
+    assert card["subtitle_new"]
+    assert "vitamins" not in pdp["score_cards"]
+
+
+@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@pytest.mark.parametrize("group_key", ["v_tags", "m_tags"])
+def test_vm_cards_skipped_without_positive_tags(mock_get_config, group_key):
+    score_key = "vitamins" if group_key == "v_tags" else "minerals"
+    card_name = "Vitamins" if group_key == "v_tags" else "Minerals"
+    mock_get_config.return_value = [
+        {
+            "card": card_name,
+            "highlight_tag": group_key,
+            "visible": True,
+            "optional": True,
+            "order": 1,
+        },
+    ]
+    src = _veggies_src()
+    src["category_data"]["tags"]["highlight_tags"] = {
+        group_key: {"negative": ["some_negative_tag"]},
+    }
+    pdp = transform_to_pdp(src)
+    assert score_key not in pdp["score_cards"]
 
 
 @patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
@@ -248,7 +328,8 @@ def test_produce_display_names_map_to_score_keys():
         "Natural Sugar",
         "Glycemic Index",
         "Hydration",
-        "Vitamins & Minerals",
+        "Vitamins",
+        "Minerals",
         "Antioxidants",
         "Gut Health",
     ):

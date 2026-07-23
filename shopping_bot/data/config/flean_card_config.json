@@ -4716,11 +4716,18 @@
       "order": 4
     },
     {
-      "card": "Vitamins & Minerals",
-      "highlight_tag": "vm_tags",
+      "card": "Vitamins",
+      "highlight_tag": "v_tags",
       "visible": true,
       "optional": true,
       "order": 1
+    },
+    {
+      "card": "Minerals",
+      "highlight_tag": "m_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
     },
     {
       "card": "Antioxidants",
@@ -4795,11 +4802,18 @@
       "order": 4
     },
     {
-      "card": "Vitamins & Minerals",
-      "highlight_tag": "vm_tags",
+      "card": "Vitamins",
+      "highlight_tag": "v_tags",
       "visible": true,
       "optional": true,
       "order": 1
+    },
+    {
+      "card": "Minerals",
+      "highlight_tag": "m_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
     },
     {
       "card": "Hydration",
@@ -4874,11 +4888,18 @@
       "order": 4
     },
     {
-      "card": "Vitamins & Minerals",
-      "highlight_tag": "vm_tags",
+      "card": "Vitamins",
+      "highlight_tag": "v_tags",
       "visible": true,
       "optional": true,
       "order": 1
+    },
+    {
+      "card": "Minerals",
+      "highlight_tag": "m_tags",
+      "visible": true,
+      "optional": true,
+      "order": 2
     },
     {
       "card": "Antioxidants",

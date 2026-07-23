@@ -539,7 +539,8 @@ SCORE_CARD_ICONS: Dict[str, str] = {
     "natural_sugar": "https://img.flean.ai/assets/Pdp-Icons/03.svg",
     "glycemic_index": "https://img.flean.ai/assets/Pdp-Icons/gi1.svg",
     "hydration": "https://img.flean.ai/assets/Pdp-Icons/hydration1.svg",
-    "vitamins_minerals": "https://img.flean.ai/assets/Pdp-Icons/vitamin1.svg",
+    "vitamins": "https://img.flean.ai/assets/Pdp-Icons/vitamin1.svg",
+    "minerals": "https://img.flean.ai/assets/Pdp-Icons/mineral1.svg",
     "antioxidants": "https://img.flean.ai/assets/Pdp-Icons/antioxidant1.svg",
     "gut_health": "https://img.flean.ai/assets/Pdp-Icons/gut1.svg",
 }
@@ -1201,6 +1202,12 @@ def _has_hydration_tag(group: Any) -> bool:
     return bool(_collect_ingredients_tag_ids(group) & _HYDRATION_TAG_IDS)
 
 
+def _has_positive_highlight_tags(group: Any) -> bool:
+    if not isinstance(group, dict):
+        return False
+    return bool(_highlight_tag_ids_from_group(group, "positive"))
+
+
 def _hydration_tier_for_value() -> Dict[str, str]:
     tier = _SCORE_TIER_BY_STATUS.get(_HYDRATION_STATUS) or _SCORE_TIER_BY_STATUS["average"]
     fields = _tier_to_card_fields(tier)
@@ -1228,6 +1235,34 @@ def _build_hydration_card(ctx: _ScoreCardBuildContext) -> Optional[Dict[str, Any
         "icon_url": SCORE_CARD_ICONS["hydration"],
         "visible": True,
     }
+
+
+def _build_positive_tag_high_card(
+    score_key: str,
+    ctx: _ScoreCardBuildContext,
+) -> Optional[Dict[str, Any]]:
+    group_key = _resolve_highlight_group_key(score_key, ctx.meta_by_key)
+    if not group_key:
+        return None
+    group = ctx.highlight_root.get(group_key) if isinstance(ctx.highlight_root, dict) else None
+    if not _has_positive_highlight_tags(group):
+        return None
+    resolved = _hydration_tier_for_value()
+    icon_url = SCORE_CARD_ICONS.get(score_key)
+    card: Dict[str, Any] = {
+        "title": _card_title(score_key, ctx.meta_by_key),
+        "value": resolved["value"],
+        "subtitle": "Efficiency",
+        "percentile": None,
+        "status": resolved["status"],
+        "status_label": resolved["value"],
+        "color": resolved["color"],
+        "theme": resolved["theme"],
+        "visible": True,
+    }
+    if icon_url:
+        card["icon_url"] = icon_url
+    return card
 
 
 def _resolve_sentiment_highlight_value(group: Any) -> Optional[str]:
@@ -1300,6 +1335,8 @@ def _build_score_card(
         return _build_glycemic_index_card(ctx)
     if build_type == "hydration":
         return _build_hydration_card(ctx)
+    if build_type == "positive_tag_high":
+        return _build_positive_tag_high_card(score_key, ctx)
     if build_type == "calories":
         return _build_calories_card(ctx)
     if build_type == "sentiment_highlight":
@@ -1796,6 +1833,49 @@ def _build_sort_config(sort_by: Optional[str]) -> List[Dict[str, Any]]:
     
     # Default: relevance (ES score)
     return [{"_score": "desc"}]
+
+
+def _build_relevance_sort_with_lab_report_priority() -> List[Dict[str, Any]]:
+    """Sort relevance results by lab-report presence first, then ES score."""
+    script_source = """
+        def src = params['_source'];
+        if (!(src instanceof Map)) {
+            return 0;
+        }
+
+        def categoryData = src['category_data'];
+        if (!(categoryData instanceof Map)) {
+            return 0;
+        }
+
+        def labReports = categoryData['lab_reports'];
+        if (!(labReports instanceof Map)) {
+            return 0;
+        }
+
+        def rawUrl = labReports['url'];
+        if (rawUrl == null) {
+            return 0;
+        }
+
+        if (rawUrl instanceof String) {
+            return rawUrl.trim().length() > 0 ? 1 : 0;
+        }
+        return 1;
+    """
+    return [
+        {
+            "_script": {
+                "type": "number",
+                "order": "desc",
+                "script": {
+                    "lang": "painless",
+                    "source": script_source,
+                },
+            }
+        },
+        {"_score": "desc"},
+    ]
 
 
 # ============================================================================
@@ -3414,6 +3494,38 @@ class ElasticsearchProductsFetcher:
         if self.use_iam_auth:
             kwargs["auth"] = self._build_aws_auth()
         return kwargs
+
+    def _post_es_with_retry(
+        self,
+        url: str,
+        body: Dict[str, Any],
+        *,
+        timeout: int = TIMEOUT,
+        max_retries: int = 3,
+        context: str = "es_search",
+    ) -> requests.Response:
+        """POST to OpenSearch with bounded retry on 429 rate limits."""
+        kwargs = self._request_kwargs()
+        last_response: Optional[requests.Response] = None
+        for attempt in range(max_retries + 1):
+            response = requests.post(url, json=body, timeout=timeout, **kwargs)
+            last_response = response
+            if response.status_code != 429 or attempt >= max_retries:
+                response.raise_for_status()
+                return response
+            retry_after = response.headers.get("Retry-After")
+            try:
+                sleep_s = float(retry_after) if retry_after else min(0.5 * (2 ** attempt), 4.0)
+            except (TypeError, ValueError):
+                sleep_s = min(0.5 * (2 ** attempt), 4.0)
+            print(
+                f"DEBUG: ES_RATE_LIMIT_RETRY | context={context} | attempt={attempt + 1} "
+                f"| sleep_s={sleep_s:.2f} | url={url}"
+            )
+            time.sleep(sleep_s)
+        if last_response is not None:
+            last_response.raise_for_status()
+        raise RuntimeError(f"OpenSearch request failed after retries: {context}")
     
     def _ensure_mapping_hints(self) -> None:
         """Lazy-load index mapping to detect exact-match fields for search-critical fields."""
@@ -4644,8 +4756,10 @@ class ElasticsearchProductsFetcher:
             relevance_flean_boost_applied = False
             relevance_flean_boost_weight = 0.0
             
-            # Build sort configuration
+            # Build sort configuration.
             sort_config = _build_sort_config(sort_by if sort_by != "relevance" else None)
+            if query_text and sort_by == "relevance":
+                sort_config = _build_relevance_sort_with_lab_report_priority()
             
             # Build filter clauses from filters object
             filter_clauses: List[Dict[str, Any]] = [VISIBILITY_FILTER]
@@ -4943,6 +5057,7 @@ class ElasticsearchProductsFetcher:
                         "category_data.nutritional.qty",
                         "category_data.nutritional.raw_text",
                         "category_data.tags.ingredient_tags",
+                        "category_data.lab_reports.url",
                         "availability.*",
                         "size", "visibility", "scheduled",
                     ]
@@ -4959,13 +5074,11 @@ class ElasticsearchProductsFetcher:
             search_endpoint = f"{self.base_url}/{self.index}/_search"
             print(f"DEBUG: ES search_products_unified | query={query_text} | subcategory={subcat} | page={page} | size={size} | sort={sort_by}")
             
-            response = requests.post(
+            response = self._post_es_with_retry(
                 search_endpoint,
-                json=body,
-                timeout=TIMEOUT,
-                **self._request_kwargs(),
+                body,
+                context="search_products_unified_primary",
             )
-            response.raise_for_status()
             data = response.json() or {}
             
             hits = (data.get("hits", {}) or {}).get("hits", []) or []
@@ -5033,13 +5146,11 @@ class ElasticsearchProductsFetcher:
                     "sort": sort_config,
                     "min_score": max(dynamic_min_score or 0.0, 0.08),
                 }
-                fuzzy_fallback_response = requests.post(
+                fuzzy_fallback_response = self._post_es_with_retry(
                     search_endpoint,
-                    json=fuzzy_fallback_body,
-                    timeout=TIMEOUT,
-                    **self._request_kwargs(),
+                    fuzzy_fallback_body,
+                    context="search_products_unified_fuzzy",
                 )
-                fuzzy_fallback_response.raise_for_status()
                 fuzzy_fallback_data = fuzzy_fallback_response.json() or {}
                 fuzzy_hits = (fuzzy_fallback_data.get("hits", {}) or {}).get("hits", []) or []
                 fuzzy_total = (fuzzy_fallback_data.get("hits", {}) or {}).get("total", {})
@@ -5126,13 +5237,11 @@ class ElasticsearchProductsFetcher:
                         "query": fallback_query,
                         "sort": sort_config,
                     }
-                    fallback_response = requests.post(
+                    fallback_response = self._post_es_with_retry(
                         search_endpoint,
-                        json=fallback_body,
-                        timeout=TIMEOUT,
-                        **self._request_kwargs(),
+                        fallback_body,
+                        context="search_products_unified_prefix",
                     )
-                    fallback_response.raise_for_status()
                     fallback_data = fallback_response.json() or {}
                     fallback_hits = (fallback_data.get("hits", {}) or {}).get("hits", []) or []
                     fallback_total = (fallback_data.get("hits", {}) or {}).get("total", {})

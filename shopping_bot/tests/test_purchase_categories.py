@@ -151,6 +151,80 @@ def test_purchase_categories_image_urls_are_capped_to_two_ranked_products(
 
 @patch("shopping_bot.routes.home_page._resolve_effective_search_pincode", return_value="201303")
 @patch("shopping_bot.routes.home_page._build_search_identical_card")
+@patch("shopping_bot.routes.home_page.transform_to_product_card")
+@patch("shopping_bot.routes.home_page._get_purchase_category_name_map")
+@patch("shopping_bot.routes.home_page._build_category_product_pairs")
+@patch("shopping_bot.routes.home_page._fetch_purchased_product_ids")
+def test_purchase_categories_grouped_mode_returns_grouped_products(
+    mock_fetch_ids,
+    mock_pairs,
+    mock_category_name_map,
+    mock_transform_to_product_card,
+    mock_build_card,
+    _mock_pincode,
+    client,
+):
+    mock_category_name_map.return_value = {
+        "light_bites": "Smart Snacks",
+        "breakfast_essentials": "Power Breakfast",
+    }
+    mock_fetch_ids.return_value = (
+        {"user_id": "u_123", "product_ids": ["p1", "p2", "p3", "p4"], "total_count": 4, "meta": {}},
+        None,
+    )
+    mock_pairs.return_value = [
+        ("light_bites", {"id": "p1", "images": ["https://img/p1.png"]}),
+        ("light_bites", {"id": "p2", "images": ["https://img/p2.png"]}),
+        ("breakfast_essentials", {"id": "p3", "images": ["https://img/p3.png"]}),
+        ("light_bites", {"id": "p2", "images": ["https://img/p2.png"]}),  # duplicate id should be de-duped
+        ("light_bites", {"id": "p4", "images": ["https://img/p4.png"]}),
+    ]
+
+    ranking = {
+        "p1": {"flean_score": 8, "flean_percentile": 80},
+        "p2": {"flean_score": 10, "flean_percentile": 96},
+        "p3": {"flean_score": 7, "flean_percentile": 70},
+        "p4": {"flean_score": 9, "flean_percentile": 92},
+    }
+    mock_transform_to_product_card.side_effect = lambda raw: {
+        "id": raw["id"],
+        "name": raw["id"],
+        **ranking[raw["id"]],
+    }
+    mock_build_card.side_effect = lambda raw, _pincode: {
+        "id": raw["id"],
+        "name": raw["id"],
+        **ranking[raw["id"]],
+    }
+
+    response = client.get("/rs/api/v1/home/purchase-categories?mode=grouped")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["success"] is True
+
+    categories = payload["data"]["categories"]
+    assert [item["category"] for item in categories] == ["light_bites", "breakfast_essentials"]
+
+    assert categories[0]["name"] == "Smart Snacks"
+    assert categories[0]["product_count"] == 3
+    assert categories[0]["image_urls"] == ["https://img/p2.png", "https://img/p4.png"]
+    assert [item["id"] for item in categories[0]["products"]] == ["p2", "p4", "p1"]
+
+    assert categories[1]["name"] == "Power Breakfast"
+    assert categories[1]["product_count"] == 1
+    assert categories[1]["image_urls"] == ["https://img/p3.png"]
+    assert [item["id"] for item in categories[1]["products"]] == ["p3"]
+
+    assert payload["meta"]["total_count"] == 4
+    assert payload["meta"]["input_product_ids"] == 4
+    assert payload["meta"]["matched_products"] == 4
+    assert payload["meta"]["category_count"] == 2
+    assert payload["meta"]["pincode"] == "201303"
+
+
+@patch("shopping_bot.routes.home_page._resolve_effective_search_pincode", return_value="201303")
+@patch("shopping_bot.routes.home_page._build_search_identical_card")
 @patch("shopping_bot.routes.home_page._build_category_product_pairs")
 @patch("shopping_bot.routes.home_page._fetch_purchased_product_ids")
 def test_purchase_category_products_returns_ranked_search_style_cards(

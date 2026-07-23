@@ -422,6 +422,21 @@ def _resolve_requested_purchase_category() -> Optional[str]:
     return None
 
 
+def _resolve_requested_purchase_mode() -> Optional[str]:
+    """Resolve optional mode selector for purchase-categories endpoint."""
+    candidates: List[Optional[str]] = [request.args.get("mode")]
+    if request.method in {"POST", "PUT", "PATCH"}:
+        body = request.get_json(force=True, silent=True) or {}
+        if isinstance(body, dict):
+            candidates.append(body.get("mode"))
+
+    for value in candidates:
+        normalized = str(value or "").strip().lower()
+        if normalized == "grouped":
+            return "grouped"
+    return None
+
+
 def _fetch_purchased_product_ids() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """
     Fetch user-specific purchased product IDs from ecom-service.
@@ -1442,6 +1457,7 @@ def get_purchase_categories() -> tuple[Dict[str, Any], int]:
     """
     try:
         selected_category = _resolve_requested_purchase_category()
+        selected_mode = _resolve_requested_purchase_mode()
 
         purchased_payload, upstream_error = _fetch_purchased_product_ids()
         if upstream_error or not purchased_payload:
@@ -1476,6 +1492,66 @@ def get_purchase_categories() -> tuple[Dict[str, Any], int]:
             ), 200
 
         pairs = _build_category_product_pairs(purchased_ids)
+        category_to_products: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for category, raw in pairs:
+            product_id = str(raw.get("id") or "").strip()
+            if not product_id:
+                continue
+            category_to_products.setdefault(category, {})
+            category_to_products[category][product_id] = raw
+
+        if selected_mode == "grouped":
+            effective_pincode = _resolve_effective_search_pincode()
+            grouped_categories: List[Dict[str, Any]] = []
+            for category, raw_products_by_id in category_to_products.items():
+                ranked_raw_products = sorted(
+                    raw_products_by_id.values(),
+                    key=_raw_product_rank_key,
+                )
+                cards: List[Dict[str, Any]] = []
+                for raw in ranked_raw_products:
+                    card = _build_search_identical_card(raw, effective_pincode)
+                    if card is not None:
+                        cards.append(card)
+                cards.sort(key=_product_card_rank_key)
+
+                grouped_categories.append(
+                    {
+                        "name": _resolve_purchase_category_name(category),
+                        "category": category,
+                        "product_count": len(cards),
+                        "image_urls": [
+                            image_url
+                            for image_url in (
+                                _extract_primary_image_url(raw_product)
+                                for raw_product in ranked_raw_products
+                            )
+                            if image_url
+                        ][:2],
+                        "products": cards,
+                    }
+                )
+
+            grouped_categories.sort(
+                key=lambda item: (
+                    -int(item.get("product_count") or 0),
+                    str(item.get("name") or "").lower(),
+                    str(item.get("category") or "").lower(),
+                )
+            )
+            return jsonify(
+                _build_success_response(
+                    {"categories": grouped_categories},
+                    meta={
+                        "total_count": unique_total_count,
+                        "input_product_ids": len(purchased_ids),
+                        "matched_products": sum(item["product_count"] for item in grouped_categories),
+                        "category_count": len(grouped_categories),
+                        "pincode": effective_pincode,
+                    },
+                )
+            ), 200
+
         if selected_category:
             raw_products_in_category = [
                 raw for item_category, raw in pairs if item_category == selected_category
@@ -1501,14 +1577,6 @@ def get_purchase_categories() -> tuple[Dict[str, Any], int]:
                     },
                 )
             ), 200
-
-        category_to_products: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        for category, raw in pairs:
-            product_id = str(raw.get("id") or "").strip()
-            if not product_id:
-                continue
-            category_to_products.setdefault(category, {})
-            category_to_products[category][product_id] = raw
 
         categories = [
             {

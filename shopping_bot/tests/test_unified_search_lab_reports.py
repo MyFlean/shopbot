@@ -125,37 +125,34 @@ def test_unified_search_returns_v1_dynamic_filters(
 
 @patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
 @patch("shopping_bot.routes.unified_search.transform_to_product_card")
-@patch("shopping_bot.routes.unified_search.get_search_gateway")
+@patch("shopping_bot.routes.unified_search.v2_search")
 def test_unified_search_returns_v2_dynamic_filters(
-    mock_get_gateway,
+    mock_v2_search,
     mock_transform_to_product_card,
     _mock_search_engine,
     unified_search_client,
 ):
-    gateway = SimpleNamespace(
-        search=lambda _params: {
-            "products": [{"id": "prod-1", "visibility": "visible", "category_data": {}}],
-            "filters": [
-                {
-                    "id": "filter_flean_score",
-                    "title": "Flean Score",
-                    "titleKey": "flean_score",
-                    "items": [
-                        {
-                            "id": "9_plus",
-                            "labelKey": "9_plus",
-                            "label": "9+ (Excellent)",
-                            "value": 9,
-                            "count": 2,
-                            "isPreSelected": False,
-                        }
-                    ],
-                }
-            ],
-            "meta": {"total_hits": 1, "took_ms": 10},
-        }
-    )
-    mock_get_gateway.return_value = gateway
+    mock_v2_search.return_value = {
+        "products": [{"id": "prod-1", "visibility": "visible", "category_data": {}}],
+        "filters": [
+            {
+                "id": "filter_flean_score",
+                "title": "Flean Score",
+                "titleKey": "flean_score",
+                "items": [
+                    {
+                        "id": "9_plus",
+                        "labelKey": "9_plus",
+                        "label": "9+ (Excellent)",
+                        "value": 9,
+                        "count": 2,
+                        "isPreSelected": False,
+                    }
+                ],
+            }
+        ],
+        "meta": {"total_hits": 1, "took_ms": 10},
+    }
     mock_transform_to_product_card.return_value = {
         "id": "prod-1",
         "parent_id": "parent-1",

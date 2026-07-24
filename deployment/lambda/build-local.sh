@@ -18,7 +18,6 @@ echo "Copying application code..."
 cp lambda_handler.py run.py indexing_es_client.py "$PACKAGE_DIR/"
 cp -r shopping_bot "$PACKAGE_DIR/"
 cp -r search_v2 "$PACKAGE_DIR/"
-cp -r search_gateway "$PACKAGE_DIR/"
 
 echo "Cleaning up..."
 find "$PACKAGE_DIR" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

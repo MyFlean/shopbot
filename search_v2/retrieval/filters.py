@@ -466,10 +466,24 @@ def build_filter_clauses(sf: SearchFilters) -> FilterClauses:
 
     if sf.brands:
         normalized = [b.strip().lower() for b in sf.brands if b.strip()]
+        # brand.exact_normalized was a planned keyword sub-field
+        # (mapping_builder.py in the search repo defines it) that the
+        # currently-running index predates and doesn't actually have —
+        # found during the vision_flow.py migration (real brand filters
+        # were silently matching zero documents). brand_phonetic.keyword
+        # holds the same raw, un-analyzed brand string and is confirmed
+        # present — see search_v2/retrieval/aggregations.py's module
+        # docstring for the full investigation.
+        # brand_phonetic.keyword preserves original casing (no normalizer),
+        # unlike the planned-but-absent brand.exact_normalized (which used a
+        # lower_keyword normalizer) — case_insensitive:true on the term
+        # query achieves the same case-insensitive exact match instead.
         if len(normalized) == 1:
-            fc.append({"term": {"brand.exact_normalized": normalized[0]}})
+            fc.append({"term": {"brand_phonetic.keyword": {"value": normalized[0], "case_insensitive": True}}})
         elif normalized:
-            fc.append({"terms": {"brand.exact_normalized": normalized}})
+            fc.append({"bool": {"should": [
+                {"term": {"brand_phonetic.keyword": {"value": b, "case_insensitive": True}}} for b in normalized
+            ], "minimum_should_match": 1}})
 
     price_range: Dict[str, Any] = {}
     if sf.price_min is not None:

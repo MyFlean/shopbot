@@ -286,19 +286,16 @@ def create_app(config_name: str = 'production') -> Flask:
         log.warning("PRODUCT_INDEX_RESOLUTION_LOG_ERROR | error=%s", _index_log_exc)
 
     if config_name == 'lambda':
-        # Lambda: gateway initializes lazily on first search request.
-        # get_search_gateway() in es_products.py handles double-checked locking.
+        # Lambda: Search V2 initializes lazily on first search request.
+        # search_v2.extension.search._get_search_fn() handles double-checked locking.
         log.info("INIT_SEARCH_GATEWAY | Lambda mode - will initialize on first request")
-        app.extensions["search_gateway"] = None
     else:
         try:
-            log.info("INIT_SEARCH_GATEWAY | initializing Search V2 gateway")
-            from .data_fetchers.es_products import get_search_gateway
-            gateway = get_search_gateway()
-            app.extensions["search_gateway"] = gateway
+            log.info("INIT_SEARCH_GATEWAY | initializing Search V2 search pipeline")
+            from search_v2.extension.search import warmup as _v2_warmup
 
             # warmup() pre-builds the V2 pipeline (OpenSearchClient, corrector).
-            gateway.warmup()
+            _v2_warmup()
 
             # Preload SentenceTransformer weights in the master gunicorn process
             # so workers inherit them via copy-on-write (avoids N×500 MB memory).
@@ -318,8 +315,8 @@ def create_app(config_name: str = 'production') -> Flask:
 
             log.info("INIT_SEARCH_GATEWAY_SUCCESS")
         except Exception as e:
-            # Gateway failure must not prevent startup — the gateway retries on
-            # first request via lazy _build_search() inside SearchGateway._get_fn().
+            # Warmup failure must not prevent startup — search_v2.extension.search
+            # retries lazily on the first request via _get_search_fn().
             log.warning(
                 "INIT_SEARCH_GATEWAY_WARNING | init failed at startup, will retry on first request | error=%s", e
             )

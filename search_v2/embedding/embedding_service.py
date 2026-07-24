@@ -106,7 +106,7 @@ def get_embedding_service(model_key: Optional[str] = None):
     Passing an explicit model_key always uses the LOCAL sentence-transformers
     path regardless of EMBEDDING_BACKEND — the only caller that does this is
     shopping_bot/__init__.py's gunicorn-preload step, itself gated behind
-    EMBEDDING_BACKEND == "local". Every other caller (search_gateway/gateway.py,
+    EMBEDDING_BACKEND == "local". Every other caller (search_v2/extension/search/core.py,
     dev_search_cli.py) must call this with NO argument to get the configured
     backend — passing SETTINGS.EMBEDDING_MODEL_KEY explicitly would silently
     bypass Bedrock entirely.

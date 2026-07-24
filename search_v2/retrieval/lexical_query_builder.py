@@ -18,12 +18,16 @@ from the brief's "Lexical Search" section lives here:
   fuzziness               -> ES-level fuzziness:AUTO on the main multi_match,
                              COMPLEMENTARY to query_processing/typo_correction.py
                              (see that module's docstring for why both)
-  wildcard                -> a single low-boosted wildcard clause against the
-                             exact_normalized keyword field — deliberately
-                             minimal (wildcards are expensive/imprecise), a
+  wildcard                -> a single low-boosted wildcard clause against
+                             name_phonetic.keyword — deliberately minimal
+                             (wildcards are expensive/imprecise), a
                              tail-catch safety net, not a primary mechanism
+                             (was name.exact_normalized; see
+                             aggregations.py's module docstring for why
+                             that field doesn't actually exist on the
+                             currently-running index)
   autocomplete            -> build_suggest_query(), uses the completion suggester
-  exact match boosting    -> term query on name.exact_normalized, highest boost
+  exact match boosting    -> term query on name_phonetic.keyword, highest boost
   intelligent field weighting -> FIELD_WEIGHTS
   category boosting       -> nested term query against category_hierarchies.segments
   derivative product demotion -> build_query() wraps everything in a `boosting`
@@ -267,7 +271,11 @@ def _field_match_clauses(
     # reason as the phrase clauses above — see that comment.
     exact_match_text = core_text if health_intent_matched_phrases else text
     if exact_match_text:
-        clauses.append({"term": {"name.exact_normalized": {"value": exact_match_text.lower(), "boost": 15.0}}})
+        # name_phonetic.keyword, not the planned-but-absent
+        # name.exact_normalized (see aggregations.py's module docstring for
+        # the mapping-drift investigation) — case_insensitive since this
+        # field has no lower_keyword normalizer.
+        clauses.append({"term": {"name_phonetic.keyword": {"value": exact_match_text.lower(), "boost": 15.0, "case_insensitive": True}}})
 
     # Category boosting — generic, not category-specific: an exact match
     # against any single category-path segment nudges relevant-category
@@ -331,7 +339,7 @@ def _wildcard_clause(text: str) -> Optional[Dict[str, Any]]:
     token = text.strip().lower()
     if not token or " " in token or len(token) < 4:
         return None
-    return {"wildcard": {"name.exact_normalized": {"value": f"*{token}*", "boost": 0.3, "case_insensitive": True}}}
+    return {"wildcard": {"name_phonetic.keyword": {"value": f"*{token}*", "boost": 0.3, "case_insensitive": True}}}
 
 
 def _variant_dis_max(
@@ -397,7 +405,9 @@ def build_filters(filters: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if filters.get("category_path_prefix"):
         clauses.append({"prefix": {"category_paths": filters["category_path_prefix"]}})
     if filters.get("brand"):
-        clauses.append({"term": {"brand.exact_normalized": str(filters["brand"]).lower()}})
+        # brand_phonetic.keyword, not the planned-but-absent
+        # brand.exact_normalized — see aggregations.py's module docstring.
+        clauses.append({"term": {"brand_phonetic.keyword": {"value": str(filters["brand"]).lower(), "case_insensitive": True}}})
 
     price_range: Dict[str, Any] = {}
     if filters.get("price_min") is not None:
@@ -479,16 +489,29 @@ def build_query(
         else:
             filter_clauses = build_filters(filters)
 
-    bool_clause: Dict[str, Any] = {
-        "should": [positive_query] + should_extras,
-        "minimum_should_match": 1,
-    }
+    # An empty query (every variant's text is blank) has no lexical match to
+    # require — a "should" + minimum_should_match:1 clause built from empty
+    # text can never match anything, at any filter combination. This is a
+    # genuine, deliberate "filters/category only, no text" search (e.g.
+    # unified_search.py's filters-only branch, with no query and no
+    # subcategory to route through category_browsing instead), not a
+    # degraded/failed query — so it drops the should-match requirement
+    # entirely and retrieves purely by filter, exactly like
+    # category_browsing.browse()'s filter-only query.
+    has_query_text = any(v.text.strip() for v in query.variants)
+
+    bool_clause: Dict[str, Any] = {}
+    if has_query_text:
+        bool_clause["should"] = [positive_query] + should_extras
+        bool_clause["minimum_should_match"] = 1
+    elif should_extras:
+        bool_clause["should"] = should_extras
     if filter_clauses:
         bool_clause["filter"] = filter_clauses
     if must_not_clauses:
         bool_clause["must_not"] = must_not_clauses
 
-    base_query: Dict[str, Any] = {"bool": bool_clause}
+    base_query: Dict[str, Any] = {"bool": bool_clause} if bool_clause else {"match_all": {}}
 
     final_query = base_query
     if settings.ENABLE_DERIVATIVE_DEMOTION:
@@ -521,21 +544,28 @@ def build_query(
     return body
 
 
+ALL_CATEGORY_GROUPS = ("f_and_b", "personal_care")
+
+
 def build_suggest_query(prefix: str, category_group: Optional[str] = None, size: int = 8) -> Dict[str, Any]:
     """Autocomplete via the completion suggester (name_suggest field — see
     indexing/mapping_builder.py). Fed by BOTH layers of the synonym system at
     index time, so "seb" can autocomplete to apple products even though
     completion suggesters don't go through a synonym-aware analyzer
-    themselves (see ARCHITECTURE.md)."""
+    themselves (see ARCHITECTURE.md).
+
+    name_suggest's category_group context has no mapping-level default, so
+    OpenSearch rejects a completion query that omits it entirely ("Missing
+    mandatory contexts"). Passing every known category group is the
+    unrestricted case; a specific category_group narrows it."""
     suggest_clause: Dict[str, Any] = {
         "prefix": prefix,
         "completion": {
             "field": "name_suggest",
             "size": size,
             "fuzzy": {"fuzziness": "AUTO"},
+            "contexts": {"category_group": [category_group] if category_group else list(ALL_CATEGORY_GROUPS)},
         },
     }
-    if category_group:
-        suggest_clause["completion"]["contexts"] = {"category_group": [category_group]}
 
     return {"suggest": {"name_suggest": suggest_clause}, "_source": ["name", "id", "brand"]}

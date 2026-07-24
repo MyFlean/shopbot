@@ -26,7 +26,7 @@ caller's requested page size (as it used to), business ranking would only
 ever see whichever `size` items pure relevance-fusion already ranked first,
 with no other candidates to promote in. Pagination (offset/size slicing) is
 therefore the CALLER's responsibility, applied AFTER business ranking — see
-search_gateway/gateway.py.
+search_v2/extension/search/core.py.
 
 Product Intent Identification integration (see
 query_processing/product_intent_extractor.py): when the caller's
@@ -251,6 +251,17 @@ def _hybrid_search_once(
         return _lexical_only(
             client, query, filters, final_size, settings,
             fallback_reason="hybrid/semantic disabled via settings",
+            sort_by=_sort_by, offset=_offset, routing_context=routing_context,
+        )
+
+    # A filters/category-only request (no query text at all — e.g.
+    # unified_search.py's filters-only branch) has nothing meaningful to
+    # embed; skip semantic retrieval and let lexical_query_builder's
+    # filter-only bool query (see build_query()) do the real retrieval.
+    if not query.primary_text().strip():
+        return _lexical_only(
+            client, query, filters, final_size, settings,
+            fallback_reason="empty query text — filters-only retrieval",
             sort_by=_sort_by, offset=_offset, routing_context=routing_context,
         )
 

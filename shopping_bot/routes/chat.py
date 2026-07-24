@@ -361,10 +361,22 @@ async def chat() -> Response:
             selected_product_id = str(data.get("selected_product_id") or "").strip()
             if selected_product_id:
                 log.info(f"IMAGE_SELECTION_START | user={user_id} | selected_id={selected_product_id}")
-                # Fetch full product doc via ES mget (sync API run in executor)
-                fetcher = get_es_fetcher()
-                loop = asyncio.get_running_loop()
-                docs = await loop.run_in_executor(None, lambda: fetcher.mget_products([selected_product_id]))
+                # V2-native id lookup unless SEARCH_ENGINE=v1 explicitly.
+                # Auto-fallback-to-V1-on-exception was removed (final
+                # pre-production pass) — same deterministic-id-lookup
+                # treatment as PDP/Batch PDP. See V1_FALLBACK_AUDIT.md.
+                docs: list = []
+                engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+                if engine != "v1":
+                    from search_v2.extension.pdp import fetch_products_batch
+                    loop = asyncio.get_running_loop()
+                    found = await loop.run_in_executor(None, fetch_products_batch, [selected_product_id])
+                    if selected_product_id in found:
+                        docs = [found[selected_product_id]]
+                if not docs and engine != "v2":
+                    fetcher = get_es_fetcher()
+                    loop = asyncio.get_running_loop()
+                    docs = await loop.run_in_executor(None, lambda: fetcher.mget_products([selected_product_id]))
                 if not docs:
                     log.info("IMAGE_SELECTION_FALLBACK | mget returned 0 docs")
                     # Gracefully degrade: minimal response

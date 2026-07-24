@@ -14,7 +14,6 @@ on:
       - 'requirements.txt'
       - 'requirements-lambda.txt'
       - 'search_v2/**'
-      - 'search_gateway/**'
       - 'deployment/lambda/**'
       - '.github/workflows/deploy-lambda.yml'
   workflow_dispatch: {}

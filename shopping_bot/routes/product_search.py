@@ -18,11 +18,16 @@ Designed for external app consumption (Flutter, React Native, etc.)
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from flask import Blueprint, jsonify, request
 
 from ..data_fetchers.es_products import get_es_fetcher
+
+_FLEAN_SCORE_TO_MIN_BADGE: Dict[str, float] = {
+    "10": 10.0, "9_plus": 9.0, "8_plus": 8.0, "7_plus": 7.0,
+}
 
 log = logging.getLogger(__name__)
 bp = Blueprint("product_search", __name__)
@@ -467,16 +472,57 @@ def product_search() -> tuple[Dict[str, Any], int]:
         
         log.info(f"PRODUCT_SEARCH_VALIDATED | params={params}")
         
-        # Get ES fetcher
-        fetcher = get_es_fetcher()
-        
-        # Perform search
-        result = fetcher.search(params)
-        
-        # Extract data
-        products = result.get("products", [])
-        meta = result.get("meta", {})
-        fallback = meta.get("fallback_applied")
+        # V2-native unless SEARCH_ENGINE=v1 explicitly. Auto-fallback-to-V1-
+        # on-exception was removed (final pre-production pass): live
+        # regression showed zero exceptions; a genuine V2 failure now
+        # surfaces as a real error. See V1_FALLBACK_AUDIT.md.
+        products: List[Dict[str, Any]] = []
+        meta: Dict[str, Any] = {}
+        fallback = None
+        engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+        used_v2 = False
+        if engine != "v1":
+            from search_v2.extension.search import search as v2_search
+            gw_params: Dict[str, Any] = {"q": params.get("q", ""), "size": params.get("size", DEFAULT_SIZE)}
+            if params.get("sort_by"):
+                gw_params["sort_by"] = params["sort_by"]
+            if params.get("category_group"):
+                gw_params["category_group"] = params["category_group"]
+            if params.get("category_paths"):
+                gw_params["category_paths"] = params["category_paths"]
+            if params.get("price_min") is not None:
+                gw_params["price_min"] = params["price_min"]
+            if params.get("price_max") is not None:
+                gw_params["price_max"] = params["price_max"]
+            if params.get("dietary_terms"):
+                gw_params["dietary_terms"] = params["dietary_terms"]
+            if params.get("avoid_ingredients"):
+                gw_params["excluded_ingredients"] = params["avoid_ingredients"]
+            if params.get("brands"):
+                gw_params["brands"] = params["brands"]
+            if params.get("min_flean_percentile") is not None:
+                gw_params["min_flean_percentile"] = params["min_flean_percentile"]
+            if params.get("food_type"):
+                gw_params["food_type"] = params["food_type"]
+            if params.get("flean_score"):
+                min_badge = _FLEAN_SCORE_TO_MIN_BADGE.get(params["flean_score"])
+                if min_badge is not None:
+                    gw_params["min_flean_score"] = min_badge
+            if params.get("page"):
+                gw_params["offset"] = params["page"] * params.get("size", DEFAULT_SIZE)
+
+            gw_result = v2_search(gw_params)
+            products = gw_result.get("products", [])
+            gw_meta = gw_result.get("meta", {}) or {}
+            meta = {"total_hits": gw_meta.get("total_hits", len(products)), "page": params.get("page", 0)}
+            used_v2 = True
+
+        if not used_v2:
+            fetcher = get_es_fetcher()
+            result = fetcher.search(params)
+            products = result.get("products", [])
+            meta = result.get("meta", {})
+            fallback = meta.get("fallback_applied")
         
         log.info(
             f"PRODUCT_SEARCH_SUCCESS | query='{params.get('q')}' | "

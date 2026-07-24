@@ -19,17 +19,19 @@ COPY requirements-lambda.txt .
 RUN pip install --no-cache-dir -r requirements-lambda.txt -t /build/package/
 
 # Copy application code.
-# search_v2/ and search_gateway/ were previously MISSING here entirely — a
-# pre-existing bug found during the Bedrock migration: shopping_bot/__init__.py
-# and shopping_bot/data_fetchers/es_products.py both import from these two
-# top-level packages, so every Search V2 request would have raised
-# ModuleNotFoundError at runtime regardless of anything else in this file.
+# search_v2/ was previously MISSING here entirely — a pre-existing bug found
+# during the Bedrock migration: shopping_bot/__init__.py imports from it, so
+# every Search V2 request would have raised ModuleNotFoundError at runtime
+# regardless of anything else in this file.
+# search_gateway/ was ALSO copied here until the SearchGateway retirement —
+# that package has been deleted from the repo (its logic moved into
+# search_v2/extension/search/core.py, already covered by the search_v2/ COPY
+# below); copying a now-nonexistent directory would fail this build.
 COPY lambda_handler.py /build/package/
 COPY run.py /build/package/
 COPY indexing_es_client.py /build/package/
 COPY shopping_bot/ /build/package/shopping_bot/
 COPY search_v2/ /build/package/search_v2/
-COPY search_gateway/ /build/package/search_gateway/
 
 # Clean up unnecessary files using Python (find command not available in minimal image).
 # The dist-info/egg-info matching below was previously `d in ['__pycache__',

@@ -7,10 +7,29 @@ Provides the brand-suggestion capability that V1 implemented inside
 ElasticsearchProductsFetcher.suggest_brand(). The result lets the gateway
 and ShopBot canonicalize user-supplied brand strings against what is actually
 in the index.
+
+MAPPING DRIFT, found and worked around during the vision_flow.py migration:
+this file originally targeted `brand.exact_normalized`, a keyword sub-field
+`search/search_v2/indexing/mapping_builder.py` DOES define — but the
+currently-running local index (`products-search-v2`) predates that mapping
+change and has no such sub-field, so every query built against it matched
+zero documents (silently — no error, just an aggregation with empty
+buckets). The same likely applies to `name.exact_normalized` (used for
+exact-match relevance boosting in lexical_query_builder.py) if production's
+index was built from the same older mapping. Recommend verifying production's
+actual field list (`GET <index>/_mapping`) and, if these sub-fields are
+missing there too, re-applying the current mapping + reindexing — see
+PRODUCTION_READINESS.md. Until then, this file uses `brand_phonetic.keyword`
+(confirmed present, holds the same raw brand string) as a working
+equivalent — it is not phonetically fuzzed at the `.keyword` sub-field level,
+only the base `brand_phonetic` field is, so exact/prefix/contains matching
+here behaves identically to what `brand.exact_normalized` would have.
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+
+_BRAND_FIELD = "brand_phonetic.keyword"
 
 
 def build_brand_suggest_query(
@@ -31,9 +50,9 @@ def build_brand_suggest_query(
 
     hint_lower = hint.lower()
     should_terms: List[Dict[str, Any]] = [
-        {"term": {"brand.exact_normalized": hint_lower}},
-        {"wildcard": {"brand.exact_normalized": {"value": f"{hint_lower}*"}}},
-        {"wildcard": {"brand.exact_normalized": {"value": f"*{hint_lower}*"}}},
+        {"term": {_BRAND_FIELD: hint_lower}},
+        {"wildcard": {_BRAND_FIELD: {"value": f"{hint_lower}*", "case_insensitive": True}}},
+        {"wildcard": {_BRAND_FIELD: {"value": f"*{hint_lower}*", "case_insensitive": True}}},
     ]
 
     filters: List[Dict[str, Any]] = []
@@ -51,7 +70,7 @@ def build_brand_suggest_query(
         },
         "aggs": {
             "brand_suggest": {
-                "terms": {"field": "brand.exact_normalized", "size": size}
+                "terms": {"field": _BRAND_FIELD, "size": size}
             }
         },
     }

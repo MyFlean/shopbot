@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -341,8 +342,23 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
             if not pid:
                 return _error_response("INVALID_ID", "Product ID is required", 400)
 
-        fetcher = get_es_fetcher()
-        raw_src = fetcher.get_product_by_id(pid)
+        # V2 lookup by id first (unless SEARCH_ENGINE=v1 explicitly). A
+        # genuine V2 EXCEPTION now propagates instead of silently degrading
+        # to V1 — live SEARCH_ENGINE=v2 regression showed zero exceptions
+        # across this deterministic, id-keyed path (see V1_FALLBACK_AUDIT.md).
+        # A V2 lookup that cleanly returns "not found" still unconditionally
+        # double-checks V1 (kept deliberately, and NOT gated on engine=="v2"
+        # — a real indexing-lag data-completeness gap, not an error to hide,
+        # and worth checking even under a strict V2 preference).
+        raw_src = None
+        engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+        if engine != "v1":
+            from search_v2.extension.pdp import fetch_product
+            raw_src = fetch_product(pid)
+
+        if raw_src is None:
+            fetcher = get_es_fetcher()
+            raw_src = fetcher.get_product_by_id(pid)
 
         if not raw_src:
             log.warning(f"PDP_NOT_FOUND | id={pid}")
@@ -418,8 +434,17 @@ def get_flean_score() -> Tuple[Dict[str, Any], int]:
     if not product_id:
         return _error_response("INVALID_ID", "Product ID is required", 400)
     try:
-        fetcher = get_es_fetcher()
-        raw_src = fetcher.get_product_by_id(product_id)
+        # See get_product_detail()'s comment — same id-keyed pattern:
+        # exceptions propagate, a clean "not found" still unconditionally
+        # double-checks V1 (not gated on engine=="v2").
+        raw_src = None
+        engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+        if engine != "v1":
+            from search_v2.extension.pdp import fetch_product
+            raw_src = fetch_product(product_id)
+        if raw_src is None:
+            fetcher = get_es_fetcher()
+            raw_src = fetcher.get_product_by_id(product_id)
         if not raw_src:
             log.warning("FLEAN_SCORE_NOT_FOUND | id=%s", product_id)
             return _error_response("NOT_FOUND", "Product not found", 404)
@@ -485,17 +510,35 @@ def get_product_details_batch() -> Tuple[Dict[str, Any], int]:
                 400
             )
 
-        fetcher = get_es_fetcher()
-        results = fetcher.mget_products_batch(ids)
+        # V2-only batch lookup unless SEARCH_ENGINE=v1 — a missing individual
+        # id within a successful batch already surfaces via `not_found`
+        # (no per-item fallback needed); a genuine V2 exception now
+        # propagates rather than silently re-running the whole batch against
+        # V1. See V1_FALLBACK_AUDIT.md.
+        found_by_id: Optional[Dict[str, Dict[str, Any]]] = None
+        engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+        if engine != "v1":
+            from search_v2.extension.pdp import fetch_products_batch
+            found_by_id = fetch_products_batch(ids)
 
         products: List[Dict[str, Any]] = []
         not_found: List[str] = []
-        for pid, raw_src in results:
-            if raw_src:
-                pdp_data = transform_to_pdp(raw_src)
-                products.append(pdp_data)
-            else:
-                not_found.append(pid)
+        if found_by_id is not None:
+            for pid in ids:
+                raw_src = found_by_id.get(pid)
+                if raw_src:
+                    products.append(transform_to_pdp(raw_src))
+                else:
+                    not_found.append(pid)
+        else:
+            fetcher = get_es_fetcher()
+            results = fetcher.mget_products_batch(ids)
+            for pid, raw_src in results:
+                if raw_src:
+                    pdp_data = transform_to_pdp(raw_src)
+                    products.append(pdp_data)
+                else:
+                    not_found.append(pid)
 
         log.info(f"PDP_BATCH_SUCCESS | requested={len(ids)} | returned={len(products)} | not_found={len(not_found)}")
         return jsonify(_success_response(
@@ -541,6 +584,22 @@ def get_healthier_alternatives(product_id: str) -> Tuple[Dict[str, Any], int]:
             return _error_response("INVALID_ID", "Product ID is required", 400)
 
         pid = product_id.strip()
+        engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+        if engine != "v1":
+            # V2-only unless SEARCH_ENGINE=v1 explicitly — live SEARCH_ENGINE=v2
+            # regression showed zero exceptions here; a genuine V2 failure now
+            # propagates instead of silently re-querying V1. See
+            # V1_FALLBACK_AUDIT.md.
+            from search_v2.extension.recommendations import similar_products
+            result = similar_products(pid, limit=5)
+            if not result.get("source_product"):
+                return _error_response("PRODUCT_NOT_FOUND", f"Product '{pid}' not found", 404)
+            log.info(f"ALTERNATIVES_SUCCESS | id={pid} | found={len(result['alternatives'])} | engine=v2")
+            return jsonify(_success_response({
+                "source_product": result["source_product"],
+                "alternatives": result["alternatives"],
+            })), 200
+
         fetcher = get_es_fetcher()
         result = fetcher.search_healthier_alternatives(pid, limit=5)
 
@@ -606,6 +665,28 @@ def get_recommended_products(product_id: str) -> Tuple[Dict[str, Any], int]:
             limit = max(1, min(int(request.args.get("limit", 8)), 10))
         except (TypeError, ValueError):
             limit = 8
+
+        # V2-only unless SEARCH_ENGINE=v1 explicitly — see
+        # get_healthier_alternatives()'s comment / V1_FALLBACK_AUDIT.md.
+        engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+        if engine != "v1":
+            from search_v2.extension.recommendations import similar_products
+            result = similar_products(pid, limit=limit)
+            if not result.get("source_product") and not result.get("alternatives"):
+                return _error_response("PRODUCT_NOT_FOUND", f"Product '{pid}' not found or has no category", 404)
+            log.info(f"RECOMMENDED_SUCCESS | id={pid} | found={len(result['alternatives'])} | engine=v2")
+            return jsonify(_success_response(
+                {
+                    "products": result["alternatives"],
+                    "section_title": "You May Also Like",
+                    "source_product_id": pid,
+                    "subcategory": result.get("subcategory", ""),
+                },
+                meta={
+                    "total_in_subcategory": result.get("total_in_subcategory", 0),
+                    "returned": len(result["alternatives"]),
+                }
+            )), 200
 
         fetcher = get_es_fetcher()
         result = fetcher.search_recommended_products(pid, limit=limit)
@@ -817,18 +898,29 @@ def scanner_lookup() -> Tuple[Dict[str, Any], int]:
                 "message": "Could not identify product from image",
             })), 200
 
-        # Search ES – fetch top 3 as product cards
-        fetcher = get_es_fetcher()
+        # V2-native unless SEARCH_ENGINE=v1 explicitly. Auto-fallback-to-V1-
+        # on-exception was removed (final pre-production pass): live
+        # regression showed zero exceptions; a genuine V2 failure now
+        # surfaces as a real error. See V1_FALLBACK_AUDIT.md.
         search_query = f"{brand_name} {product_name}".strip() if brand_name else product_name
-        result = fetcher.search({
-            "q": search_query,
-            "size": 3,
-            "category_group": extracted.get("category_group", ""),
-        })
-
-        raw_products = result.get("products", [])
-        # Transform to standardized product cards
-        product_cards = [c for c in (transform_to_product_card(p) for p in raw_products if p) if c is not None]
+        product_cards: Optional[List[Dict[str, Any]]] = None
+        engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+        if engine != "v1":
+            from search_v2.extension.search import search as v2_search
+            gw_params: Dict[str, Any] = {"q": search_query, "size": 3}
+            if extracted.get("category_group"):
+                gw_params["category_group"] = extracted["category_group"]
+            gw_result = v2_search(gw_params)
+            product_cards = gw_result.get("products", [])
+        if product_cards is None:
+            fetcher = get_es_fetcher()
+            result = fetcher.search({
+                "q": search_query,
+                "size": 3,
+                "category_group": extracted.get("category_group", ""),
+            })
+            raw_products = result.get("products", [])
+            product_cards = [c for c in (transform_to_product_card(p) for p in raw_products if p) if c is not None]
 
         log.info(f"SCANNER_COMPLETE | query={search_query} | found={len(product_cards)}")
 
@@ -880,12 +972,24 @@ def get_catalogue() -> Tuple[Dict[str, Any], int]:
 
         log.info(f"CATALOGUE_REQUEST | subcategory={subcategory} | page={page} | size={size} | sort={sort_by}")
 
-        fetcher = get_es_fetcher()
-        result = fetcher.search_by_subcategory(subcategory=subcategory, page=page, size=size, sort_by=sort_by)
-
-        raw_products = result.get("products", [])
-        product_cards = [c for c in (transform_to_product_card(p) for p in raw_products if p) if c is not None]
-        meta = result.get("meta", {})
+        # V2-only unless SEARCH_ENGINE=v1 explicitly — live SEARCH_ENGINE=v2
+        # regression showed zero exceptions across every tested category
+        # path. See V1_FALLBACK_AUDIT.md.
+        product_cards: Optional[List[Dict[str, Any]]] = None
+        meta: Dict[str, Any] = {}
+        engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+        if engine != "v1":
+            from search_v2.extension.category_browsing import browse
+            resolved_sort = {"flean_score": "flean_score_desc", "price": "price_asc"}.get(sort_by, sort_by)
+            browse_result = browse(subcategory, page=page, size=size, sort_by=resolved_sort)
+            product_cards = browse_result.get("products", [])
+            meta = browse_result.get("meta", {})
+        if product_cards is None:
+            fetcher = get_es_fetcher()
+            result = fetcher.search_by_subcategory(subcategory=subcategory, page=page, size=size, sort_by=sort_by)
+            raw_products = result.get("products", [])
+            product_cards = [c for c in (transform_to_product_card(p) for p in raw_products if p) if c is not None]
+            meta = result.get("meta", {})
 
         log.info(f"CATALOGUE_COMPLETE | subcategory={subcategory} | total={meta.get('total', 0)} | returned={len(product_cards)}")
 
@@ -1260,26 +1364,85 @@ def get_products_unified() -> Tuple[Dict[str, Any], int]:
             f"page={page} | size={size} | sort={sort_by} | filters={validated_filters}"
         )
 
-        # Execute unified search
-        fetcher = get_es_fetcher()
-        result = fetcher.search_products_unified(
-            query=query,
-            subcategory=subcategory,
-            page=page,
-            size=size,
-            sort_by=sort_by,
-            filters=validated_filters
-        )
+        # Execute unified search — same V2-first/V1-fallback routing as
+        # unified_search.py's /rs/v1/search (this endpoint is a documented
+        # functional subset of it: no in_stock/cta/lab_report enrichment).
+        result: Optional[Dict[str, Any]] = None
+        product_cards: List[Dict[str, Any]] = []
+        engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+        filters_only = bool(validated_filters) and not subcategory
+
+        # V2-native unless SEARCH_ENGINE=v1 explicitly. Auto-fallback-to-V1-
+        # on-exception was removed (final pre-production pass): live
+        # regression showed zero exceptions; a genuine V2 failure now
+        # surfaces as a real error. See V1_FALLBACK_AUDIT.md.
+        if engine != "v1" and (query or filters_only):
+            from .unified_search import _resolve_subcategory_es_path, _v1_filters_to_gw_params
+            from search_v2.extension.search import search as v2_search
+            gw_params: Dict[str, Any] = {
+                "q": query or "",
+                "size": size,
+                "offset": page * size,
+                "sort_by": sort_by,
+                "subcategory": subcategory,
+            }
+            gw_params.update(_v1_filters_to_gw_params(validated_filters or {}))
+            if subcategory:
+                resolved_path = _resolve_subcategory_es_path(subcategory)
+                if resolved_path:
+                    gw_params["category_path_prefix"] = resolved_path
+            gw_result = v2_search(gw_params)
+            gw_meta = gw_result.get("meta", {}) or {}
+            product_cards = gw_result.get("products", [])
+            returned = len(product_cards)
+            result = {"meta": {
+                "total": gw_meta.get("total_hits", returned),
+                "page": page,
+                "size": size,
+                "total_pages": page + (2 if returned == size else 1),
+                "has_next": returned == size,
+                "has_prev": page > 0,
+                "query": query,
+                "subcategory": subcategory,
+                "sort_by": sort_by,
+                "filters_applied": validated_filters,
+                "took_ms": gw_meta.get("took_ms", 0),
+                "fuzzy_fallback_used": False,
+                "prefix_fallback_used": False,
+                "phonetic_used": False,
+            }}
+
+        # V2-only for subcategory browsing unless SEARCH_ENGINE=v1 — see
+        # unified_search.py's matching comment / V1_FALLBACK_AUDIT.md.
+        if result is None and engine != "v1" and subcategory and not query:
+            from .unified_search import _resolve_subcategory_es_path, _v1_filters_to_gw_params
+            from search_v2.extension.category_browsing import browse
+            from search_v2.retrieval.filters import SearchFilters as _SearchFilters
+            resolved_path = _resolve_subcategory_es_path(subcategory)
+            if resolved_path:
+                browse_filters = _SearchFilters.from_dict(_v1_filters_to_gw_params(validated_filters or {})) if validated_filters else None
+                browse_result = browse(resolved_path, page=page, size=size, sort_by=sort_by, filters=browse_filters)
+                product_cards = browse_result.get("products", [])
+                result = {"meta": browse_result.get("meta", {})}
+
+        if result is None:
+            fetcher = get_es_fetcher()
+            result = fetcher.search_products_unified(
+                query=query,
+                subcategory=subcategory,
+                page=page,
+                size=size,
+                sort_by=sort_by,
+                filters=validated_filters
+            )
+            raw_products = result.get("products", [])
+            product_cards = [c for c in (transform_to_product_card(p) for p in raw_products if p) if c is not None]
 
         # Check for errors in result
         meta = result.get("meta", {})
         if meta.get("error"):
             log.error(f"PRODUCTS_UNIFIED_ES_ERROR | error={meta.get('error')}")
             return _error_response("SEARCH_ERROR", f"Search failed: {meta.get('error')}", 500)
-
-        # Transform products to standardized product cards
-        raw_products = result.get("products", [])
-        product_cards = [c for c in (transform_to_product_card(p) for p in raw_products if p) if c is not None]
 
         log.info(
             f"PRODUCTS_UNIFIED_COMPLETE | query={query} | subcategory={subcategory} | "

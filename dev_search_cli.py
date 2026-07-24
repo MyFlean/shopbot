@@ -4,8 +4,8 @@ dev_search_cli.py — Search developer CLI for ShopBot.
 
 Exercises the full production retrieval path depending on SEARCH_ENGINE:
 
-  v1   — V1 ElasticsearchProductsFetcher only. SearchGateway not instantiated.
-  v2   — SearchGateway only. No V1 fallback.
+  v1   — V1 ElasticsearchProductsFetcher only. Search V2 pipeline not warmed up.
+  v2   — search_v2.extension.search only. No V1 fallback.
   auto — V2 first; V1 fallback on genuine exceptions. Zero-result V2 responses
          do NOT trigger fallback. Identical to the production /rs/v1/search
          endpoint behaviour.
@@ -60,7 +60,7 @@ if str(_HERE) not in sys.path:
 
 # ── Step 3: initialize Flask app (lambda mode defers Redis) ──────────────────
 # 'lambda' config skips Redis eager-init so the CLI works without a running
-# Redis instance. SearchGateway and V1 fetcher are initialized below.
+# Redis instance. Search V2 pipeline and V1 fetcher are initialized below.
 print("Initializing ShopBot...", flush=True)
 
 import io, contextlib
@@ -93,15 +93,15 @@ _v1_fetcher = None
 _settings = None
 
 if _engine_setting != "v1":
-    # V2 or auto: warm up Search V2 gateway + embedding model
-    from shopping_bot.data_fetchers.es_products import get_search_gateway
+    # V2 or auto: warm up Search V2 pipeline + embedding model
+    from search_v2.extension.search import search as _v2_search, warmup as _v2_warmup
     from search_v2.config.settings import SETTINGS as _settings
     from search_v2.embedding.embedding_service import get_embedding_service
 
-    _gateway = get_search_gateway()
     print("Warming up Search V2 pipeline...", end=" ", flush=True)
-    _gateway.warmup()
+    _v2_warmup()
     print("done.")
+    _gateway = True  # sentinel: Search V2 available (see _search() below)
 
     # No explicit model_key here, deliberately: get_embedding_service() picks
     # Bedrock Titan vs. the local sentence-transformers path based on
@@ -109,7 +109,7 @@ if _engine_setting != "v1":
     # explicitly (as this used to) always selects the local path regardless
     # of that setting — silently breaking this file's own stated contract
     # ("CLI and HTTP endpoint always behave identically"), since production
-    # (search_gateway/gateway.py) was fixed to call this the same way.
+    # (search_v2/extension/search/core.py) calls this the same way.
     # Wrapped in try/except, matching the same tolerance
     # shopping_bot/__init__.py's ECS/non-Lambda init path already has for
     # this exact scenario: a missing AWS_BEARER_TOKEN_BEDROCK must not
@@ -216,7 +216,7 @@ def _search(query: str, size: int = 10) -> tuple[dict, str]:
     # ── V2 path (mirrors: if _search_engine() != "v1" and query) ─────────────
     if _search_engine() != "v1" and query:
         try:
-            gw_result = _gateway.search({"q": query, "size": size})
+            gw_result = _v2_search({"q": query, "size": size})
             result = gw_result
             engine_label = "V2" if _search_engine() == "v2" else "AUTO -> V2"
         except Exception as exc:

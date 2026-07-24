@@ -105,7 +105,7 @@ def test_exact_term_uses_core_text_when_health_intent_present():
     clauses = _field_match_clauses(
         "heart healthy foods", SETTINGS, health_intent_matched_phrases=("heart healthy",)
     )
-    exact_term = next(c["term"]["name.exact_normalized"] for c in clauses if "term" in c)
+    exact_term = next(c["term"]["name_phonetic.keyword"] for c in clauses if "term" in c)
     assert exact_term["value"] == "foods"
 
 

@@ -370,9 +370,18 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
         # Determine if this endpoint requires secrets
         # Critical endpoints: chat, search, product endpoints, scanner (uses Bedrock)
         request_path = event.get("requestContext", {}).get("http", {}).get("path", "")
+        # NOTE: "/rs/api/v1/product" (singular, no trailing 's') deliberately
+        # covers PDP, alternatives, recommended, batch PDP, and flean-score —
+        # all of which need ES_URL/API_KEY secrets loaded before they can
+        # reach OpenSearch (V1 fallback or V2 native), same as the plural
+        # "/rs/api/v1/products" routes already covered here. Found missing
+        # during production-readiness review — these previously fell through
+        # to the non-critical (no secrets wait) path on a cold Lambda start.
         is_critical_endpoint = any(path in request_path for path in [
             "/rs/chat", "/rs/search", "/rs/v1/search", "/rs/v2/search",
-            "/rs/api/v1/products", "/rs/api/v1/home", "/rs/flow", "/rs/api/v1/scanner",
+            "/rs/api/v1/products", "/rs/api/v1/product", "/rs/api/v1/home",
+            "/rs/api/v1/catalogue", "/rs/api/v1/flean-score",
+            "/rs/flow", "/rs/api/v1/scanner",
         ])
         
         # For critical endpoints, wait for secrets (with timeout)

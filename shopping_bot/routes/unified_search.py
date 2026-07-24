@@ -46,7 +46,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Blueprint, jsonify, request
 
-from ..data_fetchers.es_products import get_es_fetcher, get_search_gateway, transform_to_product_card
+from ..data_fetchers.es_products import get_es_fetcher, transform_to_product_card
+from search_v2.extension.search import search as v2_search
 from ..utils.pincode_mapping import try_resolve_canonical_pincode
 from .product_api import (
     VALID_SORT_OPTIONS,
@@ -365,7 +366,15 @@ def _extract_suggest_query() -> Tuple[Optional[str], Optional[Tuple[Dict[str, An
 
 
 def _fetch_flat_suggestions(query: str, size: int, version: str) -> Tuple[Optional[Dict[str, Any]], Optional[Tuple[Dict[str, Any], int]]]:
-    """Fetch flat suggestions from Elasticsearch fetcher."""
+    """Fetch flat suggestions — V2-native unless SEARCH_ENGINE=v1 explicitly.
+    Auto-fallback-to-V1-on-exception was removed (final pre-production pass):
+    live regression showed zero exceptions here even under varied partial-
+    typing input; a genuine V2 failure now surfaces as a real error instead
+    of silently degrading. See V1_FALLBACK_AUDIT.md."""
+    if _search_engine() != "v1":
+        from search_v2.extension.suggestions import suggest as v2_suggest
+        return v2_suggest(query, size=size), None
+
     try:
         fetcher = get_es_fetcher()
     except RuntimeError as exc:
@@ -482,53 +491,87 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
 
         result: Optional[Dict[str, Any]] = None
 
-        if _search_engine() != "v1" and query:
-            # Search V2 path
-            try:
-                gateway = get_search_gateway()
-                gw_params: Dict[str, Any] = {
-                    "q": query,
+        # Filters-only requests (no query, no subcategory) have nothing for
+        # category_browsing.browse() to browse — they route through
+        # v2_search with an empty query string instead, which retrieves
+        # purely by filter (see lexical_query_builder.build_query()'s
+        # empty-query path and hybrid_search_orchestrator's matching
+        # short-circuit). Query-bearing requests always go through v2_search
+        # too, regardless of subcategory (subcategory becomes a filter via
+        # category_path_prefix below).
+        # V2-native unless SEARCH_ENGINE=v1 explicitly. Auto-fallback-to-V1-
+        # on-exception was removed (final pre-production pass): live
+        # regression across varied queries/filters showed zero exceptions;
+        # a genuine V2 failure now surfaces as a real error. See
+        # V1_FALLBACK_AUDIT.md.
+        filters_only = bool(validated_filters) and not subcategory
+        if _search_engine() != "v1" and (query or filters_only):
+            gw_params: Dict[str, Any] = {
+                "q": query or "",
+                "size": size,
+                "offset": page * size,
+                "sort_by": resolved_sort,
+                "subcategory": subcategory,
+            }
+            gw_params.update(_v1_filters_to_gw_params(validated_filters or {}))
+            if subcategory:
+                resolved_path = _resolve_subcategory_es_path(subcategory)
+                if resolved_path:
+                    gw_params["category_path_prefix"] = resolved_path
+            gw_result = v2_search(gw_params)
+            gw_meta = gw_result.get("meta", {}) or {}
+            gw_products = gw_result.get("products", [])
+            gw_filters = gw_result.get("filters", []) if isinstance(gw_result, dict) else []
+            returned = len(gw_products)
+            result = {
+                "products": gw_products,
+                "filters": gw_filters,
+                "meta": {
+                    "total": gw_meta.get("total_hits", returned),
+                    "page": page,
                     "size": size,
-                    "offset": page * size,
-                    "sort_by": resolved_sort,
+                    "total_pages": page + (2 if returned == size else 1),
+                    "has_next": returned == size,
+                    "has_prev": page > 0,
+                    "query": query,
                     "subcategory": subcategory,
-                }
-                gw_params.update(_v1_filters_to_gw_params(validated_filters or {}))
-                if subcategory:
-                    resolved_path = _resolve_subcategory_es_path(subcategory)
-                    if resolved_path:
-                        gw_params["category_path_prefix"] = resolved_path
-                gw_result = gateway.search(gw_params)
-                gw_meta = gw_result.get("meta", {}) or {}
-                gw_products = gw_result.get("products", [])
-                gw_filters = gw_result.get("filters", []) if isinstance(gw_result, dict) else []
-                returned = len(gw_products)
+                    "sort_by": resolved_sort,
+                    "filters_applied": validated_filters,
+                    "took_ms": gw_meta.get("took_ms", 0),
+                    "fuzzy_fallback_used": False,
+                    "prefix_fallback_used": False,
+                    "phonetic_used": False,
+                    "engine": "v2",
+                },
+            }
+
+        # V2-only for subcategory browsing (fixed, fully-enumerable category
+        # paths) unless SEARCH_ENGINE=v1 — live SEARCH_ENGINE=v2 regression
+        # showed zero exceptions here. See V1_FALLBACK_AUDIT.md. An
+        # unresolvable bare subcategory id (resolved_path is None) still
+        # falls through to V1's more permissive wildcard matching — a
+        # taxonomy-resolution gap, not an error being hidden.
+        if result is None and _search_engine() != "v1" and subcategory and not query:
+            resolved_path = _resolve_subcategory_es_path(subcategory)
+            if resolved_path:
+                from search_v2.extension.category_browsing import browse
+                from search_v2.retrieval.filters import SearchFilters as _SearchFilters
+                browse_filters = _SearchFilters.from_dict(_v1_filters_to_gw_params(validated_filters or {})) if validated_filters else None
+                browse_result = browse(resolved_path, page=page, size=size, sort_by=resolved_sort, filters=browse_filters)
+                browse_meta = browse_result.get("meta", {}) or {}
                 result = {
-                    "products": gw_products,
-                    "filters": gw_filters,
+                    "products": browse_result.get("products", []),
+                    "filters": browse_result.get("filters", []),
                     "meta": {
-                        "total": gw_meta.get("total_hits", returned),
-                        "page": page,
-                        "size": size,
-                        "total_pages": page + (2 if returned == size else 1),
-                        "has_next": returned == size,
-                        "has_prev": page > 0,
+                        **browse_meta,
                         "query": query,
                         "subcategory": subcategory,
-                        "sort_by": resolved_sort,
                         "filters_applied": validated_filters,
-                        "took_ms": gw_meta.get("took_ms", 0),
                         "fuzzy_fallback_used": False,
                         "prefix_fallback_used": False,
                         "phonetic_used": False,
-                        "engine": "v2",
                     },
                 }
-            except Exception as exc:
-                if _search_engine() == "v2":
-                    log.error("UNIFIED_SEARCH_V2_ERROR | error=%s", exc, exc_info=True)
-                    return _error_response("INTERNAL_ERROR", str(exc), 500)
-                log.warning("UNIFIED_SEARCH_V2_FALLBACK | error=%s", exc)
 
         if result is None:
             # Legacy V1 path

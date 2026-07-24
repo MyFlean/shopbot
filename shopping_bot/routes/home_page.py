@@ -375,9 +375,23 @@ def _filter_cards_with_validation_cache(
 # ============================================================================
 
 def _fetch_products_by_ids(product_ids: List[str]) -> List[Dict[str, Any]]:
-    """Fetch products from ES by IDs and return standardized product cards."""
+    """Fetch products from ES by IDs and return standardized product cards.
+
+    V2-native unless SEARCH_ENGINE=v1 explicitly — deterministic id lookup,
+    same treatment as Batch PDP (see V1_FALLBACK_AUDIT.md). Found and
+    migrated during the final pre-production audit — this helper (used by
+    Curated's `_get_curated_data()`, in turn used by /rs/api/v1/home/unified)
+    had never been touched by any prior migration phase."""
     if not product_ids:
         return []
+    engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+    if engine != "v1":
+        from search_v2.extension.pdp import fetch_products_batch
+        found = fetch_products_batch(product_ids)
+        cards = [c for c in (transform_to_product_card(found[pid]) for pid in product_ids if pid in found) if c is not None]
+        log.debug(f"ES_FETCH_V2 | requested={len(product_ids)} | returned={len(cards)}")
+        return cards
+
     try:
         fetcher = get_es_fetcher()
         es_products = fetcher.search_by_ids(product_ids)
@@ -470,6 +484,24 @@ def _get_card_flean_sort_key(card: Dict[str, Any]) -> tuple[float, float]:
 
 def _get_best_selling_data(effective_pincode: Optional[str] = None) -> Dict[str, Any]:
     """Best-selling from fixed category paths ranked by flean_score.adjusted_score."""
+    # V2-only unless SEARCH_ENGINE=v1 explicitly — live SEARCH_ENGINE=v2
+    # regression showed zero exceptions against these fixed category paths.
+    # See V1_FALLBACK_AUDIT.md.
+    engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+    if engine != "v1":
+        from search_v2.extension.bestsellers import best_selling
+        cards = best_selling(
+            BEST_SELLING_CATEGORY_PATHS,
+            per_category=BEST_SELLING_PER_CATEGORY,
+            total_products=BEST_SELLING_TOTAL_PRODUCTS,
+            fetch_buffer=BEST_SELLING_FETCH_BUFFER,
+        )
+        cards = _filter_cards_with_validation_cache(
+            cards, effective_pincode, section="best_selling", subcategory_key="v2",
+            target_count=BEST_SELLING_TOTAL_PRODUCTS,
+        )
+        return {"products": cards[:BEST_SELLING_TOTAL_PRODUCTS], "section_title": "Best Selling"}
+
     fetcher = get_es_fetcher()
     selected_products: List[Dict[str, Any]] = []
     selected_ids: set[str] = set()
@@ -590,6 +622,23 @@ def _get_best_selling_data(effective_pincode: Optional[str] = None) -> Dict[str,
 
 def _get_supplements_data(effective_pincode: Optional[str] = None) -> Dict[str, Any]:
     """Supplements from fixed category paths ranked by flean_score.adjusted_score."""
+    # V2-only unless SEARCH_ENGINE=v1 explicitly — see
+    # _get_best_selling_data()'s comment / V1_FALLBACK_AUDIT.md.
+    engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+    if engine != "v1":
+        from search_v2.extension.bestsellers import best_selling
+        cards = best_selling(
+            SUPPLEMENTS_CATEGORY_PATHS,
+            per_category=SUPPLEMENTS_PER_CATEGORY,
+            total_products=SUPPLEMENTS_TOTAL_PRODUCTS,
+            fetch_buffer=SUPPLEMENTS_FETCH_BUFFER,
+        )
+        cards = _filter_cards_with_validation_cache(
+            cards, effective_pincode, section="supplements", subcategory_key="v2",
+            target_count=SUPPLEMENTS_TOTAL_PRODUCTS,
+        )
+        return {"products": cards[:SUPPLEMENTS_TOTAL_PRODUCTS], "section_title": "Supplements"}
+
     fetcher = get_es_fetcher()
     selected_products: List[Dict[str, Any]] = []
     selected_ids: set[str] = set()
@@ -761,6 +810,14 @@ def _extract_curate_filters() -> Optional[Dict[str, Any]]:
 
 def _search_curated_with_filters(filters: Dict[str, Any], size: int = 4) -> Dict[str, Any]:
     """Use search_products_unified with filters to produce curated results."""
+    # V2-only unless SEARCH_ENGINE=v1 explicitly — live SEARCH_ENGINE=v2
+    # regression showed zero exceptions across filter combinations tested.
+    # See V1_FALLBACK_AUDIT.md.
+    engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+    if engine != "v1":
+        from search_v2.extension.curated import curate
+        return curate(filters, size=size)
+
     fetcher = get_es_fetcher()
     result = fetcher.search_products_unified(
         query=None,
@@ -964,10 +1021,8 @@ def _get_collaborations_data() -> Dict[str, Any]:
     return {"brands": collaborations, "section_title": "Exclusive Collaborations"}
 
 
-def _fetch_full_catalog_validation_candidates() -> Dict[str, Any]:
-    """Fetch all candidate docs in one ES request (no pagination)."""
-    fetcher = get_es_fetcher()
-    query_body: Dict[str, Any] = {
+def _validation_candidates_query() -> Dict[str, Any]:
+    return {
         "bool": {
             "filter": [
                 {
@@ -991,6 +1046,55 @@ def _fetch_full_catalog_validation_candidates() -> Dict[str, Any]:
             ]
         }
     }
+
+
+def _fetch_full_catalog_validation_candidates_v2() -> Dict[str, Any]:
+    """V2-native: same filter-only query, against the V2 index/client."""
+    from search_v2.config.settings import SETTINGS
+    from search_v2.retrieval.opensearch_client import OpenSearchClient
+
+    client = OpenSearchClient(settings=SETTINGS)
+    query_body = _validation_candidates_query()
+
+    count_response = client.search({"size": 0, "track_total_hits": True, "query": query_body})
+    total_catalog_hits = int(((count_response.get("hits") or {}).get("total") or {}).get("value", 0) or 0)
+    if total_catalog_hits <= 0:
+        return {"docs": [], "total_catalog_hits": 0}
+
+    response = client.search({
+        "size": total_catalog_hits,
+        "track_total_hits": True,
+        "_source": {
+            "includes": [
+                "id",
+                "visibility",
+                "flean_score.adjusted_score",
+                "flean_score.adjusted_score_label",
+            ]
+        },
+        "query": query_body,
+        "sort": [
+            {"flean_score.adjusted_score": {"order": "desc", "missing": "_last"}},
+        ],
+    })
+    hits = ((response.get("hits") or {}).get("hits") or [])
+    docs = [hit.get("_source") for hit in hits if isinstance(hit, dict) and hit.get("_source")]
+    return {"docs": docs, "total_catalog_hits": total_catalog_hits}
+
+
+def _fetch_full_catalog_validation_candidates() -> Dict[str, Any]:
+    """Fetch all candidate docs in one ES request (no pagination).
+
+    V2-native unless SEARCH_ENGINE=v1 explicitly — a filter-only bulk query,
+    no ranking/relevance involved. Found and migrated during the final
+    pre-production audit (this bulk validation-cache-warming helper had
+    never been touched by any prior migration phase)."""
+    engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+    if engine != "v1":
+        return _fetch_full_catalog_validation_candidates_v2()
+
+    fetcher = get_es_fetcher()
+    query_body = _validation_candidates_query()
 
     count_endpoint = f"{fetcher.base_url}/{fetcher.index}/_count"
     count_response = requests.post(
@@ -1265,6 +1369,53 @@ def _unified_flean_picks_logic(
         else FLEAN_PICKS_SEE_ALL_FETCH_PER_SUBCATEGORY
     )
     requested_total = len(FLEAN_PICKS_CATEGORIES) * needed
+
+    # V2-only unless SEARCH_ENGINE=v1 or FLEAN_PICKS_FORCE_LEGACY (explicit
+    # operator overrides) — live SEARCH_ENGINE=v2 regression showed zero
+    # exceptions. See V1_FALLBACK_AUDIT.md.
+    engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+    if engine != "v1" and not force_legacy:
+        from search_v2.extension.flean_picks import flean_picks as v2_flean_picks
+        tiers = _build_flean_hybrid_tier_filters(user_filters)
+        products_by_key = v2_flean_picks(FLEAN_PICKS_CATEGORIES, tiers, needed, min(fetch_needed, 50))
+        products_by_key = {
+            key: _filter_cards_with_validation_cache(
+                products, effective_pincode, section="flean_picks", subcategory_key=key, target_count=needed,
+            )
+            for key, products in products_by_key.items()
+        }
+
+        if source == "home":
+            products = []
+            for key in FLEAN_PICKS_CATEGORIES:
+                products.extend(products_by_key.get(key, [])[:needed])
+            products.sort(key=_get_card_flean_sort_key, reverse=True)
+            response_data: Dict[str, Any] = {
+                "source": "home",
+                "products": products,
+                "filters_applied": filters_applied,
+            }
+            if len(products) == 0:
+                response_data["message"] = no_match_message
+            return response_data
+
+        collections = [
+            {
+                "key": key,
+                "name": cfg["name"],
+                "image_url": cfg["image_url"],
+                "products": products_by_key.get(key, [])[:needed],
+            }
+            for key, cfg in FLEAN_PICKS_CATEGORIES.items()
+        ]
+        response_data = {
+            "source": "see_all",
+            "collections": collections,
+            "filters_applied": filters_applied,
+        }
+        if sum(len(c["products"]) for c in collections) == 0:
+            response_data["message"] = no_match_message
+        return response_data
 
     def _apply_validation_for_collected(collected_map: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
         out: Dict[str, List[Dict[str, Any]]] = {}
@@ -1702,7 +1853,15 @@ def get_flean_picks_unified() -> tuple[Dict[str, Any], int]:
 
 @bp.route("/api/v1/home/flean-picks/<collection_key>", methods=["GET"])
 def get_flean_picks_collection(collection_key: str) -> tuple[Dict[str, Any], int]:
-    """Legacy: one Flean Picks subcategory; up to 6 products (``needed=6``), independent of unified counts."""
+    """One Flean Picks subcategory; up to 6 products (``needed=6``), independent of unified counts.
+
+    V2-native unless SEARCH_ENGINE=v1 explicitly. Found and migrated during
+    the final pre-production audit: despite its "thin wrapper around the
+    unified logic" docstring, this route was actually calling
+    `_fetch_subcategory_products()` (V1) directly, completely bypassing
+    `_unified_flean_picks_logic()`'s V2-native path — a genuinely separate,
+    never-migrated endpoint until now.
+    """
     try:
         if collection_key not in FLEAN_PICKS_CATEGORIES:
             valid = list(FLEAN_PICKS_CATEGORIES.keys())
@@ -1713,7 +1872,17 @@ def get_flean_picks_collection(collection_key: str) -> tuple[Dict[str, Any], int
 
         cfg = FLEAN_PICKS_CATEGORIES[collection_key]
         effective_pincode = _resolve_canonical_request_pincode()
-        products, _stats = _fetch_subcategory_products(cfg["es_paths"], user_filters=None, needed=6)
+
+        products: List[Dict[str, Any]] = []
+        engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
+        if engine != "v1":
+            from search_v2.extension.flean_picks import flean_picks as v2_flean_picks
+            tiers = _build_flean_hybrid_tier_filters(None)
+            products_by_key = v2_flean_picks({collection_key: cfg}, tiers, 6, 6 + FLEAN_PICKS_SEE_ALL_FETCH_PER_SUBCATEGORY)
+            products = products_by_key.get(collection_key, [])[:6]
+        else:
+            products, _stats = _fetch_subcategory_products(cfg["es_paths"], user_filters=None, needed=6)
+
         products = _filter_cards_with_validation_cache(
             products,
             effective_pincode,
@@ -1722,7 +1891,7 @@ def get_flean_picks_collection(collection_key: str) -> tuple[Dict[str, Any], int
             target_count=6,
         )
 
-        log.info(f"FLEAN_PICKS_LEGACY | key={collection_key} | returned={len(products)}")
+        log.info(f"FLEAN_PICKS_COLLECTION | key={collection_key} | returned={len(products)} | engine={engine}")
         return jsonify(_build_success_response({
             "key": collection_key,
             "name": cfg["name"],

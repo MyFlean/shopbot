@@ -23,7 +23,7 @@ itself frames business ranking as a separate post-retrieval step).
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from search_v2.config.settings import SearchV2Settings, SETTINGS
 from search_v2.embedding.embedding_service import EmbeddingService, get_embedding_service

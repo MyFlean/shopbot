@@ -377,11 +377,17 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
         # "/rs/api/v1/products" routes already covered here. Found missing
         # during production-readiness review — these previously fell through
         # to the non-critical (no secrets wait) path on a cold Lambda start.
+        # NOTE: "/flow" (no "/rs" prefix) is intentional — unlike every other
+        # blueprint, shopping_bot/routes/onboarding_flow.py's blueprint is
+        # registered without url_prefix='/rs' (see shopping_bot/__init__.py),
+        # so its real routes are "/flow/...", not "/rs/flow/...". Matching on
+        # "/rs/flow" here could never fire against a real request path. Found
+        # during production-readiness review.
         is_critical_endpoint = any(path in request_path for path in [
             "/rs/chat", "/rs/search", "/rs/v1/search", "/rs/v2/search",
             "/rs/api/v1/products", "/rs/api/v1/product", "/rs/api/v1/home",
             "/rs/api/v1/catalogue", "/rs/api/v1/flean-score",
-            "/rs/flow", "/rs/api/v1/scanner",
+            "/flow", "/rs/api/v1/scanner",
         ])
         
         # For critical endpoints, wait for secrets (with timeout)

@@ -1,10 +1,20 @@
 # Final V1 vs V2 Parity Audit — Pre-Production
 
 Date: 2026-07-24. Complete endpoint-by-endpoint JSON response comparison between `SEARCH_ENGINE=v1`
-and `SEARCH_ENGINE=v2` (two servers, ports 8080/8081, same local rebuilt index), using a new
-field-level structural diff tool (`v1_v2_parity_diff.py`) — not just pass/fail regression. Three
-real, fixable compatibility gaps were found and fixed during this audit; everything else is
-classified below.
+and `SEARCH_ENGINE=v2` (two servers, ports 8080/8081), using a new field-level structural diff tool
+(`v1_v2_parity_diff.py`) — not just pass/fail regression. 7 real, fixable compatibility gaps were
+found and fixed during this audit; everything else is classified below.
+
+**IMPORTANT CORRECTION — read `TRUE_V1_VALIDATION_REPORT.md` alongside this document.** The
+comparison described here ran "V1" against the **V2 OpenSearch index**, not V1's original index —
+a `SEARCH_V2_INDEX_NAME` environment override in `_resolve_products_index()` silently redirects
+every V1 fetcher instance to the V2 index regardless of `SEARCH_ENGINE` mode. This was later
+validated against V1's true original index (`products-v3`, via the `elastic-local` Docker container)
+in a follow-up pass. The field-shape/compatibility fixes in §1 below remain fully valid (response
+JSON structure is code-driven, not data-driven, so it's unaffected by which index backs it). §2's
+root-cause explanations, however, were based on the mismatched-index test and have been **corrected**
+with real evidence in `TRUE_V1_VALIDATION_REPORT.md` §3 — the underlying conclusions (both are real
+V1 bugs) hold, but the precise mechanisms described below are superseded.
 
 ## Method
 
@@ -37,25 +47,31 @@ each specific gap closed.
 
 ## 2. Real, pre-existing V1 bug found (not a V2 regression — the opposite)
 
-**Brand filtering has never actually worked in V1.** Tested `GET /rs/api/v1/products/search?query=milk&brands=amul`
-against both engines:
+**⚠️ Root-cause explanation below was based on testing V1's code against the V2 index — corrected
+in `TRUE_V1_VALIDATION_REPORT.md` §3b using V1's real index/engine. The conclusion is unchanged and
+now more strongly evidenced; only the mechanism description here is superseded.**
+
+**Brand filtering has never actually worked in V1 for food & beverage queries** (confirmed against
+V1's real index too). Tested `GET /rs/api/v1/products/search?query=milk&brands=amul` against both
+engines:
 - **V1 result: completely ignores the brand filter** — returns Provilac, PROATHLIX, Cadbury products,
   zero Amul products, despite `brands=["amul"]` being passed correctly (confirmed via debug log:
   `Brands: ['amul']` is logged, but never actually applied as a working filter).
 - **V2 result: correctly returns only Amul products** (5/5).
 
-**Root cause, found in V1's own source** (`shopping_bot/data_fetchers/es_products.py`,
-`_build_enhanced_es_query()`): the brand filter is `{"terms": {"brand": p["brands"]}}` against the
-bare `brand` field, which is analyzed text, not a keyword field — a `terms` query against an
-analyzed field doesn't reliably exact-match. **The original V1 code even documents this as a known
-issue** in an adjacent comment: *"Direct brand filtering/boosting proved brittle due to inconsistent
-brand tokenization... If we need brand handling later, prefer exact keyword fields (e.g.,
-`brand.keyword`)."* This is confirmed pre-existing, not something this migration introduced.
+**Real root cause** (see `TRUE_V1_VALIDATION_REPORT.md` §3b for full evidence): the brand filter
+clause in `_build_enhanced_es_query()` is nested inside `if category_group == "personal_care":` —
+it **never executes at all** for F&B queries (the vast majority of the catalog). This was confirmed
+by running the identical `terms` query directly against V1's real index (`products-v3`), which
+correctly returns 217/217 Amul products when issued directly — proving the field mapping itself is
+fine; the bug is that the application code never reaches that filter clause for non-personal-care
+searches.
 
 **Classification: Expected improvement.** V2's brand filter (fixed earlier this session using
-`brand_phonetic.keyword`, a real keyword field) is genuinely more correct than V1's ever was. This is
-disclosed here in full, not silently claimed as "parity," since V1's own behavior for this specific
-case cannot be replicated as a baseline — it was never correct to begin with.
+`brand_phonetic.keyword`) works for every category group, correctly and unconditionally — genuinely
+more correct than V1's ever was for F&B. Disclosed here in full, not silently claimed as "parity,"
+since V1's own behavior for this specific case cannot be replicated as a baseline — it was never
+correct to begin with, confirmed now against both the wrong index and V1's real one.
 
 ---
 
@@ -87,7 +103,7 @@ matched product set, and recompute when filters are applied.
 | Semantic search | Tested "post workout muscle recovery supplement" (no literal keyword overlap) | V2 surfaces protein/recovery-relevant products via real Bedrock embeddings — confirmed not degraded to lexical-only |
 | Autocomplete/suggestions | `/v1/search/suggest`, `/v2/search/suggest` | Field parity achieved (gap #6 above fixed); V2 has 1 fallback tier vs V1's 4 (bool_prefix/fuzzy/prefix/phonetic) — **disclosed, pre-existing, deliberate simplification** from earlier in this migration, unchanged by this audit |
 | Recommendations (Alternatives/Recommended) | Full field diff | Field parity achieved; ranking differs due to different percentile-sort implementations reusing the same underlying `stats.adjusted_score_percentiles` data — same signal, same direction |
-| Category browsing | `subcategory=f_and_b/food/light_bites/chips_and_crisps` via `/rs/v1/search` | **V1 returns 0 results, V2 returns 353** — this is the long-documented `category_paths.keyword` V1 bug (confirmed multiple times earlier in this migration), not a new finding — expected improvement |
+| Category browsing | `subcategory=...` via `/rs/v1/search` | **V1 returns 0 results, V2 returns 353** — root cause corrected in `TRUE_V1_VALIDATION_REPORT.md` §3a: `search_products_unified()`'s filter clause queries bare `category_hierarchies` instead of `category_hierarchies.segments.keyword` (confirmed 0 hits vs 318 hits directly against V1's real index) — not a "`category_paths.keyword` doesn't exist" issue as previously stated; that field does exist. Expected improvement either way |
 | Brand search | `brands=amul` | See §2 — V1 brand filter doesn't work at all; V2's does. Expected improvement |
 | Ingredient search | "creatine monohydrate" | Both engines surface the real product; V2 returns a broader result set (75 vs 2) due to hybrid lexical+semantic retrieval vs V1's stricter lexical-only matching — same "different algorithm, more/better results" pattern established throughout this migration |
 | Validation endpoints | `/rs/api/v1/home/validation-candidates` | Field-for-field identical between engines (confirmed in the prior reindex validation pass) |

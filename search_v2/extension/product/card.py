@@ -9,7 +9,7 @@ that just needs "raw doc -> card", not only the ranked-search path.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from shopping_bot.data_fetchers.es_products import _copy_if_present, _generate_macro_tags
 

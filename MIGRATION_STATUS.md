@@ -1,6 +1,21 @@
 # Migration Status
 
-Last updated: 2026-07-23. This file is updated after every phase.
+Last updated: 2026-07-24. This file is updated after every phase.
+
+**⚠️ Methodology correction (2026-07-24) — read `TRUE_V1_VALIDATION_REPORT.md` first.** Every V1 vs
+V2 comparison in this file (and in `FINAL_MIGRATION_REPORT.md`) that ran "V1" locally did so against
+the **V2 OpenSearch index**, not V1's original index — `_resolve_products_index()` in
+`es_products.py` silently redirects every V1 fetcher to `SEARCH_V2_INDEX_NAME` whenever it's set,
+which it always is in this repo's `.env`. This was discovered and independently re-validated against
+V1's real original index (`products-v3`, via the `elastic-local` Docker container) on 2026-07-24.
+**Every field-shape/compatibility conclusion in this file is unaffected** (response JSON structure
+is produced by code, not data, so it doesn't change based on which index backs it). Specific
+behavioral root-cause claims — in particular every mention of "`category_paths.keyword` doesn't
+exist" as the cause of the category-browsing bug — were based on the mismatched-index test and have
+been corrected with real evidence in `TRUE_V1_VALIDATION_REPORT.md` §3a (the real cause is
+`category_hierarchies` missing its `.segments` path segment). The underlying conclusion — V1's
+category browsing and brand filtering are genuinely broken — holds and is now confirmed against
+V1's real index too; only the precise mechanism differs from what was previously stated.
 
 ## Current phase: **Migration complete. Only production-only deployment steps remain.**
 

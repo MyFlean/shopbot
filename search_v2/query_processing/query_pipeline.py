@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from search_v2.query_processing.text_normalization import normalize_text
 from search_v2.query_processing.typo_correction import QueryCorrectionResult, VocabularyCorrector

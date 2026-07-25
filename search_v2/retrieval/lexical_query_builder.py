@@ -568,4 +568,4 @@ def build_suggest_query(prefix: str, category_group: Optional[str] = None, size:
         },
     }
 
-    return {"suggest": {"name_suggest": suggest_clause}, "_source": ["name", "id", "brand"]}
+    return {"suggest": {"name_suggest": suggest_clause}, "_source": ["name", "id", "brand", "category_group"]}

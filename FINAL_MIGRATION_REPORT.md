@@ -1,5 +1,17 @@
 # Final Migration Report — Search V1 → Search V2
 
+**⚠️ Methodology correction (2026-07-24) — read `TRUE_V1_VALIDATION_REPORT.md` first.** Every local
+V1-vs-V2 comparison described in this report ran V1 against the **V2 OpenSearch index**, not V1's
+original index (`_resolve_products_index()` in `es_products.py` silently redirects V1's fetcher to
+`SEARCH_V2_INDEX_NAME` whenever it's set, which it always is here). This was independently
+re-validated against V1's real index (`products-v3`, via the `elastic-local` container) on
+2026-07-24. Field-shape/compatibility conclusions are unaffected (code-driven, not data-driven).
+The specific claim that "`category_paths.keyword` doesn't exist" (§3 below, and referenced
+elsewhere) has been corrected — that field does exist; the real cause of the category-browsing bug
+is `category_hierarchies` missing its `.segments` path segment, confirmed with direct evidence in
+`TRUE_V1_VALIDATION_REPORT.md` §3a. The underlying conclusion (V1's category browsing is genuinely
+broken) holds and is now confirmed against V1's real index too.
+
 Date: 2026-07-23 (updated). Local development only throughout. No production, AWS infrastructure,
 Git, or GitHub operations performed. This report covers everything implemented across the
 migration: all capability phases (now complete), an indexing pipeline audit and fix (in the

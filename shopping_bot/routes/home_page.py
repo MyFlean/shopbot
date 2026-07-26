@@ -1377,13 +1377,21 @@ def _unified_flean_picks_logic(
     if engine != "v1" and not force_legacy:
         from search_v2.extension.flean_picks import flean_picks as v2_flean_picks
         tiers = _build_flean_hybrid_tier_filters(user_filters)
-        products_by_key = v2_flean_picks(FLEAN_PICKS_CATEGORIES, tiers, needed, min(fetch_needed, 50))
+        products_by_key, tier_stats = v2_flean_picks(FLEAN_PICKS_CATEGORIES, tiers, needed, min(fetch_needed, 50))
         products_by_key = {
             key: _filter_cards_with_validation_cache(
                 products, effective_pincode, section="flean_picks", subcategory_key=key, target_count=needed,
             )
             for key, products in products_by_key.items()
         }
+        for key, stats in tier_stats.items():
+            stats["pre_validation_collected_count"] = stats["collected_count"]
+            stats["collected_count"] = len(products_by_key.get(key, []))
+        total_tier_counts = {"tier1": 0, "tier2": 0, "tier3": 0}
+        for stats in tier_stats.values():
+            for tier_name, count in stats["tier_counts"].items():
+                total_tier_counts[tier_name] += int(count)
+        fallback_used_count = total_tier_counts["tier2"] + total_tier_counts["tier3"]
 
         if source == "home":
             products = []
@@ -1394,6 +1402,16 @@ def _unified_flean_picks_logic(
                 "source": "home",
                 "products": products,
                 "filters_applied": filters_applied,
+                "fallback_meta": {
+                    "requested_products": requested_total,
+                    "returned_products": len(products),
+                    "user_filters_supplied": bool(user_filters),
+                    "per_subcategory": tier_stats,
+                    "total_tier_counts": total_tier_counts,
+                    "matched_with_user_filters_count": total_tier_counts["tier1"] if bool(user_filters) else 0,
+                    "fallback_used_count": fallback_used_count,
+                    "fallback_used": fallback_used_count > 0,
+                },
             }
             if len(products) == 0:
                 response_data["message"] = no_match_message
@@ -1408,12 +1426,23 @@ def _unified_flean_picks_logic(
             }
             for key, cfg in FLEAN_PICKS_CATEGORIES.items()
         ]
+        returned_total = sum(len(c["products"]) for c in collections)
         response_data = {
             "source": "see_all",
             "collections": collections,
             "filters_applied": filters_applied,
+            "fallback_meta": {
+                "requested_products": requested_total,
+                "returned_products": returned_total,
+                "user_filters_supplied": bool(user_filters),
+                "per_subcategory": tier_stats,
+                "total_tier_counts": total_tier_counts,
+                "matched_with_user_filters_count": total_tier_counts["tier1"] if bool(user_filters) else 0,
+                "fallback_used_count": fallback_used_count,
+                "fallback_used": fallback_used_count > 0,
+            },
         }
-        if sum(len(c["products"]) for c in collections) == 0:
+        if returned_total == 0:
             response_data["message"] = no_match_message
         return response_data
 
@@ -1878,7 +1907,7 @@ def get_flean_picks_collection(collection_key: str) -> tuple[Dict[str, Any], int
         if engine != "v1":
             from search_v2.extension.flean_picks import flean_picks as v2_flean_picks
             tiers = _build_flean_hybrid_tier_filters(None)
-            products_by_key = v2_flean_picks({collection_key: cfg}, tiers, 6, 6 + FLEAN_PICKS_SEE_ALL_FETCH_PER_SUBCATEGORY)
+            products_by_key, _tier_stats = v2_flean_picks({collection_key: cfg}, tiers, 6, 6 + FLEAN_PICKS_SEE_ALL_FETCH_PER_SUBCATEGORY)
             products = products_by_key.get(collection_key, [])[:6]
         else:
             products, _stats = _fetch_subcategory_products(cfg["es_paths"], user_filters=None, needed=6)

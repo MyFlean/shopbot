@@ -47,13 +47,18 @@ def flean_picks(
     tiers: List[tuple],
     needed: int,
     fetch_per: int,
-) -> Dict[str, List[Dict[str, Any]]]:
-    """Returns {collection_key: [product cards...]}, each up to `needed` items."""
+) -> tuple[Dict[str, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]:
+    """Returns ({collection_key: [product cards...]}, {collection_key: tier_stats}),
+    each product list up to `needed` items. `tier_stats[key]` matches V1's
+    per-subcategory fallback_meta shape (`tier_counts`, `used_fallback`,
+    `requested_count`, `collected_count`) — see home_page.py's
+    `_legacy_unified_flean_picks_fetch()` for the V1 shape this mirrors."""
     collected: Dict[str, List[Dict[str, Any]]] = {k: [] for k in categories}
+    tier_counts: Dict[str, Dict[str, int]] = {k: {"tier1": 0, "tier2": 0, "tier3": 0} for k in categories}
     collected_ids: set = set()
     client = _get_client()
 
-    for _tier_name, tier_filters in tiers:
+    for tier_name, tier_filters in tiers:
         short_keys = [k for k in categories if len(collected[k]) < needed]
         if not short_keys:
             break
@@ -86,5 +91,15 @@ def flean_picks(
                     continue
                 collected_ids.add(product_id)
                 collected[key].append(to_product_card(src))
+                tier_counts[key][tier_name] = tier_counts[key].get(tier_name, 0) + 1
 
-    return collected
+    stats = {
+        key: {
+            "requested_count": needed,
+            "collected_count": len(collected[key]),
+            "tier_counts": tier_counts[key],
+            "used_fallback": (tier_counts[key].get("tier2", 0) + tier_counts[key].get("tier3", 0)) > 0,
+        }
+        for key in categories
+    }
+    return collected, stats

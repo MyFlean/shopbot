@@ -16,6 +16,8 @@ from search_v2.extension.product import to_product_card
 from search_v2.retrieval.opensearch_client import OpenSearchClient
 
 _client: Optional[OpenSearchClient] = None
+_LAB_TESTED_FETCH = 5
+_VISIBILITY_FILTER = {"terms": {"visibility": ["visible", "soft"]}}
 
 
 def _get_client() -> OpenSearchClient:
@@ -25,15 +27,7 @@ def _get_client() -> OpenSearchClient:
     return _client
 
 
-# ADDED: Helper to determine whether a product has a lab report.
-def _has_lab_report(card: Dict[str, Any]) -> bool:
-    return bool(card.get("has_lab_report"))
-
-
-def fetch_candidates_by_category(
-    paths: List[str],
-    fetch_per_category: int,
-) -> Dict[str, List[Dict[str, Any]]]:
+def fetch_candidates_by_category(paths: List[str], fetch_per_category: int) -> Dict[str, List[Dict[str, Any]]]:
     """Returns {path: [raw _source docs...]}, each sorted by flean score descending."""
     if not paths:
         return {}
@@ -45,42 +39,45 @@ def fetch_candidates_by_category(
                 "top": {
                     "top_hits": {
                         "size": fetch_per_category,
-                        "sort": [
-                            {
-                                "flean_score.adjusted_score": {
-                                    "order": "desc",
-                                    "missing": "_last",
-                                }
-                            }
-                        ],
+                        "sort": [{"flean_score.adjusted_score": {"order": "desc", "missing": "_last"}}],
                     }
                 }
             },
         }
         for path in paths
     }
-
-    response = _get_client().search(
-        {
-            "size": 0,
-            "track_total_hits": False,
-            "query": {"match_all": {}},
-            "aggs": aggs,
-        }
-    )
-
+    response = _get_client().search({"size": 0, "track_total_hits": False, "query": {"match_all": {}}, "aggs": aggs})
     buckets = response.get("aggregations") or {}
 
     results: Dict[str, List[Dict[str, Any]]] = {}
     for path in paths:
-        hits = (
-            ((buckets.get(path) or {}).get("top") or {})
-            .get("hits", {})
-            .get("hits", [])
-        )
+        hits = ((buckets.get(path) or {}).get("top") or {}).get("hits", {}).get("hits", [])
         results[path] = [hit.get("_source") or {} for hit in hits]
-
     return results
+
+
+def fetch_lab_tested_candidates(limit: int = _LAB_TESTED_FETCH) -> List[Dict[str, Any]]:
+    """Top lab-tested products by flean score (index-backed exists filter, no aggregation)."""
+    if limit <= 0:
+        return []
+
+    response = _get_client().search(
+        {
+            "size": limit,
+            "track_total_hits": False,
+            "query": {
+                "bool": {
+                    "filter": [
+                        _VISIBILITY_FILTER,
+                        {"exists": {"field": "category_data.lab_reports.url"}},
+                    ]
+                }
+            },
+            "sort": [{"flean_score.adjusted_score": {"order": "desc", "missing": "_last"}}],
+        }
+    )
+    hits = response.get("hits", {}).get("hits", [])
+    return [hit.get("_source") or {} for hit in hits if hit.get("_source")]
 
 
 def best_selling(
@@ -90,44 +87,30 @@ def best_selling(
     fetch_buffer: int = 13,
 ) -> List[Dict[str, Any]]:
     fetch_per_category = per_category + fetch_buffer
-    candidates_by_path = fetch_candidates_by_category(
-        category_paths,
-        fetch_per_category,
-    )
+    lab_cards = [
+        to_product_card(src)
+        for src in fetch_lab_tested_candidates()
+        if src.get("id")
+    ]
+    candidates_by_path = fetch_candidates_by_category(category_paths, fetch_per_category)
 
     selected: List[Dict[str, Any]] = []
     selected_ids: set = set()
     backfill: List[tuple] = []
 
     for path in category_paths:
-        scored = []
-
-        for src in candidates_by_path.get(path, []):
-            if not src.get("id"):
-                continue
-
-            card = to_product_card(src)
-
-            # ADDED: Populate has_lab_report from the source document.
-            card["has_lab_report"] = bool(
-                ((src.get("category_data") or {}).get("lab_reports") or {}).get("url")
-            )
-
-            score = float(
-                ((src.get("flean_score") or {}).get("adjusted_score") or 0.0)
-            )
-
-            scored.append((score, card))
-
+        scored = [
+            (float((src.get("flean_score") or {}).get("adjusted_score") or 0.0), to_product_card(src))
+            for src in candidates_by_path.get(path, [])
+            if src.get("id")
+        ]
         scored.sort(key=lambda item: item[0], reverse=True)
 
         category_count = 0
         for score, card in scored:
             product_id = card["id"]
-
             if product_id in selected_ids:
                 continue
-
             if category_count < per_category:
                 selected.append(card)
                 selected_ids.add(product_id)
@@ -137,28 +120,30 @@ def best_selling(
 
     if len(selected) < total_products:
         backfill.sort(key=lambda item: item[0], reverse=True)
-
         for _, card in backfill:
             product_id = card["id"]
-
             if product_id in selected_ids:
                 continue
-
             selected.append(card)
             selected_ids.add(product_id)
-
             if len(selected) >= total_products:
                 break
 
-    # ADDED: Lab-tested products are ranked ahead of non-lab-tested products.
-    # Within each group, existing Flean score ordering is preserved.
-    selected.sort(
+    merged: List[Dict[str, Any]] = []
+    merged_ids: set = set()
+    for card in lab_cards + selected:
+        product_id = card.get("id")
+        if not product_id or product_id in merged_ids:
+            continue
+        merged.append(card)
+        merged_ids.add(product_id)
+
+    merged.sort(
         key=lambda card: (
-            _has_lab_report(card),
+            bool(card.get("has_lab_report")),
             card.get("flean_score") or 0.0,
             card.get("flean_percentile") or 0.0,
         ),
         reverse=True,
     )
-
-    return selected[:total_products]
+    return merged[:total_products]

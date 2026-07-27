@@ -11,7 +11,7 @@ this specific OpenSearch version's feature set (no native RRF until 2.19).
 Reuses the inner clauses from lexical_query_builder.py rather than
 duplicating them — the bool/should clauses built there for a single query
 variant are exactly what becomes the "lexical" branch of the hybrid query.
-Mirrors the same approach Search V1 used (see that project's
+Mirrors the same approach prior hybrid implementation used (see that project's
 hybrid_search.py) for the function_score-vs-hybrid-query incompatibility:
 OpenSearch's hybrid query doesn't reliably combine with function_score or
 (by extension) the `boosting` query used for derivative demotion in the

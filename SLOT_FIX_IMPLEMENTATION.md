@@ -106,13 +106,13 @@ if params.get("dietary_terms"):
 
 ### **Fix 4: Fuzzy Matching on Hard Filters** ✅
 
-**File**: `data_fetchers/es_products.py`
+**File**: `data_fetchers/search_products.py`
 
 **What**: Added fuzziness to dietary_labels and must_keywords for variant tolerance
 
 **Code Changed**:
 ```python
-# es_products.py:381-393 (dietary_labels)
+# search_v2:381-393 (dietary_labels)
 shoulds.append({
     "multi_match": {
         "query": str(label).strip(),
@@ -122,7 +122,7 @@ shoulds.append({
     }
 })
 
-# es_products.py:449-462 (must_keywords)
+# search_v2:449-462 (must_keywords)
 musts.append({
     "multi_match": {
         "query": kw_str,
@@ -361,7 +361,7 @@ Turn 2 after LLM2:
 5. **enhanced_core.py** (Lines 301-311)
    - Mirrored slot clearing in enhanced core version
 
-6. **data_fetchers/es_products.py** (Lines 381-393, 449-462)
+6. **data_fetchers/search_products.py** (Lines 381-393, 449-462)
    - Added fuzzy matching to dietary_labels and must_keywords
 
 ---
@@ -383,7 +383,7 @@ Turn 2 after LLM2:
 
 3. Revert fuzzy:
    ```python
-   # Restore exact match in es_products.py
+   # Restore exact match in search_v2
    "match": {"package_claims.dietary_labels": {...}}
    "type": "phrase"  # for must_keywords
    ```

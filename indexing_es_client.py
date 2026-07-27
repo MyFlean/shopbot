@@ -5,7 +5,7 @@ Supports two AWS SigV4 flavors:
   - Amazon OpenSearch Serverless (AOSS)       → service = "aoss", host *.aoss.amazonaws.com
   - Amazon OpenSearch provisioned domain      → service = "es",   host *.es.amazonaws.com
 
-Used by index.products-v2.py and index.products-v3.py.
+Used by search_v2/indexing/index_v2.py and runtime OpenSearch clients.
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def sigv4_service_for_url(es_url: str) -> Optional[str]:
 
 
 def use_aoss_from_env(es_url_explicit: Optional[str]) -> bool:
-    """Legacy: True only for OpenSearch Serverless. Kept for index.products-v2.py."""
+    """Legacy: True only for OpenSearch Serverless."""
     if os.getenv("AOSS_ENABLED", "").lower() in ("1", "true", "yes"):
         return True
     if es_url_explicit and aoss_url_indicates_serverless(es_url_explicit):

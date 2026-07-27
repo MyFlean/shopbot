@@ -5,8 +5,7 @@ Wraps search_v2/retrieval/aggregations.py's build_brand_suggest_query()/
 parse_brand_suggest_response() — a query builder + parser that already
 existed for this exact purpose but was never wired to a callable client
 call anywhere (confirmed via repo-wide grep before this module was added).
-Matches ElasticsearchProductsFetcher.suggest_brand()'s signature/behavior:
-given a noisy hint (e.g. OCR-extracted brand text), return the most
+Given a noisy hint (e.g. OCR-extracted brand text), return the most
 frequent matching real brand value in the index, or None.
 """
 from __future__ import annotations

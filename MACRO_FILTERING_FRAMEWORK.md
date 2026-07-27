@@ -61,7 +61,7 @@ Users want nutritionally optimized products but:
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 3: ES Query Builder (es_products.py)                 │
+│  Layer 3: ES Query Builder (search_v2)                 │
 │  ├─ Hard filters → ES range queries (bool.filter)            │
 │  ├─ Soft boosts → ES function_score                          │
 │  └─ Output: Elasticsearch query JSON                         │
@@ -486,7 +486,7 @@ def get_macro_optimizer() -> MacroOptimizer:
 
 ### Phase 3: ES Query Builder Integration
 
-**File**: `shopping_bot/data_fetchers/es_products.py`
+**File**: `search_v2/extension/search`
 
 **Modify `_build_enhanced_es_query` function**:
 
@@ -842,7 +842,7 @@ Expected:
 └──────────────────────────────────────────────────────────────┘
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
-│ 4. ES Query Builder (es_products.py)                         │
+│ 4. ES Query Builder (search_v2)                         │
 │    _build_enhanced_es_query():                               │
 │    - Add hard filter: range query sodium < 300               │
 │    - Add soft boosts: function_score for protein, sat fat    │

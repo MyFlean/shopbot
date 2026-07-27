@@ -173,7 +173,7 @@ class SearchV2Settings:
     # score-scale mismatch entirely, needs no cluster-side search pipeline, and
     # works on any OpenSearch/Elasticsearch version (the production domain is
     # on OpenSearch 2.15, which lacks native RRF support — that only shipped
-    # in 2.19). "native_hybrid" remains available and is what Search V1 used.
+    # in 2.19). "native_hybrid" remains available as an alternate fusion strategy.
     FUSION_STRATEGY: str = field(default_factory=lambda: _str("SEARCH_V2_FUSION_STRATEGY", "rrf"))
     # [lexical_weight, semantic_weight]. Lexical is weighted >= semantic:
     # lexical enforces query-term coverage (see lexical_query_builder.py's

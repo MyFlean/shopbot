@@ -31,7 +31,7 @@ principle as the bonuses/penalties this builds on — see scoring_rules.json):
       file.
 
 Every rule receives the raw `_source` document and returns a multiplier
-already compressed toward 1.0 (mirrors Search V1's scoring_config.py
+already compressed toward 1.0 (mirrors prior hybrid implementation's scoring_config.py
 approach) so that even with several rules stacking, apply_business_ranking()
 clamping the PRODUCT to [BUSINESS_MIN_MULTIPLIER, BUSINESS_MAX_MULTIPLIER]
 actually means something — a single unbounded rule could otherwise blow past
@@ -113,7 +113,7 @@ def _symmetric_deviation_multiplier(deviation: float, settings: SearchV2Settings
 def flean_nutrition_rule(source: Dict[str, Any], subcategory: str, settings: SearchV2Settings) -> float:
     """Reuses the real existing bonuses/penalties from
     shopping_bot/scoring_config.py (see scoring_rules_importer.py). Same
-    compression formula Search V1 used: each rule's own weight is compressed
+    compression formula prior hybrid implementation used: each rule's own weight is compressed
     halfway toward 1.0 so several stacking bonuses/penalties can't blow past
     the overall clamp before clamping even applies.
 

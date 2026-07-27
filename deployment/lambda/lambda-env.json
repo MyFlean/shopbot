@@ -1,5 +1,4 @@
 {
-  "SEARCH_ENGINE": "auto",
   "ES_URL": "https://search-flean-products-nzem6mojpxpurbgit2z52mwiru.ap-south-1.es.amazonaws.com",
   "SEARCH_V2_ES_URL": "https://search-flean-products-nzem6mojpxpurbgit2z52mwiru.ap-south-1.es.amazonaws.com",
   "SEARCH_V2_INDEX_NAME": "products-search-v2",

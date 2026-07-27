@@ -1,9 +1,8 @@
 """
 Native Search V2 autocomplete/suggestions.
 
-Completion-suggester query against name_suggest, built once against a
-lazily-created, process-level OpenSearch client — no gateway class.
-Replaces shopping_bot/data_fetchers/es_products.py's search_suggestions().
+Completion-suggester query against name_suggest via a process-level
+OpenSearch client.
 """
 from __future__ import annotations
 

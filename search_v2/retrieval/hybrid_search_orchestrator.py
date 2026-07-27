@@ -6,7 +6,7 @@ fusion together into one call. Strategy-selectable
 (SETTINGS.FUSION_STRATEGY: "rrf" | "weighted" | "native_hybrid") and
 fallback-safe at every step — semantic/embedding unavailability degrades to
 lexical-only rather than failing the request, the same resilience contract
-used throughout this project (and in Search V1's hybrid_search.py before it).
+used throughout this project (and in prior hybrid implementation's hybrid_search.py before it).
 
 This is also where per-component scores get attached to each result
 (fused_score / lexical_score / semantic_score / ranks) — exactly what the

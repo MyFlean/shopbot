@@ -50,10 +50,8 @@ MODEL_REGISTRY: Dict[str, EmbeddingModelSpec] = {
         passage_prefix="passage: ",
         multilingual=False,
         notes=(
-            "The current Search V1 choice (and what's live in es_products.py / "
-            "shopping_bot/search/embedding_service.py today). Fast and cheap, but "
-            "the smallest-capacity model in this list. Kept here as the control "
-            "/ baseline for benchmarking, not as the V2 default."
+            "Small English embedding model kept as a local-dev baseline for "
+            "benchmarking, not the production default."
         ),
     ),
     "bge-small-en-v1.5": EmbeddingModelSpec(

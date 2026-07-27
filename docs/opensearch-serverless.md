@@ -59,4 +59,4 @@ The workflow (`.github/workflows/deploy-lambda.yml`) deploys Lambda code with **
 
 ## Verify
 
-After deploy, CloudWatch logs for the fetcher should show `IAM_AUTH: ENABLED` and `BASE_URL` host containing `aoss.amazonaws.com`. A wrong Elastic Cloud URL will fail fast with a clear `RuntimeError` from `ElasticsearchProductsFetcher`.
+After deploy, CloudWatch logs for the fetcher should show `IAM_AUTH: ENABLED` and `BASE_URL` host containing `aoss.amazonaws.com`. A wrong Elastic Cloud URL will fail fast with a clear `RuntimeError` from `Search V2`.

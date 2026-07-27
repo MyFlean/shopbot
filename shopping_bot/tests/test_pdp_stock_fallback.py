@@ -1,6 +1,5 @@
 """Tests PDP in_stock precedence: Redis override -> availability -> visibility fallback."""
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -48,9 +47,9 @@ def _base_pdp(in_stock=True, visibility="visible"):
 @patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=None)
 @patch("shopping_bot.routes.product_api.try_resolve_canonical_pincode", return_value="201303")
 @patch("shopping_bot.routes.product_api.transform_to_pdp")
-@patch("shopping_bot.routes.product_api.get_es_fetcher")
+@patch("search_v2.extension.pdp.fetch_product")
 def test_pdp_redis_miss_uses_availability_positive(
-    mock_get_fetcher,
+    mock_fetch_product,
     mock_transform_to_pdp,
     _mock_resolve_pincode,
     _mock_cache_override,
@@ -65,7 +64,7 @@ def test_pdp_redis_miss_uses_availability_positive(
             }
         }
     )
-    mock_get_fetcher.return_value = SimpleNamespace(get_product_by_id=lambda _pid: raw_src)
+    mock_fetch_product.return_value = raw_src
     mock_transform_to_pdp.return_value = _base_pdp(in_stock=True, visibility="visible")
 
     resp = pdp_client.get("/rs/api/v1/product/prod-1?pincode=201303")
@@ -79,9 +78,9 @@ def test_pdp_redis_miss_uses_availability_positive(
 @patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=None)
 @patch("shopping_bot.routes.product_api.try_resolve_canonical_pincode", return_value="201303")
 @patch("shopping_bot.routes.product_api.transform_to_pdp")
-@patch("shopping_bot.routes.product_api.get_es_fetcher")
+@patch("search_v2.extension.pdp.fetch_product")
 def test_pdp_redis_miss_uses_availability_negative(
-    mock_get_fetcher,
+    mock_fetch_product,
     mock_transform_to_pdp,
     _mock_resolve_pincode,
     _mock_cache_override,
@@ -96,7 +95,7 @@ def test_pdp_redis_miss_uses_availability_negative(
             }
         }
     )
-    mock_get_fetcher.return_value = SimpleNamespace(get_product_by_id=lambda _pid: raw_src)
+    mock_fetch_product.return_value = raw_src
     mock_transform_to_pdp.return_value = _base_pdp(in_stock=True, visibility="visible")
 
     resp = pdp_client.get("/rs/api/v1/product/prod-1?pincode=201303")
@@ -108,16 +107,16 @@ def test_pdp_redis_miss_uses_availability_negative(
 @patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=None)
 @patch("shopping_bot.routes.product_api.try_resolve_canonical_pincode", return_value="201303")
 @patch("shopping_bot.routes.product_api.transform_to_pdp")
-@patch("shopping_bot.routes.product_api.get_es_fetcher")
+@patch("search_v2.extension.pdp.fetch_product")
 def test_pdp_redis_miss_no_availability_signal_keeps_visibility_fallback(
-    mock_get_fetcher,
+    mock_fetch_product,
     mock_transform_to_pdp,
     _mock_resolve_pincode,
     _mock_cache_override,
     pdp_client,
 ):
     raw_src = _base_raw_src(availability={"201303": {"zepto": {}, "blinkit": {}}})
-    mock_get_fetcher.return_value = SimpleNamespace(get_product_by_id=lambda _pid: raw_src)
+    mock_fetch_product.return_value = raw_src
     # Simulate existing visibility-derived stock from transform_to_pdp.
     mock_transform_to_pdp.return_value = _base_pdp(in_stock=False, visibility="soft")
 
@@ -130,9 +129,9 @@ def test_pdp_redis_miss_no_availability_signal_keeps_visibility_fallback(
 @patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=False)
 @patch("shopping_bot.routes.product_api.try_resolve_canonical_pincode", return_value="201303")
 @patch("shopping_bot.routes.product_api.transform_to_pdp")
-@patch("shopping_bot.routes.product_api.get_es_fetcher")
+@patch("search_v2.extension.pdp.fetch_product")
 def test_pdp_redis_hit_overrides_availability_fallback(
-    mock_get_fetcher,
+    mock_fetch_product,
     mock_transform_to_pdp,
     _mock_resolve_pincode,
     _mock_cache_override,
@@ -147,7 +146,7 @@ def test_pdp_redis_hit_overrides_availability_fallback(
             }
         }
     )
-    mock_get_fetcher.return_value = SimpleNamespace(get_product_by_id=lambda _pid: raw_src)
+    mock_fetch_product.return_value = raw_src
     mock_transform_to_pdp.return_value = _base_pdp(in_stock=True, visibility="visible")
 
     resp = pdp_client.get("/rs/api/v1/product/prod-1?pincode=201303")
@@ -159,9 +158,9 @@ def test_pdp_redis_hit_overrides_availability_fallback(
 @patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=False)
 @patch("shopping_bot.routes.product_api.try_resolve_canonical_pincode", return_value=None)
 @patch("shopping_bot.routes.product_api.transform_to_pdp")
-@patch("shopping_bot.routes.product_api.get_es_fetcher")
+@patch("search_v2.extension.pdp.fetch_product")
 def test_pdp_missing_pincode_defaults_to_201303_and_redis_still_overrides(
-    mock_get_fetcher,
+    mock_fetch_product,
     mock_transform_to_pdp,
     _mock_resolve_pincode,
     mock_cache_override,
@@ -176,7 +175,7 @@ def test_pdp_missing_pincode_defaults_to_201303_and_redis_still_overrides(
             }
         }
     )
-    mock_get_fetcher.return_value = SimpleNamespace(get_product_by_id=lambda _pid: raw_src)
+    mock_fetch_product.return_value = raw_src
     mock_transform_to_pdp.return_value = _base_pdp(in_stock=True, visibility="visible")
 
     resp = pdp_client.get("/rs/api/v1/product/prod-1")
@@ -190,9 +189,9 @@ def test_pdp_missing_pincode_defaults_to_201303_and_redis_still_overrides(
 @patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=None)
 @patch("shopping_bot.routes.product_api.try_resolve_canonical_pincode", return_value=None)
 @patch("shopping_bot.routes.product_api.transform_to_pdp")
-@patch("shopping_bot.routes.product_api.get_es_fetcher")
+@patch("search_v2.extension.pdp.fetch_product")
 def test_pdp_placeholder_pincode_defaults_to_201303(
-    mock_get_fetcher,
+    mock_fetch_product,
     mock_transform_to_pdp,
     _mock_resolve_pincode,
     mock_cache_override,
@@ -207,7 +206,7 @@ def test_pdp_placeholder_pincode_defaults_to_201303(
             }
         }
     )
-    mock_get_fetcher.return_value = SimpleNamespace(get_product_by_id=lambda _pid: raw_src)
+    mock_fetch_product.return_value = raw_src
     mock_transform_to_pdp.return_value = _base_pdp(in_stock=False, visibility="soft")
 
     resp = pdp_client.get("/rs/api/v1/product/prod-1?pincode=000000")
@@ -220,9 +219,9 @@ def test_pdp_placeholder_pincode_defaults_to_201303(
 @patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=None)
 @patch("shopping_bot.routes.product_api.try_resolve_canonical_pincode", return_value=None)
 @patch("shopping_bot.routes.product_api.transform_to_pdp")
-@patch("shopping_bot.routes.product_api.get_es_fetcher")
+@patch("search_v2.extension.pdp.fetch_product")
 def test_pdp_unmapped_pincode_defaults_to_201303(
-    mock_get_fetcher,
+    mock_fetch_product,
     mock_transform_to_pdp,
     _mock_resolve_pincode,
     mock_cache_override,
@@ -237,7 +236,7 @@ def test_pdp_unmapped_pincode_defaults_to_201303(
             }
         }
     )
-    mock_get_fetcher.return_value = SimpleNamespace(get_product_by_id=lambda _pid: raw_src)
+    mock_fetch_product.return_value = raw_src
     mock_transform_to_pdp.return_value = _base_pdp(in_stock=True, visibility="visible")
 
     resp = pdp_client.get("/rs/api/v1/product/prod-1?pincode=999999")
@@ -250,16 +249,16 @@ def test_pdp_unmapped_pincode_defaults_to_201303(
 @patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=None)
 @patch("shopping_bot.routes.product_api.try_resolve_canonical_pincode", return_value="201303")
 @patch("shopping_bot.routes.product_api.transform_to_pdp")
-@patch("shopping_bot.routes.product_api.get_es_fetcher")
+@patch("search_v2.extension.pdp.fetch_product")
 def test_pdp_returns_lab_report_url_when_present(
-    mock_get_fetcher,
+    mock_fetch_product,
     mock_transform_to_pdp,
     _mock_resolve_pincode,
     _mock_cache_override,
     pdp_client,
 ):
     raw_src = _base_raw_src(lab_report_url=" https://cdn.example.com/report.pdf ")
-    mock_get_fetcher.return_value = SimpleNamespace(get_product_by_id=lambda _pid: raw_src)
+    mock_fetch_product.return_value = raw_src
     mock_transform_to_pdp.return_value = _base_pdp(in_stock=True, visibility="visible")
 
     resp = pdp_client.get("/rs/api/v1/product/prod-1?pincode=201303")
@@ -271,16 +270,16 @@ def test_pdp_returns_lab_report_url_when_present(
 @patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=None)
 @patch("shopping_bot.routes.product_api.try_resolve_canonical_pincode", return_value="201303")
 @patch("shopping_bot.routes.product_api.transform_to_pdp")
-@patch("shopping_bot.routes.product_api.get_es_fetcher")
+@patch("search_v2.extension.pdp.fetch_product")
 def test_pdp_returns_null_lab_report_url_when_absent(
-    mock_get_fetcher,
+    mock_fetch_product,
     mock_transform_to_pdp,
     _mock_resolve_pincode,
     _mock_cache_override,
     pdp_client,
 ):
     raw_src = _base_raw_src()
-    mock_get_fetcher.return_value = SimpleNamespace(get_product_by_id=lambda _pid: raw_src)
+    mock_fetch_product.return_value = raw_src
     mock_transform_to_pdp.return_value = _base_pdp(in_stock=True, visibility="visible")
 
     resp = pdp_client.get("/rs/api/v1/product/prod-1?pincode=201303")

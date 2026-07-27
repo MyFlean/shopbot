@@ -50,12 +50,12 @@ def _build_products(prefix: str, count: int) -> list[dict]:
     ]
 
 
-def _legacy_payload(products_per_category: int) -> tuple:
+def _v2_flean_picks_payload(products_per_category: int) -> tuple:
     products_by_key = {
         key: _build_products(key, products_per_category)
         for key in FLEAN_PICKS_CATEGORIES
     }
-    per_subcategory = {
+    tier_stats = {
         key: {
             "requested_count": products_per_category,
             "collected_count": len(products),
@@ -64,9 +64,7 @@ def _legacy_payload(products_per_category: int) -> tuple:
         }
         for key, products in products_by_key.items()
     }
-    total_products = sum(len(items) for items in products_by_key.values())
-    total_tier_counts = {"tier1": total_products, "tier2": 0, "tier3": 0}
-    return [], [], per_subcategory, total_tier_counts, products_by_key
+    return products_by_key, tier_stats
 
 
 @patch("shopping_bot.routes.home_page._resolve_canonical_request_pincode", return_value="201303")
@@ -186,12 +184,9 @@ def test_post_invalid_filter_ignored(mock_logic, _mock_pincode, client):
 
 
 @patch("shopping_bot.routes.home_page._filter_cards_with_validation_cache")
-@patch("shopping_bot.routes.home_page._legacy_unified_flean_picks_fetch")
-@patch("shopping_bot.routes.home_page.os.getenv", return_value="1")
-def test_home_mode_targets_three_per_subcategory(
-    _mock_getenv, mock_legacy_fetch, mock_validate_cache
-):
-    mock_legacy_fetch.return_value = _legacy_payload(products_per_category=5)
+@patch("search_v2.extension.flean_picks.flean_picks")
+def test_home_mode_targets_three_per_subcategory(mock_v2_flean_picks, mock_validate_cache):
+    mock_v2_flean_picks.return_value = _v2_flean_picks_payload(products_per_category=5)
     seen_target_counts = []
 
     def _validation_side_effect(products, *_args, **kwargs):
@@ -211,12 +206,9 @@ def test_home_mode_targets_three_per_subcategory(
 
 
 @patch("shopping_bot.routes.home_page._filter_cards_with_validation_cache")
-@patch("shopping_bot.routes.home_page._legacy_unified_flean_picks_fetch")
-@patch("shopping_bot.routes.home_page.os.getenv", return_value="1")
-def test_see_all_mode_still_targets_twelve_per_subcategory(
-    _mock_getenv, mock_legacy_fetch, mock_validate_cache
-):
-    mock_legacy_fetch.return_value = _legacy_payload(products_per_category=14)
+@patch("search_v2.extension.flean_picks.flean_picks")
+def test_see_all_mode_still_targets_twelve_per_subcategory(mock_v2_flean_picks, mock_validate_cache):
+    mock_v2_flean_picks.return_value = _v2_flean_picks_payload(products_per_category=14)
     seen_target_counts = []
 
     def _validation_side_effect(products, *_args, **kwargs):

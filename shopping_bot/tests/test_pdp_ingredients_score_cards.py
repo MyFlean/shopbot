@@ -2,8 +2,8 @@
 
 import pytest
 
-from shopping_bot.data_fetchers import es_products
-from shopping_bot.data_fetchers.es_products import transform_to_pdp, transform_to_product_card
+from shopping_bot import product_transforms
+from shopping_bot.product_transforms import transform_to_pdp, transform_to_product_card
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +21,7 @@ def _no_redis_cards_config(monkeypatch):
     assert on. These tests are meant to check transform_to_pdp's pure
     data-transform behavior, not Redis config gating, so pin that dependency.
     """
-    monkeypatch.setattr(es_products, "get_subcategory_cards_config_for_path", lambda _path: [])
+    monkeypatch.setattr(product_transforms, "get_subcategory_cards_config_for_path", lambda _path: [])
 
 
 def _base_src(**overrides):

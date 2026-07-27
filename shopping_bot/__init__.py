@@ -265,33 +265,18 @@ def create_app(config_name: str = 'production') -> Flask:
     # STEP 2: Initialize Search V2 Gateway
     # ────────────────────────────────────────────────────────
     try:
-        from .data_fetchers.es_products import (
-            ELASTIC_INDEX as _legacy_index,
-            RESOLVED_PRODUCT_INDEX as _resolved_product_index,
-        )
-        _s2_index = os.getenv("SEARCH_V2_INDEX_NAME", "").strip()
-        log.info(
-            "PRODUCT_INDEX_RESOLUTION | resolved_index=%s | search_v2_index=%s | legacy_index=%s",
-            _resolved_product_index,
-            _s2_index or "<unset>",
-            _legacy_index,
-        )
-        if _s2_index and _legacy_index and _s2_index != _legacy_index:
-            log.warning(
-                "PRODUCT_INDEX_MISMATCH | SEARCH_V2_INDEX_NAME and ELASTIC_INDEX differ; "
-                "legacy fetcher-backed APIs will use SEARCH_V2_INDEX_NAME=%s",
-                _s2_index,
-            )
+        _s2_index = os.getenv("SEARCH_V2_INDEX_NAME", "").strip() or "products-search-v2"
+        log.info("PRODUCT_INDEX_RESOLUTION | search_v2_index=%s", _s2_index)
     except Exception as _index_log_exc:
         log.warning("PRODUCT_INDEX_RESOLUTION_LOG_ERROR | error=%s", _index_log_exc)
 
     if config_name == 'lambda':
         # Lambda: Search V2 initializes lazily on first search request.
         # search_v2.extension.search._get_search_fn() handles double-checked locking.
-        log.info("INIT_SEARCH_GATEWAY | Lambda mode - will initialize on first request")
+        log.info("INIT_SEARCH_V2 | Lambda mode - will initialize on first request")
     else:
         try:
-            log.info("INIT_SEARCH_GATEWAY | initializing Search V2 search pipeline")
+            log.info("INIT_SEARCH_V2 | initializing Search V2 search pipeline")
             from search_v2.extension.search import warmup as _v2_warmup
 
             # warmup() pre-builds the V2 pipeline (OpenSearchClient, corrector).
@@ -313,12 +298,12 @@ def create_app(config_name: str = 'production') -> Flask:
             else:
                 log.info("INIT_EMBEDDING_PRELOAD_SKIPPED | backend=%s (nothing to preload)", _s2.EMBEDDING_BACKEND)
 
-            log.info("INIT_SEARCH_GATEWAY_SUCCESS")
+            log.info("INIT_SEARCH_V2_SUCCESS")
         except Exception as e:
             # Warmup failure must not prevent startup — search_v2.extension.search
             # retries lazily on the first request via _get_search_fn().
             log.warning(
-                "INIT_SEARCH_GATEWAY_WARNING | init failed at startup, will retry on first request | error=%s", e
+                "INIT_SEARCH_V2_WARNING | init failed at startup, will retry on first request | error=%s", e
             )
 
     # ────────────────────────────────────────────────────────

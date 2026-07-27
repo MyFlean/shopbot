@@ -21,19 +21,10 @@ don't fit an embedding InvokeModel call's shape, and duplicating the ~15
 lines of bearer-token HTTP plumbing here is cheaper than forcing an
 unrelated abstraction over both).
 
-Failure philosophy — deliberately the OPPOSITE of the Search repo's indexing
-version, and this is the important part: this is the RUNTIME query path.
-On any failure (timeout, throttle, bad response), embed_query() RAISES
-BedrockEmbeddingError rather than returning None. This is intentional: the
-existing V1 fallback in shopping_bot/routes/unified_search.py (lines
-~440-497) already catches any uncaught exception from gateway.search() and
-falls through to the legacy Elasticsearch/OpenSearch V1 path automatically
-— an uncaught exception here is what triggers that existing, tested
-fallback. If this instead swallowed the error and returned None (the old
-local-model convention), semantic_query_builder.py would degrade to
-lexical-only Search V2 instead — which is explicitly NOT the desired
-behavior per the current migration's failure-handling requirement (fall
-back to V1, not lexical-only V2).
+Failure philosophy: this is the runtime query path. On any failure (timeout,
+throttle, bad response), embed_query() raises BedrockEmbeddingError rather
+than returning None, so callers surface the error instead of silently
+degrading to lexical-only retrieval.
 """
 from __future__ import annotations
 
@@ -51,7 +42,7 @@ _WS_RE = re.compile(r"\s+")
 MAX_QUERY_CHARS = 500
 
 # Short timeout/retry budget, deliberately — this sits in the live request
-# path. The existing V1 fallback is the real safety net; this budget only
+# Bedrock call timeout (seconds). Failures raise BedrockEmbeddingError.
 # needs to avoid needlessly inflating request latency before falling back.
 _MAX_ATTEMPTS = 2
 _RETRY_DELAY_SEC = 0.5
@@ -65,10 +56,7 @@ def _clean(text: Optional[str], max_chars: int) -> str:
 
 
 class BedrockEmbeddingError(RuntimeError):
-    """Raised on any Titan query-embedding failure. Deliberately NOT caught
-    anywhere in this module or in semantic_query_builder.py/
-    hybrid_search_orchestrator.py — see module docstring. Must propagate to
-    unified_search.py's existing V1-fallback handler."""
+    """Raised on any Titan query-embedding failure."""
 
 
 class BedrockTitanEmbeddingService:
@@ -87,8 +75,7 @@ class BedrockTitanEmbeddingService:
         if not bearer_token:
             raise RuntimeError(
                 "Missing AWS_BEARER_TOKEN_BEDROCK. Set it in the environment — "
-                "semantic search cannot generate query embeddings without it "
-                "(lexical-only V1 will still work via the existing fallback)."
+                "semantic search cannot generate query embeddings without it."
             )
         self.bearer_token = bearer_token
         self.region = region
@@ -178,9 +165,7 @@ class BedrockTitanEmbeddingService:
         )
 
     def embed_query(self, text: str) -> Optional[List[float]]:
-        """Raises BedrockEmbeddingError on failure — does NOT return None.
-        See module docstring: this is what lets the existing V1 fallback in
-        unified_search.py catch it, instead of degrading to lexical-only V2."""
+        """Raises BedrockEmbeddingError on failure — does not return None."""
         cleaned = _clean(text, MAX_QUERY_CHARS)
         if not cleaned:
             return None

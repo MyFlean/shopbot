@@ -26,12 +26,12 @@ Three strategies, selected via search_v2.config.SETTINGS.FUSION_STRATEGY:
           version — unlike OpenSearch's native hybrid-query RRF support
           (score-ranker-processor), which only shipped in OpenSearch 2.19+
           (the production domain, per OPENSEARCH-MIGRATION-2026-04.md, is on
-          2.15 — see Search V1's ARCHITECTURE.md for that finding, which
+          2.15 — see prior hybrid implementation's ARCHITECTURE.md for that finding, which
           still applies here).
         - It's pure Python, fully unit-testable, and trivially explainable —
           all properties this is meant to be the long-term architecture for.
       Cost: two round trips (lexical query + semantic query) instead of one.
-      At this catalog's actual scale (~8K products, <1 QPS — see Search V1's
+      At this catalog's actual scale (~8K products, <1 QPS — see prior hybrid implementation's
       findings), that cost is immaterial.
 
   "weighted" — score-based: min-max normalize each retriever's scores

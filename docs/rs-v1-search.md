@@ -22,7 +22,7 @@ The new route:
 
 - Accepts parameters compatible with **all three** (including alias names where historical clients differ).
 - Returns exactly the **same JSON envelope** as `/rs/api/v1/products`: `{ "success", "data": { "products" }, "meta" }`.
-- Uses the same backend query path as `/rs/api/v1/products`: `ElasticsearchProductsFetcher.search_products_unified(...)`.
+- Uses Search V2 via `search_v2.extension.search.search()` (and `category_browsing.browse` for subcategory-only requests).
 - Does **not** remove or change the legacy routes; they remain available.
 
 ---
@@ -199,11 +199,11 @@ Errors use the same wrapper as other Shopbot product APIs: `success: false` and 
 
 1. Parse and normalize parameters (GET vs POST, sort aliases, filter key aliases, optional top-level `food_type` on POST).
 2. Validate sort and filters.
-3. Call `get_es_fetcher().search_products_unified(query, subcategory, page, size, sort_by=resolved, filters=validated)`.
+3. Call `search_v2.extension.search.search()` or `search_v2.extension.category_browsing.browse()` depending on query vs subcategory-only input.
 4. Map raw hits through `transform_to_product_card`.
 5. Return `_success_response({"products": cards}, meta)` with `meta["sort_by"]` set to the resolved sort.
 
-OpenSearch / Elasticsearch configuration (URL, index, API key vs IAM for AOSS) is shared with the rest of the service via `ElasticsearchProductsFetcher` and environment variables; it is not specific to this route.
+OpenSearch configuration (`SEARCH_V2_ES_URL`, `SEARCH_V2_INDEX_NAME`, API key vs IAM) is shared with the rest of Search V2 via `search_v2/config/settings.py`.
 
 ---
 
@@ -257,7 +257,9 @@ curl -sS -X POST "https://api.flean.ai/rs/v1/search" \
 |------|------|
 | [`shopping_bot/routes/unified_search.py`](../shopping_bot/routes/unified_search.py) | Route, sort/filter alias handling |
 | [`shopping_bot/routes/product_api.py`](../shopping_bot/routes/product_api.py) | `VALID_SORT_OPTIONS`, `_validate_filters`, `_success_response` |
-| [`shopping_bot/data_fetchers/es_products.py`](../shopping_bot/data_fetchers/es_products.py) | `search_products_unified`, `_build_sort_config` (including `flean_score_desc`) |
+| [`search_v2/extension/search/core.py`](../search_v2/extension/search/core.py) | Hybrid search pipeline |
+| [`search_v2/extension/category_browsing/browse.py`](../search_v2/extension/category_browsing/browse.py) | Subcategory browse |
+| [`shopping_bot/product_transforms.py`](../shopping_bot/product_transforms.py) | `transform_to_product_card` |
 | [`shopping_bot/__init__.py`](../shopping_bot/__init__.py) | Blueprint registration: `unified_search` with `url_prefix='/rs'` |
 
 Production search backend (AOSS, `ES_URL`, IAM): [`docs/opensearch-serverless.md`](opensearch-serverless.md).

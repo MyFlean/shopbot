@@ -157,7 +157,7 @@ type_map = {
 
 ### Files Changed
 
-**1. `/shopping_bot/data_fetchers/es_products.py`**
+**1. `/search_v2/extension/search`**
 
 **New Function:** `_parse_product_type(anchor: str)` (lines 644-732)
 - Detects product category (hair/face/body/skin/lips/eyes/nails)
@@ -231,7 +231,7 @@ POST /rs/chat
 
 ### Test 3: Debug the Parser
 ```python
-from shopping_bot.data_fetchers.es_products import _parse_product_type
+from search_v2.extension.routing import parse_product_type as _parse_product_type
 
 result = _parse_product_type("hair oil")
 print(result)
@@ -294,7 +294,7 @@ print(result)
 
 **Check what gets parsed:**
 ```python
-from shopping_bot.data_fetchers.es_products import _parse_product_type
+from search_v2.extension.routing import parse_product_type as _parse_product_type
 
 # Test various anchors
 for anchor in ["hair oil", "face wash", "body lotion"]:
@@ -303,7 +303,7 @@ for anchor in ["hair oil", "face wash", "body lotion"]:
 
 **View ES query structure:**
 ```python
-from shopping_bot.data_fetchers.es_products import _build_skin_es_query
+# (historical — personal-care query builder removed with V1)
 import json
 
 params = {
@@ -323,7 +323,7 @@ print(json.dumps(query, indent=2))
 
 - **RCA & Design Doc:** `PERSONAL_CARE_STRICT_MATCHING_RCA.md`
 - **Test Suite:** `test_strict_matching.py`
-- **Implementation:** `shopping_bot/data_fetchers/es_products.py`
+- **Implementation:** `search_v2/extension/search`
 
 ---
 

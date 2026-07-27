@@ -94,7 +94,7 @@ Anthropic call log (Turn 2)
   - Result: tool_use → `{fetch_functions:["search_products", ...]}` → parsed to `List[BackendFunction]`
 
 Step 4: Build ES params and fetch
-- For follow-up delta, core iterates fetchers (L151-L173) → `get_fetcher(SEARCH_PRODUCTS)` → `data_fetchers/es_products.search_products_handler` (L1103-L1135).
+- For follow-up delta, core iterates fetchers → `get_fetcher(SEARCH_PRODUCTS)` → `data_fetchers/search_products.search_products_handler`.
   - Build params:
     - Defaults: `_extract_defaults_from_context` (L845-L928) → includes `q` from `assessment.original_query`, budget parsed → `price_max≈200`.
     - LLM normalization: `LLMService.extract_es_params` → `RecommendationService.extract_search_params` (L319-L655) merges constraints; drops noise; may set category_group and cat_path; normalizes dietary terms if present.
@@ -124,7 +124,7 @@ Step 4: Build ES params and fetch
           - Params: tool `fb_category_classify`, temperature 0, max_tokens 200
           - Result: `{is_fnb, category, subcategory}`
     - Final merge and heuristics: `_normalize_params` (L930-L963) + (L1017-L1064).
-  - ES query: `_build_enhanced_es_query` (L146-L498) + function_score from `scoring_config.build_function_score_functions` (L221-L280); execute via `ElasticsearchProductsFetcher.search` (L649-L694).
+  - ES query: `_build_enhanced_es_query` (L146-L498) + function_score from `scoring_config.build_function_score_functions` (L221-L280); execute via `search_v2.extension.search.search` (L649-L694).
   - Transform: `_transform_results` (L500-L593) → stores into `ctx.fetched_data["search_products"]` and Redis.
 
 Step 5: Product answer and UX
@@ -239,7 +239,7 @@ See `docs/diagrams/trace-flow.mmd` for a sequence-style view of the above traces
 
 - MPM delta → ES:
   - Delta assess: `shopping_bot/llm_service.py:L1157-L1226`
-  - ES query builder: `shopping_bot/data_fetchers/es_products.py:L146-L498`
+  - Search query path: `search_v2/extension/search/core.py`
 
 - SPM clamp:
   - One product: `shopping_bot/llm_service.py:L903-L961`

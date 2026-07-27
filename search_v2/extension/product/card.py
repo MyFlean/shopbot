@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from shopping_bot.data_fetchers.es_products import _copy_if_present, _generate_macro_tags
+from shopping_bot.product_transforms import _copy_if_present, _generate_macro_tags
 
 
 def to_product_card(source: Dict[str, Any], rank: int = 0, score: float = 0.0) -> Dict[str, Any]:

@@ -1,11 +1,7 @@
 """
 Native Search V2 PDP document fetch.
 
-Only the retrieval step is V2-native here — transform_to_pdp() (and the
-route-level cta/lab-report/stock-override composition around it) is a pure,
-engine-agnostic data transform with no V1 query/client dependency, so it's
-reused directly rather than reimplemented (see MIGRATION_STATUS.md's V1
-dependency audit for why this one stays shared).
+Retrieval only — card/PDP shaping lives in shopping_bot.product_transforms.
 """
 from __future__ import annotations
 
@@ -31,8 +27,7 @@ def fetch_product(product_id: str) -> Optional[Dict[str, Any]]:
 
 
 def fetch_products_batch(product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
-    """One `terms` query for every id, not N single-id fetches — same
-    single-round-trip shape as ElasticsearchProductsFetcher.mget_products_batch().
+    """One `terms` query for every id, not N single-id fetches.
     Returns {id: _source} only for ids that were actually found."""
     if not product_ids:
         return {}

@@ -53,7 +53,7 @@ This document provides a high-level view of the backend architecture, major comp
    - `shopping_bot/recommendation.py` builds ES parameters with LLM tooling and deterministic fallbacks (dietary/brand/budget/category mapping & carry-over).
      - Main extractor: `ElasticsearchRecommendationEngine.extract_search_params`: `shopping_bot/recommendation.py:L319-L655`.
      - Category-based scoring and function_score shaping are consumed by ES fetcher.
-   - ES fetcher: `shopping_bot/data_fetchers/es_products.py` applies query building, mapping hints, and result transformation; includes `_mget` enrichment.
+   - Search: `search_v2.extension.search` and `shopping_bot/data_fetchers/search_products.py` (chat flow); transforms in `product_transforms.py`.
      - Query builder: `L146-L498`, transform: `L500-L593`, search: `L649-L694`, mget: `L696-L739`.
 
 6) UX layer
@@ -71,7 +71,7 @@ This document provides a high-level view of the backend architecture, major comp
   - Context load/save with debounce and cluster-safe writes; atomic fetched-data merge; background processing status lifecycle.
   - Key APIs: `get_context` `L130-L173`, `save_context` `L175-L203`, `merge_fetched_data` `L253-L307`, `set_processing_status` `L417-L466`.
 
-- **Elasticsearch**: `shopping_bot/data_fetchers/es_products.py`
+- **OpenSearch (Search V2)**: `search_v2/` package and `indexing_es_client.py`
   - Uses `ELASTIC_*` envs; function_score driven ranking via `shopping_bot/scoring_config.py`.
   - Enrichment via `_mget` for top products to power UX persuasion.
 
@@ -86,7 +86,7 @@ This document provides a high-level view of the backend architecture, major comp
    - Continue assessment if in-progress; else classify intent; for serious product L3 intents, classify 4-intent.
    - Assess requirements → either ask user (QUESTION) or run backend fetchers.
 4. For product intents:
-   - Extract ES parameters (recommendation engine) → `data_fetchers.es_products.search`.
+   - Extract search parameters (recommendation engine) → `data_fetchers.search_products`.
    - LLM `generate_response` builds product answer; UX generator adds DPL/QR/surface.
 5. Build FE envelope and return JSON.
 
@@ -96,7 +96,7 @@ This document provides a high-level view of the backend architecture, major comp
 - `shopping_bot/bot_core.py`: session flow control, missing-slot detection, fetch orchestration, UX generation wiring.
 - `shopping_bot/llm_service.py`: all LLM logic; prompts & tool schemas; product/non-product generation; follow-ups; slot questions; ES params glue.
 - `shopping_bot/recommendation.py`: robust ES param extraction, normalization, and category mapping; brand/dietary/budget carry-over policy.
-- `shopping_bot/data_fetchers/es_products.py`: ES I/O, enriched transformation, and function_score ranking integration.
+- `search_v2/` and `shopping_bot/product_transforms.py`: OpenSearch I/O, ranking, and response transforms.
 - `shopping_bot/scoring_config.py`: per-subcategory scoring config; builds ES function_score functions.
 - `shopping_bot/ux_response_generator.py`: DPL/UX surface/QRs; strict SPM/MPM intent mapping.
 - `shopping_bot/redis_manager.py`: durable user context; atomic merges; status lifecycle; health.

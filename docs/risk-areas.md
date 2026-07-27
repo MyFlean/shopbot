@@ -41,7 +41,7 @@ This document captures brittle paths, TODO/FIXME hotspots, and security/performa
   - Recommendation: Log token estimates and add caps based on traffic; consider summarizing briefs further.
 
 - ES requests
-  - Function score and highlights add latency. Ensure `TIMEOUT` (`es_products.py:L34`) suits prod.
+  - Function score and highlights add latency. Ensure `TIMEOUT` (`search_v2:L34`) suits prod.
   - Recommendation: Add retries/backoff for ES; consider caching recent param→result for short TTL.
 
 - Redis serialization

@@ -23,10 +23,6 @@ RUN pip install --no-cache-dir -r requirements-lambda.txt -t /build/package/
 # during the Bedrock migration: shopping_bot/__init__.py imports from it, so
 # every Search V2 request would have raised ModuleNotFoundError at runtime
 # regardless of anything else in this file.
-# search_gateway/ was ALSO copied here until the SearchGateway retirement —
-# that package has been deleted from the repo (its logic moved into
-# search_v2/extension/search/core.py, already covered by the search_v2/ COPY
-# below); copying a now-nonexistent directory would fail this build.
 COPY lambda_handler.py /build/package/
 COPY run.py /build/package/
 COPY indexing_es_client.py /build/package/

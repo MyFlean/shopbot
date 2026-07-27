@@ -3,25 +3,13 @@
 postman_regression_runner.py — executes every request in a Postman v2.1
 collection against a running ShopBot instance and reports pass/fail, status
 code, latency, and a response summary for each. Optionally diffs two
-previously-saved result files against each other (e.g. a V1-only run vs a
-V2-only run) to report response differences.
-
-Why two separate runs for V1-vs-V2, not one: SEARCH_ENGINE is read from the
-SERVER process's environment, not from anything a client can override
-per-request — so a true V1-vs-V2 comparison means starting the server twice
-(once per SEARCH_ENGINE value) and diffing two saved result files, not
-something a single invocation of this script can do against one live server.
+previously-saved result files against each other.
 
 Usage:
-  # Run once against whatever server is currently up (reports pass/fail,
-  # status, latency for every request):
   python postman_regression_runner.py --collection Flean_HomePage_Search_APIs.postman_collection.json \
-      --base-url http://localhost:8080 --out results_auto.json
+      --base-url http://localhost:8080 --out results.json
 
-  # Then, to get a V1-vs-V2 comparison: start the server once with
-  # SEARCH_ENGINE=v1 and run with --out results_v1.json, then again with
-  # SEARCH_ENGINE=v2 and --out results_v2.json, then:
-  python postman_regression_runner.py --diff results_v1.json results_v2.json
+  python postman_regression_runner.py --diff results_a.json results_b.json
 """
 from __future__ import annotations
 
@@ -243,7 +231,7 @@ def main() -> None:
     parser.add_argument("--base-url", help="Base URL to run the collection against")
     parser.add_argument("--out", default="postman_regression_results.json", help="Where to save run results")
     parser.add_argument("--timeout", type=float, default=20.0)
-    parser.add_argument("--label", help="Tag for this run (e.g. 'v1', 'v2', 'auto') — required to diff two runs against the same base-url")
+    parser.add_argument("--label", help="Tag for this run (e.g. 'local', 'prod') — used when diffing two saved result files")
     parser.add_argument("--diff", nargs=2, metavar=("RESULTS_A", "RESULTS_B"),
                          help="Instead of running, diff two previously-saved result files")
     args = parser.parse_args()

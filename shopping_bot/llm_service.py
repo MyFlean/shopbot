@@ -28,7 +28,6 @@ from .intent_config import (CATEGORY_QUESTION_HINTS, INTENT_MAPPING,
 from .models import (FollowUpPatch, FollowUpResult, ProductData,
                      RequirementAssessment, UserContext)
 from .recommendation import get_recommendation_service
-# Avoid top-level import of es_products to prevent circular import at app startup
 from .utils.helpers import extract_json_block
 
 Cfg = get_config()
@@ -317,7 +316,8 @@ SKIN_ES_PARAMS_TOOL = {
 #    - Clear PC-specific slots on new assessments
 #
 # 🔄 Step 5: Add fuzzy matching to nested efficacy/skin_type queries
-#    - Update _build_skin_es_query in es_products.py
+#    - Update personal-care OpenSearch query construction in search_products /
+#      Search V2 retrieval for skin/PC filters
 #    - Change exact terms queries to fuzzy multi_match
 #
 # 🔄 Step 6: Route personal_care traffic to 2025 method

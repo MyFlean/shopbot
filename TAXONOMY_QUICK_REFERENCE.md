@@ -13,7 +13,7 @@
 - **Taxonomy Source**: `shopping_bot/llm_service.py` (lines 4776-4881, embedded fallback)
 - **Optional Override**: `shopping_bot/taxonomies/fnb_hierarchy.json`
 - **Prompt Injection**: `shopping_bot/llm_service.py` (lines 2982-2984, 3106-3108)
-- **ES Path Handler**: `shopping_bot/data_fetchers/es_products.py` (lines 204-294)
+- **ES Path Handler**: `search_v2/extension/search` and `search_v2/retrieval/filters.py`
 
 ### Path Format
 ```

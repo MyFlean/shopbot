@@ -46,7 +46,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Blueprint, jsonify, request
 
-from ..data_fetchers.es_products import get_es_fetcher, transform_to_product_card
+from ..product_transforms import transform_to_product_card
 from search_v2.extension.search import search as v2_search
 from ..utils.pincode_mapping import try_resolve_canonical_pincode
 from .product_api import (
@@ -70,10 +70,6 @@ MAX_PRODUCTS_PER_BRAND = 3
 V1_SUGGEST_SIZE = 8
 V2_SUGGEST_SIZE = 100
 DEFAULT_SEARCH_PINCODE = "201303"
-
-
-def _search_engine() -> str:
-    return os.getenv("SEARCH_ENGINE", "auto").strip().lower()
 
 
 # ---------------------------------------------------------------------------
@@ -366,36 +362,9 @@ def _extract_suggest_query() -> Tuple[Optional[str], Optional[Tuple[Dict[str, An
 
 
 def _fetch_flat_suggestions(query: str, size: int, version: str) -> Tuple[Optional[Dict[str, Any]], Optional[Tuple[Dict[str, Any], int]]]:
-    """Fetch flat suggestions — V2-native unless SEARCH_ENGINE=v1 explicitly.
-    Auto-fallback-to-V1-on-exception was removed (final pre-production pass):
-    live regression showed zero exceptions here even under varied partial-
-    typing input; a genuine V2 failure now surfaces as a real error instead
-    of silently degrading. See V1_FALLBACK_AUDIT.md."""
-    if _search_engine() != "v1":
-        from search_v2.extension.suggestions import suggest as v2_suggest
-        return v2_suggest(query, size=size), None
-
-    try:
-        fetcher = get_es_fetcher()
-    except RuntimeError as exc:
-        log.error("UNIFIED_SEARCH_SUGGEST_CONFIG_ERROR | version=%s | error=%s", version, exc, exc_info=True)
-        return None, _error_response("INTERNAL_ERROR", str(exc), 500)
-
-    try:
-        result = fetcher.search_suggestions(
-            query=query,
-            size=size,
-        )
-    except TypeError as exc:
-        if "unexpected keyword argument 'size'" not in str(exc):
-            raise
-        # Backward-compatible call shape for older mocks/callers.
-        result = fetcher.search_suggestions(query=query)
-    meta = result.get("meta", {}) or {}
-    if meta.get("error"):
-        log.error("UNIFIED_SEARCH_SUGGEST_ES_ERROR | version=%s | error=%s", version, meta.get("error"))
-        return None, _error_response("SEARCH_ERROR", f"Suggestion search failed: {meta.get('error')}", 500)
-    return result, None
+    """Fetch flat suggestions via V2 suggest."""
+    from search_v2.extension.suggestions import suggest as v2_suggest
+    return v2_suggest(query, size=size), None
 
 
 # ---------------------------------------------------------------------------
@@ -499,13 +468,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         # short-circuit). Query-bearing requests always go through v2_search
         # too, regardless of subcategory (subcategory becomes a filter via
         # category_path_prefix below).
-        # V2-native unless SEARCH_ENGINE=v1 explicitly. Auto-fallback-to-V1-
-        # on-exception was removed (final pre-production pass): live
-        # regression across varied queries/filters showed zero exceptions;
-        # a genuine V2 failure now surfaces as a real error. See
-        # V1_FALLBACK_AUDIT.md.
         filters_only = bool(validated_filters) and not subcategory
-        if _search_engine() != "v1" and (query or filters_only):
+        if query or filters_only:
             gw_params: Dict[str, Any] = {
                 "q": query or "",
                 "size": size,
@@ -547,12 +511,9 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             }
 
         # V2-only for subcategory browsing (fixed, fully-enumerable category
-        # paths) unless SEARCH_ENGINE=v1 — live SEARCH_ENGINE=v2 regression
-        # showed zero exceptions here. See V1_FALLBACK_AUDIT.md. An
-        # unresolvable bare subcategory id (resolved_path is None) still
-        # falls through to V1's more permissive wildcard matching — a
-        # taxonomy-resolution gap, not an error being hidden.
-        if result is None and _search_engine() != "v1" and subcategory and not query:
+        # paths). An unresolvable bare subcategory id (resolved_path is
+        # None) falls through to the no-match branch below.
+        if result is None and subcategory and not query:
             resolved_path = _resolve_subcategory_es_path(subcategory)
             if resolved_path:
                 from search_v2.extension.category_browsing import browse
@@ -575,21 +536,34 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 }
 
         if result is None:
-            # Legacy V1 path
-            try:
-                fetcher = get_es_fetcher()
-            except RuntimeError as exc:
-                log.error("UNIFIED_SEARCH_CONFIG_ERROR | error=%s", exc, exc_info=True)
-                return _error_response("INTERNAL_ERROR", str(exc), 500)
-
-            result = fetcher.search_products_unified(
-                query=query,
-                subcategory=subcategory,
-                page=page,
-                size=size,
-                sort_by=resolved_sort,
-                filters=validated_filters,
+            # No V2 path matched (e.g. unresolved subcategory with no query).
+            log.warning(
+                "UNIFIED_SEARCH_NO_V2_MATCH | query=%r | subcategory=%r | filters=%s",
+                query,
+                subcategory,
+                bool(validated_filters),
             )
+            result = {
+                "products": [],
+                "filters": [],
+                "meta": {
+                    "total": 0,
+                    "page": page,
+                    "size": size,
+                    "total_pages": 0,
+                    "has_next": False,
+                    "has_prev": page > 0,
+                    "query": query,
+                    "subcategory": subcategory,
+                    "sort_by": resolved_sort,
+                    "filters_applied": validated_filters,
+                    "took_ms": 0,
+                    "fuzzy_fallback_used": False,
+                    "prefix_fallback_used": False,
+                    "phonetic_used": False,
+                    "engine": "v2",
+                },
+            }
 
         meta = result.get("meta", {}) or {}
         if meta.get("error"):

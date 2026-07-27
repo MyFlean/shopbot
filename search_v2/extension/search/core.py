@@ -1,12 +1,9 @@
 """
-Native Search V2 query-driven search — the plain-function replacement for
-search_gateway/gateway.py's SearchGateway class.
+Native Search V2 query-driven search.
 
-Same pipeline (query processing -> hybrid retrieval -> business ranking ->
-pagination -> dynamic filters), reorganized as module-level lazy singletons
-(matching every other search_v2/extension/* module) instead of a class with
-a closure factory. No feature flags, no V1 compatibility layer: this module
-IS Search V2's query search, unconditionally.
+Pipeline: query processing → hybrid retrieval → business ranking →
+pagination → dynamic filters. Module-level lazy singletons (matching other
+search_v2/extension/* modules).
 """
 from __future__ import annotations
 

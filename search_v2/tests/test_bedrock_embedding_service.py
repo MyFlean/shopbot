@@ -1,10 +1,8 @@
 """
 Unit tests for BedrockTitanEmbeddingService (shopbot-main's runtime query
 embedder). Mocks requests.post — no live AWS credentials or network access
-required. These tests validate the request/response contract and, most
-importantly, the raise-not-None failure contract that unified_search.py's
-existing V1 fallback depends on (see bedrock_embedding_service.py's module
-docstring).
+required. Validates the request/response contract and the raise-on-failure
+contract (BedrockEmbeddingError, never silent None).
 """
 from __future__ import annotations
 

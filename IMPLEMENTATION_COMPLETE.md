@@ -53,7 +53,7 @@ All core implementation tasks are complete. The system is ready for real-world t
   - "healthy snacks" → DON'T extract (too vague)
 
 ### 5. **ES Query Builder Integration** ✅
-- **File**: `shopping_bot/data_fetchers/es_products.py`
+- **File**: `search_v2/extension/search`
 - **Modified**: `_build_enhanced_es_query()` function
 - **Logic**:
   ```python
@@ -71,7 +71,7 @@ All core implementation tasks are complete. The system is ready for real-world t
   ```
 
 ### 6. **ES Source Fields** ✅
-- **File**: `shopping_bot/data_fetchers/es_products.py`
+- **File**: `search_v2/extension/search`
 - **Added to _source.includes**:
   ```python
   "category_data.nutritional.nutri_breakdown_updated.*",
@@ -260,7 +260,7 @@ DEBUG: MACRO_SCORING | Added 2 macro-based scoring functions to total 8 function
    - Added `MACRO_EXTRACTION_EXAMPLES`
    - Injected examples into LLM prompt
 
-2. ✅ `shopping_bot/data_fetchers/es_products.py`
+2. ✅ `search_v2/extension/search`
    - Added macro filtering logic to `_build_enhanced_es_query()`
    - Added nutritional fields to `_source.includes`
 

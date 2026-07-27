@@ -111,7 +111,7 @@ All follow-up examples now use full taxonomy paths:
 ```
 
 ### 5. ES Query Builder Improvement
-**File**: `shopping_bot/data_fetchers/es_products.py` (lines 199-294)
+**File**: `search_v2/extension/search` (lines 199-294)
 
 #### Enhanced Path Normalization
 ```python
@@ -277,7 +277,7 @@ print(f"DEBUG: CAT_PATH_FILTER | using wildcard on category_paths (no .keyword)"
    - Updated follow-up prompt (lines 2960-3086)
    - Updated new query prompt (lines 3087-3210)
 
-2. **shopping_bot/data_fetchers/es_products.py**
+2. **search_v2/extension/search**
    - Enhanced `_normalize_path()` function (lines 204-219)
    - Updated path handling logic (lines 255-294)
    - Added beverages branch support

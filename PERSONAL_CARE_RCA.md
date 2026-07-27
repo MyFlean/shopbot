@@ -25,9 +25,9 @@ Personal care uses a **parallel but inferior** architecture compared to the opti
 
 | Component | Food Path | Personal Care Path | Branch Location |
 |-----------|-----------|-------------------|-----------------|
-| **LLM Param Extraction** | `generate_unified_es_params_2025()` | `generate_skin_es_params()` | `data_fetchers/es_products.py:1456-1485` |
+| **LLM Param Extraction** | `generate_unified_es_params_2025()` | `generate_skin_es_params()` | `data_fetchers/search_products.py:1456-1485` |
 | **Tool Schema** | `UNIFIED_ES_PARAMS_TOOL` (single) | `INITIAL_SKIN_PARAMS_TOOL` + `FOLLOWUP_SKIN_PARAMS_TOOL` (dual) | `llm_service.py:496-583 vs 101-166` |
-| **ES Query Builder** | `_build_enhanced_es_query()` | `_build_skin_es_query()` | `data_fetchers/es_products.py:1123-1127` |
+| **ES Query Builder** | `_build_enhanced_es_query()` | `_build_skin_es_query()` | `data_fetchers/search_products.py:1123-1127` |
 | **Scoring** | `function_score` with category-specific | `function_score` with review-based | Lines 479-542 vs 654-677 |
 | **Redis Persistence** | `debug.last_search_params` | `debug.last_skin_search_params` | Lines 1514 vs 1482 |
 
@@ -488,7 +488,7 @@ Persists to debug:
 
 ### **Personal Care**
 ```python
-# Line 1482 in data_fetchers/es_products.py
+# Line 1482 in data_fetchers/search_products.py
 Persists to debug ONLY:
 - last_skin_search_params (full snapshot)
 

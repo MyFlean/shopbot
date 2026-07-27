@@ -10,7 +10,6 @@ import traceback
 
 from .bedrock_client import AsyncBedrockClient
 from .config import get_config
-from .data_fetchers.es_products import get_es_fetcher
 from .models import UserContext
 
 Cfg = get_config()
@@ -181,8 +180,7 @@ async def process_image_query(ctx: UserContext, image_url: str) -> Dict[str, Any
                     "fields": ["name^5", "description^2", "combined_text"],
                 }
             })
-        # Prepare fetcher and loop before any sync offloading
-        fetcher = get_es_fetcher()
+        # Loop for run_in_executor; V1 fetcher is created only on the V1 branch.
         import asyncio as _a
         loop = _a.get_running_loop()
 
@@ -213,73 +211,28 @@ async def process_image_query(ctx: UserContext, image_url: str) -> Dict[str, Any
             # this flavor" intent through V2's normal lexical matching.
             query_text = f"{query_text} {' '.join(flavor_tokens)}".strip()
 
-        # V2-native unless SEARCH_ENGINE=v1 explicitly. Auto-fallback-to-V1-
-        # on-exception was removed (final pre-production pass): a genuine V2
-        # failure now propagates to this function's own outer try/except
-        # (which already gracefully degrades to {"product_ids": []} for any
-        # error) instead of silently retrying against V1. See
-        # V1_FALLBACK_AUDIT.md.
         product_ids: List[str] = []
-        engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
-        used_v2 = False
-        if engine != "v1":
-            from search_v2.extension.brand import suggest_brand
-            from search_v2.extension.search import search as v2_search
+        from search_v2.extension.brand import suggest_brand
+        from search_v2.extension.search import search as v2_search
 
-            effective_brand = None
-            if brand_name:
-                canonical = await loop.run_in_executor(
-                    None, lambda: suggest_brand(brand_name, category_group or None)
-                )
-                effective_brand = (canonical or brand_name).strip()
-                print(f"IMAGE_BRAND_CANON_V2 | raw='{brand_name}' | canonical='{effective_brand}'")
+        effective_brand = None
+        if brand_name:
+            canonical = await loop.run_in_executor(
+                None, lambda: suggest_brand(brand_name, category_group or None)
+            )
+            effective_brand = (canonical or brand_name).strip()
+            print(f"IMAGE_BRAND_CANON_V2 | raw='{brand_name}' | canonical='{effective_brand}'")
 
-            gw_params: Dict[str, Any] = {"q": query_text, "size": 3}
-            if category_group:
-                gw_params["category_group"] = category_group
-            if effective_brand:
-                gw_params["brands"] = [effective_brand]
+        gw_params: Dict[str, Any] = {"q": query_text, "size": 3}
+        if category_group:
+            gw_params["category_group"] = category_group
+        if effective_brand:
+            gw_params["brands"] = [effective_brand]
 
-            gw_result = await loop.run_in_executor(None, lambda: v2_search(gw_params))
-            products = gw_result.get("products", [])
-            product_ids = [str(p.get("id")).strip() for p in products[:3] if str(p.get("id") or "").strip()]
-            used_v2 = True
-            print(f"ES_IMAGE_TOP3_V2 | ids={product_ids}")
-
-        if not used_v2:
-            fetcher = get_es_fetcher()
-            params: Dict[str, Any] = {
-                "q": query_text,
-                "size": 3,
-                "keywords": name_tokens[:4],
-                # Signal to ES builder that this request comes from vision
-                "is_image_query": True,
-            }
-            if category_group:
-                params["category_group"] = category_group
-            if brand_name:
-                # Brand normalization via ES brand suggestion to align with canonical values (e.g., 'Dabur Real')
-                try:
-                    canonical = await loop.run_in_executor(None, lambda: fetcher.suggest_brand(brand_name, category_group or None))
-                except Exception:
-                    canonical = None
-                effective_brand = (canonical or brand_name).strip()
-                params["brands"] = [effective_brand]
-                params["enforce_brand"] = True  # Hard brand filter for vision flow
-                try:
-                    print(f"IMAGE_BRAND_CANON | raw='{brand_name}' | canonical='{effective_brand}'")
-                except Exception:
-                    pass
-            if flavor_tokens:
-                params["must_keywords"] = flavor_tokens
-
-            result = await loop.run_in_executor(None, lambda: fetcher.search(params))
-            products = (result or {}).get("products", [])
-            product_ids = [str(p.get("id")).strip() for p in products[:3] if str(p.get("id") or "").strip()]
-            try:
-                print(f"ES_IMAGE_TOP3 | ids={product_ids}")
-            except Exception:
-                pass
+        gw_result = await loop.run_in_executor(None, lambda: v2_search(gw_params))
+        products = gw_result.get("products", [])
+        product_ids = [str(p.get("id")).strip() for p in products[:3] if str(p.get("id") or "").strip()]
+        print(f"ES_IMAGE_TOP3_V2 | ids={product_ids}")
 
         return {"product_ids": product_ids}
 

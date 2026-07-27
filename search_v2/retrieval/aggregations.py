@@ -3,10 +3,8 @@ search_v2/retrieval/aggregations.py
 ──────────────────────────────────────
 Brand aggregation and suggestion for Search V2.
 
-Provides the brand-suggestion capability that V1 implemented inside
-ElasticsearchProductsFetcher.suggest_brand(). The result lets the gateway
-and ShopBot canonicalize user-supplied brand strings against what is actually
-in the index.
+Provides brand-suggestion aggregation so the gateway and ShopBot can
+canonicalize user-supplied brand strings against what is actually in the index.
 
 MAPPING DRIFT, found and worked around during the vision_flow.py migration:
 this file originally targeted `brand.exact_normalized`, a keyword sub-field

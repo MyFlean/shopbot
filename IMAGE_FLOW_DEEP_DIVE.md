@@ -246,10 +246,9 @@ When a user selects a product (`selected_product_id`), the system:
 
 ```python
 if selected_product_id:
-    # Fetch full product doc
-    fetcher = get_es_fetcher()
-    docs = await loop.run_in_executor(None, lambda: fetcher.mget_products([selected_product_id]))
-    doc = docs[0]
+    # Fetch full product doc via Search V2 PDP
+    from search_v2.extension.pdp import fetch_product
+    doc = fetch_product(selected_product_id)
     
     # Create synthetic query for SPM (Single Product Mode)
     synthetic_query = f"is this good? {brand} {name}".strip()

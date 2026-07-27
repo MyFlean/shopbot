@@ -22,7 +22,7 @@
 
 ### The Code Problem
 
-In `shopping_bot/data_fetchers/es_products.py`, lines 708-714:
+In `search_v2/extension/search`, lines 708-714:
 
 ```python
 # NOTE: Personal care: ignore category_path(s) entirely per product decision
@@ -234,7 +234,7 @@ Results: Only actual hair oils
 
 ## 📝 Code Changes Summary
 
-**File:** `shopping_bot/data_fetchers/es_products.py`
+**File:** `search_v2/extension/search`
 
 **New Function:** `_parse_product_type(anchor: str)` (lines 644-732)
 - Parses anchor into category, type, and exclusion terms
@@ -306,7 +306,7 @@ if "category" in detected_category:
 ## 📚 References
 
 - **LLM Tool:** `PERSONAL_CARE_ES_PARAMS_TOOL_2025` (llm_service.py:101-247)
-- **ES Query Builder:** `_build_skin_es_query()` (es_products.py:735+)
+- **ES Query Builder:** `_build_skin_es_query()` (search_v2:735+)
 - **ES Mapping:** flean-v4 index (personal_care category_group)
 - **Test Logs:** Line 153 in user's terminal output showing correct LLM extraction
 

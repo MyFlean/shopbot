@@ -464,7 +464,7 @@ Add macro extraction examples:
 - "high protein low sugar snacks"
 - Health condition inference (diabetes → low sugar)
 
-#### Phase 3: ES Query Builder (es_products.py)
+#### Phase 3: ES Query Builder (search_v2)
 ```python
 def _build_enhanced_es_query(params):
     # ... existing code ...

@@ -37,7 +37,7 @@ For each file: purpose, key symbols, ingress/egress, notable logic, and risks. C
 - `llm_service.py`
   - Purpose: All LLM interactions and tool schemas.
   - Key: Classification (L617-L660, L662-L701), unified generation (L703-L727), product response (L737-L1021), simple reply (L1040-L1082), follow-up (L1112-L1156), delta assess (L1157-L1226), requirements (L1228-L1299), questions (L1301-L1475), slot selection (L1476-L1532), ES param proxy (L1534-L1543).
-  - Ingress: `bot_core`, `data_fetchers/es_products.py` (for ES params). Egress: Anthropic, `recommendation.get_recommendation_service`.
+  - Ingress: `bot_core`, `data_fetchers/search_products.py` (chat search params). Egress: Anthropic, `recommendation.get_recommendation_service`.
   - Notes: Uses AsyncAnthropic tool-use; product flows enrich top-K via ES `_mget`.
   - Risks: Requires Anthropic key; prompt complexity; potential token costs.
 
@@ -120,12 +120,12 @@ For each file: purpose, key symbols, ingress/egress, notable logic, and risks. C
 
 ### shopping_bot/data_fetchers/
 
-- `es_products.py`
-  - Purpose: ES search/mget and result shaping.
-  - Key: `_build_enhanced_es_query` (L146-L498), `_transform_results` (L500-L593), `ElasticsearchProductsFetcher.search` (L649-L694), `mget_products` (L696-L739), `build_search_params` (L964-L1091), async handlers (L1103-L1166).
-  - Ingress: `bot_core` via `get_fetcher`, `llm_service` product response enrichment, routes image-selection path.
-  - Notes: Mapping hints for `category_paths.keyword`; strict brand enforcement only when hints exist.
-  - Risks: Prints debug; relies on ES env; timeouts.
+- `search_products.py`
+  - Purpose: Chat/conversational product search via Search V2.
+  - Key: `build_search_params`, `search_products_handler` (calls `search_v2.extension.search.search()`).
+  - Ingress: `bot_core` via `get_fetcher`, LLM product-search intent.
+- `product_transforms.py`
+  - Purpose: Shared PDP and product-card transforms for Search V2 routes.
 
 - `product_details.py`, `product_inventory.py`, `product_reviews.py`
   - Purpose: Mock/stub fetchers for details, inventory, and reviews.

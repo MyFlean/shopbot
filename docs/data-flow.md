@@ -23,13 +23,13 @@ This document traces how data moves across the API, `ShoppingBotCore`, LLM servi
    - When no user slots pending, compute backend fetchers and run via `data_fetchers.get_fetcher` in async.
 
 4) Data fetchers
-   - Primary: `BackendFunction.SEARCH_PRODUCTS` → `shopping_bot/data_fetchers/es_products.py:search_products_handler` (L1103-L1135)
+   - Primary: `BackendFunction.SEARCH_PRODUCTS` → `shopping_bot/data_fetchers/search_products.py:search_products_handler`
    - Build ES params:
      - Defaults and session → `_extract_defaults_from_context` (L845-L928)
      - LLM-based normalization → `LLMService.extract_es_params` → `RecommendationService.extract_es_params` (see `shopping_bot/recommendation.py:L319-L655`)
      - Final params: `_normalize_params` (L930-L963) + heuristics (L1017-L1064, L1066-L1081)
    - Execute ES:
-     - Search → `ElasticsearchProductsFetcher.search` (L649-L694) using `_build_enhanced_es_query` (L146-L498)
+     - Search → `search_v2.extension.search.search` (L649-L694) using `_build_enhanced_es_query` (L146-L498)
      - Transform results → `_transform_results` (L500-L593)
      - Optional enrichment → `_mget_products` (L696-L739) for top-K briefs
    - Persist fetched data into `ctx.fetched_data["search_products"]` and save to Redis.
@@ -61,14 +61,14 @@ This document traces how data moves across the API, `ShoppingBotCore`, LLM servi
 
 ### Data Contracts
 
-- ES result shape (post-transform): `{"meta": {...}, "products": [{id, name, brand, price, flean_percentile, bonus_percentiles, penalty_percentiles, image, ...}]}` (`shopping_bot/data_fetchers/es_products.py:L500-L593`).
+- Search result shape (post-transform): `{"meta": {...}, "products": [...]}` from `search_v2.extension.search`.
 - Product answer (SPM): `{"response_type":"final_answer","summary_message":str,"products":[{id,text,description,price,special_features}],"product_intent":"is_this_good"}` (`shopping_bot/llm_service.py:L902-L961`).
 - UX response: `{"ux_response": {"dpl_runtime_text": str, "ux_surface": "SPM|MPM", "quick_replies": [..], "product_ids": [..]}, "product_intent": str}` (`shopping_bot/ux_response_generator.py:L223-L229`, `L493-L509`).
 
 ### Error Handling & Fallbacks
 
 - Redis down → `get_context` returns empty context but processing continues (`shopping_bot/redis_manager.py:L134-L143`).
-- ES timeout/error → returns empty product list with error meta (`shopping_bot/data_fetchers/es_products.py:L686-L694`).
+- OpenSearch timeout/error → returns empty product list with error meta from Search V2 handler.
 - LLM tool-use missing → deterministic fallbacks for ES params and product responses (`shopping_bot/recommendation.py:L402-L416`, `shopping_bot/llm_service.py:L1022-L1038`).
 - CLI/test channel with flow content → CLI fallback text builder (`shopping_bot/routes/chat.py:L454-L529`).
 

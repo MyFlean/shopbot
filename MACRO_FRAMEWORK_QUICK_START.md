@@ -150,7 +150,7 @@ prompt = self._build_optimized_prompt(...) + (
 
 ### Step 3: Modify ES Query Builder (30 min)
 
-**File**: `shopping_bot/data_fetchers/es_products.py`
+**File**: `search_v2/extension/search`
 
 **Location**: In `_build_enhanced_es_query()` function, after the existing filter logic (~line 492)
 
@@ -295,7 +295,7 @@ def _build_enhanced_es_query(params: Dict[str, Any]) -> Dict[str, Any]:
 
 ### Step 4: Update ES Source Fields (5 min)
 
-**File**: `shopping_bot/data_fetchers/es_products.py`
+**File**: `search_v2/extension/search`
 
 **Location**: In `_build_enhanced_es_query()`, update `_source.includes` (~line 163)
 

@@ -26,7 +26,7 @@ A brief map of how the **Shopbot** service is structured and how a typical reque
 | **RedisContextManager** | `redis_manager.py` | Persists **UserContext** (session, permanent, fetched_data) with TTL; debounced saves; used for conversation state and idempotency-style guards. |
 | **ShoppingBotCore** | `bot_core.py` | Main orchestration: assessment continuation, follow-up vs new query, **4-intent** product handling, fetch orchestration, response assembly. |
 | **LLMService** | `llm_service.py` | Bedrock-backed calls: intent/follow-up classification, assessment, delta requirements, final text, tool-style structured outputs. |
-| **Data fetchers** | `data_fetchers/` | Registry maps `BackendFunction` → handlers; product search is centralized on **Elasticsearch** (`es_products`). |
+| **Data fetchers** | `data_fetchers/` | Registry maps `BackendFunction` → handlers; product search uses **Search V2** (`search_products.py`). |
 | **UX layer** | `ux_response_generator.py` | After product intent classification, shapes UX (e.g. DPL, `ux_surface` SPM/MPM, quick replies). |
 | **Response envelope** | `fe_payload.py` (`build_envelope`) | Normalizes chat responses for clients (WhatsApp/API). |
 
@@ -90,4 +90,4 @@ flowchart LR
   B --> R
 ```
 
-This document is intentionally short; for line-level behavior, start from `shopping_bot/bot_core.py` and `shopping_bot/routes/chat.py`, then trace into `llm_service.py` and `data_fetchers/es_products.py`.
+This document is intentionally short; for line-level behavior, start from `shopping_bot/bot_core.py` and `shopping_bot/routes/chat.py`, then trace into `llm_service.py` and `data_fetchers/search_products.py`.

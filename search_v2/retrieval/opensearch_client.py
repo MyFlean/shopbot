@@ -1,18 +1,7 @@
 """
 search_v2/retrieval/opensearch_client.py
-─────────────────────────────────────────────────
 Thin wrapper for issuing search requests against the OpenSearch domain.
-Deliberately reuses indexing_es_client.py (already in this repo, at the
-search/ root, proven working for both Elastic-Cloud-ApiKey and AWS-IAM/SigV4
-auth) rather than writing a third copy of that signing logic — V1 had its own
-copy in shopbot/es_products.py; this is "reuse existing code where it
-provides real value" applied directly.
-
-indexing_es_client.py is a flat script at the search repo root (not inside a
-package), so it's imported the same way index.products-v4.py and
-setup_search_pipeline.py already do: `import indexing_es_client` works when
-the working directory is the search repo root (or it's otherwise on
-sys.path) — consistent with this repo's existing convention, not a new one.
+Reuses indexing_es_client.py for Elastic Cloud API-key and AWS IAM/SigV4 auth.
 """
 from __future__ import annotations
 
@@ -34,7 +23,7 @@ class OpenSearchClient:
     def _get_client(self):
         if self._client is not None:
             return self._client
-        import indexing_es_client as iec  # see module docstring
+        import indexing_es_client as iec
 
         use_iam = iec.use_iam_from_env(self.es_url)
         self._client = iec.build_search_client(self.es_url, self.api_key, use_aoss=use_iam, force_opensearch_client=True)

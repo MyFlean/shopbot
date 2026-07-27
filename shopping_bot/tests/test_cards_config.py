@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from shopping_bot.data_fetchers.es_products import transform_to_pdp
+from shopping_bot.product_transforms import transform_to_pdp
 from shopping_bot.utils.cards_config import (
     CARD_DISPLAY_NAME_TO_SCORE_KEY,
     CARD_STATS_REGISTRY,
@@ -151,7 +151,7 @@ def _veggies_src(**overrides):
     return src
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 def test_calories_card_value_uses_kcal_format(mock_get_config):
     mock_get_config.return_value = [
         {
@@ -171,7 +171,7 @@ def test_calories_card_value_uses_kcal_format(mock_get_config):
     assert cal["percentile"] == 30.0
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 def test_transform_to_pdp_only_builds_visible_configured_cards(mock_get_config):
     mock_get_config.return_value = [
         {"card": "Protein", "visible": False, "order": 1},
@@ -182,7 +182,7 @@ def test_transform_to_pdp_only_builds_visible_configured_cards(mock_get_config):
     assert "fiber" in pdp["score_cards"]
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 def test_transform_to_pdp_only_builds_listed_cards(mock_get_config):
     mock_get_config.return_value = [
         {"card": "Fiber", "visible": True, "order": 1},
@@ -192,7 +192,7 @@ def test_transform_to_pdp_only_builds_listed_cards(mock_get_config):
     assert set(pdp["score_cards"].keys()) == {"fiber"}
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 def test_transform_to_pdp_empty_config_returns_all_built_cards(mock_get_config):
     mock_get_config.return_value = []
     pdp = transform_to_pdp(_rich_src())
@@ -200,7 +200,7 @@ def test_transform_to_pdp_empty_config_returns_all_built_cards(mock_get_config):
     assert "fiber" in pdp["score_cards"]
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 def test_transform_to_pdp_builds_produce_cards_from_stats(mock_get_config):
     mock_get_config.return_value = [
         {"card": "Natural Sugar", "highlight_tag": "ns_tags", "visible": True, "optional": True, "order": 1},
@@ -224,7 +224,7 @@ def test_transform_to_pdp_builds_produce_cards_from_stats(mock_get_config):
     assert sc["antioxidants"]["percentile"] is None
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 def test_transform_to_pdp_uses_config_highlight_tag_for_protein(mock_get_config):
     mock_get_config.return_value = [
         {
@@ -262,7 +262,7 @@ def test_score_card_build_order_covers_registry_and_display_names():
     assert display_score_keys <= registry_keys
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 def test_highlight_only_card_uses_config_highlight_tag(mock_get_config):
     mock_get_config.return_value = [
         {
@@ -286,7 +286,7 @@ def test_highlight_only_card_uses_config_highlight_tag(mock_get_config):
     assert sc["antioxidants"]["subtitle_new"][0]["tag_label"]
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 def test_highlight_only_skipped_without_config_highlight_tag(mock_get_config):
     mock_get_config.return_value = [
         {
@@ -313,7 +313,7 @@ _GI_CONFIG = [
 ]
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 @pytest.mark.parametrize(
     ("tag_id", "expected_value"),
     [
@@ -332,7 +332,7 @@ def test_glycemic_index_maps_tag_to_value(mock_get_config, tag_id, expected_valu
     assert card["percentile"] is None
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 def test_glycemic_index_skipped_without_gi_tag(mock_get_config):
     mock_get_config.return_value = _GI_CONFIG
     src = _veggies_src()
@@ -352,7 +352,7 @@ _HYDRATION_CONFIG = [
 ]
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 def test_hydration_shown_with_hydrating_tag(mock_get_config):
     mock_get_config.return_value = _HYDRATION_CONFIG
     src = _veggies_src()
@@ -366,7 +366,7 @@ def test_hydration_shown_with_hydrating_tag(mock_get_config):
     assert card["subtitle_new"][0]["tag_label"] == "High water content"
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 def test_hydration_skipped_without_hydrating_tag(mock_get_config):
     mock_get_config.return_value = _HYDRATION_CONFIG
     src = _veggies_src()
@@ -377,7 +377,7 @@ def test_hydration_skipped_without_hydrating_tag(mock_get_config):
     assert "hydration" not in pdp["score_cards"]
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 def test_hydration_skipped_without_config_highlight_tag(mock_get_config):
     mock_get_config.return_value = [
         {
@@ -417,7 +417,7 @@ _ANTIOXIDANTS_CONFIG = [
 ]
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 @pytest.mark.parametrize(
     ("score_key", "group_key", "config"),
     [
@@ -445,7 +445,7 @@ def test_sentiment_highlight_maps_bucket_to_value(
     assert card["percentile"] is None
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 @pytest.mark.parametrize(
     ("score_key", "group_key", "config"),
     [
@@ -465,7 +465,7 @@ def test_sentiment_highlight_skipped_when_group_empty(mock_get_config, score_key
     assert score_key not in pdp["score_cards"]
 
 
-@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+@patch("shopping_bot.product_transforms.get_subcategory_cards_config_for_path")
 @pytest.mark.parametrize(
     ("score_key", "group_key", "config"),
     [

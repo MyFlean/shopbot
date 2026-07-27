@@ -10,12 +10,9 @@ Supports sorting and filtering.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Blueprint, jsonify, request
-
-from ..data_fetchers.es_products import get_es_fetcher, transform_to_product_card
 
 log = logging.getLogger(__name__)
 bp = Blueprint("simple_search", __name__)
@@ -152,51 +149,15 @@ def simple_search() -> tuple[Dict[str, Any], int]:
         if not food_type and validated_filters:
             food_type = validated_filters.get("food_type")
 
-        # V2-native unless SEARCH_ENGINE=v1 explicitly. Auto-fallback-to-V1-
-        # on-exception was removed (final pre-production pass): live
-        # regression showed zero exceptions; a genuine V2 failure now
-        # surfaces as a real error. See V1_FALLBACK_AUDIT.md.
-        product_cards: List[Dict[str, Any]] = []
-        total_hits = 0
-        engine = os.getenv("SEARCH_ENGINE", "auto").strip().lower()
-        used_v2 = False
-        if engine != "v1":
-            from search_v2.extension.search import search as v2_search
-            from .unified_search import _v1_filters_to_gw_params
-            gw_params: Dict[str, Any] = {"q": query, "size": 20, "sort_by": sort_by}
-            gw_params.update(_v1_filters_to_gw_params(validated_filters or {}))
-            if food_type and food_type in ("veg", "nonveg"):
-                gw_params["food_type"] = food_type
-            gw_result = v2_search(gw_params)
-            product_cards = gw_result.get("products", [])
-            total_hits = (gw_result.get("meta", {}) or {}).get("total_hits", len(product_cards))
-            used_v2 = True
-
-        if not used_v2:
-            fetcher = get_es_fetcher()
-            params: Dict[str, Any] = {
-                "q": query,
-                "size": 20,
-                "sort_by": sort_by if sort_by != "relevance" else None,
-                "filters": validated_filters,
-            }
-            if food_type and food_type in ("veg", "nonveg"):
-                params["food_type"] = food_type
-            result = fetcher.search(params)
-
-            raw_products = result.get("products", [])
-            meta = result.get("meta", {})
-            total_hits = meta.get("total_hits", 0)
-
-            # Use shared product card transformer
-            for raw in raw_products:
-                try:
-                    card = transform_to_product_card(raw)
-                    if card is not None:
-                        product_cards.append(card)
-                except Exception as e:
-                    log.warning(f"PRODUCT_CARD_ERROR | id={raw.get('id', '?')} | error={e}")
-                    continue
+        from search_v2.extension.search import search as v2_search
+        from .unified_search import _v1_filters_to_gw_params
+        gw_params: Dict[str, Any] = {"q": query, "size": 20, "sort_by": sort_by}
+        gw_params.update(_v1_filters_to_gw_params(validated_filters or {}))
+        if food_type and food_type in ("veg", "nonveg"):
+            gw_params["food_type"] = food_type
+        gw_result = v2_search(gw_params)
+        product_cards: List[Dict[str, Any]] = gw_result.get("products", [])
+        total_hits = (gw_result.get("meta", {}) or {}).get("total_hits", len(product_cards))
 
         log.info(f"SIMPLE_SEARCH_SUCCESS | query='{query}' | total_hits={total_hits} | returned={len(product_cards)}")
 

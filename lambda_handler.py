@@ -387,7 +387,7 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
             "/rs/chat", "/rs/search", "/rs/v1/search", "/rs/v2/search",
             "/rs/api/v1/products", "/rs/api/v1/product", "/rs/api/v1/home",
             "/rs/api/v1/catalogue", "/rs/api/v1/flean-score",
-            "/flow", "/rs/api/v1/scanner",
+            "/flow", "/rs/flow", "/rs/api/v1/scanner",
         ])
         
         # For critical endpoints, wait for secrets (with timeout)

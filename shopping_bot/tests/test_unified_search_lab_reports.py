@@ -1,4 +1,4 @@
-"""Tests unified search has_lab_report flag derivation."""
+"""Tests unified search lab-report annotations, ordering, and dynamic filters."""
 
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -166,3 +166,53 @@ def test_unified_search_returns_v2_dynamic_filters(
     assert resp.status_code == 200
     payload = resp.get_json()
     assert payload["data"]["filters"][0]["id"] == "filter_flean_score"
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v1")
+@patch("shopping_bot.routes.unified_search.transform_to_product_card")
+@patch("shopping_bot.routes.unified_search.get_es_fetcher")
+def test_unified_search_preserves_fetcher_rank_order(
+    mock_get_fetcher,
+    mock_transform_to_product_card,
+    _mock_search_engine,
+    unified_search_client,
+):
+    raw_products = [
+        {
+            "id": "higher-rank-non-report",
+            "visibility": "visible",
+            "_score": 99.0,
+            "category_data": {"tags": {"ingredient_tags": ["no_palm_oil"]}},
+        },
+        {
+            "id": "lower-rank-with-report",
+            "visibility": "visible",
+            "_score": 80.0,
+            "category_data": {
+                "tags": {"ingredient_tags": ["no_palm_oil"]},
+                "lab_reports": {"url": "https://cdn.example.com/lab-report-a.pdf"},
+            },
+        },
+    ]
+    mock_get_fetcher.return_value = SimpleNamespace(
+        search_products_unified=lambda **_kwargs: {
+            "products": raw_products,
+            "meta": {"total": 2},
+        }
+    )
+
+    mock_transform_to_product_card.side_effect = lambda raw: {
+        "id": raw["id"],
+        "name": raw["id"],
+        "visibility": "visible",
+        "flean_score": 8,
+    }
+
+    resp = unified_search_client.get("/rs/v1/search?query=paneer&sort_by=relevance")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    products = payload["data"]["products"]
+    assert [item["id"] for item in products] == [
+        "higher-rank-non-report",
+        "lower-rank-with-report",
+    ]

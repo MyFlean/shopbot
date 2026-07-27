@@ -237,14 +237,15 @@ CARD_DISPLAY_NAME_TO_SCORE_KEY: Dict[str, str] = {
     "Watch Outs": "watch_outs",
     "Natural Sugar": "natural_sugar",
     "Glycemic Index": "glycemic_index",
-    "Vitamins & Minerals": "vitamins_minerals",
+    "Vitamins": "vitamins",
+    "Minerals": "minerals",
     "Antioxidants": "antioxidants",
     "Gut Health": "gut_health",
     "Hydration": "hydration",
 }
 
 # Unified score-card build registry.
-# build_type: percentile | highlight_only | additives | preservatives | watch_outs | flean_rank | glycemic_index | sentiment_highlight
+# build_type: percentile | highlight_only | additives | preservatives | watch_outs | flean_rank | glycemic_index | sentiment_highlight | positive_tag_high
 # tier_mode (percentile): bonus → High/Good/Average/Poor/Sub-Par | penalty → Very Low/Low/Present/High/Very High
 # ES highlight tag groups come from Redis config highlight_tag only (not registry).
 CARD_STATS_REGISTRY: Dict[str, Dict[str, Any]] = {
@@ -279,12 +280,13 @@ CARD_STATS_REGISTRY: Dict[str, Dict[str, Any]] = {
         "build_type": "hydration",
         "default_title": "Hydration",
     },
-    "vitamins_minerals": {
-        "build_type": "percentile",
-        "default_title": "Vitamins & Minerals",
-        "stats_fields": ("total_vitamin_mineral_percentiles",),
-        "tier_mode": "bonus",
-        "subtitle": "Efficiency",
+    "vitamins": {
+        "build_type": "positive_tag_high",
+        "default_title": "Vitamins",
+    },
+    "minerals": {
+        "build_type": "positive_tag_high",
+        "default_title": "Minerals",
     },
     "sweeteners": {
         "build_type": "percentile",
@@ -333,7 +335,8 @@ SCORE_CARD_BUILD_ORDER: Tuple[str, ...] = (
     "natural_sugar",
     "glycemic_index",
     "hydration",
-    "vitamins_minerals",
+    "vitamins",
+    "minerals",
     "sweeteners",
     "oils",
     "additives",

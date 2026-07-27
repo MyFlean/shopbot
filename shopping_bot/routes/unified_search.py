@@ -510,9 +510,10 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 "q": query or "",
                 "size": size,
                 "offset": page * size,
-                "sort_by": resolved_sort,
                 "subcategory": subcategory,
             }
+            if sort_raw:
+                gw_params["sort_by"] = resolved_sort
             gw_params.update(_v1_filters_to_gw_params(validated_filters or {}))
             if subcategory:
                 resolved_path = _resolve_subcategory_es_path(subcategory)

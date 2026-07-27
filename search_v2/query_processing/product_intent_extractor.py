@@ -153,13 +153,11 @@ class ProductIntentResult:
                          secondary (OR) signal alongside the exact
                          product_type match to catch relevant products whose
                          own name doesn't happen to contain the same phrase.
-    fresh_produce_ids  — set ONLY when the query exactly matched a curated
-                         vernacular produce alias/name (see
-                         canonical_produce.py). The authoritative catalog
-                         product ids belonging to that produce family —
-                         retrieval hard-restricts to exactly these ids
-                         (SearchFilters.product_ids) instead of any text
-                         signal. Empty tuple (not None) when no such match.
+    fresh_produce_ids  — catalog ids for the matched produce family. Hard
+                         retrieval restriction applies only when
+                         fresh_produce_exact is True.
+    fresh_produce_exact — True for an exact curated alias match, False for a
+                         fuzzy_match_produce_alias() edit-distance match.
     source            — which resolution mechanism produced this result:
                          "fresh_produce" | "category_fallback" | "head_term" |
                          "none". Lets downstream consumers (e.g. the query
@@ -172,6 +170,7 @@ class ProductIntentResult:
     tier: str = "none"
     dominant_category: Optional[str] = None
     fresh_produce_ids: Tuple[str, ...] = ()
+    fresh_produce_exact: bool = False
     source: str = "none"
 
 
@@ -352,33 +351,11 @@ class ProductIntentExtractor:
         if self._produce_aliases:
             normalized = " ".join(tokens)
             family = self._produce_aliases.get(normalized)
-            # Only ever attempt the fuzzy fallback when `normalized` is NOT
-            # already a real, catalog-attested term in its own right (i.e.
-            # not already a key in the product-type lexicon). Without this
-            # guard, an ordinary, correctly-spelled word can land within the
-            # length-scaled edit-distance budget of an unrelated curated
-            # alias purely by coincidence — e.g. "cheese" is 2 edits from the
-            # curated Hindi alias "cheeku" (sapota/chikoo), which used to
-            # hard-restrict a "cheese" search to sapota products (0 relevant
-            # results). A genuine typo of a produce alias (the feature this
-            # fallback exists for — see fuzzy_match_produce_alias()'s
-            # docstring) is, by definition, NOT itself a term the catalog's
-            # own product-name statistics already recognize, so this guard
-            # only ever blocks false-positive collisions, never the intended
-            # double-typo recovery case.
+            exact_match = family is not None
             if family is None and normalized not in self._lexicon:
                 from search_v2.query_processing.canonical_produce import fuzzy_match_produce_alias
                 family = fuzzy_match_produce_alias(normalized, self._produce_aliases)
             if family is not None:
-                # Fresh Produce intent: retrieval hard-restricts to exactly
-                # this family's real catalog ids (fresh_produce_ids) rather
-                # than any text-based product_type signal — see
-                # canonical_produce.py's module docstring for why a text
-                # match (even an exact one) can't distinguish "Onion (Pyaz)"
-                # from "Cream & Onion Chips", but an authoritative id
-                # allowlist can. dominant_category stays None for the same
-                # reason it did before this redesign: it isn't used when
-                # fresh_produce_ids is set (see build_filter_clauses()).
                 return ProductIntentResult(
                     primary_product=family.canonical_name,
                     modifiers=[],
@@ -386,6 +363,7 @@ class ProductIntentExtractor:
                     tier="high",
                     dominant_category=None,
                     fresh_produce_ids=family.member_ids,
+                    fresh_produce_exact=exact_match,
                     source="fresh_produce",
                 )
 

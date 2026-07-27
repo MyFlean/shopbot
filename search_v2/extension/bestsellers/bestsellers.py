@@ -25,7 +25,15 @@ def _get_client() -> OpenSearchClient:
     return _client
 
 
-def fetch_candidates_by_category(paths: List[str], fetch_per_category: int) -> Dict[str, List[Dict[str, Any]]]:
+# ADDED: Helper to determine whether a product has a lab report.
+def _has_lab_report(card: Dict[str, Any]) -> bool:
+    return bool(card.get("has_lab_report"))
+
+
+def fetch_candidates_by_category(
+    paths: List[str],
+    fetch_per_category: int,
+) -> Dict[str, List[Dict[str, Any]]]:
     """Returns {path: [raw _source docs...]}, each sorted by flean score descending."""
     if not paths:
         return {}
@@ -37,20 +45,41 @@ def fetch_candidates_by_category(paths: List[str], fetch_per_category: int) -> D
                 "top": {
                     "top_hits": {
                         "size": fetch_per_category,
-                        "sort": [{"flean_score.adjusted_score": {"order": "desc", "missing": "_last"}}],
+                        "sort": [
+                            {
+                                "flean_score.adjusted_score": {
+                                    "order": "desc",
+                                    "missing": "_last",
+                                }
+                            }
+                        ],
                     }
                 }
             },
         }
         for path in paths
     }
-    response = _get_client().search({"size": 0, "track_total_hits": False, "query": {"match_all": {}}, "aggs": aggs})
+
+    response = _get_client().search(
+        {
+            "size": 0,
+            "track_total_hits": False,
+            "query": {"match_all": {}},
+            "aggs": aggs,
+        }
+    )
+
     buckets = response.get("aggregations") or {}
 
     results: Dict[str, List[Dict[str, Any]]] = {}
     for path in paths:
-        hits = ((buckets.get(path) or {}).get("top") or {}).get("hits", {}).get("hits", [])
+        hits = (
+            ((buckets.get(path) or {}).get("top") or {})
+            .get("hits", {})
+            .get("hits", [])
+        )
         results[path] = [hit.get("_source") or {} for hit in hits]
+
     return results
 
 
@@ -61,25 +90,44 @@ def best_selling(
     fetch_buffer: int = 13,
 ) -> List[Dict[str, Any]]:
     fetch_per_category = per_category + fetch_buffer
-    candidates_by_path = fetch_candidates_by_category(category_paths, fetch_per_category)
+    candidates_by_path = fetch_candidates_by_category(
+        category_paths,
+        fetch_per_category,
+    )
 
     selected: List[Dict[str, Any]] = []
     selected_ids: set = set()
     backfill: List[tuple] = []
 
     for path in category_paths:
-        scored = [
-            (float((src.get("flean_score") or {}).get("adjusted_score") or 0.0), to_product_card(src))
-            for src in candidates_by_path.get(path, [])
-            if src.get("id")
-        ]
+        scored = []
+
+        for src in candidates_by_path.get(path, []):
+            if not src.get("id"):
+                continue
+
+            card = to_product_card(src)
+
+            # ADDED: Populate has_lab_report from the source document.
+            card["has_lab_report"] = bool(
+                ((src.get("category_data") or {}).get("lab_reports") or {}).get("url")
+            )
+
+            score = float(
+                ((src.get("flean_score") or {}).get("adjusted_score") or 0.0)
+            )
+
+            scored.append((score, card))
+
         scored.sort(key=lambda item: item[0], reverse=True)
 
         category_count = 0
         for score, card in scored:
             product_id = card["id"]
+
             if product_id in selected_ids:
                 continue
+
             if category_count < per_category:
                 selected.append(card)
                 selected_ids.add(product_id)
@@ -89,14 +137,28 @@ def best_selling(
 
     if len(selected) < total_products:
         backfill.sort(key=lambda item: item[0], reverse=True)
+
         for _, card in backfill:
             product_id = card["id"]
+
             if product_id in selected_ids:
                 continue
+
             selected.append(card)
             selected_ids.add(product_id)
+
             if len(selected) >= total_products:
                 break
 
-    selected.sort(key=lambda card: (card.get("flean_score") or 0.0, card.get("flean_percentile") or 0.0), reverse=True)
+    # ADDED: Lab-tested products are ranked ahead of non-lab-tested products.
+    # Within each group, existing Flean score ordering is preserved.
+    selected.sort(
+        key=lambda card: (
+            _has_lab_report(card),
+            card.get("flean_score") or 0.0,
+            card.get("flean_percentile") or 0.0,
+        ),
+        reverse=True,
+    )
+
     return selected[:total_products]

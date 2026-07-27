@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from search_v2.query_processing.text_normalization import normalize_text
 from search_v2.query_processing.typo_correction import QueryCorrectionResult, VocabularyCorrector
@@ -47,6 +47,27 @@ def _merged_variant_text(normalized: str) -> Optional[str]:
         return None
     merged = "".join(words)
     return merged if merged != normalized else None
+
+
+_GROCERY_SYNONYMS: Dict[str, str] = {
+    "chips": "crisps",
+    "crisps": "chips",
+    "groundnut": "peanut",
+    "groundnuts": "peanuts",
+    "peanut": "groundnut",
+    "peanuts": "groundnuts",
+    "cold drink": "soft drink",
+    "soft drink": "cold drink",
+    "energy bar": "protein bar",
+}
+
+
+def _synonym_variant_text(normalized: str) -> Optional[str]:
+    for term, synonym in _GROCERY_SYNONYMS.items():
+        pattern = rf"\b{re.escape(term)}\b"
+        if re.search(pattern, normalized):
+            return re.sub(pattern, synonym, normalized, count=1)
+    return None
 
 
 @dataclass
@@ -120,6 +141,10 @@ def process_query(
     merged_variant = _merged_variant_text(normalized)
     if merged_variant:
         variants.append(QueryVariant(text=merged_variant, is_correction=False, confidence=1.0))
+
+    synonym_variant = _synonym_variant_text(normalized)
+    if synonym_variant:
+        variants.append(QueryVariant(text=synonym_variant, is_correction=False, confidence=0.6))
 
     correction_result: Optional[QueryCorrectionResult] = None
     if enable_typo_correction and corrector is not None and normalized:
@@ -276,16 +301,11 @@ def process_search_request(
                     product_type=product_intent.primary_product,
                     product_type_mode="filter" if product_intent.tier == "high" else "boost",
                     product_type_category=product_intent.dominant_category,
-                    # Fresh Produce Identification (see canonical_produce.py
-                    # / SearchFilters.product_ids) — only ever non-empty
-                    # alongside tier=="high", set by an exact curated
-                    # vernacular produce match. Hard-restricts retrieval to
-                    # this family's real catalog ids, replacing the
-                    # text-based product_type clause entirely.
                     product_ids=(
                         list(product_intent.fresh_produce_ids)
                         if product_intent.fresh_produce_ids else None
                     ),
+                    product_ids_exact=product_intent.fresh_produce_exact,
                 )
                 nl_filters = merge_filters(intent_filters, nl_filters)
 

@@ -255,6 +255,7 @@ class SearchFilters:
     # back to processed foods containing the same word). None (the default)
     # is a complete no-op.
     product_ids: Optional[List[str]] = None
+    product_ids_exact: bool = False
 
     # Pagination / sort
     sort_by: Optional[str] = None
@@ -836,6 +837,7 @@ def merge_filters(base: SearchFilters, overlay: SearchFilters) -> SearchFilters:
         product_type_mode=overlay.product_type_mode or base.product_type_mode,
         product_type_category=overlay.product_type_category or base.product_type_category,
         product_ids=overlay.product_ids or base.product_ids,
+        product_ids_exact=overlay.product_ids_exact or base.product_ids_exact,
         sort_by=overlay.sort_by or base.sort_by,
         offset=overlay.offset if overlay.offset else base.offset,
     )

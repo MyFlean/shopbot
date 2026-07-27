@@ -123,6 +123,15 @@ def _pool_size(settings: SearchV2Settings, final_size: int, offset: int, expande
     return max(floor, offset + final_size)
 
 
+def _adaptive_fusion_weights(routing_context, settings: SearchV2Settings) -> List[float]:
+    default = settings.FUSION_WEIGHTS
+    if routing_context is None:
+        return default
+    if getattr(routing_context, "health_intent_detected", False) or getattr(routing_context, "has_nutritional_constraint", False):
+        return [0.4, 0.6]
+    return default
+
+
 def _wants_expanded_pool(filters) -> bool:
     """True only when filters carries an ACTIVE high-confidence product-type
     hard filter, OR a Fresh Produce id-restriction (see
@@ -334,17 +343,19 @@ def _hybrid_search_once(
         semantic_ids = [h[0] for h in semantic_hits]
         semantic_scores = [h[1] for h in semantic_hits]
 
+        fusion_weights = _adaptive_fusion_weights(routing_context, settings)
+
         if strategy == "rrf":
             fused = fusion.reciprocal_rank_fusion(
                 [lexical_ids, semantic_ids],
                 rank_constant=settings.RRF_RANK_CONSTANT,
-                weights=settings.FUSION_WEIGHTS,
+                weights=fusion_weights,
                 raw_scores=[lexical_scores, semantic_scores],
             )
         else:
             fused = fusion.weighted_score_fusion(
                 [list(zip(lexical_ids, lexical_scores)), list(zip(semantic_ids, semantic_scores))],
-                weights=settings.FUSION_WEIGHTS,
+                weights=fusion_weights,
             )
 
         # Apply sort over fused results when requested (post-fusion in-memory sort)
@@ -373,6 +384,13 @@ def _relax_product_type_filter(filters):
     product-type filter produced zero results (see hybrid_search() below).
     Mirrors _retrieval_filters()'s dataclasses.replace() pattern above."""
     return dataclasses.replace(filters, product_type=None, product_type_mode=None, product_type_category=None)
+
+
+def _relax_product_ids_filter(filters):
+    return dataclasses.replace(
+        filters, product_ids=None, product_ids_exact=False,
+        product_type=None, product_type_mode=None, product_type_category=None,
+    )
 
 
 def hybrid_search(
@@ -422,15 +440,17 @@ def hybrid_search(
 
     from search_v2.retrieval.filters import SearchFilters
     has_product_ids = isinstance(filters, SearchFilters) and bool(filters.product_ids)
+    has_exact_product_ids = has_product_ids and filters.product_ids_exact
+    has_fuzzy_product_ids = has_product_ids and not filters.product_ids_exact
 
     if (
         getattr(settings, "ENABLE_PRODUCT_INTENT_RELAXATION", True)
-        and not getattr(settings, "STRICT_ZERO_RESULTS", False)
-        and not has_product_ids
+        and not has_exact_product_ids
+        and (has_fuzzy_product_ids or not getattr(settings, "STRICT_ZERO_RESULTS", False))
         and _wants_expanded_pool(filters)
         and not result.items
     ):
-        relaxed_filters = _relax_product_type_filter(filters)
+        relaxed_filters = _relax_product_ids_filter(filters) if has_product_ids else _relax_product_type_filter(filters)
         result = _hybrid_search_once(client, query, relaxed_filters, size, settings, embedding_service, sort_by, offset)
         result.product_intent_relaxed = True
 

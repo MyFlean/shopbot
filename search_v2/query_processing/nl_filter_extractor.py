@@ -50,6 +50,7 @@ _PRICE_ABOVE = re.compile(
     re.IGNORECASE,
 )
 _PRICE_STANDALONE = re.compile(rf"{_CURRENCY}{_NUM}", re.IGNORECASE)
+_PRICE_QUALITATIVE = re.compile(r"\b(?:cheap(?:est)?|budget|affordable|inexpensive|low[\s-]?cost)\b", re.IGNORECASE)
 
 
 def _parse_num(s: str) -> float:
@@ -102,12 +103,12 @@ _NUTRIENT_WORD = r"(?:" + "|".join(
 # nutrient dimension generically via _NUTRIENT_WORD, no per-nutrient phrasing.
 _NUM_RAW = r"\d+(?:\.\d+)?"
 _NUTRIENT_UNIT = r"(?:g|grams?|mg|milligrams?|kcal|cals?|calories?)?"
+_NUTRIENT_UNIT_REQUIRED = r"(?:g|grams?|mg|milligrams?|kcal|cals?|calories?)"
 _OP_GTE = r"(?:more\s+than|greater\s+than|at\s+least|minimum\s+of|minimum|min|over|above)"
 _OP_LTE = r"(?:less\s+than|no\s+more\s+than|at\s+most|maximum\s+of|maximum|max|under|below|up\s*to)"
 
 _NUMERIC_NUTRIENT_PATTERNS: List[Tuple[re.Pattern, str]] = []
 for _op, _op_key in ((_OP_GTE, "gte"), (_OP_LTE, "lte")):
-    # "<operator> <number><unit> <nutrient>" — e.g. "under 200 calories"
     _NUMERIC_NUTRIENT_PATTERNS.append((
         re.compile(
             rf"\b{_op}\b\s*(?P<num>{_NUM_RAW})\s*(?P<unit>{_NUTRIENT_UNIT})\s*(?P<nutrient>{_NUTRIENT_WORD})\b",
@@ -115,10 +116,9 @@ for _op, _op_key in ((_OP_GTE, "gte"), (_OP_LTE, "lte")):
         ),
         _op_key,
     ))
-    # "<nutrient> <operator> <number><unit>" — e.g. "sugar under 10g"
     _NUMERIC_NUTRIENT_PATTERNS.append((
         re.compile(
-            rf"\b(?P<nutrient>{_NUTRIENT_WORD})\b\s*{_op}\b\s*(?P<num>{_NUM_RAW})\s*(?P<unit>{_NUTRIENT_UNIT})\b",
+            rf"\b(?P<nutrient>{_NUTRIENT_WORD})\b\s*{_op}\b\s*(?P<num>{_NUM_RAW})\s*(?P<unit>{_NUTRIENT_UNIT_REQUIRED})\b",
             re.IGNORECASE,
         ),
         _op_key,
@@ -161,6 +161,11 @@ _EXCL_DIETARY_STOPWORDS = {
     for label in DIETARY_LABEL_ALIASES
 }
 _EXCL_KNOWN_ADJECTIVES = {"artificial", "added", "preservative", "preservatives"}
+
+_LIFESTYLE_INTENT_PATTERNS: List[Tuple[re.Pattern, List[str]]] = [
+    (re.compile(r"\b(?:gym|workout|work[\s-]?out|post[\s-]?workout|muscle|bodybuilding)\b", re.IGNORECASE), ["high_protein"]),
+    (re.compile(r"\b(?:weight\s*loss|slimming|fat\s*loss)\b", re.IGNORECASE), ["low_carb", "low_sugar"]),
+]
 
 
 @dataclass
@@ -251,6 +256,14 @@ class NLFilterExtractor:
                 remaining = remaining[:m.start()] + remaining[m.end():]
                 signals.append(f"price_max_currency={price_max}")
 
+        sort_by: Optional[str] = None
+        if price_min is None and price_max is None:
+            m = _PRICE_QUALITATIVE.search(remaining)
+            if m:
+                sort_by = "price_asc"
+                remaining = remaining[:m.start()] + remaining[m.end():]
+                signals.append("sort=price_asc")
+
         # ── 3. Qualitative macro constraints ("high protein", "low sugar") ───
         # Threshold per (nutrient, direction) sourced from settings — same
         # table drives both this loop and _MACRO_PATTERNS' construction above.
@@ -271,6 +284,17 @@ class NLFilterExtractor:
                     seen_nutrients.add(nutrient)
                     remaining = remaining[:m.start()] + remaining[m.end():]
                     signals.append(f"macro={nutrient}{operator}{threshold}")
+
+        # ── 3b. Lifestyle intent phrases ("gym snacks", "weight loss snacks") ──
+        nutrition_profiles: List[str] = []
+        for pattern, profiles in _LIFESTYLE_INTENT_PATTERNS:
+            m = pattern.search(remaining)
+            if m:
+                for profile in profiles:
+                    if profile not in nutrition_profiles:
+                        nutrition_profiles.append(profile)
+                remaining = remaining[:m.start()] + remaining[m.end():]
+                signals.append(f"nutrition_profile={','.join(profiles)}")
 
         # ── 4. Dietary labels (after macros — avoids double-capturing "high protein") ─
         for pattern, canonical in _DIETARY_PATTERNS:
@@ -313,6 +337,8 @@ class NLFilterExtractor:
                 dietary_labels=dietary_labels or None,
                 macro_filters=macro_filters or None,
                 excluded_ingredients=excluded_ingredients or None,
+                sort_by=sort_by,
+                nutrition_profiles=nutrition_profiles or None,
             ),
             signals_found=signals,
         )

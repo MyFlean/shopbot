@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from search_v2.config.settings import SearchV2Settings, SETTINGS
 from search_v2.query_processing.query_pipeline import ProcessedQuery
+from search_v2.retrieval.listing import LISTING_COLLAPSE, LISTING_SOURCE_EXCLUDES
 
 if TYPE_CHECKING:
     from search_v2.retrieval.filters import SearchFilters
@@ -528,8 +529,8 @@ def build_query(
     body: Dict[str, Any] = {
         "size": size,
         "query": final_query,
-        "_source": {"excludes": ["text_vector", "text_vector_source", "vernacular_synonyms"]},
-        "collapse": {"field": "parent_id"},
+        "_source": {"excludes": list(LISTING_SOURCE_EXCLUDES)},
+        "collapse": dict(LISTING_COLLAPSE),
     }
 
     if _effective_offset:

@@ -125,7 +125,7 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
     from search_v2.query_processing.canonical_produce import (
         PRODUCE_SYNONYMS_PATH, load_produce_alias_map,
     )
-    from search_v2.ranking.business_ranking import apply_business_ranking, promote_lab_tested
+    from search_v2.ranking.business_ranking import apply_business_ranking, finalize_search_ranking
     from search_v2.retrieval.hybrid_search_orchestrator import hybrid_search
     from search_v2.retrieval import lexical_query_builder
     from search_v2.retrieval.opensearch_client import OpenSearchClient
@@ -214,8 +214,12 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
             product_type_category=req.filters.product_type_category,
             health_intent=req.health_intent,
         )
-        if not is_explicit_non_relevance_sort:
-            ranked = promote_lab_tested(ranked, req.filters.product_type, req.filters.product_type_category)
+        ranked = finalize_search_ranking(
+            ranked,
+            product_type=req.filters.product_type,
+            product_type_category=req.filters.product_type_category,
+            promote_lab=not is_explicit_non_relevance_sort,
+        )
 
         offset = req.filters.offset or 0
 

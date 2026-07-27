@@ -606,6 +606,25 @@ def has_lab_report(source: Dict[str, Any]) -> bool:
     return bool(_get_nested(source, "category_data.lab_reports.url"))
 
 
+def finalize_search_ranking(
+    ranked: List[RankedItem],
+    *,
+    product_type: Optional[str] = None,
+    product_type_category: Optional[str] = None,
+    promote_lab: bool = True,
+) -> List[RankedItem]:
+    """Post-ranking rules for query search — same general retrieval tier as listings."""
+    from search_v2.retrieval.listing import apply_general_retrieval_rules, flean_score_from_source
+
+    ranked = apply_general_retrieval_rules(
+        ranked,
+        score_getter=lambda item: flean_score_from_source(item.source or {}),
+    )
+    if promote_lab:
+        ranked = promote_lab_tested(ranked, product_type, product_type_category)
+    return ranked
+
+
 def promote_lab_tested(
     ranked: List[RankedItem],
     product_type: Optional[str],

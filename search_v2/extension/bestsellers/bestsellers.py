@@ -6,6 +6,9 @@ with a `top_hits` sub-aggregation sorted by flean_score.adjusted_score
 descending. Category paths are exact keyword-field terms, matching
 category_browsing/'s use of category_paths (see that module for why the
 legacy .keyword suffix doesn't apply to this index).
+
+Product-family dedup: top_hits cannot use field collapse, so raw hits are
+passed through family_selection.select_one_per_family() before card selection.
 """
 from __future__ import annotations
 
@@ -13,11 +16,20 @@ from typing import Any, Dict, List, Optional
 
 from search_v2.config.settings import SETTINGS
 from search_v2.extension.product import to_product_card
+from search_v2.retrieval.family_selection import (
+    default_flean_score_fn,
+    family_key_from_card,
+    select_one_per_family,
+)
+from search_v2.retrieval.listing import (
+    apply_flat_listing_defaults,
+    listing_visibility_filter_clause,
+    finalize_listing_cards,
+)
 from search_v2.retrieval.opensearch_client import OpenSearchClient
 
 _client: Optional[OpenSearchClient] = None
 _LAB_TESTED_FETCH = 5
-_VISIBILITY_FILTER = {"terms": {"visibility": ["visible", "soft"]}}
 
 
 def _get_client() -> OpenSearchClient:
@@ -28,7 +40,7 @@ def _get_client() -> OpenSearchClient:
 
 
 def fetch_candidates_by_category(paths: List[str], fetch_per_category: int) -> Dict[str, List[Dict[str, Any]]]:
-    """Returns {path: [raw _source docs...]}, each sorted by flean score descending."""
+    """Returns {path: [raw _source docs...]}, one per product family, by flean score."""
     if not paths:
         return {}
 
@@ -52,23 +64,24 @@ def fetch_candidates_by_category(paths: List[str], fetch_per_category: int) -> D
     results: Dict[str, List[Dict[str, Any]]] = {}
     for path in paths:
         hits = ((buckets.get(path) or {}).get("top") or {}).get("hits", {}).get("hits", [])
-        results[path] = [hit.get("_source") or {} for hit in hits]
+        sources = [hit.get("_source") or {} for hit in hits]
+        results[path] = select_one_per_family(sources, score_fn=default_flean_score_fn)
     return results
 
 
 def fetch_lab_tested_candidates(limit: int = _LAB_TESTED_FETCH) -> List[Dict[str, Any]]:
-    """Top lab-tested products by flean score (index-backed exists filter, no aggregation)."""
+    """Top lab-tested products by flean score (flat listing query with family collapse)."""
     if limit <= 0:
         return []
 
-    response = _get_client().search(
+    body = apply_flat_listing_defaults(
         {
             "size": limit,
             "track_total_hits": False,
             "query": {
                 "bool": {
                     "filter": [
-                        _VISIBILITY_FILTER,
+                        listing_visibility_filter_clause(),
                         {"exists": {"field": "category_data.lab_reports.url"}},
                     ]
                 }
@@ -76,6 +89,7 @@ def fetch_lab_tested_candidates(limit: int = _LAB_TESTED_FETCH) -> List[Dict[str
             "sort": [{"flean_score.adjusted_score": {"order": "desc", "missing": "_last"}}],
         }
     )
+    response = _get_client().search(body)
     hits = response.get("hits", {}).get("hits", [])
     return [hit.get("_source") or {} for hit in hits if hit.get("_source")]
 
@@ -95,7 +109,7 @@ def best_selling(
     candidates_by_path = fetch_candidates_by_category(category_paths, fetch_per_category)
 
     selected: List[Dict[str, Any]] = []
-    selected_ids: set = set()
+    selected_families: set = set()
     backfill: List[tuple] = []
 
     for path in category_paths:
@@ -108,12 +122,12 @@ def best_selling(
 
         category_count = 0
         for score, card in scored:
-            product_id = card["id"]
-            if product_id in selected_ids:
+            family = family_key_from_card(card)
+            if not family or family in selected_families:
                 continue
             if category_count < per_category:
                 selected.append(card)
-                selected_ids.add(product_id)
+                selected_families.add(family)
                 category_count += 1
             else:
                 backfill.append((score, card))
@@ -121,29 +135,21 @@ def best_selling(
     if len(selected) < total_products:
         backfill.sort(key=lambda item: item[0], reverse=True)
         for _, card in backfill:
-            product_id = card["id"]
-            if product_id in selected_ids:
+            family = family_key_from_card(card)
+            if not family or family in selected_families:
                 continue
             selected.append(card)
-            selected_ids.add(product_id)
+            selected_families.add(family)
             if len(selected) >= total_products:
                 break
 
     merged: List[Dict[str, Any]] = []
-    merged_ids: set = set()
+    merged_families: set = set()
     for card in lab_cards + selected:
-        product_id = card.get("id")
-        if not product_id or product_id in merged_ids:
+        family = family_key_from_card(card)
+        if not family or family in merged_families:
             continue
         merged.append(card)
-        merged_ids.add(product_id)
+        merged_families.add(family)
 
-    merged.sort(
-        key=lambda card: (
-            bool(card.get("has_lab_report")),
-            card.get("flean_score") or 0.0,
-            card.get("flean_percentile") or 0.0,
-        ),
-        reverse=True,
-    )
-    return merged[:total_products]
+    return finalize_listing_cards(merged)[:total_products]

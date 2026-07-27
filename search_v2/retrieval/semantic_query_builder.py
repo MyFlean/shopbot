@@ -20,6 +20,7 @@ from search_v2.config.settings import SearchV2Settings, SETTINGS
 from search_v2.embedding.embedding_service import EmbeddingService, get_embedding_service
 from search_v2.query_processing.query_pipeline import ProcessedQuery
 from search_v2.retrieval.lexical_query_builder import build_filters
+from search_v2.retrieval.listing import LISTING_COLLAPSE, LISTING_SOURCE_EXCLUDES
 
 
 def build_knn_clause(
@@ -112,8 +113,8 @@ def build_query(
     return {
         "size": size if size is not None else settings.DEFAULT_RESULT_SIZE,
         "query": {"knn": knn},
-        "_source": {"excludes": ["text_vector", "text_vector_source", "vernacular_synonyms"]},
-        "collapse": {"field": "parent_id"},
+        "_source": {"excludes": list(LISTING_SOURCE_EXCLUDES)},
+        "collapse": dict(LISTING_COLLAPSE),
     }
 
 

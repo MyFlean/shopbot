@@ -29,6 +29,7 @@ from search_v2.config.settings import SearchV2Settings, SETTINGS
 from search_v2.embedding.embedding_service import EmbeddingService, get_embedding_service
 from search_v2.query_processing.query_pipeline import ProcessedQuery
 from search_v2.retrieval.lexical_query_builder import _field_match_clauses, build_filters
+from search_v2.retrieval.listing import LISTING_COLLAPSE, LISTING_SOURCE_EXCLUDES
 from search_v2.retrieval.semantic_query_builder import build_knn_clause
 
 
@@ -88,8 +89,8 @@ def build_native_hybrid_request(
     body = {
         "size": size if size is not None else settings.DEFAULT_RESULT_SIZE,
         "query": {"hybrid": {"queries": [lexical_subquery, semantic_subquery]}},
-        "_source": {"excludes": ["text_vector", "text_vector_source", "vernacular_synonyms"]},
-        "collapse": {"field": "parent_id"},
+        "_source": {"excludes": list(LISTING_SOURCE_EXCLUDES)},
+        "collapse": dict(LISTING_COLLAPSE),
     }
     query_params = {"search_pipeline": settings.HYBRID_PIPELINE_NAME}
     return body, query_params

@@ -21,6 +21,7 @@ from shopping_bot.data_fetchers.dynamic_search_filters import (
 from search_v2.config.settings import SETTINGS
 from search_v2.extension.product import to_product_card
 from search_v2.retrieval.filters import SearchFilters, build_filter_clauses
+from search_v2.retrieval.listing import apply_flat_listing_defaults, finalize_listing_cards, listing_visibility_filter_clause
 from search_v2.retrieval.opensearch_client import OpenSearchClient
 from search_v2.retrieval.sorting import build_sort_clauses
 
@@ -44,7 +45,7 @@ def browse(
     t0 = time.monotonic()
     offset = max(0, page) * max(1, size)
     category_filter = {"term": {"category_paths": category_path}}
-    filter_clauses = [category_filter]
+    filter_clauses = [category_filter, listing_visibility_filter_clause()]
     must_not_clauses: List[Dict[str, Any]] = []
     should_extras: List[Dict[str, Any]] = []
     if filters is not None:
@@ -72,6 +73,7 @@ def browse(
     sort_clauses = build_sort_clauses(sort_by or "flean_score_desc")
     if sort_clauses:
         body["sort"] = sort_clauses
+    body = apply_flat_listing_defaults(body)
 
     client = _get_client()
     response = client.search(body)
@@ -82,6 +84,9 @@ def browse(
         to_product_card(hit.get("_source") or {}, rank=i + 1, score=hit.get("_score") or 0.0)
         for i, hit in enumerate(hits)
     ]
+    products = finalize_listing_cards(products)
+    for i, product in enumerate(products, 1):
+        product["rank"] = i
 
     bounds_response = client.search({
         "size": 0, "track_total_hits": False, "query": query,

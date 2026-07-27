@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 
 from search_v2.config.settings import SETTINGS
 from search_v2.extension.product import to_product_card
+from search_v2.retrieval.listing import apply_flat_listing_defaults, apply_general_retrieval_rules, listing_visibility_filter_clause
 from search_v2.retrieval.opensearch_client import OpenSearchClient
 
 _client: Optional[OpenSearchClient] = None
@@ -38,24 +39,32 @@ def similar_products(product_id: str, limit: int = 5) -> Dict[str, Any]:
     if not subcat:
         return {"source_product": to_product_card(source), "alternatives": [], "total_in_subcategory": 0}
 
-    body = {
-        "size": limit,
-        "track_total_hits": True,
-        "query": {
-            "bool": {
-                "filter": [{"term": {"category_paths": subcat}}],
-                "must_not": [{"term": {"id": product_id}}],
-            }
-        },
-        "sort": [{"stats.adjusted_score_percentiles.subcategory_percentile": {"order": "desc", "missing": "_last"}}],
-    }
+    body = apply_flat_listing_defaults(
+        {
+            "size": limit,
+            "track_total_hits": True,
+            "query": {
+                "bool": {
+                    "filter": [
+                        listing_visibility_filter_clause(),
+                        {"term": {"category_paths": subcat}},
+                    ],
+                    "must_not": [{"term": {"id": product_id}}],
+                }
+            },
+            "sort": [{"stats.adjusted_score_percentiles.subcategory_percentile": {"order": "desc", "missing": "_last"}}],
+        }
+    )
     response = _get_client().search(body)
     hits = (response.get("hits") or {}).get("hits") or []
     total = ((response.get("hits") or {}).get("total") or {}).get("value", len(hits))
 
+    alternatives = apply_general_retrieval_rules(
+        [to_product_card(hit.get("_source") or {}) for hit in hits]
+    )
     return {
         "source_product": to_product_card(source),
-        "alternatives": [to_product_card(hit.get("_source") or {}) for hit in hits],
+        "alternatives": alternatives,
         "subcategory": subcat,
         "total_in_subcategory": total,
     }

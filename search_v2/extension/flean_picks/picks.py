@@ -13,7 +13,9 @@ from typing import Any, Dict, List, Optional
 
 from search_v2.config.settings import SETTINGS
 from search_v2.extension.product import to_product_card
+from search_v2.retrieval.family_selection import default_flean_score_fn, family_key, select_one_per_family
 from search_v2.retrieval.filters import SearchFilters, build_filter_clauses
+from search_v2.retrieval.listing import finalize_listing_cards
 from search_v2.retrieval.opensearch_client import OpenSearchClient
 
 _client: Optional[OpenSearchClient] = None
@@ -56,6 +58,7 @@ def flean_picks(
     collected: Dict[str, List[Dict[str, Any]]] = {k: [] for k in categories}
     tier_counts: Dict[str, Dict[str, int]] = {k: {"tier1": 0, "tier2": 0, "tier3": 0} for k in categories}
     collected_ids: set = set()
+    collected_families: set = set()
     client = _get_client()
 
     for tier_name, tier_filters in tiers:
@@ -82,16 +85,21 @@ def flean_picks(
 
         for key in short_keys:
             hits = ((buckets.get(key) or {}).get("top") or {}).get("hits", {}).get("hits", [])
-            for hit in hits:
+            sources = [hit.get("_source") or {} for hit in hits]
+            for src in select_one_per_family(sources, score_fn=default_flean_score_fn):
                 if len(collected[key]) >= needed:
                     break
-                src = hit.get("_source") or {}
                 product_id = src.get("id")
-                if not product_id or product_id in collected_ids:
+                family = family_key(src)
+                if not product_id or product_id in collected_ids or family in collected_families:
                     continue
                 collected_ids.add(product_id)
+                collected_families.add(family)
                 collected[key].append(to_product_card(src))
                 tier_counts[key][tier_name] = tier_counts[key].get(tier_name, 0) + 1
+
+    for key in collected:
+        collected[key] = finalize_listing_cards(collected[key])
 
     stats = {
         key: {

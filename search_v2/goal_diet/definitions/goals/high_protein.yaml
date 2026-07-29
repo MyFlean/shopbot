@@ -1,0 +1,41 @@
+id: high_protein
+kind: goal
+display_name: High Protein
+triggers:
+  - high protein
+  - protein rich
+  - protein packed
+  - gym
+  - post workout
+  - post-workout
+  - pre workout
+  - pre-workout
+filters:
+  include:
+    - any_of:
+        - nutrient:
+            protein_g:
+              gte: 10
+        - derived_metric:
+            protein_cal_pct:
+              gte: 15
+        - ingredient_tag: high_protein_density
+  exclude:
+    - flean_score:
+        adjusted_score:
+          lt: 50
+    - all_of:
+        - percentile:
+            sweetener_penalty:
+              gte: 75
+        - nutrient:
+            sugar_g:
+              gt: 10
+sort: protein
+blocked_rules:
+  - rule: "tags.sweetners_sugar_tags.negative CONTAINS bad_sweetners_used AND nutri.added sugar g > 10"
+    missing_field: category_data.tags.highlight_tags.sweetners_sugar_tags, added_sugar_g
+    proxy: "sweetener_penalty >= 75 AND sugar_g > 10 (conservative — penalises high total sugar, not added sugar alone)"
+    fidelity_gap: "May miss bad-sweetener products with low total sugar; may over-exclude high-total-sugar whole foods without bad sweeteners"
+  - rule: "SORT BY stats.protein_percentiles.category_percentile DESC, flean_score DESC"
+    note: "Registry sort uses subcategory protein percentile + relevance tiebreaker"

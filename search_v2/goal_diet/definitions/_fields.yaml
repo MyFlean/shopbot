@@ -1,0 +1,104 @@
+# Shared ES field references for goal/diet filter definitions.
+# Loaded by registry_loader._load_percentile_field_map() at compile time.
+
+percentile_fields:
+  protein: stats.protein_percentiles.subcategory_percentile
+  protein_category: stats.protein_percentiles.category_percentile
+  fiber: stats.fiber_percentiles.subcategory_percentile
+  fiber_category: stats.fiber_percentiles.category_percentile
+  carbs_penalty: stats.carbs_penalty_percentiles.subcategory_percentile
+  carbs_penalty_category: stats.carbs_penalty_percentiles.category_percentile
+  sugar_penalty: stats.sugar_penalty_percentiles.subcategory_percentile
+  sugar_penalty_global: stats.sugar_penalty_percentiles.global_percentile
+  sodium_penalty: stats.sodium_penalty_percentiles.subcategory_percentile
+  fat_penalty: stats.total_fat_penalty_percentiles.subcategory_percentile
+  saturated_fat_penalty: stats.saturated_fat_penalty_percentiles.subcategory_percentile
+  trans_fat_penalty: stats.trans_fat_penalty_percentiles.subcategory_percentile
+  healthy_fat: stats.healthy_fat_percentiles.subcategory_percentile
+  fermentation: stats.fermentation_percentiles.subcategory_percentile
+  fortification: stats.fortification_percentiles.subcategory_percentile
+  fortification_category: stats.fortification_percentiles.category_percentile
+  adjusted_score: stats.adjusted_score_percentiles.subcategory_percentile
+  sweetener_penalty: stats.sweetener_penalty_percentiles.subcategory_percentile
+  wholefood: stats.wholefood_percentiles.subcategory_percentile
+  wholefood_category: stats.wholefood_percentiles.category_percentile
+
+# Runtime-computed from indexed nutrients (Painless script filters — PDF-faithful absolutes).
+derived_metrics:
+  net_carbs:
+    formula: "carbs_g - fiber_g"
+    requires:
+      - category_data.nutritional.nutri_breakdown_updated.carbs_g
+      - category_data.nutritional.nutri_breakdown_updated.fiber_g
+  fat_cal_pct:
+    formula: "(fat_g * 9 / energy_kcal) * 100"
+    requires:
+      - category_data.nutritional.nutri_breakdown_updated.fat_g
+      - category_data.nutritional.nutri_breakdown_updated.energy_kcal
+  protein_cal_pct:
+    formula: "(protein_g * 4 / energy_kcal) * 100"
+    requires:
+      - category_data.nutritional.nutri_breakdown_updated.protein_g
+      - category_data.nutritional.nutri_breakdown_updated.energy_kcal
+
+nutrient_fields:
+  protein_g: category_data.nutritional.nutri_breakdown_updated.protein_g
+  sugar_g: category_data.nutritional.nutri_breakdown_updated.sugar_g
+  fat_g: category_data.nutritional.nutri_breakdown_updated.fat_g
+  fiber_g: category_data.nutritional.nutri_breakdown_updated.fiber_g
+  sodium_mg: category_data.nutritional.nutri_breakdown_updated.sodium_mg
+  energy_kcal: category_data.nutritional.nutri_breakdown_updated.energy_kcal
+  carbs_g: category_data.nutritional.nutri_breakdown_updated.carbs_g
+  saturated_fat_g: category_data.nutritional.nutri_breakdown_updated.saturated_fat_g
+  trans_fat_g: category_data.nutritional.nutri_breakdown_updated.trans_fat_g
+
+# PDF fields not yet indexed — see definitions/PDF_AUDIT.md for per-tile status.
+blocked_fields:
+  added_sugar_g:
+    pdf_key: "nutri.added sugar g"
+    reason: "Not mapped in document_transformer._NUTRI_RAW_TO_NORMALIZED; dropped at index time"
+    indexing_work: "Add added sugar g → added_sugar_g in document_transformer + NUTRIENT_FIELD_MAP"
+  cholesterol_mg:
+    pdf_key: "nutri.cholesterol mg"
+    reason: "Not mapped in nutri_breakdown_updated normalization"
+    indexing_work: "Add cholesterol mg → cholesterol_mg in document_transformer + NUTRIENT_FIELD_MAP"
+  protein_cal_pct:
+    pdf_key: "protein_cal_pct"
+    reason: "Derived metric not precomputed at index time"
+    indexing_work: "Compute (protein_g * 4 / energy_kcal) * 100 in document_transformer → goal_metrics.protein_cal_pct"
+  fat_cal_pct:
+    pdf_key: "fat_cal_pct"
+    reason: "Derived metric not precomputed at index time"
+    indexing_work: "Compute (fat_g * 9 / energy_kcal) * 100 → goal_metrics.fat_cal_pct"
+  net_carbs:
+    pdf_key: "net_carbs"
+    reason: "Derived metric not precomputed at index time"
+    indexing_work: "Compute carbs_g - fiber_g → goal_metrics.net_carbs"
+  highlight_tags:
+    pdf_key: "category_data.tags.highlight_tags.*"
+    reason: "Highlight tag arrays not consistently indexed on f_and_b products"
+    indexing_work: "Normalize protein_tags, sweetners_sugar_tags, carbs_fiber_tags, energy_tags, oils_fats_tags at index time"
+  ingredients_normalised:
+    pdf_key: "ingredients.normalised.*"
+    reason: "Structured normalised ingredient buckets not indexed for ES filtering"
+    indexing_work: "Index normalised sweetener/protein/oil token arrays as keyword fields"
+  ingredients_allergens:
+    pdf_key: "ingredients.allergens.contains"
+    reason: "Allergen array not in indexing allowlist"
+    indexing_work: "Index ingredients.allergens.contains as keyword array"
+  additives_count:
+    pdf_key: "LEN(ingredients.additives)"
+    reason: "Additive count not precomputed"
+    indexing_work: "Index ingredients.additives_count integer at index time"
+  millet_top3:
+    pdf_key: "millet in first 3 ingredients"
+    reason: "Ingredient position logic requires runtime parse or precomputed flag"
+    indexing_work: "Index tags.millet_primary boolean from structured ingredient ordering"
+  micronutrient_count:
+    pdf_key: "COUNT(micronutrients >= 3)"
+    reason: "Micronutrient presence count not indexed"
+    indexing_work: "Index goal_metrics.immunity_micronutrient_count from nutri_breakdown keys"
+  category_hierarchy_exclusion:
+    pdf_key: "leaf IN wheat-based categories unless labelled GF"
+    reason: "Category-based exclusion requires tile-specific category denylist + exception logic"
+    indexing_work: "Index category_exclusion_tags or apply curated category denylist per tile"

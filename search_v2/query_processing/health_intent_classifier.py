@@ -2,94 +2,66 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
+from search_v2.goal_diet.registry_loader import get_compiled_registry
 from search_v2.query_processing.typo_correction import damerau_levenshtein, _auto_fuzziness_budget
 
 
 @dataclass(frozen=True)
-class HealthIntentDefinition:
-    category: str
-    triggers: Tuple[str, ...]
-    primary_preferences: Tuple[str, ...] = ()
-    secondary_preferences: Tuple[str, ...] = ()
-
-
-HEALTH_INTENT_REGISTRY: Tuple[HealthIntentDefinition, ...] = (
-    HealthIntentDefinition(
-        category="fitness",
-        triggers=(
-            "gym", "muscle gain", "muscle building", "muscle mass",
-            "weight gain", "gain weight", "mass gain", "bulking",
-            "bodybuilding", "high protein",
-            "pre workout", "pre-workout", "post workout", "post-workout",
-            "recovery", "endurance",
-        ),
-        primary_preferences=("high_protein",),
-        secondary_preferences=("low_sugar",),
-    ),
-    HealthIntentDefinition(
-        category="weight",
-        triggers=("weight loss", "fat loss", "cutting", "dieting", "low calorie"),
-        primary_preferences=("low_calorie",),
-        secondary_preferences=("high_fiber",),
-    ),
-    HealthIntentDefinition(
-        category="diabetes",
-        triggers=("diabetes", "diabetic", "sugar patient", "sugar control"),
-        primary_preferences=("low_sugar", "no_added_sugar"),
-        secondary_preferences=("high_fiber",),
-    ),
-    HealthIntentDefinition(
-        category="heart",
-        triggers=("heart healthy", "cardiac", "cholesterol", "heart care"),
-        primary_preferences=("low_saturated_fat", "low_sodium", "low_trans_fat"),
-        secondary_preferences=("high_fiber", "high_potassium"),
-    ),
-    HealthIntentDefinition(
-        category="blood_pressure",
-        triggers=("hypertension", "bp", "high bp"),
-        primary_preferences=("low_sodium",),
-        secondary_preferences=("high_potassium",),
-    ),
-    HealthIntentDefinition(
-        category="digestive",
-        triggers=("digestion", "gut health", "constipation"),
-        primary_preferences=("high_fiber",),
-    ),
-    HealthIntentDefinition(
-        category="keto",
-        triggers=("keto", "ketogenic", "low carb"),
-        primary_preferences=("low_carb",),
-    ),
-    HealthIntentDefinition(
-        category="general",
-        triggers=("healthy eating", "eating healthy", "wellness", "energy", "immunity"),
-        primary_preferences=(),
-    ),
-)
-
-_PATTERNS: Dict[str, re.Pattern] = {
-    trigger: re.compile(r"\b" + re.escape(trigger) + r"\b")
-    for definition in HEALTH_INTENT_REGISTRY
-    for trigger in definition.triggers
-}
-
-# (definition, [(trigger, trigger_tokens), ...]) — precomputed once for the fuzzy
-# fallback below, mirroring HEALTH_INTENT_REGISTRY's own per-definition grouping.
-_TRIGGER_TOKENS: List[Tuple[HealthIntentDefinition, List[Tuple[str, Tuple[str, ...]]]]] = [
-    (definition, [(trigger, tuple(trigger.split())) for trigger in definition.triggers])
-    for definition in HEALTH_INTENT_REGISTRY
-]
-
-
-@dataclass(frozen=True)
 class HealthIntentResult:
+    """Health Intake output — canonical goal/diet IDs and matched phrases only."""
+
     detected: bool = False
-    categories: Tuple[str, ...] = ()
+    goal_diet_ids: Tuple[str, ...] = ()
     matched_phrases: Tuple[str, ...] = ()
-    primary_preferences: Tuple[str, ...] = ()
-    secondary_preferences: Tuple[str, ...] = ()
+
+
+def classify_health_intent(raw_query: str) -> HealthIntentResult:
+    text = (raw_query or "").strip().lower()
+    if not text:
+        return HealthIntentResult()
+
+    registry = get_compiled_registry()
+    matched_ids: List[str] = []
+    matched_phrases: List[str] = []
+    seen_ids: set[str] = set()
+
+    for pattern, definition_id, trigger in registry.trigger_index:
+        if definition_id in seen_ids:
+            continue
+        if pattern.search(text):
+            matched_ids.append(definition_id)
+            matched_phrases.append(trigger)
+            seen_ids.add(definition_id)
+
+    if not matched_ids:
+        fuzzy_match = _fuzzy_trigger_match(text, registry)
+        if fuzzy_match:
+            matched_ids.append(fuzzy_match[0])
+            matched_phrases.append(fuzzy_match[1])
+
+    if not matched_ids:
+        return HealthIntentResult()
+
+    return HealthIntentResult(
+        detected=True,
+        goal_diet_ids=tuple(dict.fromkeys(matched_ids)),
+        matched_phrases=tuple(matched_phrases),
+    )
+
+
+def _fuzzy_trigger_match(text: str, registry) -> Tuple[str, str] | None:
+    """Lightweight fuzzy fallback against compiled registry triggers only."""
+    query_tokens = text.split()
+    if not query_tokens:
+        return None
+
+    for _pattern, definition_id, trigger in registry.trigger_index:
+        trigger_tokens = tuple(trigger.split())
+        if _fuzzy_window_match(query_tokens, trigger_tokens):
+            return definition_id, trigger
+    return None
 
 
 def _fuzzy_window_match(query_tokens: List[str], trigger_tokens: Tuple[str, ...]) -> bool:
@@ -114,46 +86,3 @@ def _fuzzy_window_match(query_tokens: List[str], trigger_tokens: Tuple[str, ...]
         if matched:
             return True
     return False
-
-
-def classify_health_intent(raw_query: str) -> HealthIntentResult:
-    text = (raw_query or "").strip().lower()
-    if not text:
-        return HealthIntentResult()
-
-    matched_definitions: List[HealthIntentDefinition] = []
-    matched_phrases: List[str] = []
-    for definition in HEALTH_INTENT_REGISTRY:
-        for trigger in definition.triggers:
-            if _PATTERNS[trigger].search(text):
-                matched_definitions.append(definition)
-                matched_phrases.append(trigger)
-                break
-
-    if not matched_definitions:
-        # Lightweight fallback, only attempted when exact trigger matching found
-        # nothing at all — fuzzy-matches query tokens against this small, fixed
-        # trigger registry only (never the catalog vocabulary), reusing the
-        # existing Damerau-Levenshtein implementation from typo_correction.py.
-        query_tokens = text.split()
-        for definition, triggers in _TRIGGER_TOKENS:
-            for trigger, trigger_tokens in triggers:
-                if _fuzzy_window_match(query_tokens, trigger_tokens):
-                    matched_definitions.append(definition)
-                    matched_phrases.append(trigger)
-                    break
-
-    if not matched_definitions:
-        return HealthIntentResult()
-
-    categories = tuple(dict.fromkeys(d.category for d in matched_definitions))
-    primary = tuple(dict.fromkeys(p for d in matched_definitions for p in d.primary_preferences))
-    secondary = tuple(dict.fromkeys(p for d in matched_definitions for p in d.secondary_preferences))
-
-    return HealthIntentResult(
-        detected=True,
-        categories=categories,
-        matched_phrases=tuple(matched_phrases),
-        primary_preferences=primary,
-        secondary_preferences=secondary,
-    )

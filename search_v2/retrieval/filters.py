@@ -117,6 +117,22 @@ DIETARY_LABEL_ALIASES: Dict[str, str] = {
     "non-gmo": "NON GMO",
 }
 
+# Canonical dietary labels that duplicate an active goal/diet registry ID.
+# When goal_diet_ids is set, skip these tag-only filters — the registry applies
+# hybrid inclusion (nutrition + optional tags), not mandatory tag gating.
+DIETARY_LABEL_TO_GOAL_DIET: Dict[str, str] = {
+    "KETO": "keto",
+    "VEGAN": "vegan",
+    "VEGETARIAN": "vegetarian",
+    "GLUTEN FREE": "gluten_free",
+    "DAIRY FREE": "dairy_free",
+    "LOW SUGAR": "low_sugar",
+    "LOW SODIUM": "low_sodium",
+    "HIGH PROTEIN": "high_protein",
+    "LOW FAT": "low_fat",
+    "NUT FREE": "nut_free",
+}
+
 
 def normalize_dietary_label(label: str) -> str:
     """Normalize a dietary label to its canonical uppercase form."""
@@ -127,6 +143,19 @@ def normalize_dietary_label(label: str) -> str:
 def _to_dietary_tag_key(label: str) -> str:
     """Map canonical/alias dietary label text to tag-style key (e.g. GLUTEN FREE -> gluten_free)."""
     return " ".join(str(label or "").strip().lower().split()).replace("-", "_").replace(" ", "_")
+
+
+def _effective_dietary_labels(sf: "SearchFilters") -> List[str]:
+    """Drop dietary tag filters already covered by an active goal/diet registry ID."""
+    labels = sf.dietary_labels or []
+    if not labels or not sf.goal_diet_ids:
+        return list(labels)
+    active = set(sf.goal_diet_ids)
+    return [
+        label
+        for label in labels
+        if DIETARY_LABEL_TO_GOAL_DIET.get(normalize_dietary_label(str(label))) not in active
+    ]
 
 
 # ── Nutrition profile filter → ES range clause ────────────────────────────────
@@ -151,6 +180,46 @@ _NUTRITION_PROFILE_CLAUSES: Dict[str, Dict[str, Any]] = {
     "low_sodium":   {"range": {"stats.sodium_penalty_percentiles.subcategory_percentile":    {"lte": 50}}},
     "low_fat":      {"range": {"stats.total_fat_penalty_percentiles.subcategory_percentile": {"lte": 50}}},
 }
+
+
+def _parse_goal_diet_ids(d: Dict[str, Any]) -> Optional[List[str]]:
+    raw = d.get("goal_diet_ids") or d.get("goal_ids") or d.get("diet_ids")
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        return parts or None
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()] or None
+    return None
+
+
+def _normalize_legacy_nutrition_profiles(
+    nutrition_profiles: Optional[List[str]],
+    goal_diet_ids: Optional[List[str]],
+) -> tuple[Optional[List[str]], Optional[List[str]]]:
+    """
+    Map legacy nutrition_profiles to canonical goal_diet_ids without double-filtering.
+
+    Profiles with a known mapping become goal_diet_ids; unmapped profiles stay on
+    nutrition_profiles for backward compatibility.
+    """
+    from search_v2.goal_diet.registry_loader import NUTRITION_PROFILE_TO_GOAL_DIET
+
+    if not nutrition_profiles:
+        return nutrition_profiles, goal_diet_ids
+
+    mapped_ids = list(goal_diet_ids or [])
+    legacy_profiles: List[str] = []
+    for profile in nutrition_profiles:
+        key = str(profile).strip().lower()
+        mapped = NUTRITION_PROFILE_TO_GOAL_DIET.get(key)
+        if mapped and mapped not in mapped_ids:
+            mapped_ids.append(mapped)
+        elif not mapped:
+            legacy_profiles.append(profile)
+
+    return (legacy_profiles or None), (mapped_ids or None)
 
 
 @dataclass
@@ -226,6 +295,9 @@ class SearchFilters:
 
     # Percentile-based nutrition profile filters (see _NUTRITION_PROFILE_CLAUSES)
     nutrition_profiles: Optional[List[str]] = None
+
+    # Canonical Shop by Goals/Diets IDs — resolved to ES clauses in build_filter_clauses().
+    goal_diet_ids: Optional[List[str]] = None
 
     # Product Intent Identification (query_processing/product_intent_extractor.py).
     # product_type          — the resolved head-noun phrase ("yogurt", "chips", ...).
@@ -376,6 +448,11 @@ class SearchFilters:
         elif isinstance(np_raw, str) and np_raw:
             nutrition_profiles = [np_raw]
 
+        goal_diet_ids = _parse_goal_diet_ids(d)
+        nutrition_profiles, goal_diet_ids = _normalize_legacy_nutrition_profiles(
+            nutrition_profiles, goal_diet_ids
+        )
+
         sort_by = d.get("sort_by") or d.get("sort")
         offset_raw = d.get("offset") or d.get("from") or 0
         try:
@@ -405,6 +482,7 @@ class SearchFilters:
             ingredient_tags=ingredient_tags,
             food_type=food_type,
             nutrition_profiles=nutrition_profiles,
+            goal_diet_ids=goal_diet_ids,
             sort_by=sort_by,
             offset=offset,
         )
@@ -497,9 +575,10 @@ def build_filter_clauses(sf: SearchFilters) -> FilterClauses:
     if sf.in_stock_only:
         fc.append(_build_in_stock_filter())
 
-    if sf.dietary_labels:
+    effective_dietary_labels = _effective_dietary_labels(sf)
+    if effective_dietary_labels:
         # Dietary preferences are sourced from category_data.tags.dietary_tags.
-        for label in sf.dietary_labels:
+        for label in effective_dietary_labels:
             tag_key = _to_dietary_tag_key(str(label).strip())
             if not tag_key:
                 continue
@@ -598,6 +677,13 @@ def build_filter_clauses(sf: SearchFilters) -> FilterClauses:
             clause = _NUTRITION_PROFILE_CLAUSES.get(profile)
             if clause:
                 fc.append(clause)
+
+    if sf.goal_diet_ids:
+        from search_v2.goal_diet.merge import merge_goal_diet_plans
+
+        merged_plan = merge_goal_diet_plans(sf.goal_diet_ids)
+        fc.extend(merged_plan.filter_clauses)
+        mn.extend(merged_plan.must_not_clauses)
 
     # ── Product Intent Identification (see SearchFilters.product_type*) ──────
     # "filter" mode (high confidence) gates admission to the candidate pool
@@ -833,6 +919,7 @@ def merge_filters(base: SearchFilters, overlay: SearchFilters) -> SearchFilters:
         ingredient_tags=_merge_list(base.ingredient_tags, overlay.ingredient_tags),
         food_type=overlay.food_type or base.food_type,
         nutrition_profiles=_merge_list(base.nutrition_profiles, overlay.nutrition_profiles),
+        goal_diet_ids=_merge_list(base.goal_diet_ids, overlay.goal_diet_ids),
         product_type=overlay.product_type or base.product_type,
         product_type_mode=overlay.product_type_mode or base.product_type_mode,
         product_type_category=overlay.product_type_category or base.product_type_category,

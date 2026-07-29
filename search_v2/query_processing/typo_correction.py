@@ -129,10 +129,9 @@ def _dynamic_protected_words() -> FrozenSet[str]:
     for term in SEED_TERMS:
         words.update(_words_in(term))
 
-    from search_v2.query_processing.health_intent_classifier import HEALTH_INTENT_REGISTRY
-    for definition in HEALTH_INTENT_REGISTRY:
-        for trigger in definition.triggers:
-            words.update(_words_in(trigger))
+    from search_v2.goal_diet.registry_loader import get_all_triggers
+    for trigger in get_all_triggers():
+        words.update(_words_in(trigger))
 
     return frozenset(words)
 

@@ -1,11 +1,13 @@
 """
-Shop by Goal — backend architecture preparation only. No API implemented.
+Shop by Goal — extends Search V2 via the shared goal/diet registry.
 
-Design principle: a "goal" (Keto, High Protein, Gluten Free, ...) is a named
-filter preset layered on the SAME shared taxonomy (taxonomy/,
-category_paths/category_hierarchies) — not a second, parallel hierarchy. A
-goal can be combined with an ordinary category scope (e.g. "Keto snacks")
-because both facets read the same document fields.
+Canonical definitions live in search_v2/goal_diet/definitions/ (split YAML).
+Runtime flow: Health Intake detects IDs → SearchFilters.goal_diet_ids →
+build_filter_clauses() compiles filters → same retrieval/ranking pipeline as
+search, browse, and curate.
+
+See search_v2/goal_diet/ and search_v2/extension/shop_by_goal/ field-readiness
+notes below for index dependencies.
 
 Evidence gathered directly against the local index (not assumed) —
 per-goal readiness:

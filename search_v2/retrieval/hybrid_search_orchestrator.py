@@ -78,6 +78,7 @@ class HybridSearchResult:
     lexical_ran: bool = False
     semantic_ran: bool = False
     fallback_reason: Optional[str] = None
+    router_decision: Optional[str] = None
     # True when a high-confidence Product Intent Identification filter was
     # dropped because it produced zero results — see module docstring and
     # hybrid_search() below. Surfaced for observability (logging/playground),
@@ -127,7 +128,7 @@ def _adaptive_fusion_weights(routing_context, settings: SearchV2Settings) -> Lis
     default = settings.FUSION_WEIGHTS
     if routing_context is None:
         return default
-    if getattr(routing_context, "health_intent_detected", False) or getattr(routing_context, "has_nutritional_constraint", False):
+    if getattr(routing_context, "goal_diet_detected", False) or getattr(routing_context, "has_nutritional_constraint", False):
         return [0.4, 0.6]
     return default
 
@@ -200,6 +201,7 @@ def _lexical_only(
     sort_by: Optional[str] = None,
     offset: int = 0,
     routing_context=None,
+    router_decision: Optional[str] = None,
 ) -> HybridSearchResult:
     """Returns the FULL candidate pool (see _pool_size) — NOT sliced to a
     page. Pagination is the caller's responsibility, applied AFTER business
@@ -215,7 +217,13 @@ def _lexical_only(
     ]
     if sort_by and sort_by != "relevance":
         items = _apply_post_fusion_sort(items, sort_by)
-    return HybridSearchResult(items=items, strategy_used="lexical_only", lexical_ran=True, fallback_reason=fallback_reason)
+    return HybridSearchResult(
+        items=items,
+        strategy_used="lexical_only",
+        lexical_ran=True,
+        fallback_reason=fallback_reason,
+        router_decision=router_decision,
+    )
 
 
 def _hybrid_search_once(
@@ -243,6 +251,12 @@ def _hybrid_search_once(
     settings = settings or SETTINGS
     final_size = size if size is not None else settings.DEFAULT_RESULT_SIZE
 
+    router_decision = None
+    if routing_context is not None:
+        from search_v2.goal_diet.goal_only_retrieval import resolve_router_decision
+
+        router_decision = resolve_router_decision(routing_context, settings)
+
     # Extract sort/offset from SearchFilters if not overridden by kwargs
     _sort_by = sort_by
     _offset = offset
@@ -261,6 +275,7 @@ def _hybrid_search_once(
             client, query, filters, final_size, settings,
             fallback_reason="hybrid/semantic disabled via settings",
             sort_by=_sort_by, offset=_offset, routing_context=routing_context,
+            router_decision=router_decision,
         )
 
     # A filters/category-only request (no query text at all — e.g.
@@ -272,6 +287,26 @@ def _hybrid_search_once(
             client, query, filters, final_size, settings,
             fallback_reason="empty query text — filters-only retrieval",
             sort_by=_sort_by, offset=_offset, routing_context=routing_context,
+            router_decision=router_decision,
+        )
+
+    from search_v2.goal_diet.goal_only_retrieval import (
+        filter_only_processed_query,
+        is_goal_only_retrieval,
+    )
+
+    if is_goal_only_retrieval(query, filters if _is_search_filters else None, routing_context):
+        return _lexical_only(
+            client,
+            filter_only_processed_query(query),
+            filters,
+            final_size,
+            settings,
+            fallback_reason="goal_diet: filter-only retrieval",
+            sort_by=_sort_by,
+            offset=_offset,
+            routing_context=routing_context,
+            router_decision=router_decision,
         )
 
     if getattr(settings, "ENABLE_QUERY_ROUTER", True) and routing_context is not None:
@@ -281,6 +316,7 @@ def _hybrid_search_once(
                 client, query, filters, final_size, settings,
                 fallback_reason="query_router: LEXICAL_ONLY",
                 sort_by=_sort_by, offset=_offset, routing_context=routing_context,
+                router_decision=router_decision,
             )
 
     strategy = settings.FUSION_STRATEGY
@@ -296,6 +332,7 @@ def _hybrid_search_once(
                 client, query, filters, final_size, settings,
                 fallback_reason="embedding model unavailable",
                 sort_by=_sort_by, offset=_offset, routing_context=routing_context,
+                router_decision=router_decision,
             )
         body, query_params = result
         response = client.search(body, query_params)
@@ -306,7 +343,13 @@ def _hybrid_search_once(
         ]
         if _sort_by and _sort_by != "relevance":
             items = _apply_post_fusion_sort(items, _sort_by)
-        return HybridSearchResult(items=items, strategy_used="native_hybrid", lexical_ran=True, semantic_ran=True)
+        return HybridSearchResult(
+            items=items,
+            strategy_used="native_hybrid",
+            lexical_ran=True,
+            semantic_ran=True,
+            router_decision=router_decision,
+        )
 
     if strategy in ("rrf", "weighted"):
         retrieval_k = _pool_size(settings, final_size, _offset, expanded=expanded_pool)
@@ -319,6 +362,7 @@ def _hybrid_search_once(
                 client, query, filters, final_size, settings,
                 fallback_reason="embedding model unavailable",
                 sort_by=_sort_by, offset=_offset, routing_context=routing_context,
+                router_decision=router_decision,
             )
 
         # Retrieval phase uses full retrieval_k, always in relevance order
@@ -373,7 +417,13 @@ def _hybrid_search_once(
 
         # NOT sliced to a page here — see _pool_size()/module docstring.
         # Pagination is applied by the caller AFTER business ranking.
-        return HybridSearchResult(items=all_fused, strategy_used=strategy, lexical_ran=True, semantic_ran=True)
+        return HybridSearchResult(
+            items=all_fused,
+            strategy_used=strategy,
+            lexical_ran=True,
+            semantic_ran=True,
+            router_decision=router_decision,
+        )
 
     raise ValueError(f"Unknown FUSION_STRATEGY: {strategy!r} (expected 'rrf', 'weighted', or 'native_hybrid')")
 
@@ -439,6 +489,30 @@ def hybrid_search(
     )
 
     from search_v2.retrieval.filters import SearchFilters
+    from search_v2.goal_diet.goal_only_retrieval import (
+        filter_only_processed_query,
+        is_goal_only_retrieval,
+    )
+
+    search_filters = filters if isinstance(filters, SearchFilters) else None
+    if (
+        not result.items
+        and is_goal_only_retrieval(query, search_filters, routing_context)
+        and result.fallback_reason != "goal_diet: filter-only retrieval"
+    ):
+        result = _lexical_only(
+            client,
+            filter_only_processed_query(query),
+            filters,
+            size if size is not None else settings.DEFAULT_RESULT_SIZE,
+            settings,
+            fallback_reason="goal_diet: filter-only retrieval",
+            sort_by=sort_by,
+            offset=offset,
+            routing_context=routing_context,
+            router_decision=result.router_decision,
+        )
+
     has_product_ids = isinstance(filters, SearchFilters) and bool(filters.product_ids)
     has_exact_product_ids = has_product_ids and filters.product_ids_exact
     has_fuzzy_product_ids = has_product_ids and not filters.product_ids_exact
@@ -451,8 +525,16 @@ def hybrid_search(
         and not result.items
     ):
         relaxed_filters = _relax_product_ids_filter(filters) if has_product_ids else _relax_product_type_filter(filters)
-        result = _hybrid_search_once(client, query, relaxed_filters, size, settings, embedding_service, sort_by, offset)
-        result.product_intent_relaxed = True
+        relaxed_result = _hybrid_search_once(
+            client, query, relaxed_filters, size, settings, embedding_service, sort_by, offset,
+            routing_context=routing_context,
+        )
+        relaxed_result = dataclasses.replace(
+            relaxed_result,
+            product_intent_relaxed=True,
+            router_decision=result.router_decision or relaxed_result.router_decision,
+        )
+        result = relaxed_result
 
     return result
 

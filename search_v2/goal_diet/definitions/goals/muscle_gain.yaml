@@ -1,0 +1,40 @@
+id: muscle_gain
+kind: goal
+display_name: Muscle Gain
+triggers:
+  - muscle gain
+  - muscle building
+  - muscle mass
+  - bulking
+  - mass gain
+  - bodybuilding
+  - weight gain
+  - gain weight
+filters:
+  include:
+    - nutrient:
+        protein_g:
+          gte: 12
+    - nutrient:
+        energy_kcal:
+          gte: 350
+    - any_of:
+        - ingredient_tag: complete_amino_profile
+        - ingredient_tag: high_protein_density
+  exclude:
+    - nutrient:
+        sugar_g:
+          gt: 15
+    - nutrient:
+        trans_fat_g:
+          gt: 0
+sort: protein
+blocked_rules:
+  - rule: "nutri.added sugar g > 15"
+    missing_field: added_sugar_g
+    proxy: "sugar_g > 15 (conservative — total sugar threshold)"
+    fidelity_gap: "May over-exclude high-natural-sugar bulking foods with low added sugar"
+  - rule: "complete_amino_profile OR high_protein_density required (third AND leg)"
+    missing_field: category_data.tags.ingredient_tags (complete_amino_profile, high_protein_density)
+    note: "Live index has 0 products with these tags — tile pool is empty until tags are indexed"
+    fidelity_gap: "1202 products meet protein>=12 and kcal>=350 but lack required tags"

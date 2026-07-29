@@ -1,0 +1,41 @@
+id: gut_health
+kind: goal
+display_name: Gut Health
+triggers:
+  - gut health
+  - digestion
+  - digestive
+  - constipation
+  - probiotic
+  - probiotics
+filters:
+  include:
+    - any_of:
+        - nutrient:
+            fiber_g:
+              gte: 6
+        - percentile:
+            fiber_category:
+              gte: 70
+        - flean_bonus:
+            fermentation_bonus:
+              gt: 0
+    - processing_type:
+        not: ultra_processed
+  exclude:
+    - ingredient_tag: no_fiber_content
+    - ingredient_text_any:
+        - sucralose
+        - aspartame
+        - acesulfame
+        - acesulfame k
+sort: fiber
+blocked_rules:
+  - rule: "tags.carbs_fiber_tags.negative CONTAINS no_fiber_content"
+    missing_field: category_data.tags.highlight_tags.carbs_fiber_tags
+    proxy: "ingredient_tag no_fiber_content when indexed"
+  - rule: "ingredients.normalised.sweetners CONTAINS artificial sweetener list"
+    missing_field: ingredients.normalised.sweetners
+    proxy: "ingredient_text_any on raw_text (sucralose, aspartame, acesulfame)"
+  - rule: "SORT BY flean_score.bonuses.fermentation_bonus DESC, nutri.fiber g DESC"
+    note: "Registry sort uses fiber percentile proxy"

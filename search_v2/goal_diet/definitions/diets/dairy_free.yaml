@@ -1,0 +1,34 @@
+id: dairy_free
+kind: diet
+display_name: Dairy Free / Lactose Free
+triggers:
+  - dairy free
+  - dairy-free
+  - lactose free
+  - lactose-free
+filters:
+  include:
+    - any_of:
+        - dietary_tag: dairy_free
+        - all_of:
+            - ingredient_text_exclude:
+                - milk
+                - ghee
+                - butter
+                - paneer
+                - curd
+                - khoya
+                - whey
+                - casein
+                - lactose
+  exclude:
+    - ingredient_text_any:
+        - milk solids
+        - whey protein
+        - casein
+sort: quality
+blocked_rules:
+  - rule: "ingredients.allergens.contains NOT CONTAINS MILK"
+    missing_field: ingredients.allergens.contains
+    proxy: "ingredient_text_exclude on raw_text"
+    fidelity_gap: "May admit milk-allergen products if raw_text omits explicit dairy terms"

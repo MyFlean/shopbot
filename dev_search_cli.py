@@ -259,14 +259,17 @@ def _print(result: dict, raw_q: str, engine_label: str) -> None:
 
     hi = meta.get("health_intent")
     if hi:
-        print(f"  HealthIntent: categories={hi['categories']}  "
-              f"primary={hi['primary_preferences']}  secondary={hi['secondary_preferences']}")
+        goal_ids = hi.get("goal_diet_ids") or hi.get("goal_ids") or []
+        phrases = hi.get("matched_phrases") or []
+        print(f"  HealthIntake: goal_diet_ids={goal_ids}  matched_phrases={phrases}")
 
     routing = meta.get("routing")
     if routing:
         print(f"  RoutingContext: source={routing['product_intent_source']}  "
               f"confidence={routing['product_intent_confidence']}  is_compound={routing['is_compound']}  "
-              f"health_intent_detected={routing['health_intent_detected']}")
+              f"goal_diet_detected={routing.get('goal_diet_detected', routing.get('health_intent_detected'))}")
+        if routing.get("retrieval_mode"):
+            print(f"  Retrieval mode: {routing['retrieval_mode']}")
         print(f"  Router decision: {routing['decision']}")
 
     if not products:

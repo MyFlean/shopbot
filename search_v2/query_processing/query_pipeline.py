@@ -309,6 +309,11 @@ def process_search_request(
                 )
                 nl_filters = merge_filters(intent_filters, nl_filters)
 
+    # Step 4b: Overlay Health Intake goal/diet IDs (detection only).
+    if health_intent and health_intent.detected and health_intent.goal_diet_ids:
+        intake_filters = SearchFilters(goal_diet_ids=list(health_intent.goal_diet_ids))
+        nl_filters = merge_filters(intake_filters, nl_filters)
+
     # Step 5: Merge explicit + NL/intent-extracted filters (explicit wins)
     base = explicit_filters or SearchFilters()
     merged = merge_filters(nl_filters, base)   # base values win on overlap

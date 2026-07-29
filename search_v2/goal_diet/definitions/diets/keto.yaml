@@ -1,0 +1,36 @@
+id: keto
+kind: diet
+display_name: Keto / Low Carb
+triggers:
+  - keto
+  - ketogenic
+  - low carb
+filters:
+  include:
+    - derived_metric:
+        net_carbs:
+          lte: 15
+    - nutrient:
+        sugar_g:
+          lte: 2
+    - derived_metric:
+        fat_cal_pct:
+          gte: 40
+  exclude:
+    - ingredient_text_any:
+        - invert sugar syrup
+        - glucose syrup
+        - maltodextrin
+        - maida
+        - sugar
+sort: fat
+blocked_rules:
+  - rule: "nutri.added sugar g <= 2"
+    missing_field: added_sugar_g
+    proxy: "sugar_g <= 2 (conservative — total sugar cap stricter than added-sugar-only)"
+    fidelity_gap: "May exclude keto products with natural sugar > 2 g and zero added sugar"
+  - rule: "ingredients.normalised.sweetners and protein_ingredients CONTAINS maida/sugar syrups"
+    missing_field: ingredients.normalised.*
+    proxy: "ingredient_text_any on raw_text for syrups and maida"
+  - rule: "SORT BY net_carbs ASC, protein_g DESC"
+    note: "Registry sort uses fat penalty percentile ascending proxy until script sort wired"

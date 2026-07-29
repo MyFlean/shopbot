@@ -1,0 +1,41 @@
+id: clean_eating
+kind: goal
+display_name: Clean Eating
+triggers:
+  - clean eating
+  - eating healthy
+  - healthy eating
+  - whole foods
+  - wellness
+filters:
+  include:
+    - processing_type:
+        not: ultra_processed
+    - any_of:
+        - ingredient_tag: no_harmful_additives
+        - flean_bonus:
+            simplicity_bonus:
+              gt: 0
+    - any_of:
+        - ingredient_tag: preservative_free
+        - flean_bonus:
+            wholefood_bonus:
+              gt: 0
+  exclude:
+    - ingredient_text_any:
+        - sucralose
+        - aspartame
+        - acesulfame
+        - acesulfame k
+        - saccharin
+sort: quality
+blocked_rules:
+  - rule: "LEN(ingredients.additives) > 2"
+    missing_field: ingredients.additives_count
+    note: "Additive-count exclusion blocked until additives_count indexed"
+    fidelity_gap: "Products with >2 additives may remain in tile"
+  - rule: "ingredients.normalised.sweetners CONTAINS artificial sweetener"
+    missing_field: ingredients.normalised.sweetners
+    proxy: "ingredient_text_any on raw_text"
+  - rule: "SORT BY simplicity_bonus DESC, wholefood_bonus DESC, score DESC"
+    note: "Registry sort uses quality proxy"

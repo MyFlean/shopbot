@@ -1,0 +1,30 @@
+id: high_fiber
+kind: diet
+display_name: High Fiber
+triggers:
+  - high fiber
+  - high fibre
+filters:
+  include:
+    - any_of:
+        - nutrient:
+            fiber_g:
+              gte: 6
+        - percentile:
+            fiber_category:
+              gte: 80
+  exclude:
+    - ingredient_tag: no_fiber_content
+    - nutrient:
+        sugar_g:
+          gt: 12
+sort: fiber
+blocked_rules:
+  - rule: "tags.carbs_fiber_tags.negative CONTAINS no_fiber_content"
+    missing_field: category_data.tags.highlight_tags.carbs_fiber_tags
+    proxy: "ingredient_tag no_fiber_content when indexed"
+  - rule: "nutri.added sugar g > 12"
+    missing_field: added_sugar_g
+    proxy: "sugar_g > 12 (conservative total-sugar exclusion)"
+  - rule: "SORT BY fiber DESC, fiber_bonus DESC"
+    note: "Registry sort uses fiber percentile proxy"

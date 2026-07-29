@@ -1,0 +1,46 @@
+id: diabetic_friendly
+kind: diet
+display_name: Diabetic Friendly / Low GI
+triggers:
+  - diabetic
+  - diabetes
+  - sugar patient
+  - low gi
+  - low-gi
+filters:
+  include:
+    - nutrient:
+        sugar_g:
+          lte: 1
+    - any_of:
+        - nutrient:
+            fiber_g:
+              gte: 3
+        - nutrient:
+            protein_g:
+              gte: 8
+    - ingredient_text_exclude:
+        - maida
+  exclude:
+    - ingredient_text_any:
+        - glucose syrup
+        - invert sugar syrup
+        - maltodextrin
+    - all_of:
+        - nutrient:
+            carbs_g:
+              gte: 70
+        - nutrient:
+            fiber_g:
+              lt: 6
+sort: low_sugar
+blocked_rules:
+  - rule: "nutri.added sugar g <= 1 AND nutri.total sugar g <= 5"
+    missing_field: added_sugar_g
+    proxy: "sugar_g <= 1 (conservative — stricter than PDF total-sugar cap of 5 g)"
+    fidelity_gap: "Excludes diabetic-friendly products with 2–5 g total sugar and low added sugar"
+  - rule: "ingredients.normalised.sweetners CONTAINS sugar-type sweetener"
+    missing_field: ingredients.normalised.sweetners
+    proxy: "ingredient_text_any exclusions for syrups/maltodextrin"
+  - rule: "Low GI tag/signal"
+    note: "PDF mentions low GI in triggers only — no GI field indexed for qualification"

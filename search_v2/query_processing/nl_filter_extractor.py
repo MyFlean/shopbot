@@ -162,11 +162,6 @@ _EXCL_DIETARY_STOPWORDS = {
 }
 _EXCL_KNOWN_ADJECTIVES = {"artificial", "added", "preservative", "preservatives"}
 
-_LIFESTYLE_INTENT_PATTERNS: List[Tuple[re.Pattern, List[str]]] = [
-    (re.compile(r"\b(?:gym|workout|work[\s-]?out|post[\s-]?workout|muscle|bodybuilding)\b", re.IGNORECASE), ["high_protein"]),
-    (re.compile(r"\b(?:weight\s*loss|slimming|fat\s*loss)\b", re.IGNORECASE), ["low_carb", "low_sugar"]),
-]
-
 
 @dataclass
 class NLExtractionResult:
@@ -285,16 +280,8 @@ class NLFilterExtractor:
                     remaining = remaining[:m.start()] + remaining[m.end():]
                     signals.append(f"macro={nutrient}{operator}{threshold}")
 
-        # ── 3b. Lifestyle intent phrases ("gym snacks", "weight loss snacks") ──
-        nutrition_profiles: List[str] = []
-        for pattern, profiles in _LIFESTYLE_INTENT_PATTERNS:
-            m = pattern.search(remaining)
-            if m:
-                for profile in profiles:
-                    if profile not in nutrition_profiles:
-                        nutrition_profiles.append(profile)
-                remaining = remaining[:m.start()] + remaining[m.end():]
-                signals.append(f"nutrition_profile={','.join(profiles)}")
+        # Lifestyle goal/diet phrases are detected by Health Intake (registry
+        # triggers) — not duplicated here.
 
         # ── 4. Dietary labels (after macros — avoids double-capturing "high protein") ─
         for pattern, canonical in _DIETARY_PATTERNS:
@@ -338,7 +325,6 @@ class NLFilterExtractor:
                 macro_filters=macro_filters or None,
                 excluded_ingredients=excluded_ingredients or None,
                 sort_by=sort_by,
-                nutrition_profiles=nutrition_profiles or None,
             ),
             signals_found=signals,
         )

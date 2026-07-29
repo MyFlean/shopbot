@@ -1,0 +1,39 @@
+id: millet_based
+kind: diet
+display_name: Millet Based
+triggers:
+  - millet
+  - millet based
+filters:
+  include:
+    - any_of:
+        - ingredient_tag: millet
+        - ingredient_text_any:
+            - millet
+            - ragi
+            - jowar
+            - bajra
+            - foxtail
+            - kodo
+            - barnyard
+            - little millet
+            - proso
+            - nachni
+  exclude:
+    - nutrient:
+        sugar_g:
+          gt: 12
+sort: quality
+blocked_rules:
+  - rule: "millet ingredient appears in first 3 ingredients"
+    missing_field: tags.millet_primary
+    note: "Top-3 position requirement blocked — any millet mention in raw_text qualifies"
+    fidelity_gap: "Millet-washing products (millet listed late) may be admitted"
+  - rule: "exclude millet mentioned but not in top 3"
+    missing_field: tags.millet_primary
+    note: "Late-position millet exclusion blocked"
+  - rule: "nutri.added sugar g > 12"
+    missing_field: added_sugar_g
+    proxy: "sugar_g > 12 (conservative total-sugar exclusion)"
+  - rule: "SORT BY score DESC, wholefood_percentiles.category_percentile DESC"
+    note: "Registry sort uses quality proxy"

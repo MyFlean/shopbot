@@ -1,0 +1,23 @@
+id: nut_free
+kind: diet
+display_name: Nut Free
+triggers:
+  - nut free
+  - nut-free
+  - nutfree
+filters:
+  include:
+    - dietary_tag: nut_free
+  exclude:
+    - ingredient_text_any:
+        - may contain tree nuts
+        - may contain peanuts
+        - may contain nuts
+sort: quality
+blocked_rules:
+  - rule: "ingredients.allergens.contains CONTAINS ANY nut allergen"
+    missing_field: ingredients.allergens.contains
+    note: "Nut allergen exclusion blocked — only 'may contain' text warnings enforced"
+    fidelity_gap: "Products with nut allergens but no may-contain warning may remain"
+  - rule: "Text-based nut-free inference when tag absent"
+    note: "Removed — PDF requires nut_free dietary tag for inclusion"

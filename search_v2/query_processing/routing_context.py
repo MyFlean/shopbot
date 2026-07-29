@@ -15,7 +15,7 @@ class RoutingContext:
     product_intent_confidence: float = 0.0
     product_intent_is_compound: bool = False
     has_fresh_produce_match: bool = False
-    health_intent_detected: bool = False
+    goal_diet_detected: bool = False
     has_nutritional_constraint: bool = False
     health_intent_matched_phrases: Tuple[str, ...] = ()
 
@@ -31,12 +31,16 @@ def build_routing_context(
     has_nutritional_constraint = bool(
         filters and (filters.macro_filters or filters.nutrition_profiles)
     )
+    goal_diet_detected = bool(
+        (health_intent and health_intent.detected)
+        or (filters and filters.goal_diet_ids)
+    )
     return RoutingContext(
         product_intent_source=product_intent.source if product_intent else "none",
         product_intent_confidence=product_intent.confidence if product_intent else 0.0,
         product_intent_is_compound=is_compound,
         has_fresh_produce_match=bool(product_intent.fresh_produce_ids) if product_intent else False,
-        health_intent_detected=health_intent.detected if health_intent else False,
+        goal_diet_detected=goal_diet_detected,
         has_nutritional_constraint=has_nutritional_constraint,
         health_intent_matched_phrases=health_intent.matched_phrases if health_intent else (),
     )

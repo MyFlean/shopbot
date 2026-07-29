@@ -129,6 +129,7 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
     from search_v2.retrieval.hybrid_search_orchestrator import hybrid_search
     from search_v2.retrieval import lexical_query_builder
     from search_v2.retrieval.opensearch_client import OpenSearchClient
+    from search_v2.retrieval.sorting import resolve_sort_for_filters
 
     client = OpenSearchClient(settings=SETTINGS)
     try:
@@ -177,6 +178,13 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
         except Exception:
             _log.exception("search: failed to build product intent extractor — feature disabled")
 
+    try:
+        from search_v2.goal_diet.registry_loader import get_compiled_registry
+        registry = get_compiled_registry()
+        _log.info("search: goal/diet registry loaded (%d definitions)", len(registry.definitions))
+    except Exception:
+        _log.exception("search: failed to load goal/diet registry")
+
     def _search(params: Dict[str, Any]) -> Dict[str, Any]:
         t0 = time.monotonic()
         raw_q = params.get("q") or ""
@@ -197,12 +205,15 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
         # by SETTINGS.RETRIEVAL_K), NOT just this page — business ranking
         # needs that full pool to have real candidates to promote;
         # pagination happens below, after ranking.
+        effective_sort = resolve_sort_for_filters(req.filters.sort_by, req.filters.goal_diet_ids)
+
         hybrid_result = hybrid_search(
             client, req.processed_query, req.filters, size, SETTINGS, emb_svc,
             routing_context=req.routing_context,
+            sort_by=effective_sort,
         )
 
-        sort_by = (req.filters.sort_by or "").strip().lower()
+        sort_by = (effective_sort or "").strip().lower()
         is_explicit_non_relevance_sort = bool(sort_by) and sort_by != "relevance"
 
         ranked = apply_business_ranking(
@@ -213,6 +224,7 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
             product_type=req.filters.product_type,
             product_type_category=req.filters.product_type_category,
             health_intent=req.health_intent,
+            goal_diet_ids=req.filters.goal_diet_ids,
         )
         ranked = finalize_search_ranking(
             ranked,
@@ -247,18 +259,17 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
             }
         if req.health_intent is not None and req.health_intent.detected:
             meta["health_intent"] = {
-                "categories": list(req.health_intent.categories),
+                "goal_diet_ids": list(req.health_intent.goal_diet_ids),
                 "matched_phrases": list(req.health_intent.matched_phrases),
-                "primary_preferences": list(req.health_intent.primary_preferences),
-                "secondary_preferences": list(req.health_intent.secondary_preferences),
             }
         if req.routing_context is not None:
             meta["routing"] = {
                 "product_intent_source": req.routing_context.product_intent_source,
                 "product_intent_confidence": round(req.routing_context.product_intent_confidence, 4),
                 "is_compound": req.routing_context.product_intent_is_compound,
-                "health_intent_detected": req.routing_context.health_intent_detected,
-                "decision": "LEXICAL_ONLY" if hybrid_result.fallback_reason == "query_router: LEXICAL_ONLY" else "HYBRID",
+                "goal_diet_detected": req.routing_context.goal_diet_detected,
+                "decision": hybrid_result.router_decision or "HYBRID",
+                "retrieval_mode": hybrid_result.fallback_reason or hybrid_result.strategy_used,
             }
 
         dynamic_filters = []

@@ -1,0 +1,39 @@
+id: energy_focus
+kind: goal
+display_name: Energy & Focus
+triggers:
+  - energy
+  - focus
+  - endurance
+  - stamina
+filters:
+  include:
+    - nutrient:
+        carbs_g:
+          gte: 30
+    - nutrient:
+        sugar_g:
+          lte: 8
+    - any_of:
+        - nutrient:
+            fiber_g:
+              gte: 3
+    - nutrient:
+        protein_g:
+          gte: 5
+  exclude:
+    - nutrient:
+        sugar_g:
+          gt: 15
+    - nutrient:
+        trans_fat_g:
+          gt: 0
+sort: quality
+blocked_rules:
+  - rule: "nutri.added sugar g <= 8 (inclusion) and > 15 (exclusion)"
+    missing_field: added_sugar_g
+    proxy: "total sugar_g thresholds (conservative for inclusion at <= 8)"
+    fidelity_gap: "Natural-sugar products may fail inclusion; added-sugar violations with low total sugar may pass exclusion"
+  - rule: "tags.energy_tags.neutral CONTAINS medium_calories as alternative to fiber >= 3"
+    missing_field: category_data.tags.highlight_tags.energy_tags
+    note: "medium_calories tag path blocked — only fiber >= 3 enforced until tag indexed"

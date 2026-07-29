@@ -1,0 +1,14 @@
+id: low_fat
+kind: diet
+display_name: Low Fat
+triggers:
+  - low fat
+filters:
+  include:
+    - nutrient:
+        fat_g:
+          lte: 5
+  exclude: []
+sort: fat
+notes: "Not defined in founder PDF — extension tile using absolute fat_g <= 5 only."
+blocked_rules: []

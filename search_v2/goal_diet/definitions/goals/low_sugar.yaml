@@ -1,0 +1,34 @@
+id: low_sugar
+kind: goal
+display_name: Low Sugar / Sugar Control
+triggers:
+  - low sugar
+  - sugar free
+  - no added sugar
+  - sugar control
+filters:
+  include:
+    - nutrient:
+        sugar_g:
+          lte: 2
+  exclude:
+    - ingredient_text_any:
+        - invert sugar syrup
+        - glucose syrup
+        - maltodextrin
+        - high fructose corn syrup
+        - sugar
+sort: low_sugar
+blocked_rules:
+  - rule: "nutri.added sugar g <= 2 AND nutri.total sugar g <= 8"
+    missing_field: added_sugar_g
+    proxy: "sugar_g <= 2 (conservative — stricter than total <= 8 alone; approximates both PDF caps)"
+    fidelity_gap: "Excludes products with 3–8 g natural sugar and zero added sugar"
+  - rule: "ingredients.normalised.sweetners CONTAINS honey/jaggery when added sugar > 2"
+    missing_field: ingredients.normalised.sweetners
+    note: "Conditional honey/jaggery exclusion blocked"
+  - rule: "tags.sweetners_sugar_tags.negative NOT EMPTY"
+    missing_field: category_data.tags.highlight_tags.sweetners_sugar_tags
+    note: "Negative sweetener tag exclusion blocked"
+  - rule: "SORT BY added_sugar ASC, sugar_penalty ASC"
+    note: "Registry sort uses sugar_penalty percentile proxy"

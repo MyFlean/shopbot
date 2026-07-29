@@ -1,0 +1,34 @@
+id: immunity
+kind: goal
+display_name: Immunity
+triggers:
+  - immunity
+  - immune
+  - immune system
+filters:
+  include:
+    - any_of:
+        - flean_bonus:
+            fortification_bonus:
+              gt: 0
+        - percentile:
+            fortification_category:
+              gte: 75
+  exclude:
+    - flean_score:
+        adjusted_score:
+          lt: 50
+    - nutrient:
+        sugar_g:
+          gt: 15
+sort: quality
+blocked_rules:
+  - rule: "COUNT(micronutrients: vitamin a, c, zinc, iron, folate, b-vitamins) >= 3"
+    missing_field: goal_metrics.immunity_micronutrient_count
+    note: "Micronutrient-count path blocked — only fortification bonus/percentile enforced"
+    fidelity_gap: "Products with 3+ micronutrients but no fortification signal are excluded"
+  - rule: "nutri.added sugar g > 15"
+    missing_field: added_sugar_g
+    proxy: "sugar_g > 15 (conservative total-sugar exclusion)"
+  - rule: "SORT BY stats.fortification_percentiles.category_percentile DESC, score DESC"
+    note: "Registry sort uses quality proxy"

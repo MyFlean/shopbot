@@ -1,0 +1,45 @@
+id: weight_loss
+kind: goal
+display_name: Weight Loss / Fat Loss
+triggers:
+  - weight loss
+  - fat loss
+  - cutting
+  - dieting
+  - low calorie
+  - slimming
+filters:
+  include:
+    - nutrient:
+        energy_kcal:
+          lte: 400
+    - nutrient:
+        sugar_g:
+          lte: 5
+    - any_of:
+        - nutrient:
+            fiber_g:
+              gte: 3
+        - flean_bonus:
+            fiber_bonus:
+              gt: 0
+        - derived_metric:
+            protein_cal_pct:
+              gte: 12
+  exclude:
+    - all_of:
+        - processing_type: ultra_processed
+        - flean_score:
+            adjusted_score:
+              lt: 55
+    - nutrient:
+        fat_g:
+          gt: 20
+sort: low_sugar
+blocked_rules:
+  - rule: "nutri.added sugar g <= 5"
+    missing_field: added_sugar_g
+    proxy: "sugar_g <= 5 (conservative — total sugar cap is stricter than added-sugar-only)"
+    fidelity_gap: "Excludes products with high natural sugar but low added sugar"
+  - rule: "SORT BY flean_score.penalties.calories_penalty ASC, protein_cal_pct DESC"
+    note: "Registry sort uses low_sugar percentile proxy; calories_penalty sort not wired"

@@ -9,9 +9,26 @@ that just needs "raw doc -> card", not only the ranked-search path.
 """
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from shopping_bot.data_fetchers.es_products import _copy_if_present, _generate_macro_tags
+from shopping_bot.data_fetchers.es_products import (
+    _copy_if_present,
+    _generate_macro_tags,
+    _parse_flean_badge_score_double,
+    _round_flean_score_whole,
+)
+
+
+def _display_flean_score(flean_score_data: Any) -> Optional[int]:
+    """0–10 display score — same semantics as PDP and transform_to_product_card()."""
+    if isinstance(flean_score_data, dict):
+        label_val = _parse_flean_badge_score_double(flean_score_data.get("adjusted_score_label"))
+        if label_val is not None:
+            return _round_flean_score_whole(label_val)
+        adj_val = _parse_flean_badge_score_double(flean_score_data.get("adjusted_score"))
+        if adj_val is not None:
+            return _round_flean_score_whole(adj_val / 10.0)
+    return None
 
 
 def to_product_card(source: Dict[str, Any], rank: int = 0, score: float = 0.0) -> Dict[str, Any]:
@@ -90,7 +107,7 @@ def to_product_card(source: Dict[str, Any], rank: int = 0, score: float = 0.0) -
         "dietary_labels": dietary_labels if isinstance(dietary_labels, list) else [],
         "package_claims": claims,
         "flean_percentile": score_pcts.get("subcategory_percentile"),
-        "flean_score": (source.get("flean_score") or {}).get("adjusted_score"),
+        "flean_score": _display_flean_score(source.get("flean_score")),
         "bonus_percentiles": {k: v for k, v in bonus_percentiles.items() if v is not None},
         "penalty_percentiles": {k: v for k, v in penalty_percentiles.items() if v is not None},
         "image": image,

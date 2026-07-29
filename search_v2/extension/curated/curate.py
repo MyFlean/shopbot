@@ -14,7 +14,7 @@ from search_v2.extension.product import to_product_card
 from search_v2.retrieval.filters import SearchFilters, build_filter_clauses
 from search_v2.retrieval.listing import apply_flat_listing_defaults, apply_general_retrieval_rules, listing_visibility_filter_clause
 from search_v2.retrieval.opensearch_client import OpenSearchClient
-from search_v2.retrieval.sorting import build_sort_clauses
+from search_v2.retrieval.sorting import build_sort_clauses, resolve_sort_for_filters
 
 _client: Optional[OpenSearchClient] = None
 
@@ -41,7 +41,8 @@ def curate(filters: Dict[str, Any], size: int = 4, sort_by: str = "flean_score_d
         bool_clause["should"] = fc.should_clauses
 
     body: Dict[str, Any] = {"size": size, "query": {"bool": bool_clause}, "track_total_hits": True}
-    sort_clauses = build_sort_clauses(sort_by)
+    effective_sort = resolve_sort_for_filters(sort_by, search_filters.goal_diet_ids)
+    sort_clauses = build_sort_clauses(effective_sort or sort_by)
     if sort_clauses:
         body["sort"] = sort_clauses
     body = apply_flat_listing_defaults(body)

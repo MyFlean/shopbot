@@ -1,0 +1,33 @@
+id: heart_healthy
+kind: goal
+display_name: Heart Healthy
+triggers:
+  - heart healthy
+  - cardiac
+  - cholesterol
+  - heart care
+filters:
+  include:
+    - nutrient:
+        saturated_fat_g:
+          lte: 5
+    - nutrient:
+        trans_fat_g:
+          lte: 0
+    - nutrient:
+        sodium_mg:
+          lte: 300
+  exclude:
+    - ingredient_text_any:
+        - palm oil
+sort: quality
+blocked_rules:
+  - rule: "nutri.cholesterol mg <= 20"
+    missing_field: cholesterol_mg
+    note: "Cannot enforce — rule blocked until cholesterol_mg is indexed"
+    fidelity_gap: "Products with cholesterol > 20 mg may be admitted"
+  - rule: "tags.oils_fats_tags.negative NOT EMPTY"
+    missing_field: category_data.tags.highlight_tags.oils_fats_tags
+    note: "Negative oil tags not indexed — only palm oil text exclusion enforced"
+  - rule: "SORT BY flean_score.bonuses.healthy_fat_bonus DESC, sodium_penalty ASC"
+    note: "Registry sort uses quality (adjusted_score percentile) proxy"

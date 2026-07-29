@@ -53,3 +53,4 @@ aiohttp>=3.8.0
 # see that file's comment for why (opensearch-py 3.x's hard grpcio/protobuf
 # dependency, unused by this codebase's plain HTTP/REST usage).
 opensearch-py>=2.4.0,<3.0.0
+PyYAML>=6.0                # Goal/Diet registry YAML definitions (search_v2/goal_diet/)

@@ -1,0 +1,13 @@
+id: vegetarian
+kind: diet
+display_name: Vegetarian
+triggers:
+  - vegetarian
+filters:
+  include:
+    - dietary_label: veg
+  exclude: []
+sort: quality
+blocked_rules:
+  - rule: "dietary_label == veg (PDF literal — no tag fallback)"
+    note: "Products without dietary_label veg are excluded even if vegetarian tag present"

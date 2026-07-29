@@ -1,0 +1,36 @@
+id: vegan
+kind: diet
+display_name: Vegan
+triggers:
+  - vegan
+filters:
+  include:
+    - any_of:
+        - dietary_tag: vegan
+        - all_of:
+            - dietary_label: veg
+            - ingredient_text_exclude:
+                - milk
+                - ghee
+                - butter
+                - paneer
+                - curd
+                - honey
+                - whey
+                - casein
+                - gelatin
+                - egg
+  exclude:
+    - ingredient_text_any:
+        - milk solids
+        - whey protein
+        - casein
+sort: quality
+blocked_rules:
+  - rule: "ingredients.allergens.contains NOT CONTAINS MILK"
+    missing_field: ingredients.allergens.contains
+    proxy: "ingredient_text_exclude on raw_text for dairy/animal ingredients"
+    fidelity_gap: "May admit products with milk allergen if raw_text omits explicit terms"
+  - rule: "ingredients.normalised.protein_ingredients CONTAINS milk protein"
+    missing_field: ingredients.normalised.protein_ingredients
+    proxy: "ingredient_text_any exclusion for whey/casein/milk solids"

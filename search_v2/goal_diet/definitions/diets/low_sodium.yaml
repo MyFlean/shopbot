@@ -1,0 +1,22 @@
+id: low_sodium
+kind: diet
+display_name: Low Sodium
+triggers:
+  - low sodium
+filters:
+  include:
+    - nutrient:
+        sodium_mg:
+          lte: 120
+    - exists: category_data.nutritional.nutri_breakdown_updated.sodium_mg
+  exclude: []
+sort: quality
+blocked_rules:
+  - rule: "tags CONTAINS sodium-negative signals"
+    missing_field: category_data.tags highlight sodium signals
+    note: "Negative sodium tag exclusion blocked"
+    fidelity_gap: "Products with negative sodium tags but sodium_mg <= 120 may remain"
+  - rule: "Exclude missing sodium value (PDF requires confirmed low sodium)"
+    note: "Enforced via exists guard on sodium_mg in inclusion"
+  - rule: "SORT BY nutri.sodium mg ASC"
+    note: "Registry sort uses quality proxy; absolute sodium ASC sort not wired"

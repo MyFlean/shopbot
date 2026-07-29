@@ -1,0 +1,45 @@
+id: kids_friendly
+kind: goal
+display_name: Kids Friendly
+triggers:
+  - kids friendly
+  - kid friendly
+  - kids
+  - children
+filters:
+  include:
+    - any_of:
+        - ingredient_tag: no_harmful_additives
+        - flean_bonus:
+            simplicity_bonus:
+              gt: 0
+    - nutrient:
+        sugar_g:
+          lte: 8
+    - nutrient:
+        trans_fat_g:
+          lte: 0
+    - flean_score:
+        adjusted_score:
+          gte: 60
+  exclude:
+    - ingredient_text_any:
+        - sucralose
+        - aspartame
+        - acesulfame
+        - acesulfame k
+        - saccharin
+    - nutrient:
+        sodium_mg:
+          gt: 400
+sort: quality
+blocked_rules:
+  - rule: "nutri.added sugar g <= 8"
+    missing_field: added_sugar_g
+    proxy: "sugar_g <= 8 (conservative total-sugar cap)"
+  - rule: "ingredients.additives CONTAINS colour INS 102, 110, 122, 124, 129, 133, 143, 155"
+    missing_field: ingredients.structured.additives
+    note: "Artificial colour exclusion blocked until additive INS codes indexed"
+    fidelity_gap: "Products with artificial colours may remain in tile"
+  - rule: "SORT BY score DESC, fortification_bonus DESC"
+    note: "Registry sort uses quality only; fortification tiebreaker blocked"

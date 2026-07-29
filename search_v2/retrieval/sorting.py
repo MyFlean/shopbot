@@ -99,6 +99,21 @@ _ALIASES: Dict[str, str] = {
 }
 
 
+def resolve_sort_for_filters(
+    sort_by: Optional[str],
+    goal_diet_ids: Optional[List[str]] = None,
+) -> Optional[str]:
+    """
+    Return the effective sort key: explicit user/API sort wins; otherwise use
+    the first goal/diet default sort from the compiled registry.
+    """
+    if sort_by and str(sort_by).strip().lower() not in ("", "relevance"):
+        return sort_by
+    from search_v2.goal_diet.registry_loader import get_default_sort_for_goal_diet_ids
+
+    return get_default_sort_for_goal_diet_ids(goal_diet_ids)
+
+
 def build_sort_clauses(sort_by: Optional[str]) -> Optional[List[Dict[str, Any]]]:
     """
     Return OpenSearch sort clauses for the given sort key, or None for

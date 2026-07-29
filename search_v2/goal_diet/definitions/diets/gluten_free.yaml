@@ -1,0 +1,40 @@
+id: gluten_free
+kind: diet
+display_name: Gluten Free
+triggers:
+  - gluten free
+  - gluten-free
+  - glutenfree
+filters:
+  include:
+    - any_of:
+        - dietary_tag: gluten_free
+        - all_of:
+            - ingredient_text_exclude:
+                - wheat
+                - maida
+                - atta
+                - barley
+                - rye
+                - semolina
+                - sooji
+                - suji
+                - dalia
+  exclude:
+    - ingredient_text_any:
+        - wheat flour
+        - refined wheat flour
+        - maida
+        - atta
+        - barley
+        - rye
+        - semolina
+sort: quality
+blocked_rules:
+  - rule: "ingredients.allergens.contains NOT CONTAINS WHEAT"
+    missing_field: ingredients.allergens.contains
+    note: "Wheat allergen gate blocked — text exclusions only"
+    fidelity_gap: "May admit wheat-allergen products if raw_text omits explicit wheat terms"
+  - rule: "category_hierarchies leaf IN wheat-based categories unless labelled gluten free"
+    missing_field: category_exclusion_tags
+    note: "Category-based wheat exclusion blocked"

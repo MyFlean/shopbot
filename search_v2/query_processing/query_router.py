@@ -12,6 +12,17 @@ HYBRID: Literal["HYBRID"] = "HYBRID"
 RouteDecision = Literal["LEXICAL_ONLY", "HYBRID"]
 
 
+def _strong_product_intent(context: "RoutingContext", settings: "SearchV2Settings") -> bool:
+    if context.product_intent_source == "category_fallback":
+        return True
+    if context.product_intent_source == "head_term" and (
+        context.product_intent_is_compound
+        or context.product_intent_confidence >= settings.ROUTER_CONFIDENCE_THRESHOLD
+    ):
+        return True
+    return False
+
+
 def route(context: "RoutingContext", settings: Optional["SearchV2Settings"] = None) -> RouteDecision:
     if settings is None:
         from search_v2.config.settings import SETTINGS as settings
@@ -19,7 +30,12 @@ def route(context: "RoutingContext", settings: Optional["SearchV2Settings"] = No
     if context.has_nutritional_constraint:
         return HYBRID
 
-    if context.health_intent_detected:
+    # Explicit Goal/Diet + Product queries ("keto bread", "high protein oats")
+    # stay lexical when product intent is strong — goal phrase stripped for lexical match.
+    if context.goal_diet_detected and _strong_product_intent(context, settings):
+        return LEXICAL_ONLY
+
+    if context.goal_diet_detected:
         return HYBRID
 
     if context.has_fresh_produce_match:

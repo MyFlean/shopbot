@@ -458,6 +458,7 @@ def apply_business_ranking(
     product_type: Optional[str] = None,
     product_type_category: Optional[str] = None,
     health_intent: Optional[Any] = None,
+    goal_diet_ids: Optional[List[str]] = None,
 ) -> List[RankedItem]:
     """
     `items`: anything with `.doc_id`, `.source`, `.fused_score` (and
@@ -556,11 +557,15 @@ def apply_business_ranking(
 
             if (
                 getattr(settings, "ENABLE_HEALTH_PREFERENCE_RANKING", True)
+                and not goal_diet_ids
                 and health_intent is not None
                 and getattr(health_intent, "detected", False)
+                and getattr(health_intent, "primary_preferences", None)
             ):
                 component = health_preference_rule(
-                    source, health_intent.primary_preferences, health_intent.secondary_preferences,
+                    source,
+                    health_intent.primary_preferences,
+                    health_intent.secondary_preferences,
                 )
                 weight = rule_weights.get("health_preference_rule", 1.0)
                 effective = 1.0 + (component - 1.0) * weight

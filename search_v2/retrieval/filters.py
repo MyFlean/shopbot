@@ -220,6 +220,9 @@ class SearchFilters:
     # (e.g. "no_palm_oil", "preservative_free"). Each tag is an AND requirement.
     ingredient_tags: Optional[List[str]] = None
 
+    # Flavour tags (root-level field `flavour`) used for dynamic flavour filtering.
+    flavour: Optional[List[str]] = None
+
     # Food type: "veg" excludes products with "Non Veg" in description;
     # "nonveg" requires it. Mirrors V1 description-marker approach.
     food_type: Optional[str] = None
@@ -256,6 +259,11 @@ class SearchFilters:
     # is a complete no-op.
     product_ids: Optional[List[str]] = None
     product_ids_exact: bool = False
+
+    # Category selector token for category_hierarchies.segments[2].
+    category_segment_l2: Optional[str] = None
+    # Subcategory selector token for category_hierarchies.segments[3].
+    subcategory_segment_l3: Optional[str] = None
 
     # Pagination / sort
     sort_by: Optional[str] = None
@@ -365,6 +373,9 @@ class SearchFilters:
         avoid_ingredients_pc = _to_list(avoid_raw)
 
         ingredient_tags = _to_list(d.get("ingredient_tags"))
+        flavour = _to_list(d.get("flavour"))
+        if flavour:
+            flavour = [str(item).strip().lower() for item in flavour if str(item).strip()] or None
 
         food_type_raw = d.get("food_type")
         food_type: Optional[str] = str(food_type_raw).strip().lower() if food_type_raw else None
@@ -375,6 +386,26 @@ class SearchFilters:
             nutrition_profiles = [str(p) for p in np_raw if p] or None
         elif isinstance(np_raw, str) and np_raw:
             nutrition_profiles = [np_raw]
+
+        category_segment_l2: Optional[str] = None
+        raw_category_segment = d.get("category_segment_l2")
+        if raw_category_segment is None:
+            raw_category_segment = d.get("category")
+        if isinstance(raw_category_segment, str):
+            normalized_segment = raw_category_segment.strip().lower()
+            if normalized_segment:
+                category_segment_l2 = normalized_segment
+
+        subcategory_segment_l3: Optional[str] = None
+        raw_subcategory_segment = d.get("subcategory_segment_l3")
+        if raw_subcategory_segment is None:
+            raw_subcategory_segment = d.get("subcategory")
+        if isinstance(raw_subcategory_segment, str):
+            normalized_subcategory = raw_subcategory_segment.strip().lower()
+            if normalized_subcategory:
+                if "/" in normalized_subcategory:
+                    normalized_subcategory = normalized_subcategory.rsplit("/", 1)[-1]
+                subcategory_segment_l3 = normalized_subcategory
 
         sort_by = d.get("sort_by") or d.get("sort")
         offset_raw = d.get("offset") or d.get("from") or 0
@@ -403,8 +434,11 @@ class SearchFilters:
             hair_concerns=hair_concerns,
             avoid_ingredients_pc=avoid_ingredients_pc,
             ingredient_tags=ingredient_tags,
+            flavour=flavour,
             food_type=food_type,
             nutrition_profiles=nutrition_profiles,
+            category_segment_l2=category_segment_l2,
+            subcategory_segment_l3=subcategory_segment_l3,
             sort_by=sort_by,
             offset=offset,
         )
@@ -590,6 +624,23 @@ def build_filter_clauses(sf: SearchFilters) -> FilterClauses:
                     }
                 })
 
+    if sf.flavour:
+        for flavour_token in sf.flavour:
+            s = str(flavour_token).strip().lower()
+            if not s:
+                continue
+            fc.append(
+                {
+                    "bool": {
+                        "should": [
+                            {"term": {"flavour": s}},
+                            {"term": {"flavour.keyword": s}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                }
+            )
+
     if sf.food_type == "nonveg":
         fc.append({"match_phrase": {"description": "Non Veg"}})
 
@@ -598,6 +649,32 @@ def build_filter_clauses(sf: SearchFilters) -> FilterClauses:
             clause = _NUTRITION_PROFILE_CLAUSES.get(profile)
             if clause:
                 fc.append(clause)
+
+    if sf.category_segment_l2:
+        fc.append(
+            {
+                "nested": {
+                    "path": "category_hierarchies",
+                    "query": {
+                        "term": {"category_hierarchies.segments": sf.category_segment_l2}
+                    },
+                    "score_mode": "none",
+                }
+            }
+        )
+
+    if sf.subcategory_segment_l3:
+        fc.append(
+            {
+                "nested": {
+                    "path": "category_hierarchies",
+                    "query": {
+                        "term": {"category_hierarchies.segments": sf.subcategory_segment_l3}
+                    },
+                    "score_mode": "none",
+                }
+            }
+        )
 
     # ── Product Intent Identification (see SearchFilters.product_type*) ──────
     # "filter" mode (high confidence) gates admission to the candidate pool
@@ -831,6 +908,7 @@ def merge_filters(base: SearchFilters, overlay: SearchFilters) -> SearchFilters:
         hair_concerns=_merge_list(base.hair_concerns, overlay.hair_concerns),
         avoid_ingredients_pc=_merge_list(base.avoid_ingredients_pc, overlay.avoid_ingredients_pc),
         ingredient_tags=_merge_list(base.ingredient_tags, overlay.ingredient_tags),
+        flavour=_merge_list(base.flavour, overlay.flavour),
         food_type=overlay.food_type or base.food_type,
         nutrition_profiles=_merge_list(base.nutrition_profiles, overlay.nutrition_profiles),
         product_type=overlay.product_type or base.product_type,
@@ -838,6 +916,8 @@ def merge_filters(base: SearchFilters, overlay: SearchFilters) -> SearchFilters:
         product_type_category=overlay.product_type_category or base.product_type_category,
         product_ids=overlay.product_ids or base.product_ids,
         product_ids_exact=overlay.product_ids_exact or base.product_ids_exact,
+        category_segment_l2=overlay.category_segment_l2 or base.category_segment_l2,
+        subcategory_segment_l3=overlay.subcategory_segment_l3 or base.subcategory_segment_l3,
         sort_by=overlay.sort_by or base.sort_by,
         offset=overlay.offset if overlay.offset else base.offset,
     )

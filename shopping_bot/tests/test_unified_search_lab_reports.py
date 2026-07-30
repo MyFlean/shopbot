@@ -149,6 +149,21 @@ def test_unified_search_returns_v2_dynamic_filters(
                         "isPreSelected": False,
                     }
                 ],
+            },
+            {
+                "id": "filter_flavour",
+                "title": "Flavour",
+                "titleKey": "flavour",
+                "items": [
+                    {
+                        "id": "flavour_chocolate",
+                        "labelKey": "chocolate",
+                        "label": "Chocolate",
+                        "value": "chocolate",
+                        "count": 3,
+                        "isPreSelected": False,
+                    }
+                ],
             }
         ],
         "meta": {"total_hits": 1, "took_ms": 10},
@@ -166,6 +181,39 @@ def test_unified_search_returns_v2_dynamic_filters(
     assert resp.status_code == 200
     payload = resp.get_json()
     assert payload["data"]["filters"][0]["id"] == "filter_flean_score"
+    assert any(f["id"] == "filter_flavour" for f in payload["data"]["filters"])
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
+@patch("shopping_bot.routes.unified_search.transform_to_product_card")
+@patch("shopping_bot.routes.unified_search.v2_search")
+def test_unified_search_forwards_flavour_filter_to_v2_params(
+    mock_v2_search,
+    mock_transform_to_product_card,
+    _mock_search_engine,
+    unified_search_client,
+):
+    mock_v2_search.return_value = {
+        "products": [{"id": "prod-1", "visibility": "visible", "category_data": {}}],
+        "filters": [],
+        "meta": {"total_hits": 1, "took_ms": 8},
+    }
+    mock_transform_to_product_card.return_value = {
+        "id": "prod-1",
+        "parent_id": "parent-1",
+        "name": "prod-1",
+        "visibility": "visible",
+        "flean_score": 9,
+        "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
+    }
+
+    resp = unified_search_client.post(
+        "/rs/v1/search",
+        json={"query": "protein bar", "filters": {"flavour": ["Chocolate", "Vanilla"]}},
+    )
+    assert resp.status_code == 200
+    params = mock_v2_search.call_args.args[0]
+    assert params["flavour"] == ["chocolate", "vanilla"]
 
 
 @patch("shopping_bot.routes.unified_search._search_engine", return_value="v1")
@@ -216,3 +264,114 @@ def test_unified_search_preserves_fetcher_rank_order(
         "higher-rank-non-report",
         "lower-rank-with-report",
     ]
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
+@patch("shopping_bot.routes.unified_search.transform_to_product_card")
+@patch("shopping_bot.routes.unified_search.browse_by_category_segment")
+def test_unified_search_category_flow_returns_subcategories(
+    mock_browse_by_category_segment,
+    mock_transform_to_product_card,
+    _mock_search_engine,
+    unified_search_client,
+):
+    mock_browse_by_category_segment.return_value = {
+        "products": [{"id": "prod-1", "visibility": "visible", "category_data": {}}],
+        "filters": [],
+        "subcategories": [
+            {"id": "chips_and_crisps", "image": "img1", "name": "Chips & Crisps"},
+            {"id": "nachos", "image": "img2", "name": "Nachos"},
+        ],
+        "meta": {"total": 1, "took_ms": 12, "engine": "v2"},
+    }
+    mock_transform_to_product_card.return_value = {
+        "id": "prod-1",
+        "name": "prod-1",
+        "visibility": "visible",
+        "flean_score": 9,
+        "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
+    }
+
+    resp = unified_search_client.get("/rs/v1/search?category=light_bites")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["data"]["subcategories"] == [
+        {"id": "chips_and_crisps", "image": "img1", "name": "Chips & Crisps"},
+        {"id": "nachos", "image": "img2", "name": "Nachos"},
+    ]
+    assert payload["meta"]["category"] == "light_bites"
+    assert payload["meta"]["engine"] == "v2"
+
+    assert mock_browse_by_category_segment.call_args.kwargs["category_segment_l2"] == "light_bites"
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
+@patch("shopping_bot.routes.unified_search.transform_to_product_card")
+@patch("shopping_bot.routes.unified_search.browse_by_subcategory_segment")
+def test_unified_search_subcategory_flow_uses_segment3_browse_without_subcategories(
+    mock_browse_by_subcategory_segment,
+    mock_transform_to_product_card,
+    _mock_search_engine,
+    unified_search_client,
+):
+    mock_browse_by_subcategory_segment.return_value = {
+        "products": [{"id": "prod-1", "visibility": "visible", "category_data": {}}],
+        "filters": [],
+        "subcategories": [],
+        "meta": {"total": 1, "took_ms": 12, "engine": "v2"},
+    }
+    mock_transform_to_product_card.return_value = {
+        "id": "prod-1",
+        "name": "prod-1",
+        "visibility": "visible",
+        "flean_score": 9,
+        "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
+    }
+
+    resp = unified_search_client.get("/rs/v1/search?subcategory=chips_and_crisps")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert "subcategories" not in payload["data"]
+    assert payload["meta"]["subcategory"] == "chips_and_crisps"
+    assert payload["meta"]["engine"] == "v2"
+    assert mock_browse_by_subcategory_segment.call_args.kwargs["subcategory_segment_l3"] == "chips_and_crisps"
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
+@patch("shopping_bot.routes.unified_search.transform_to_product_card")
+@patch("shopping_bot.routes.unified_search.v2_search")
+def test_unified_search_query_flow_does_not_return_subcategories(
+    mock_v2_search,
+    mock_transform_to_product_card,
+    _mock_search_engine,
+    unified_search_client,
+):
+    mock_v2_search.return_value = {
+        "products": [{"id": "prod-1", "visibility": "visible", "category_data": {}}],
+        "filters": [],
+        "subcategories": ["should_not_be_exposed"],
+        "meta": {"total_hits": 1, "took_ms": 9},
+    }
+    mock_transform_to_product_card.return_value = {
+        "id": "prod-1",
+        "name": "prod-1",
+        "visibility": "visible",
+        "flean_score": 8,
+        "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
+    }
+
+    resp = unified_search_client.get("/rs/v1/search?query=chips")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert "subcategories" not in payload["data"]
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v1")
+def test_unified_search_category_selector_rejected_for_v1(
+    _mock_search_engine,
+    unified_search_client,
+):
+    resp = unified_search_client.get("/rs/v1/search?category=light_bites")
+    assert resp.status_code == 400
+    payload = resp.get_json()
+    assert payload["error"]["code"] == "UNSUPPORTED_PARAMETER"

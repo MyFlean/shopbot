@@ -17,6 +17,7 @@ Returns the wrapped `{success, data:{products}, meta}` shape used by
 
 Accepted params (GET query or POST JSON body):
   - query (string, optional)
+  - category (string, optional)            category_hierarchies.segments[2]
   - subcategory (string, optional)         ES path
   - page (int, default 0)
   - size (int, 1..100, default 100)
@@ -35,7 +36,7 @@ Accepted params (GET query or POST JSON body):
   - Top-level food_type also accepted (simple_search quirk); folded into filters.food_type
   - GET also accepts nutrition_profiles as a comma-separated query param
 
-Requires at least one of query/subcategory/filters (same as /api/v1/products).
+Requires at least one of query/category/subcategory/filters.
 """
 
 from __future__ import annotations
@@ -47,7 +48,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from flask import Blueprint, jsonify, request
 
 from ..data_fetchers.es_products import get_es_fetcher, transform_to_product_card
+from search_v2.extension.category_browsing import (
+    browse_by_category_segment,
+    browse_by_subcategory_segment,
+)
 from search_v2.extension.search import search as v2_search
+from search_v2.retrieval.filters import SearchFilters
 from ..utils.pincode_mapping import try_resolve_canonical_pincode
 from .product_api import (
     VALID_SORT_OPTIONS,
@@ -55,7 +61,6 @@ from .product_api import (
     _enrich_listing_card,
     _error_response,
     _has_palm_oil_ingredient,
-    _load_category_mapping,
     _normalize_filter_aliases,
     _resolve_pdp_cta,
     _success_response,
@@ -102,31 +107,6 @@ _FLEAN_SCORE_TO_MIN_BADGE: Dict[str, float] = {
     "8_plus": 8.0,
     "7_plus": 7.0,
 }
-
-
-def _resolve_subcategory_es_path(subcategory: str) -> Optional[str]:
-    """Resolve a `subcategory` value (bare leaf id, e.g. "baby_food", or an
-    already-full ES path) to the full ES path SearchFilters.category_paths
-    expects for prefix matching. Returns None (no filter applied — same as
-    today's behavior) when a bare leaf id can't be resolved unambiguously,
-    so this never narrows results incorrectly."""
-    if not subcategory:
-        return None
-    if "/" in subcategory:
-        return subcategory
-    try:
-        mapping = _load_category_mapping()
-    except Exception:
-        return None
-    matches = [
-        sub["es_path"]
-        for cat in mapping.get("categories", [])
-        for sub in cat.get("subcategories", [])
-        if sub.get("es_path", "").rsplit("/", 1)[-1] == subcategory
-    ]
-    if len(matches) == 1:
-        return matches[0]
-    return None
 
 
 def _v1_filters_to_gw_params(vf: Dict[str, Any]) -> Dict[str, Any]:
@@ -190,6 +170,10 @@ def _v1_filters_to_gw_params(vf: Dict[str, Any]) -> Dict[str, Any]:
     food_type = vf.get("food_type")
     if food_type:
         out["food_type"] = food_type
+
+    flavour = vf.get("flavour")
+    if flavour:
+        out["flavour"] = list(flavour)
 
     nutrition_profiles = vf.get("nutrition_profiles")
     if nutrition_profiles:
@@ -409,7 +393,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         body: Dict[str, Any] = {}
         if request.method == "GET":
             query = (request.args.get("query") or "").strip() or None
-            subcategory = (request.args.get("subcategory") or "").strip() or None
+            category = (request.args.get("category") or "").strip().lower() or None
+            subcategory = (request.args.get("subcategory") or "").strip().lower() or None
 
             try:
                 page = max(0, int(request.args.get("page", 0)))
@@ -432,11 +417,17 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                     return _error_response("INVALID_QUERY", "'query' must be a string", 400)
                 query = query.strip() or None
 
+            category = body.get("category")
+            if category is not None:
+                if not isinstance(category, str):
+                    return _error_response("INVALID_CATEGORY", "'category' must be a string", 400)
+                category = category.strip().lower() or None
+
             subcategory = body.get("subcategory")
             if subcategory is not None:
                 if not isinstance(subcategory, str):
                     return _error_response("INVALID_SUBCATEGORY", "'subcategory' must be a string", 400)
-                subcategory = subcategory.strip() or None
+                subcategory = subcategory.strip().lower() or None
 
             try:
                 page = max(0, int(body.get("page", 0)))
@@ -460,10 +451,17 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 raw_filters["food_type"] = top_food_type
 
         # At least one selector is required
-        if not query and not subcategory and not raw_filters:
+        if not query and not category and not subcategory and not raw_filters:
             return _error_response(
                 "MISSING_PARAMETER",
-                "At least one of 'query', 'subcategory', or 'filters' must be provided",
+                "At least one of 'query', 'category', 'subcategory', or 'filters' must be provided",
+                400,
+            )
+
+        if category and _search_engine() == "v1":
+            return _error_response(
+                "UNSUPPORTED_PARAMETER",
+                "'category' selector is supported only on Search V2",
                 400,
             )
 
@@ -484,7 +482,7 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         effective_pincode = _resolve_effective_pincode(body)
 
         log.info(
-            f"UNIFIED_SEARCH_REQUEST | query={query} | subcategory={subcategory} | "
+            f"UNIFIED_SEARCH_REQUEST | query={query} | category={category} | subcategory={subcategory} | "
             f"page={page} | size={size} | sort={resolved_sort} | filters={validated_filters} "
             f"| effective_pincode={effective_pincode}"
         )
@@ -504,29 +502,35 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         # regression across varied queries/filters showed zero exceptions;
         # a genuine V2 failure now surfaces as a real error. See
         # V1_FALLBACK_AUDIT.md.
-        filters_only = bool(validated_filters) and not subcategory
+        filters_only = bool(validated_filters) and not subcategory and not category and not query
+        selector_only_category = bool(category) and not query and not subcategory
+        selector_only_subcategory = bool(subcategory) and not query and not category
+
         if _search_engine() != "v1" and (query or filters_only):
             gw_params: Dict[str, Any] = {
                 "q": query or "",
                 "size": size,
                 "offset": page * size,
+                "category": category,
                 "subcategory": subcategory,
             }
             if sort_raw:
                 gw_params["sort_by"] = resolved_sort
             gw_params.update(_v1_filters_to_gw_params(validated_filters or {}))
+            if category:
+                gw_params["category_segment_l2"] = category
             if subcategory:
-                resolved_path = _resolve_subcategory_es_path(subcategory)
-                if resolved_path:
-                    gw_params["category_path_prefix"] = resolved_path
+                gw_params["subcategory_segment_l3"] = subcategory
             gw_result = v2_search(gw_params)
             gw_meta = gw_result.get("meta", {}) or {}
             gw_products = gw_result.get("products", [])
             gw_filters = gw_result.get("filters", []) if isinstance(gw_result, dict) else []
+            gw_subcategories = gw_result.get("subcategories", []) if isinstance(gw_result, dict) else []
             returned = len(gw_products)
             result = {
                 "products": gw_products,
                 "filters": gw_filters,
+                "subcategories": gw_subcategories,
                 "meta": {
                     "total": gw_meta.get("total_hits", returned),
                     "page": page,
@@ -535,6 +539,7 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                     "has_next": returned == size,
                     "has_prev": page > 0,
                     "query": query,
+                    "category": category,
                     "subcategory": subcategory,
                     "sort_by": resolved_sort,
                     "filters_applied": validated_filters,
@@ -546,33 +551,41 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 },
             }
 
-        # V2-only for subcategory browsing (fixed, fully-enumerable category
-        # paths) unless SEARCH_ENGINE=v1 — live SEARCH_ENGINE=v2 regression
-        # showed zero exceptions here. See V1_FALLBACK_AUDIT.md. An
-        # unresolvable bare subcategory id (resolved_path is None) still
-        # falls through to V1's more permissive wildcard matching — a
-        # taxonomy-resolution gap, not an error being hidden.
-        if result is None and _search_engine() != "v1" and subcategory and not query:
-            resolved_path = _resolve_subcategory_es_path(subcategory)
-            if resolved_path:
-                from search_v2.extension.category_browsing import browse
-                from search_v2.retrieval.filters import SearchFilters as _SearchFilters
-                browse_filters = _SearchFilters.from_dict(_v1_filters_to_gw_params(validated_filters or {})) if validated_filters else None
-                browse_result = browse(resolved_path, page=page, size=size, sort_by=resolved_sort, filters=browse_filters)
-                browse_meta = browse_result.get("meta", {}) or {}
-                result = {
-                    "products": browse_result.get("products", []),
-                    "filters": browse_result.get("filters", []),
-                    "meta": {
-                        **browse_meta,
-                        "query": query,
-                        "subcategory": subcategory,
-                        "filters_applied": validated_filters,
-                        "fuzzy_fallback_used": False,
-                        "prefix_fallback_used": False,
-                        "phonetic_used": False,
-                    },
-                }
+        if result is None and _search_engine() != "v1" and (selector_only_category or selector_only_subcategory):
+            browse_filters = SearchFilters.from_dict(_v1_filters_to_gw_params(validated_filters or {})) if validated_filters else None
+            if selector_only_category:
+                browse_result = browse_by_category_segment(
+                    category_segment_l2=category or "",
+                    page=page,
+                    size=size,
+                    sort_by=resolved_sort,
+                    filters=browse_filters,
+                )
+            else:
+                browse_result = browse_by_subcategory_segment(
+                    subcategory_segment_l3=subcategory or "",
+                    page=page,
+                    size=size,
+                    sort_by=resolved_sort,
+                    filters=browse_filters,
+                )
+
+            browse_meta = browse_result.get("meta", {}) or {}
+            result = {
+                "products": browse_result.get("products", []),
+                "filters": browse_result.get("filters", []),
+                "subcategories": browse_result.get("subcategories", []),
+                "meta": {
+                    **browse_meta,
+                    "query": query,
+                    "category": category,
+                    "subcategory": subcategory,
+                    "filters_applied": validated_filters,
+                    "fuzzy_fallback_used": False,
+                    "prefix_fallback_used": False,
+                    "phonetic_used": False,
+                },
+            }
 
         if result is None:
             # Legacy V1 path
@@ -629,12 +642,18 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 )
 
         log.info(
-            f"UNIFIED_SEARCH_COMPLETE | query={query} | subcategory={subcategory} | "
+            f"UNIFIED_SEARCH_COMPLETE | query={query} | category={category} | subcategory={subcategory} | "
             f"total={meta.get('total', 0)} | returned={len(product_cards)}"
         )
 
         dynamic_filters = result.get("filters", []) if isinstance(result, dict) else []
-        return jsonify(_success_response({"products": product_cards, "filters": dynamic_filters}, meta=meta)), 200
+        response_data: Dict[str, Any] = {
+            "products": product_cards,
+            "filters": dynamic_filters,
+        }
+        if category and not query and not subcategory:
+            response_data["subcategories"] = result.get("subcategories", []) if isinstance(result, dict) else []
+        return jsonify(_success_response(response_data, meta=meta)), 200
 
     except Exception as exc:
         log.error(f"UNIFIED_SEARCH_ERROR | error={exc}", exc_info=True)

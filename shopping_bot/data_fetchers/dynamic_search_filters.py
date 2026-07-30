@@ -14,6 +14,7 @@ FILTER_FLEAN_SCORE_ID = "filter_flean_score"
 FILTER_DIETARY_ID = "filter_preferences"
 FILTER_INGREDIENT_ID = "ingredient_preferences"
 FILTER_NUTRITION_ID = "filter_nutrition"
+FILTER_FLAVOUR_ID = "filter_flavour"
 
 _FLEAN_BUCKETS: List[Dict[str, Any]] = [
     {"key": "9_plus", "label_key": "9_plus", "label": "9+ (Excellent)", "value": 9},
@@ -282,6 +283,13 @@ def build_facet_aggregations(price_ranges: Optional[List[Dict[str, Any]]] = None
                 "filters": {bucket["key"]: bucket["query"] for bucket in _NUTRITION_BUCKETS}
             }
         },
+        "flavour_options": {
+            "terms": {
+                "field": "flavour.keyword",
+                "size": 30,
+                "min_doc_count": 1,
+            }
+        },
     }
     if price_ranges:
         aggs["price_ranges"] = {"range": {"field": "price", "keyed": True, "ranges": price_ranges}}
@@ -432,6 +440,35 @@ def parse_dynamic_filters_from_aggs(aggregations: Optional[Dict[str, Any]]) -> L
                 "title": "Nutrition Preferences",
                 "titleKey": "nutrition_profiles",
                 "items": nutrition_items,
+            }
+        )
+
+    flavour_items: List[Dict[str, Any]] = []
+    for bucket in ((aggregations.get("flavour_options") or {}).get("buckets") or []):
+        if not isinstance(bucket, dict):
+            continue
+        key = str(bucket.get("key", "")).strip()
+        count = int(bucket.get("doc_count", 0) or 0)
+        if not key or count <= 0:
+            continue
+        key_norm = key.lower()
+        flavour_items.append(
+            {
+                "id": f"flavour_{key_norm.replace(' ', '_')}",
+                "labelKey": key_norm.replace(" ", "_"),
+                "label": _humanize_slug(key_norm),
+                "value": key_norm,
+                "count": count,
+                "isPreSelected": False,
+            }
+        )
+    if flavour_items:
+        groups.append(
+            {
+                "id": FILTER_FLAVOUR_ID,
+                "title": "Flavour",
+                "titleKey": "flavour",
+                "items": flavour_items,
             }
         )
 

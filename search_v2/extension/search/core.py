@@ -16,7 +16,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from shopping_bot.data_fetchers.dynamic_search_filters import (
     build_dynamic_price_ranges,
@@ -287,15 +287,17 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
             price_min = float(price_min_raw) if isinstance(price_min_raw, (int, float)) else None
             price_max = float(price_max_raw) if isinstance(price_max_raw, (int, float)) else None
             price_ranges = build_dynamic_price_ranges(price_min, price_max, target_buckets=4)
+            facets_aggs = build_facet_aggregations(price_ranges=price_ranges)
 
             facets_req = {
                 "size": 0,
                 "track_total_hits": False,
                 "query": facet_query,
-                "aggs": build_facet_aggregations(price_ranges=price_ranges),
+                "aggs": facets_aggs,
             }
             facets_resp = client.search(facets_req)
-            dynamic_filters = parse_dynamic_filters_from_aggs((facets_resp.get("aggregations") or {}))
+            facets_aggs_out = facets_resp.get("aggregations") or {}
+            dynamic_filters = parse_dynamic_filters_from_aggs(facets_aggs_out)
         except Exception as exc:
             _log.warning("search: failed to compute dynamic search filters (%s)", exc)
 

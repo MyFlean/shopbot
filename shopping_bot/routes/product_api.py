@@ -1116,6 +1116,10 @@ def _build_filters_from_query_args() -> Dict[str, Any]:
     if request.args.get("food_type"):
         raw_filters["food_type"] = request.args["food_type"]
 
+    flavour = request.args.get("flavour")
+    if flavour:
+        raw_filters["flavour"] = [f.strip() for f in flavour.split(",") if f.strip()]
+
     nutrition_params: Dict[str, Any] = {}
     for key in ("protein", "carbs", "fat"):
         value = request.args.get(key)
@@ -1204,6 +1208,22 @@ def _validate_filters(filters: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[
         if food_type not in VALID_FOOD_TYPES:
             return None, f"Invalid food_type: '{food_type}'. Valid: {sorted(VALID_FOOD_TYPES)}"
         validated["food_type"] = food_type
+
+    flavour = filters.get("flavour")
+    if flavour is not None:
+        if not isinstance(flavour, list):
+            return None, "flavour must be an array"
+        normalized_flavour: List[str] = []
+        for item in flavour:
+            if not isinstance(item, str):
+                return None, "flavour must contain only strings"
+            token = item.strip().lower()
+            if not token:
+                continue
+            if token not in normalized_flavour:
+                normalized_flavour.append(token)
+        if normalized_flavour:
+            validated["flavour"] = normalized_flavour
 
     nutrition = filters.get("nutrition")
     if nutrition and isinstance(nutrition, dict):

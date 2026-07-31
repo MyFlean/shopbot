@@ -29,6 +29,7 @@ from ..enums import BackendFunction
 from . import register_fetcher
 from ..config import get_config
 from ..scoring_config import build_function_score_functions
+from ..utils.capsule_tag_labels import resolve_capsule_tags
 from ..utils.pdp_tag_labels import label_for_tag_id
 from ..utils.cards_config import (
     CARD_STATS_REGISTRY,
@@ -1402,7 +1403,8 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     """
     # ── Extract raw data ──
     images = src.get("images")
-    nutritional_data = src.get("category_data", {}).get("nutritional", {})
+    category_data = src.get("category_data") if isinstance(src.get("category_data"), dict) else {}
+    nutritional_data = category_data.get("nutritional", {}) or {}
     nutrition = _extract_nutrition_from_source(src)
     stats = src.get("stats", {})
     package_claims = src.get("package_claims", {}) or {}
@@ -1443,6 +1445,12 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "variants": _normalize_variant_entries(src.get("variants")),
     }
     _copy_if_present(src, product_info, "scheduled")
+    servings_per_container = category_data.get("servings_per_container")
+    if servings_per_container is not None:
+        product_info["servings_per_container"] = servings_per_container
+    dietary_label = category_data.get("dietary_label")
+    if dietary_label is not None:
+        product_info["dietary_label"] = dietary_label
 
     # ── flean_badge ──
     flean_percentile = None
@@ -1598,7 +1606,7 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     # ── cons_list (watch-out items from ES) ──
     cons_list = src.get("cons_list", []) or []
 
-    return {
+    pdp_data = {
         "product_info": product_info,
         "flean_badge": flean_badge,
         "score_cards": score_cards,
@@ -1611,7 +1619,15 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "cons_list": cons_list,
         "additional_info": additional_info,
         "macro_tags": _generate_macro_tags(nutrition),
+        "capsule_tags": resolve_capsule_tags(src),
     }
+    amino_acid_profile = category_data.get("amino_acid_profile")
+    if amino_acid_profile is not None:
+        pdp_data["amino_acid_profile"] = amino_acid_profile
+    active_ingredients = category_data.get("active_ingredients")
+    if active_ingredients is not None:
+        pdp_data["active_ingredients"] = active_ingredients
+    return pdp_data
 
 def _get_current_user_text(ctx) -> str:
     """Best-effort extraction of the CURRENT user utterance.

@@ -159,6 +159,35 @@ def _to_bool(value: Any) -> Optional[bool]:
     return None
 
 
+def _extract_express_delivery(
+    raw: Dict[str, Any],
+    effective_pincode: str,
+) -> Optional[str]:
+    """Return availability.<pincode>.flean.express_delivery when present and non-null."""
+    if not effective_pincode:
+        return None
+
+    availability = raw.get("availability")
+    if not isinstance(availability, dict):
+        return None
+
+    pincode_entry = availability.get(effective_pincode)
+    if not isinstance(pincode_entry, dict):
+        return None
+
+    flean_data = pincode_entry.get("flean")
+    if not isinstance(flean_data, dict):
+        return None
+
+    express_delivery = flean_data.get("express_delivery")
+    if express_delivery is None:
+        return None
+    if isinstance(express_delivery, str):
+        cleaned = express_delivery.strip()
+        return cleaned or None
+    return str(express_delivery)
+
+
 def _derive_in_stock_from_availability(
     raw: Dict[str, Any],
     effective_pincode: str,
@@ -402,6 +431,12 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
                     effective_pincode=effective_pincode,
                     fallback_in_stock=fallback_in_stock,
                 )
+            express_delivery = _extract_express_delivery(
+                raw=raw_src,
+                effective_pincode=effective_pincode,
+            )
+            if express_delivery is not None:
+                product_info["express_delivery"] = express_delivery
 
         product_info = pdp_data.get("product_info")
         flean_badge = pdp_data.get("flean_badge")

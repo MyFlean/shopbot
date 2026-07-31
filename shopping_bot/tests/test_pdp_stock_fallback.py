@@ -287,3 +287,94 @@ def test_pdp_returns_null_lab_report_url_when_absent(
     assert resp.status_code == 200
     payload = resp.get_json()
     assert payload["data"]["lab_report_url"] is None
+
+
+@patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=None)
+@patch("shopping_bot.routes.product_api.try_resolve_canonical_pincode", return_value="201303")
+@patch("shopping_bot.routes.product_api.transform_to_pdp")
+@patch("shopping_bot.routes.product_api.get_es_fetcher")
+def test_pdp_returns_express_delivery_for_pincode(
+    mock_get_fetcher,
+    mock_transform_to_pdp,
+    _mock_resolve_pincode,
+    _mock_cache_override,
+    pdp_client,
+):
+    raw_src = _base_raw_src(
+        availability={
+            "201303": {
+                "flean": {
+                    "quantity": 100,
+                    "express_delivery": "60 Mins",
+                }
+            }
+        }
+    )
+    mock_get_fetcher.return_value = SimpleNamespace(get_product_by_id=lambda _pid: raw_src)
+    mock_transform_to_pdp.return_value = _base_pdp(in_stock=True, visibility="visible")
+
+    resp = pdp_client.get("/rs/api/v1/product/prod-1?pincode=201303")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["data"]["product_info"]["express_delivery"] == "60 Mins"
+
+
+@patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=None)
+@patch("shopping_bot.routes.product_api.try_resolve_canonical_pincode", return_value=None)
+@patch("shopping_bot.routes.product_api.transform_to_pdp")
+@patch("shopping_bot.routes.product_api.get_es_fetcher")
+def test_pdp_express_delivery_uses_default_pincode(
+    mock_get_fetcher,
+    mock_transform_to_pdp,
+    _mock_resolve_pincode,
+    mock_cache_override,
+    pdp_client,
+):
+    raw_src = _base_raw_src(
+        availability={
+            "201303": {
+                "flean": {
+                    "quantity": 100,
+                    "express_delivery": "60 Mins",
+                }
+            }
+        }
+    )
+    mock_get_fetcher.return_value = SimpleNamespace(get_product_by_id=lambda _pid: raw_src)
+    mock_transform_to_pdp.return_value = _base_pdp(in_stock=True, visibility="visible")
+
+    resp = pdp_client.get("/rs/api/v1/product/prod-1")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["data"]["product_info"]["express_delivery"] == "60 Mins"
+    mock_cache_override.assert_called_once_with("prod-1", "201303")
+
+
+@patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=None)
+@patch("shopping_bot.routes.product_api.try_resolve_canonical_pincode", return_value="201303")
+@patch("shopping_bot.routes.product_api.transform_to_pdp")
+@patch("shopping_bot.routes.product_api.get_es_fetcher")
+def test_pdp_omits_express_delivery_when_null_or_missing(
+    mock_get_fetcher,
+    mock_transform_to_pdp,
+    _mock_resolve_pincode,
+    _mock_cache_override,
+    pdp_client,
+):
+    raw_src = _base_raw_src(
+        availability={
+            "201303": {
+                "flean": {
+                    "quantity": 100,
+                    "express_delivery": None,
+                }
+            }
+        }
+    )
+    mock_get_fetcher.return_value = SimpleNamespace(get_product_by_id=lambda _pid: raw_src)
+    mock_transform_to_pdp.return_value = _base_pdp(in_stock=True, visibility="visible")
+
+    resp = pdp_client.get("/rs/api/v1/product/prod-1?pincode=201303")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert "express_delivery" not in payload["data"]["product_info"]

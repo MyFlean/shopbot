@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from typing import Any, Dict, List, Optional
 
 from shopping_bot.data_fetchers.dynamic_search_filters import (
@@ -27,6 +28,8 @@ from search_v2.retrieval.opensearch_client import OpenSearchClient
 from search_v2.retrieval.sorting import build_sort_clauses
 
 _client: Optional[OpenSearchClient] = None
+_SUBCATEGORY_SCOPE_GLOBAL_AGG = "subcategory_scope_global"
+_SUBCATEGORY_SCOPE_FILTER_AGG = "subcategory_scope_filter"
 
 
 def _get_client() -> OpenSearchClient:
@@ -34,6 +37,19 @@ def _get_client() -> OpenSearchClient:
     if _client is None:
         _client = OpenSearchClient(settings=SETTINGS)
     return _client
+
+
+def _build_bool_query(
+    filter_clauses: List[Dict[str, Any]],
+    should_clauses: List[Dict[str, Any]],
+    must_not_clauses: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    bool_clause: Dict[str, Any] = {"filter": filter_clauses}
+    if should_clauses:
+        bool_clause["should"] = should_clauses
+    if must_not_clauses:
+        bool_clause["must_not"] = must_not_clauses
+    return {"bool": bool_clause}
 
 
 def _browse_by_filters(
@@ -62,12 +78,11 @@ def _browse_by_filters(
         must_not_clauses.extend(fc.must_not_clauses)
         should_extras.extend(fc.should_clauses)
 
-    bool_clause: Dict[str, Any] = {"filter": filter_clauses}
-    if should_extras:
-        bool_clause["should"] = should_extras
-    if must_not_clauses:
-        bool_clause["must_not"] = must_not_clauses
-    query = {"bool": bool_clause}
+    query = _build_bool_query(
+        filter_clauses=filter_clauses,
+        should_clauses=should_extras,
+        must_not_clauses=must_not_clauses,
+    )
 
     body: Dict[str, Any] = {
         "size": safe_size,
@@ -104,7 +119,41 @@ def _browse_by_filters(
 
     facets_aggs: Dict[str, Any] = build_facet_aggregations(price_ranges=price_ranges)
     if include_subcategories and category_segment_l2:
+        # Dynamic filter facets should stay narrowed by all active filters,
+        # but subcategory listing must remain category-scoped even when a
+        # specific subcategory is selected.
         facets_aggs.update(build_subcategory_terms_aggregation(category_segment_l2))
+
+        relaxed_selector_filters = selector_filters
+        relaxed_filters = filters
+        if relaxed_filters and relaxed_filters.subcategory_segment_l3:
+            relaxed_filters = replace(relaxed_filters, subcategory_segment_l3=None)
+
+        relaxed_selector_clauses = build_filter_clauses(relaxed_selector_filters)
+        relaxed_filter_clauses = list(relaxed_selector_clauses.filter_clauses) + [listing_visibility_filter_clause()]
+        relaxed_must_not_clauses: List[Dict[str, Any]] = list(relaxed_selector_clauses.must_not_clauses)
+        relaxed_should_clauses: List[Dict[str, Any]] = list(relaxed_selector_clauses.should_clauses)
+
+        if relaxed_filters is not None:
+            relaxed_fc = build_filter_clauses(relaxed_filters)
+            relaxed_filter_clauses.extend(relaxed_fc.filter_clauses)
+            relaxed_must_not_clauses.extend(relaxed_fc.must_not_clauses)
+            relaxed_should_clauses.extend(relaxed_fc.should_clauses)
+
+        relaxed_subcategory_query = _build_bool_query(
+            filter_clauses=relaxed_filter_clauses,
+            should_clauses=relaxed_should_clauses,
+            must_not_clauses=relaxed_must_not_clauses,
+        )
+        facets_aggs[_SUBCATEGORY_SCOPE_GLOBAL_AGG] = {
+            "global": {},
+            "aggs": {
+                _SUBCATEGORY_SCOPE_FILTER_AGG: {
+                    "filter": relaxed_subcategory_query,
+                    "aggs": build_subcategory_terms_aggregation(category_segment_l2),
+                }
+            },
+        }
     facets_response = client.search({
         "size": 0, "track_total_hits": False, "query": query,
         "aggs": facets_aggs,
@@ -113,7 +162,14 @@ def _browse_by_filters(
     dynamic_filters = parse_dynamic_filters_from_aggs(facets_aggs_out)
     subcategories: List[Dict[str, str]] = []
     if include_subcategories and category_segment_l2:
-        subcategory_ids = parse_subcategories_from_aggregations(facets_aggs_out, category_segment_l2)
+        subcategory_source_aggs = facets_aggs_out
+        scoped_subcategory_aggs = (
+            (facets_aggs_out.get(_SUBCATEGORY_SCOPE_GLOBAL_AGG) or {})
+            .get(_SUBCATEGORY_SCOPE_FILTER_AGG)
+        )
+        if isinstance(scoped_subcategory_aggs, dict):
+            subcategory_source_aggs = scoped_subcategory_aggs
+        subcategory_ids = parse_subcategories_from_aggregations(subcategory_source_aggs, category_segment_l2)
         subcategories = sync_subcategory_metadata_with_app_config(
             category=category_segment_l2,
             es_subcategory_ids=subcategory_ids,

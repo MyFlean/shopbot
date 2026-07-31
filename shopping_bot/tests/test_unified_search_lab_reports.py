@@ -339,6 +339,52 @@ def test_unified_search_subcategory_flow_uses_segment3_browse_without_subcategor
 
 @patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
 @patch("shopping_bot.routes.unified_search.transform_to_product_card")
+@patch("shopping_bot.routes.unified_search.browse_by_category_segment")
+def test_unified_search_category_with_subcategory_filter_returns_full_subcategories(
+    mock_browse_by_category_segment,
+    mock_transform_to_product_card,
+    _mock_search_engine,
+    unified_search_client,
+):
+    mock_browse_by_category_segment.return_value = {
+        "products": [{"id": "prod-butter-1", "visibility": "visible", "category_data": {}}],
+        "filters": [],
+        "subcategories": [
+            {"id": "butter", "image": "img1", "name": "Butter"},
+            {"id": "milk", "image": "img2", "name": "Milk"},
+            {"id": "eggs", "image": "img3", "name": "Eggs"},
+        ],
+        "meta": {"total": 1, "took_ms": 11, "engine": "v2"},
+    }
+    mock_transform_to_product_card.return_value = {
+        "id": "prod-butter-1",
+        "name": "prod-butter-1",
+        "visibility": "visible",
+        "flean_score": 9,
+        "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
+    }
+
+    resp = unified_search_client.get("/rs/v1/search?category=dairy_and_bakery&subcategory=butter")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+
+    assert payload["data"]["subcategories"] == [
+        {"id": "butter", "image": "img1", "name": "Butter"},
+        {"id": "milk", "image": "img2", "name": "Milk"},
+        {"id": "eggs", "image": "img3", "name": "Eggs"},
+    ]
+    assert payload["meta"]["category"] == "dairy_and_bakery"
+    assert payload["meta"]["subcategory"] == "butter"
+    assert payload["meta"]["engine"] == "v2"
+
+    browse_kwargs = mock_browse_by_category_segment.call_args.kwargs
+    assert browse_kwargs["category_segment_l2"] == "dairy_and_bakery"
+    assert browse_kwargs["filters"] is not None
+    assert browse_kwargs["filters"].subcategory_segment_l3 == "butter"
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
+@patch("shopping_bot.routes.unified_search.transform_to_product_card")
 @patch("shopping_bot.routes.unified_search.v2_search")
 def test_unified_search_query_flow_does_not_return_subcategories(
     mock_v2_search,

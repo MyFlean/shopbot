@@ -504,6 +504,7 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         # V1_FALLBACK_AUDIT.md.
         filters_only = bool(validated_filters) and not subcategory and not category and not query
         selector_only_category = bool(category) and not query and not subcategory
+        selector_category_with_subcategory = bool(category) and bool(subcategory) and not query
         selector_only_subcategory = bool(subcategory) and not query and not category
 
         if _search_engine() != "v1" and (query or filters_only):
@@ -551,9 +552,14 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 },
             }
 
-        if result is None and _search_engine() != "v1" and (selector_only_category or selector_only_subcategory):
-            browse_filters = SearchFilters.from_dict(_v1_filters_to_gw_params(validated_filters or {})) if validated_filters else None
-            if selector_only_category:
+        if result is None and _search_engine() != "v1" and (
+            selector_only_category or selector_category_with_subcategory or selector_only_subcategory
+        ):
+            browse_filter_params = _v1_filters_to_gw_params(validated_filters or {})
+            if selector_category_with_subcategory and subcategory:
+                browse_filter_params["subcategory_segment_l3"] = subcategory
+            browse_filters = SearchFilters.from_dict(browse_filter_params) if browse_filter_params else None
+            if selector_only_category or selector_category_with_subcategory:
                 browse_result = browse_by_category_segment(
                     category_segment_l2=category or "",
                     page=page,
@@ -651,7 +657,7 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             "products": product_cards,
             "filters": dynamic_filters,
         }
-        if category and not query and not subcategory:
+        if category and not query:
             response_data["subcategories"] = result.get("subcategories", []) if isinstance(result, dict) else []
         return jsonify(_success_response(response_data, meta=meta)), 200
 

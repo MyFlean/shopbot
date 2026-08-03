@@ -3,6 +3,7 @@ Search V2 category hierarchy utilities.
 
 This module provides helpers for category-scoped flows that rely only on
 `category_hierarchies.segments`:
+  - department match at segments[1]
   - category match at segments[2]
   - returned subcategory values at segments[3]
 """
@@ -19,6 +20,9 @@ _SUBCATEGORY_TERMS_LIMIT = 500
 _SUBCATEGORY_AGG_NAME = "category_hierarchy_nested"
 _SUBCATEGORY_FILTER_NAME = "category_scope"
 _SUBCATEGORY_BUCKETS_NAME = "subcategory_candidates"
+_CATEGORY_AGG_NAME = "department_hierarchy_nested"
+_CATEGORY_FILTER_NAME = "department_scope"
+_CATEGORY_BUCKETS_NAME = "category_candidates"
 _APP_CONFIG_CATEGORIES_URL = "https://api.flean.ai/ui/app-config/categories"
 _APP_CONFIG_TIMEOUT_SEC = 10.0
 
@@ -92,30 +96,16 @@ def build_subcategory_terms_aggregation(category: str) -> Dict[str, Any]:
     }
 
 
-def parse_subcategories_from_aggregations(
-    aggregations: Optional[Dict[str, Any]],
-    category: str,
+def _parse_segment_values_from_bucket(
+    parsed: Dict[str, Any],
+    scripted_metric_key: str,
 ) -> List[str]:
-    """
-    Parse unique subcategories from category_hierarchies aggregation response.
-
-    Expected input shape:
-      aggregations.category_hierarchy_nested.category_scope
-        .subcategory_candidates.buckets[]
-    """
-    normalized = str(category or "").strip().lower()
-    if not normalized:
-        return []
-
-    agg_root = (aggregations or {}).get(_SUBCATEGORY_AGG_NAME) or {}
-    category_scope = agg_root.get(_SUBCATEGORY_FILTER_NAME) or {}
     out: List[str] = []
-    parsed = category_scope.get(_SUBCATEGORY_BUCKETS_NAME) or {}
     if not isinstance(parsed, dict):
-        return []
+        return out
     # Support both terms-buckets and scripted_metric return shapes.
-    segment3_values = parsed.get("segment3_values")
-    raw_values = (segment3_values or {}).get("value") if isinstance(segment3_values, dict) else parsed.get("value")
+    scripted = parsed.get(scripted_metric_key)
+    raw_values = (scripted or {}).get("value") if isinstance(scripted, dict) else parsed.get("value")
     if isinstance(raw_values, (list, set, tuple)):
         for value in raw_values:
             key = str(value or "").strip().lower()
@@ -134,6 +124,119 @@ def parse_subcategories_from_aggregations(
             if key not in out:
                 out.append(key)
     return out
+
+
+def parse_subcategories_from_aggregations(
+    aggregations: Optional[Dict[str, Any]],
+    category: str,
+) -> List[str]:
+    """
+    Parse unique subcategories from category_hierarchies aggregation response.
+
+    Expected input shape:
+      aggregations.category_hierarchy_nested.category_scope
+        .subcategory_candidates.buckets[]
+    """
+    normalized = str(category or "").strip().lower()
+    if not normalized:
+        return []
+
+    agg_root = (aggregations or {}).get(_SUBCATEGORY_AGG_NAME) or {}
+    category_scope = agg_root.get(_SUBCATEGORY_FILTER_NAME) or {}
+    parsed = category_scope.get(_SUBCATEGORY_BUCKETS_NAME) or {}
+    if not isinstance(parsed, dict):
+        return []
+    return _parse_segment_values_from_bucket(parsed, "segment3_values")
+
+
+def build_category_terms_aggregation(department: str) -> Dict[str, Any]:
+    """
+    Build nested aggregation that extracts department-scoped category terms.
+
+    The aggregation runs over `category_hierarchies` nested docs and emits
+    strict segment[2] values from rows that contain the requested segment[1]
+    department token.
+    """
+    normalized = str(department or "").strip().lower()
+    if not normalized:
+        return {}
+    return {
+        _CATEGORY_AGG_NAME: {
+            "nested": {"path": "category_hierarchies"},
+            "aggs": {
+                _CATEGORY_FILTER_NAME: {
+                    "filter": {
+                        "term": {"category_hierarchies.segments": normalized}
+                    },
+                    "aggs": {
+                        _CATEGORY_BUCKETS_NAME: {
+                            "reverse_nested": {},
+                            "aggs": {
+                                "segment2_values": {
+                                    "scripted_metric": {
+                                        "params": {
+                                            "department": normalized,
+                                            "limit": _SUBCATEGORY_TERMS_LIMIT,
+                                        },
+                                        "init_script": "state.categories = new HashSet();",
+                                        "map_script": (
+                                            "def rows = params._source['category_hierarchies']; "
+                                            "if (rows == null) return; "
+                                            "for (def row : rows) { "
+                                            "  if (row == null) continue; "
+                                            "  def segs = row['segments']; "
+                                            "  if (segs == null || segs.size() <= 2) continue; "
+                                            "  def l1 = segs[1]; "
+                                            "  def l2 = segs[2]; "
+                                            "  if (l1 == null || l2 == null) continue; "
+                                            "  if (l1.toString().toLowerCase() == params.department) { "
+                                            "    if (state.categories.size() < params.limit) { "
+                                            "      state.categories.add(l2.toString().toLowerCase()); "
+                                            "    } "
+                                            "  } "
+                                            "}"
+                                        ),
+                                        "combine_script": "return state.categories;",
+                                        "reduce_script": (
+                                            "def out = new HashSet(); "
+                                            "for (def s : states) { "
+                                            "  if (s == null) continue; "
+                                            "  out.addAll(s); "
+                                            "} "
+                                            "return out;"
+                                        ),
+                                    }
+                                }
+                            }
+                        }
+                    },
+                }
+            },
+        }
+    }
+
+
+def parse_categories_from_aggregations(
+    aggregations: Optional[Dict[str, Any]],
+    department: str,
+) -> List[str]:
+    """
+    Parse unique categories from department-scoped aggregation response.
+
+    Expected input shape:
+      aggregations.department_hierarchy_nested.department_scope
+        .category_candidates.segment2_values.value[]
+    """
+    normalized = str(department or "").strip().lower()
+    if not normalized:
+        return []
+
+    agg_root = (aggregations or {}).get(_CATEGORY_AGG_NAME) or {}
+    department_scope = agg_root.get(_CATEGORY_FILTER_NAME) or {}
+    parsed = department_scope.get(_CATEGORY_BUCKETS_NAME) or {}
+    if not isinstance(parsed, dict):
+        return []
+    return _parse_segment_values_from_bucket(parsed, "segment2_values")
 
 
 def fetch_app_config_categories(
@@ -214,6 +317,55 @@ def sync_subcategory_metadata_with_app_config(
                 "id": raw_id,
                 "image": str(subcategory.get("image") or "").strip(),
                 "name": str(subcategory.get("name") or "").strip(),
+            }
+        )
+        seen.add(normalized_id)
+    return out
+
+
+def sync_category_metadata_with_app_config(
+    department: str,
+    es_category_ids: List[str],
+    categories_payload: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, str]]:
+    """
+    Return categories as ordered metadata objects (`id`, `image`, `name`).
+
+    The returned list is the intersection of:
+      - ES-derived category ids under the department
+      - app-config top-level category ids
+    Ordering follows app-config.
+    """
+    department_id = str(department or "").strip().lower()
+    if not department_id:
+        return []
+
+    normalized_es_ids = {
+        str(item or "").strip().lower()
+        for item in (es_category_ids or [])
+        if str(item or "").strip()
+    }
+    if not normalized_es_ids:
+        return []
+
+    categories = categories_payload if categories_payload is not None else fetch_app_config_categories()
+    if not isinstance(categories, list):
+        return []
+
+    out: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for entry in categories:
+        if not isinstance(entry, dict):
+            continue
+        raw_id = str(entry.get("id") or "").strip()
+        normalized_id = raw_id.lower()
+        if not raw_id or normalized_id not in normalized_es_ids or normalized_id in seen:
+            continue
+        out.append(
+            {
+                "id": raw_id,
+                "image": str(entry.get("image") or "").strip(),
+                "name": str(entry.get("name") or "").strip(),
             }
         )
         seen.add(normalized_id)

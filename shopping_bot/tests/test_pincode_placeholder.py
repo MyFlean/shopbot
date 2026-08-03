@@ -66,14 +66,13 @@ def test_try_resolve_canonical_pincode_unmapped_returns_none():
         assert try_resolve_canonical_pincode("560001") is None
 
 
-def test_try_resolve_canonical_pincode_infra_error_propagates():
+def test_try_resolve_canonical_pincode_infra_error_fail_open():
     with patch.object(
         pincode_mapping,
         "resolve_canonical_pincode",
         side_effect=PincodeMappingError("S3 down"),
     ):
-        with pytest.raises(PincodeMappingError):
-            try_resolve_canonical_pincode("560001")
+        assert try_resolve_canonical_pincode("560001") is None
 
 
 def test_resolve_canonical_request_pincode_unmapped_fail_open():

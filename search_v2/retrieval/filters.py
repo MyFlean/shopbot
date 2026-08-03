@@ -260,6 +260,8 @@ class SearchFilters:
     product_ids: Optional[List[str]] = None
     product_ids_exact: bool = False
 
+    # Department selector token for category_hierarchies.segments[1].
+    department_segment_l1: Optional[str] = None
     # Category selector token for category_hierarchies.segments[2].
     category_segment_l2: Optional[str] = None
     # Subcategory selector token for category_hierarchies.segments[3].
@@ -387,6 +389,15 @@ class SearchFilters:
         elif isinstance(np_raw, str) and np_raw:
             nutrition_profiles = [np_raw]
 
+        department_segment_l1: Optional[str] = None
+        raw_department_segment = d.get("department_segment_l1")
+        if raw_department_segment is None:
+            raw_department_segment = d.get("department")
+        if isinstance(raw_department_segment, str):
+            normalized_department = raw_department_segment.strip().lower()
+            if normalized_department:
+                department_segment_l1 = normalized_department
+
         category_segment_l2: Optional[str] = None
         raw_category_segment = d.get("category_segment_l2")
         if raw_category_segment is None:
@@ -437,6 +448,7 @@ class SearchFilters:
             flavour=flavour,
             food_type=food_type,
             nutrition_profiles=nutrition_profiles,
+            department_segment_l1=department_segment_l1,
             category_segment_l2=category_segment_l2,
             subcategory_segment_l3=subcategory_segment_l3,
             sort_by=sort_by,
@@ -649,6 +661,19 @@ def build_filter_clauses(sf: SearchFilters) -> FilterClauses:
             clause = _NUTRITION_PROFILE_CLAUSES.get(profile)
             if clause:
                 fc.append(clause)
+
+    if sf.department_segment_l1:
+        fc.append(
+            {
+                "nested": {
+                    "path": "category_hierarchies",
+                    "query": {
+                        "term": {"category_hierarchies.segments": sf.department_segment_l1}
+                    },
+                    "score_mode": "none",
+                }
+            }
+        )
 
     if sf.category_segment_l2:
         fc.append(
@@ -916,6 +941,7 @@ def merge_filters(base: SearchFilters, overlay: SearchFilters) -> SearchFilters:
         product_type_category=overlay.product_type_category or base.product_type_category,
         product_ids=overlay.product_ids or base.product_ids,
         product_ids_exact=overlay.product_ids_exact or base.product_ids_exact,
+        department_segment_l1=overlay.department_segment_l1 or base.department_segment_l1,
         category_segment_l2=overlay.category_segment_l2 or base.category_segment_l2,
         subcategory_segment_l3=overlay.subcategory_segment_l3 or base.subcategory_segment_l3,
         sort_by=overlay.sort_by or base.sort_by,

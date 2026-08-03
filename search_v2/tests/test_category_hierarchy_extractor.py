@@ -6,9 +6,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from search_v2.extension.taxonomy import (
+    build_category_terms_aggregation,
     build_subcategory_terms_aggregation,
     fetch_app_config_categories,
+    parse_categories_from_aggregations,
     parse_subcategories_from_aggregations,
+    sync_category_metadata_with_app_config,
     sync_subcategory_metadata_with_app_config,
 )
 from search_v2.retrieval.filters import SearchFilters, build_filter_clauses
@@ -58,6 +61,21 @@ def test_parse_subcategories_from_aggregations_handles_scripted_metric_values():
     }
     out = parse_subcategories_from_aggregations(aggregations, "packaged_meals")
     assert out == ["ready_to_cook_meals", "pasta_and_soups"]
+
+
+def test_build_filter_clauses_applies_nested_department_segment_filter():
+    sf = SearchFilters.from_dict({"department": "food"})
+    clauses = build_filter_clauses(sf).filter_clauses
+    nested = [
+        c for c in clauses
+        if isinstance(c, dict)
+        and isinstance(c.get("nested"), dict)
+        and c["nested"].get("path") == "category_hierarchies"
+        and isinstance(c["nested"].get("query"), dict)
+        and "term" in c["nested"]["query"]
+    ]
+    assert nested, "Expected nested category_hierarchies clause for department selector"
+    assert nested[0]["nested"]["query"]["term"]["category_hierarchies.segments"] == "food"
 
 
 def test_build_filter_clauses_applies_nested_category_segment_filter():
@@ -138,6 +156,53 @@ def test_sync_subcategory_metadata_handles_missing_category_or_fields():
         categories_payload=categories_payload,
     )
     assert out_missing_fields == [{"id": "chips_and_crisps", "image": "", "name": "Chips"}]
+
+
+def test_build_category_terms_aggregation_has_nested_department_scope():
+    aggs = build_category_terms_aggregation("food")
+    nested = aggs["department_hierarchy_nested"]
+    assert nested["nested"]["path"] == "category_hierarchies"
+    scoped = nested["aggs"]["department_scope"]["filter"]["term"]
+    assert scoped["category_hierarchies.segments"] == "food"
+    scripted_metric = (
+        nested["aggs"]["department_scope"]["aggs"]["category_candidates"]["aggs"][
+            "segment2_values"
+        ]["scripted_metric"]
+    )
+    assert scripted_metric["params"]["department"] == "food"
+
+
+def test_parse_categories_from_aggregations_returns_segment_two_candidates():
+    aggregations = {
+        "department_hierarchy_nested": {
+            "department_scope": {
+                "category_candidates": {
+                    "segment2_values": {
+                        "value": ["biscuits_and_crackers", "light_bites", "biscuits_and_crackers"]
+                    }
+                }
+            }
+        }
+    }
+    out = parse_categories_from_aggregations(aggregations, "food")
+    assert out == ["biscuits_and_crackers", "light_bites"]
+
+
+def test_sync_category_metadata_returns_intersection_in_app_config_order():
+    categories_payload = [
+        {"id": "light_bites", "image": "i1", "name": "Light Bites"},
+        {"id": "biscuits_and_crackers", "image": "i2", "name": "Biscuits"},
+        {"id": "dairy_and_bakery", "image": "i3", "name": "Dairy"},
+    ]
+    out = sync_category_metadata_with_app_config(
+        department="food",
+        es_category_ids=["dairy_and_bakery", "biscuits_and_crackers"],
+        categories_payload=categories_payload,
+    )
+    assert out == [
+        {"id": "biscuits_and_crackers", "image": "i2", "name": "Biscuits"},
+        {"id": "dairy_and_bakery", "image": "i3", "name": "Dairy"},
+    ]
 
 
 def test_fetch_app_config_categories_returns_empty_on_non_list_payload(monkeypatch):

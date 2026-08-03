@@ -91,11 +91,19 @@ def resolve_canonical_pincode(request_pincode: str) -> str:
 
 
 def try_resolve_canonical_pincode(request_pincode: Optional[str]) -> Optional[str]:
-    """Return canonical pincode, or None for placeholder/unmapped (fail-open)."""
+    """Return canonical pincode, or None for placeholder/unmapped/S3 errors (fail-open)."""
     if is_placeholder_pincode(request_pincode):
         return None
     try:
         return resolve_canonical_pincode(request_pincode)
     except UnmappedPincodeError:
         log.warning("PINCODE_UNMAPPED_FAIL_OPEN | request_pincode=%s", request_pincode)
+        return None
+    except PincodeMappingError as exc:
+        # Missing S3 permissions or fetch failures must not 500 search/home/PDP.
+        log.warning(
+            "PINCODE_MAPPING_FAIL_OPEN | request_pincode=%s | error=%s",
+            request_pincode,
+            exc,
+        )
         return None

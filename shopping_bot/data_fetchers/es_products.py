@@ -301,10 +301,10 @@ def _get_raw_nutri_breakdown(src: Dict[str, Any]) -> Dict[str, Any]:
     nutritional_data = src.get("category_data", {}).get("nutritional", {})
     if not isinstance(nutritional_data, dict):
         return {}
-    updated = nutritional_data.get("nutri_breakdown_updated")
+    updated = nutritional_data.get("nutri_breakdown")
     if isinstance(updated, dict) and updated:
         return updated
-    fallback = nutritional_data.get("nutri_breakdown")
+    fallback = nutritional_data.get("nutri_breakdown_updated")
     if isinstance(fallback, dict):
         return fallback
     return {}

@@ -103,13 +103,26 @@ def test_category_browse_subcategory_list_uses_relaxed_dual_aggregation(monkeypa
         "milk",
         "eggs",
     ]
-    assert result["filters"] == [{"id": "filter_price"}]
+    assert any(group.get("id") == "filter_price" for group in result["filters"])
+    assert any(group.get("id") == "filter_subcategory" for group in result["filters"])
 
     products_query = json.dumps(requests[0].get("query", {}), sort_keys=True)
     assert "bread_and_buns" in products_query
+    nested_clauses = [
+        clause
+        for clause in ((requests[0].get("query") or {}).get("bool") or {}).get("filter") or []
+        if isinstance(clause, dict) and isinstance(clause.get("nested"), dict)
+        and clause["nested"].get("path") == "category_hierarchies"
+    ]
+    assert len(nested_clauses) == 1
+    assert nested_clauses[0]["nested"]["query"]["bool"]["filter"] == [
+        {"term": {"category_hierarchies.segments": "dairy_and_bakery"}},
+        {"term": {"category_hierarchies.segments": "bread_and_buns"}},
+    ]
 
     facets_request = requests[2]
     assert "subcategory_scope_global" in facets_request.get("aggs", {})
+    assert "departments_hierarchy_nested" in facets_request.get("aggs", {})
 
     scoped_agg_payload = json.dumps(
         facets_request["aggs"]["subcategory_scope_global"],
@@ -212,16 +225,30 @@ def test_department_browse_categories_list_uses_relaxed_dual_aggregation(monkeyp
         "light_bites",
         "dairy_and_bakery",
     ]
-    assert result["filters"] == [{"id": "filter_price"}]
+    assert any(group.get("id") == "filter_price" for group in result["filters"])
+    assert any(group.get("id") == "filter_category" for group in result["filters"])
     assert result["meta"]["department_segment_l1"] == "food"
 
     products_query = json.dumps(requests[0].get("query", {}), sort_keys=True)
     assert "food" in products_query
     assert "biscuits_and_crackers" in products_query
     assert "cookies" in products_query
+    nested_clauses = [
+        clause
+        for clause in ((requests[0].get("query") or {}).get("bool") or {}).get("filter") or []
+        if isinstance(clause, dict) and isinstance(clause.get("nested"), dict)
+        and clause["nested"].get("path") == "category_hierarchies"
+    ]
+    assert len(nested_clauses) == 1
+    assert nested_clauses[0]["nested"]["query"]["bool"]["filter"] == [
+        {"term": {"category_hierarchies.segments": "food"}},
+        {"term": {"category_hierarchies.segments": "biscuits_and_crackers"}},
+        {"term": {"category_hierarchies.segments": "cookies"}},
+    ]
 
     facets_request = requests[2]
     assert "category_scope_global" in facets_request.get("aggs", {})
+    assert "departments_hierarchy_nested" in facets_request.get("aggs", {})
     scoped_agg_payload = json.dumps(
         facets_request["aggs"]["category_scope_global"],
         sort_keys=True,

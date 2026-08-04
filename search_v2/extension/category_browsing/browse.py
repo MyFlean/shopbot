@@ -15,10 +15,13 @@ from search_v2.config.settings import SETTINGS
 from search_v2.extension.product import to_product_card
 from search_v2.extension.taxonomy import (
     build_category_terms_aggregation,
+    build_department_subcategory_terms_aggregation,
     build_subcategory_terms_aggregation,
     parse_categories_from_aggregations,
+    parse_department_subcategories_from_aggregations,
     parse_subcategories_from_aggregations,
     sync_category_metadata_with_app_config,
+    sync_department_subcategory_metadata_with_app_config,
     sync_subcategory_metadata_with_app_config,
 )
 from search_v2.retrieval.filters import SearchFilters, build_filter_clauses
@@ -35,6 +38,8 @@ _SUBCATEGORY_SCOPE_GLOBAL_AGG = "subcategory_scope_global"
 _SUBCATEGORY_SCOPE_FILTER_AGG = "subcategory_scope_filter"
 _CATEGORY_SCOPE_GLOBAL_AGG = "category_scope_global"
 _CATEGORY_SCOPE_FILTER_AGG = "category_scope_filter"
+_DEPARTMENT_SUBCATEGORY_SCOPE_GLOBAL_AGG = "department_subcategory_scope_global"
+_DEPARTMENT_SUBCATEGORY_SCOPE_FILTER_AGG = "department_subcategory_scope_filter"
 
 
 def _get_client() -> OpenSearchClient:
@@ -67,6 +72,7 @@ def _browse_by_filters(
     category_segment_l2: Optional[str] = None,
     include_categories: bool = False,
     department_segment_l1: Optional[str] = None,
+    include_department_grouped_subcategories: bool = False,
 ) -> Dict[str, Any]:
     t0 = time.monotonic()
     safe_size = max(1, min(int(size or 20), 100))
@@ -199,6 +205,42 @@ def _browse_by_filters(
                 }
             },
         }
+    if include_department_grouped_subcategories and department_segment_l1:
+        facets_aggs.update(build_department_subcategory_terms_aggregation(department_segment_l1))
+
+        relaxed_filters = filters
+        if relaxed_filters is not None:
+            relaxed_filters = replace(
+                relaxed_filters,
+                category_segment_l2=None,
+                subcategory_segment_l3=None,
+            )
+
+        relaxed_selector_clauses = build_filter_clauses(selector_filters)
+        relaxed_filter_clauses = list(relaxed_selector_clauses.filter_clauses) + [listing_visibility_filter_clause()]
+        relaxed_must_not_clauses = list(relaxed_selector_clauses.must_not_clauses)
+        relaxed_should_clauses = list(relaxed_selector_clauses.should_clauses)
+
+        if relaxed_filters is not None:
+            relaxed_fc = build_filter_clauses(relaxed_filters)
+            relaxed_filter_clauses.extend(relaxed_fc.filter_clauses)
+            relaxed_must_not_clauses.extend(relaxed_fc.must_not_clauses)
+            relaxed_should_clauses.extend(relaxed_fc.should_clauses)
+
+        relaxed_department_subcategory_query = _build_bool_query(
+            filter_clauses=relaxed_filter_clauses,
+            should_clauses=relaxed_should_clauses,
+            must_not_clauses=relaxed_must_not_clauses,
+        )
+        facets_aggs[_DEPARTMENT_SUBCATEGORY_SCOPE_GLOBAL_AGG] = {
+            "global": {},
+            "aggs": {
+                _DEPARTMENT_SUBCATEGORY_SCOPE_FILTER_AGG: {
+                    "filter": relaxed_department_subcategory_query,
+                    "aggs": build_department_subcategory_terms_aggregation(department_segment_l1),
+                }
+            },
+        }
     facets_response = client.search({
         "size": 0, "track_total_hits": False, "query": query,
         "aggs": facets_aggs,
@@ -235,6 +277,47 @@ def _browse_by_filters(
             department=department_segment_l1,
             es_category_ids=category_ids,
         )
+    grouped_subcategories: List[Dict[str, Any]] = []
+    if include_department_grouped_subcategories and department_segment_l1:
+        department_subcategory_source_aggs = facets_aggs_out
+        scoped_department_subcategory_aggs = (
+            (facets_aggs_out.get(_DEPARTMENT_SUBCATEGORY_SCOPE_GLOBAL_AGG) or {})
+            .get(_DEPARTMENT_SUBCATEGORY_SCOPE_FILTER_AGG)
+        )
+        if isinstance(scoped_department_subcategory_aggs, dict):
+            department_subcategory_source_aggs = scoped_department_subcategory_aggs
+        subcategory_ids_by_category = parse_department_subcategories_from_aggregations(
+            department_subcategory_source_aggs,
+            department_segment_l1,
+        )
+        grouped_subcategories = sync_department_subcategory_metadata_with_app_config(
+            department=department_segment_l1,
+            es_subcategory_ids_by_category=subcategory_ids_by_category,
+        )
+    department_flat_subcategories: List[Dict[str, str]] = []
+    if include_department_grouped_subcategories:
+        seen_subcategory_ids: set[str] = set()
+        for grouped_entry in grouped_subcategories:
+            if not isinstance(grouped_entry, dict):
+                continue
+            items = grouped_entry.get("items")
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                raw_id = str(item.get("id") or "").strip()
+                normalized_id = raw_id.lower()
+                if not raw_id or normalized_id in seen_subcategory_ids:
+                    continue
+                department_flat_subcategories.append(
+                    {
+                        "id": raw_id,
+                        "image": str(item.get("image") or "").strip(),
+                        "name": str(item.get("name") or "").strip(),
+                    }
+                )
+                seen_subcategory_ids.add(normalized_id)
 
     took_ms = round((time.monotonic() - t0) * 1000)
     result: Dict[str, Any] = {
@@ -257,6 +340,8 @@ def _browse_by_filters(
     }
     if include_categories:
         result["categories"] = categories
+    if include_department_grouped_subcategories:
+        result["subcategories"] = department_flat_subcategories
     return result
 
 
@@ -267,8 +352,16 @@ def browse_by_department_segment(
     sort_by: Optional[str] = None,
     filters: Optional[SearchFilters] = None,
 ) -> Dict[str, Any]:
+    normalized_department = (department_segment_l1 or "").strip().lower()
+    selected_category = (filters.category_segment_l2 or "").strip().lower() if filters else ""
+    selected_subcategory = (filters.subcategory_segment_l3 or "").strip().lower() if filters else ""
     selector_filters = SearchFilters(
-        department_segment_l1=(department_segment_l1 or "").strip().lower()
+        department_segment_l1=normalized_department
+    )
+    include_categories = not bool(selected_category) and not bool(selected_subcategory)
+    include_subcategories = bool(selected_category) and not bool(selected_subcategory)
+    include_department_grouped_subcategories = (
+        not bool(selected_category) and not bool(selected_subcategory)
     )
     return _browse_by_filters(
         selector_filters=selector_filters,
@@ -276,8 +369,11 @@ def browse_by_department_segment(
         size=size,
         sort_by=sort_by,
         filters=filters,
-        include_categories=True,
+        include_subcategories=include_subcategories,
+        category_segment_l2=selected_category or None,
+        include_categories=include_categories,
         department_segment_l1=selector_filters.department_segment_l1,
+        include_department_grouped_subcategories=include_department_grouped_subcategories,
     )
 
 

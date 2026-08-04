@@ -23,6 +23,9 @@ _SUBCATEGORY_BUCKETS_NAME = "subcategory_candidates"
 _CATEGORY_AGG_NAME = "department_hierarchy_nested"
 _CATEGORY_FILTER_NAME = "department_scope"
 _CATEGORY_BUCKETS_NAME = "category_candidates"
+_DEPARTMENT_SUBCATEGORY_AGG_NAME = "department_subcategory_hierarchy_nested"
+_DEPARTMENT_SUBCATEGORY_FILTER_NAME = "department_subcategory_scope"
+_DEPARTMENT_SUBCATEGORY_BUCKETS_NAME = "department_subcategory_candidates"
 _APP_CONFIG_CATEGORIES_URL = "https://api.flean.ai/ui/app-config/categories"
 _APP_CONFIG_TIMEOUT_SEC = 10.0
 
@@ -239,6 +242,140 @@ def parse_categories_from_aggregations(
     return _parse_segment_values_from_bucket(parsed, "segment2_values")
 
 
+def build_department_subcategory_terms_aggregation(department: str) -> Dict[str, Any]:
+    """
+    Build nested aggregation that extracts department-scoped category->subcategories.
+
+    The aggregation runs over `category_hierarchies` nested docs and emits a
+    scripted metric map:
+      {
+        "category_id_1": ["subcategory_a", "subcategory_b"],
+        "category_id_2": ["subcategory_c"],
+      }
+    """
+    normalized = str(department or "").strip().lower()
+    if not normalized:
+        return {}
+    return {
+        _DEPARTMENT_SUBCATEGORY_AGG_NAME: {
+            "nested": {"path": "category_hierarchies"},
+            "aggs": {
+                _DEPARTMENT_SUBCATEGORY_FILTER_NAME: {
+                    "filter": {
+                        "term": {"category_hierarchies.segments": normalized}
+                    },
+                    "aggs": {
+                        _DEPARTMENT_SUBCATEGORY_BUCKETS_NAME: {
+                            "reverse_nested": {},
+                            "aggs": {
+                                "category_subcategory_values": {
+                                    "scripted_metric": {
+                                        "params": {
+                                            "department": normalized,
+                                            "limit": _SUBCATEGORY_TERMS_LIMIT,
+                                        },
+                                        "init_script": "state.category_map = new HashMap();",
+                                        "map_script": (
+                                            "def rows = params._source['category_hierarchies']; "
+                                            "if (rows == null) return; "
+                                            "for (def row : rows) { "
+                                            "  if (row == null) continue; "
+                                            "  def segs = row['segments']; "
+                                            "  if (segs == null || segs.size() <= 3) continue; "
+                                            "  def l1 = segs[1]; "
+                                            "  def l2 = segs[2]; "
+                                            "  def l3 = segs[3]; "
+                                            "  if (l1 == null || l2 == null || l3 == null) continue; "
+                                            "  if (l1.toString().toLowerCase() != params.department) continue; "
+                                            "  def categoryKey = l2.toString().toLowerCase(); "
+                                            "  def subcategoryValue = l3.toString().toLowerCase(); "
+                                            "  def bucket = state.category_map.get(categoryKey); "
+                                            "  if (bucket == null) { "
+                                            "    bucket = new HashSet(); "
+                                            "    state.category_map.put(categoryKey, bucket); "
+                                            "  } "
+                                            "  if (bucket.size() < params.limit) { "
+                                            "    bucket.add(subcategoryValue); "
+                                            "  } "
+                                            "}"
+                                        ),
+                                        "combine_script": "return state.category_map;",
+                                        "reduce_script": (
+                                            "def out = new HashMap(); "
+                                            "for (def m : states) { "
+                                            "  if (m == null) continue; "
+                                            "  for (def entry : m.entrySet()) { "
+                                            "    def key = entry.getKey(); "
+                                            "    def vals = entry.getValue(); "
+                                            "    if (key == null || vals == null) continue; "
+                                            "    def bucket = out.get(key); "
+                                            "    if (bucket == null) { "
+                                            "      bucket = new HashSet(); "
+                                            "      out.put(key, bucket); "
+                                            "    } "
+                                            "    bucket.addAll(vals); "
+                                            "  } "
+                                            "} "
+                                            "def normalized = new HashMap(); "
+                                            "for (def entry : out.entrySet()) { "
+                                            "  normalized.put(entry.getKey(), new ArrayList(entry.getValue())); "
+                                            "} "
+                                            "return normalized;"
+                                        ),
+                                    }
+                                }
+                            }
+                        }
+                    },
+                }
+            },
+        }
+    }
+
+
+def parse_department_subcategories_from_aggregations(
+    aggregations: Optional[Dict[str, Any]],
+    department: str,
+) -> Dict[str, List[str]]:
+    """
+    Parse unique category->subcategories map from department aggregation response.
+
+    Expected input shape:
+      aggregations.department_subcategory_hierarchy_nested.department_subcategory_scope
+        .department_subcategory_candidates.category_subcategory_values.value
+    """
+    normalized = str(department or "").strip().lower()
+    if not normalized:
+        return {}
+
+    agg_root = (aggregations or {}).get(_DEPARTMENT_SUBCATEGORY_AGG_NAME) or {}
+    department_scope = agg_root.get(_DEPARTMENT_SUBCATEGORY_FILTER_NAME) or {}
+    parsed = department_scope.get(_DEPARTMENT_SUBCATEGORY_BUCKETS_NAME) or {}
+    scripted_metric = parsed.get("category_subcategory_values") if isinstance(parsed, dict) else None
+    raw_map = (
+        scripted_metric.get("value")
+        if isinstance(scripted_metric, dict)
+        else None
+    )
+    if not isinstance(raw_map, dict):
+        return {}
+
+    out: Dict[str, List[str]] = {}
+    for raw_category, raw_subcategories in raw_map.items():
+        category_id = str(raw_category or "").strip().lower()
+        if not category_id:
+            continue
+        normalized_subcategories: List[str] = []
+        if isinstance(raw_subcategories, (list, set, tuple)):
+            for item in raw_subcategories:
+                normalized_subcategory = str(item or "").strip().lower()
+                if normalized_subcategory and normalized_subcategory not in normalized_subcategories:
+                    normalized_subcategories.append(normalized_subcategory)
+        if normalized_subcategories:
+            out[category_id] = normalized_subcategories
+    return out
+
+
 def fetch_app_config_categories(
     url: str = _APP_CONFIG_CATEGORIES_URL,
     timeout_sec: float = _APP_CONFIG_TIMEOUT_SEC,
@@ -364,9 +501,86 @@ def sync_category_metadata_with_app_config(
         out.append(
             {
                 "id": raw_id,
-                "image": str(entry.get("image") or "").strip(),
+                # App-config categories primarily expose top-level `icon`.
+                "image": str(entry.get("image") or entry.get("icon") or "").strip(),
                 "name": str(entry.get("name") or "").strip(),
             }
         )
         seen.add(normalized_id)
+    return out
+
+
+def sync_department_subcategory_metadata_with_app_config(
+    department: str,
+    es_subcategory_ids_by_category: Dict[str, List[str]],
+    categories_payload: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Return department grouped subcategories in app-config order.
+
+    Output shape:
+      [
+        {
+          "category": {"id", "image", "name"},
+          "items": [{"id", "image", "name"}],
+        }
+      ]
+    """
+    department_id = str(department or "").strip().lower()
+    if not department_id:
+        return []
+    if not isinstance(es_subcategory_ids_by_category, dict) or not es_subcategory_ids_by_category:
+        return []
+
+    categories = categories_payload if categories_payload is not None else fetch_app_config_categories()
+    if not isinstance(categories, list):
+        return []
+
+    category_ids = [
+        str(category_id or "").strip().lower()
+        for category_id in es_subcategory_ids_by_category.keys()
+        if str(category_id or "").strip()
+    ]
+    category_metadata_rows = sync_category_metadata_with_app_config(
+        department=department_id,
+        es_category_ids=category_ids,
+        categories_payload=categories,
+    )
+    category_metadata_by_id = {
+        str(entry.get("id") or "").strip().lower(): entry
+        for entry in category_metadata_rows
+        if isinstance(entry, dict) and str(entry.get("id") or "").strip()
+    }
+
+    out: List[Dict[str, Any]] = []
+    for category_entry in categories:
+        if not isinstance(category_entry, dict):
+            continue
+        raw_category_id = str(category_entry.get("id") or "").strip()
+        category_id = raw_category_id.lower()
+        if not raw_category_id:
+            continue
+        es_ids = es_subcategory_ids_by_category.get(category_id)
+        if not es_ids:
+            continue
+        items = sync_subcategory_metadata_with_app_config(
+            category=category_id,
+            es_subcategory_ids=es_ids,
+            categories_payload=categories,
+        )
+        if not items:
+            continue
+        category_meta = category_metadata_by_id.get(category_id)
+        if not category_meta:
+            continue
+        out.append(
+            {
+                "category": {
+                    "id": str(category_meta.get("id") or "").strip(),
+                    "image": str(category_meta.get("image") or "").strip(),
+                    "name": str(category_meta.get("name") or "").strip(),
+                },
+                "items": items,
+            }
+        )
     return out

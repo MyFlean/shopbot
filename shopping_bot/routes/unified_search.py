@@ -715,8 +715,10 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             "products": product_cards,
             "filters": dynamic_filters,
         }
-        if department and not query:
+        if department and not query and not category and not subcategory:
             response_data["categories"] = result.get("categories", []) if isinstance(result, dict) else []
+        if department and not query and not subcategory:
+            response_data["subcategories"] = result.get("subcategories", []) if isinstance(result, dict) else []
         if category and not query and not department:
             response_data["subcategories"] = result.get("subcategories", []) if isinstance(result, dict) else []
         return jsonify(_success_response(response_data, meta=meta)), 200

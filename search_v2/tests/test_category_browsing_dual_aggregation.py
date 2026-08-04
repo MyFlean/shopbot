@@ -118,7 +118,7 @@ def test_category_browse_subcategory_list_uses_relaxed_dual_aggregation(monkeypa
     assert "bread_and_buns" not in scoped_agg_payload
 
 
-def test_department_browse_categories_list_uses_relaxed_dual_aggregation(monkeypatch):
+def test_department_browse_returns_separate_categories_and_flat_subcategories(monkeypatch):
     requests: list[dict] = []
 
     class _DummyClient:
@@ -146,7 +146,11 @@ def test_department_browse_categories_list_uses_relaxed_dual_aggregation(monkeyp
                             "department_scope": {
                                 "category_candidates": {
                                     "segment2_values": {
-                                        "value": ["biscuits_and_crackers"],
+                                        "value": [
+                                            "biscuits_and_crackers",
+                                            "light_bites",
+                                            "dairy_and_bakery",
+                                        ],
                                     }
                                 }
                             }
@@ -164,6 +168,36 @@ def test_department_browse_categories_list_uses_relaxed_dual_aggregation(monkeyp
                                                     "light_bites",
                                                     "dairy_and_bakery",
                                                 ]
+                                            }
+                                        }
+                                    }
+                                },
+                            },
+                        },
+                        "department_subcategory_hierarchy_nested": {
+                            "department_subcategory_scope": {
+                                "department_subcategory_candidates": {
+                                    "category_subcategory_values": {
+                                        "value": {
+                                            "biscuits_and_crackers": ["cookies"],
+                                            "light_bites": ["nachos"],
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "department_subcategory_scope_global": {
+                            "doc_count": 999,
+                            "department_subcategory_scope_filter": {
+                                "doc_count": 555,
+                                "department_subcategory_hierarchy_nested": {
+                                    "department_subcategory_scope": {
+                                        "department_subcategory_candidates": {
+                                            "category_subcategory_values": {
+                                                "value": {
+                                                    "biscuits_and_crackers": ["cookies", "cream_biscuits"],
+                                                    "light_bites": ["nachos"],
+                                                }
                                             }
                                         }
                                     }
@@ -194,6 +228,93 @@ def test_department_browse_categories_list_uses_relaxed_dual_aggregation(monkeyp
             for category_id in es_category_ids
         ],
     )
+    monkeypatch.setattr(
+        browse_module,
+        "sync_department_subcategory_metadata_with_app_config",
+        lambda department, es_subcategory_ids_by_category: [
+            {
+                "category": {"id": category_id, "image": "", "name": category_id},
+                "items": [
+                    {"id": subcategory_id, "image": "", "name": subcategory_id}
+                    for subcategory_id in subcategory_ids
+                ],
+            }
+            for category_id, subcategory_ids in es_subcategory_ids_by_category.items()
+        ],
+    )
+
+    result = browse_module.browse_by_department_segment(
+        department_segment_l1="food",
+        page=0,
+        size=20,
+        sort_by="relevance",
+        filters=SearchFilters(),
+    )
+
+    assert len(requests) == 3
+    assert result["categories"] == [
+        {"id": "biscuits_and_crackers", "image": "", "name": "biscuits_and_crackers"},
+        {"id": "light_bites", "image": "", "name": "light_bites"},
+        {"id": "dairy_and_bakery", "image": "", "name": "dairy_and_bakery"},
+    ]
+    assert result["filters"] == [{"id": "filter_price"}]
+    assert result["meta"]["department_segment_l1"] == "food"
+    assert result["subcategories"] == [
+        {"id": "cookies", "image": "", "name": "cookies"},
+        {"id": "cream_biscuits", "image": "", "name": "cream_biscuits"},
+        {"id": "nachos", "image": "", "name": "nachos"},
+    ]
+
+    products_query = json.dumps(requests[0].get("query", {}), sort_keys=True)
+    assert "food" in products_query
+
+    facets_request = requests[2]
+    assert "category_scope_global" in facets_request.get("aggs", {})
+    assert "department_subcategory_scope_global" in facets_request.get("aggs", {})
+    scoped_agg_payload = json.dumps(
+        facets_request["aggs"]["category_scope_global"],
+        sort_keys=True,
+    )
+    assert "cookies" not in scoped_agg_payload
+
+
+def test_department_browse_with_subcategory_suppresses_hierarchy_aggs(monkeypatch):
+    requests: list[dict] = []
+
+    class _DummyClient:
+        def search(self, body):
+            requests.append(body)
+            call_idx = len(requests)
+            if call_idx == 1:
+                return {
+                    "hits": {
+                        "hits": [{"_source": {"id": "prod-1"}, "_score": 1.0}],
+                        "total": {"value": 1},
+                    }
+                }
+            if call_idx == 2:
+                return {
+                    "aggregations": {
+                        "price_min": {"value": 10.0},
+                        "price_max": {"value": 100.0},
+                    }
+                }
+            if call_idx == 3:
+                return {"aggregations": {}}
+            raise AssertionError(f"Unexpected OpenSearch search call: {call_idx}")
+
+    monkeypatch.setattr(browse_module, "_client", _DummyClient())
+    monkeypatch.setattr(
+        browse_module,
+        "to_product_card",
+        lambda source, rank, score: {"id": source.get("id"), "rank": rank, "_score": score},
+    )
+    monkeypatch.setattr(browse_module, "finalize_listing_cards", lambda products: products)
+    monkeypatch.setattr(
+        browse_module,
+        "parse_dynamic_filters_from_aggs",
+        lambda _aggs: [{"id": "filter_price"}],
+    )
 
     result = browse_module.browse_by_department_segment(
         department_segment_l1="food",
@@ -207,24 +328,10 @@ def test_department_browse_categories_list_uses_relaxed_dual_aggregation(monkeyp
     )
 
     assert len(requests) == 3
-    assert [entry["id"] for entry in result["categories"]] == [
-        "biscuits_and_crackers",
-        "light_bites",
-        "dairy_and_bakery",
-    ]
     assert result["filters"] == [{"id": "filter_price"}]
-    assert result["meta"]["department_segment_l1"] == "food"
-
-    products_query = json.dumps(requests[0].get("query", {}), sort_keys=True)
-    assert "food" in products_query
-    assert "biscuits_and_crackers" in products_query
-    assert "cookies" in products_query
-
+    assert "categories" not in result
+    assert result["subcategories"] == []
     facets_request = requests[2]
-    assert "category_scope_global" in facets_request.get("aggs", {})
-    scoped_agg_payload = json.dumps(
-        facets_request["aggs"]["category_scope_global"],
-        sort_keys=True,
-    )
-    assert "biscuits_and_crackers" not in scoped_agg_payload
-    assert "cookies" not in scoped_agg_payload
+    assert "category_scope_global" not in facets_request.get("aggs", {})
+    assert "subcategory_scope_global" not in facets_request.get("aggs", {})
+    assert "department_subcategory_scope_global" not in facets_request.get("aggs", {})

@@ -7,11 +7,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from search_v2.extension.taxonomy import (
     build_category_terms_aggregation,
+    build_department_subcategory_terms_aggregation,
     build_subcategory_terms_aggregation,
     fetch_app_config_categories,
     parse_categories_from_aggregations,
+    parse_department_subcategories_from_aggregations,
     parse_subcategories_from_aggregations,
     sync_category_metadata_with_app_config,
+    sync_department_subcategory_metadata_with_app_config,
     sync_subcategory_metadata_with_app_config,
 )
 from search_v2.retrieval.filters import SearchFilters, build_filter_clauses
@@ -202,6 +205,100 @@ def test_sync_category_metadata_returns_intersection_in_app_config_order():
     assert out == [
         {"id": "biscuits_and_crackers", "image": "i2", "name": "Biscuits"},
         {"id": "dairy_and_bakery", "image": "i3", "name": "Dairy"},
+    ]
+
+
+def test_sync_category_metadata_uses_icon_when_image_missing():
+    categories_payload = [
+        {"id": "light_bites", "icon": "cat-icon-1", "name": "Light Bites"},
+        {"id": "biscuits_and_crackers", "icon": "cat-icon-2", "name": "Biscuits"},
+    ]
+    out = sync_category_metadata_with_app_config(
+        department="food",
+        es_category_ids=["biscuits_and_crackers"],
+        categories_payload=categories_payload,
+    )
+    assert out == [
+        {"id": "biscuits_and_crackers", "image": "cat-icon-2", "name": "Biscuits"},
+    ]
+
+
+def test_build_department_subcategory_terms_aggregation_has_nested_department_scope():
+    aggs = build_department_subcategory_terms_aggregation("food")
+    nested = aggs["department_subcategory_hierarchy_nested"]
+    assert nested["nested"]["path"] == "category_hierarchies"
+    scoped = nested["aggs"]["department_subcategory_scope"]["filter"]["term"]
+    assert scoped["category_hierarchies.segments"] == "food"
+    scripted_metric = (
+        nested["aggs"]["department_subcategory_scope"]["aggs"][
+            "department_subcategory_candidates"
+        ]["aggs"]["category_subcategory_values"]["scripted_metric"]
+    )
+    assert scripted_metric["params"]["department"] == "food"
+
+
+def test_parse_department_subcategories_from_aggregations_returns_grouped_candidates():
+    aggregations = {
+        "department_subcategory_hierarchy_nested": {
+            "department_subcategory_scope": {
+                "department_subcategory_candidates": {
+                    "category_subcategory_values": {
+                        "value": {
+                            "biscuits_and_crackers": ["cookies", "cream_biscuits", "cookies"],
+                            "light_bites": ["chips_and_crisps"],
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out = parse_department_subcategories_from_aggregations(aggregations, "food")
+    assert out == {
+        "biscuits_and_crackers": ["cookies", "cream_biscuits"],
+        "light_bites": ["chips_and_crisps"],
+    }
+
+
+def test_sync_department_subcategory_metadata_returns_grouped_app_config_order():
+    categories_payload = [
+        {
+            "id": "light_bites",
+            "image": "cat1",
+            "name": "Light Bites",
+            "subcategories": [
+                {"id": "chips_and_crisps", "image": "sub1", "name": "Chips"},
+            ],
+        },
+        {
+            "id": "biscuits_and_crackers",
+            "image": "cat2",
+            "name": "Biscuits",
+            "subcategories": [
+                {"id": "cookies", "image": "sub2", "name": "Cookies"},
+                {"id": "cream_biscuits", "image": "sub3", "name": "Cream Biscuits"},
+            ],
+        },
+    ]
+    out = sync_department_subcategory_metadata_with_app_config(
+        department="food",
+        es_subcategory_ids_by_category={
+            "biscuits_and_crackers": ["cream_biscuits", "cookies"],
+            "light_bites": ["chips_and_crisps"],
+        },
+        categories_payload=categories_payload,
+    )
+    assert out == [
+        {
+            "category": {"id": "light_bites", "image": "cat1", "name": "Light Bites"},
+            "items": [{"id": "chips_and_crisps", "image": "sub1", "name": "Chips"}],
+        },
+        {
+            "category": {"id": "biscuits_and_crackers", "image": "cat2", "name": "Biscuits"},
+            "items": [
+                {"id": "cookies", "image": "sub2", "name": "Cookies"},
+                {"id": "cream_biscuits", "image": "sub3", "name": "Cream Biscuits"},
+            ],
+        },
     ]
 
 

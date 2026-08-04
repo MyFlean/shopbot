@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 from flask import Flask
 
+from shopping_bot.data_fetchers.es_products import _normalize_variant_entries
 from shopping_bot.routes.unified_search import bp as unified_search_bp
 
 
@@ -15,6 +16,41 @@ def unified_search_client():
     app.config["TESTING"] = True
     app.register_blueprint(unified_search_bp, url_prefix="/rs")
     return app.test_client()
+
+
+def test_variant_normalizer_preserves_variant_field_and_value_key():
+    rows = _normalize_variant_entries([
+        {
+            "id": "v-size",
+            "variant_field": "size",
+            "size": "500 g",
+            "price": 99.0,
+            "image": "img-size",
+        },
+        {
+            "id": "v-flavour",
+            "variant_field": "flavour",
+            "flavour": "Cafe Latte",
+            "mrp": 120.0,
+            "image": "img-flavour",
+        },
+    ])
+    assert rows == [
+        {
+            "id": "v-size",
+            "variant_field": "size",
+            "size": "500 g",
+            "price": 99.0,
+            "image": "img-size",
+        },
+        {
+            "id": "v-flavour",
+            "variant_field": "flavour",
+            "flavour": "Cafe Latte",
+            "mrp": 120.0,
+            "image": "img-flavour",
+        },
+    ]
 
 
 @patch("shopping_bot.routes.unified_search._search_engine", return_value="v1")
@@ -55,7 +91,14 @@ def test_unified_search_sets_has_lab_report_per_product(
             "name": raw["id"],
             "visibility": "visible",
             "flean_score": 8,
-            "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
+            "variants": [{
+                "id": "variant-1",
+                "variant_field": "flavour",
+                "flavour": "Cafe Latte",
+                "price": 99.0,
+                "mrp": 120.0,
+                "image": "img",
+            }],
         }
 
     mock_transform_to_product_card.side_effect = _card_for
@@ -72,6 +115,8 @@ def test_unified_search_sets_has_lab_report_per_product(
     assert by_id["prod-without-report"]["has_lab_report"] is False
     assert by_id["prod-with-report"]["parent_id"] == "parent-1"
     assert by_id["prod-with-report"]["variants"][0]["id"] == "variant-1"
+    assert by_id["prod-with-report"]["variants"][0]["variant_field"] == "flavour"
+    assert by_id["prod-with-report"]["variants"][0]["flavour"] == "Cafe Latte"
     assert payload["data"]["filters"] == []
 
 

@@ -39,7 +39,14 @@ def _base_pdp(in_stock=True, visibility="visible"):
             "name": "Test Product",
             "in_stock": in_stock,
             "visibility": visibility,
-            "variants": [{"id": "prod-2", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img-2"}],
+            "variants": [{
+                "id": "prod-2",
+                "variant_field": "size",
+                "size": "500 g",
+                "price": 99.0,
+                "mrp": 120.0,
+                "image": "img-2",
+            }],
         },
         "flean_badge": {"score": 8},
     }
@@ -74,6 +81,8 @@ def test_pdp_redis_miss_uses_availability_positive(
     assert payload["data"]["product_info"]["in_stock"] is True
     assert payload["data"]["product_info"]["parent_id"] == "parent-1"
     assert payload["data"]["product_info"]["variants"][0]["id"] == "prod-2"
+    assert payload["data"]["product_info"]["variants"][0]["variant_field"] == "size"
+    assert payload["data"]["product_info"]["variants"][0]["size"] == "500 g"
 
 
 @patch("shopping_bot.routes.product_api._get_cached_in_stock_override", return_value=None)

@@ -456,6 +456,70 @@ def _browse_by_filters(
             subcategory_source_aggs, active_categories
         )
 
+    # Subcategory-only browse has no category selector, so subcategory
+    # sibling facets are not built above. Infer parent category(ies) from
+    # the filtered result set, then fetch siblings with subcategory relaxed.
+    inferred_categories_for_subcategories: List[str] = []
+    if (
+        not subcategory_counts
+        and active_subcategories
+        and not active_categories
+    ):
+        parent_depts = list(department_counts.keys()) if department_counts else []
+        if parent_depts:
+            parent_category_response = client.search({
+                "size": 0,
+                "track_total_hits": False,
+                "query": query,
+                "aggs": build_category_terms_aggregation(parent_depts),
+            })
+            inferred_categories_for_subcategories = list(
+                parse_category_counts_from_aggregations(
+                    parent_category_response.get("aggregations") or {},
+                    parent_depts,
+                ).keys()
+            )
+        if inferred_categories_for_subcategories:
+            relaxed_selector_filters = replace(
+                selector_filters, subcategory_segment_l3=None
+            )
+            relaxed_selector_clauses = build_filter_clauses(relaxed_selector_filters)
+            relaxed_filter_clauses = list(relaxed_selector_clauses.filter_clauses) + [
+                listing_visibility_filter_clause()
+            ]
+            relaxed_must_not_clauses = list(relaxed_selector_clauses.must_not_clauses)
+            relaxed_should_clauses = list(relaxed_selector_clauses.should_clauses)
+            if filters is not None:
+                relaxed_fc = build_filter_clauses(filters)
+                relaxed_filter_clauses.extend(relaxed_fc.filter_clauses)
+                relaxed_must_not_clauses.extend(relaxed_fc.must_not_clauses)
+                relaxed_should_clauses.extend(relaxed_fc.should_clauses)
+            sibling_subcategory_response = client.search({
+                "size": 0,
+                "track_total_hits": False,
+                "query": _build_bool_query(
+                    filter_clauses=relaxed_filter_clauses,
+                    should_clauses=relaxed_should_clauses,
+                    must_not_clauses=relaxed_must_not_clauses,
+                ),
+                "aggs": build_subcategory_terms_aggregation(
+                    inferred_categories_for_subcategories
+                ),
+            })
+            sibling_subcategory_aggs = sibling_subcategory_response.get("aggregations") or {}
+            subcategory_counts = parse_subcategory_counts_from_aggregations(
+                sibling_subcategory_aggs, inferred_categories_for_subcategories
+            )
+            if len(inferred_categories_for_subcategories) == 1:
+                subcategory_ids = parse_subcategories_from_aggregations(
+                    sibling_subcategory_aggs, inferred_categories_for_subcategories[0]
+                )
+                subcategories = sync_subcategory_metadata_with_app_config(
+                    category=inferred_categories_for_subcategories[0],
+                    es_subcategory_ids=subcategory_ids,
+                )
+                subcategory_label_lookup = _label_lookup_from_metadata(subcategories)
+
     if subcategory_counts:
         subcategory_group = build_hierarchy_filter_group(
             group_id=FILTER_SUBCATEGORY_ID,
@@ -502,13 +566,65 @@ def _browse_by_filters(
             category_source_aggs, active_departments
         )
 
+    # Category/subcategory-only browse has no department selector, so category
+    # sibling facets are not built above. Infer department(s) from the
+    # result-set department facet and fetch sibling categories under them.
+    inferred_departments_for_categories: List[str] = []
+    if (
+        not category_counts
+        and (active_categories or active_subcategories)
+        and not active_departments
+        and department_counts
+    ):
+        inferred_departments_for_categories = list(department_counts.keys())
+        relaxed_selector_filters = replace(
+            selector_filters,
+            category_segment_l2=None,
+            subcategory_segment_l3=None,
+        )
+        relaxed_selector_clauses = build_filter_clauses(relaxed_selector_filters)
+        relaxed_filter_clauses = list(relaxed_selector_clauses.filter_clauses) + [
+            listing_visibility_filter_clause()
+        ]
+        relaxed_must_not_clauses = list(relaxed_selector_clauses.must_not_clauses)
+        relaxed_should_clauses = list(relaxed_selector_clauses.should_clauses)
+        if filters is not None:
+            relaxed_fc = build_filter_clauses(filters)
+            relaxed_filter_clauses.extend(relaxed_fc.filter_clauses)
+            relaxed_must_not_clauses.extend(relaxed_fc.must_not_clauses)
+            relaxed_should_clauses.extend(relaxed_fc.should_clauses)
+        sibling_category_response = client.search({
+            "size": 0,
+            "track_total_hits": False,
+            "query": _build_bool_query(
+                filter_clauses=relaxed_filter_clauses,
+                should_clauses=relaxed_should_clauses,
+                must_not_clauses=relaxed_must_not_clauses,
+            ),
+            "aggs": build_category_terms_aggregation(inferred_departments_for_categories),
+        })
+        sibling_category_aggs = sibling_category_response.get("aggregations") or {}
+        category_counts = parse_category_counts_from_aggregations(
+            sibling_category_aggs, inferred_departments_for_categories
+        )
+        if len(inferred_departments_for_categories) == 1:
+            category_ids = parse_categories_from_aggregations(
+                sibling_category_aggs, inferred_departments_for_categories[0]
+            )
+            categories = sync_category_metadata_with_app_config(
+                department=inferred_departments_for_categories[0],
+                es_category_ids=category_ids,
+            )
+            category_label_lookup = _label_lookup_from_metadata(categories)
+
+    selected_category_values = active_categories or inferred_categories_for_subcategories
     if category_counts:
         category_group = build_hierarchy_filter_group(
             group_id=FILTER_CATEGORY_ID,
             title="Category",
             title_key="category",
             counts=category_counts,
-            selected_values=active_categories,
+            selected_values=selected_category_values,
             label_lookup=category_label_lookup,
         )
         if category_group:

@@ -103,13 +103,26 @@ def test_category_browse_subcategory_list_uses_relaxed_dual_aggregation(monkeypa
         "milk",
         "eggs",
     ]
-    assert result["filters"] == [{"id": "filter_price"}]
+    assert any(group.get("id") == "filter_price" for group in result["filters"])
+    assert any(group.get("id") == "filter_subcategory" for group in result["filters"])
 
     products_query = json.dumps(requests[0].get("query", {}), sort_keys=True)
     assert "bread_and_buns" in products_query
+    nested_clauses = [
+        clause
+        for clause in ((requests[0].get("query") or {}).get("bool") or {}).get("filter") or []
+        if isinstance(clause, dict) and isinstance(clause.get("nested"), dict)
+        and clause["nested"].get("path") == "category_hierarchies"
+    ]
+    assert len(nested_clauses) == 1
+    assert nested_clauses[0]["nested"]["query"]["bool"]["filter"] == [
+        {"term": {"category_hierarchies.segments": "dairy_and_bakery"}},
+        {"term": {"category_hierarchies.segments": "bread_and_buns"}},
+    ]
 
     facets_request = requests[2]
     assert "subcategory_scope_global" in facets_request.get("aggs", {})
+    assert "departments_hierarchy_nested" in facets_request.get("aggs", {})
 
     scoped_agg_payload = json.dumps(
         facets_request["aggs"]["subcategory_scope_global"],
@@ -195,7 +208,10 @@ def test_department_browse_returns_separate_categories_and_flat_subcategories(mo
                                         "department_subcategory_candidates": {
                                             "category_subcategory_values": {
                                                 "value": {
-                                                    "biscuits_and_crackers": ["cookies", "cream_biscuits"],
+                                                    "biscuits_and_crackers": [
+                                                        "cookies",
+                                                        "cream_biscuits",
+                                                    ],
                                                     "light_bites": ["nachos"],
                                                 }
                                             }
@@ -257,7 +273,7 @@ def test_department_browse_returns_separate_categories_and_flat_subcategories(mo
         {"id": "light_bites", "image": "", "name": "light_bites"},
         {"id": "dairy_and_bakery", "image": "", "name": "dairy_and_bakery"},
     ]
-    assert result["filters"] == [{"id": "filter_price"}]
+    assert any(group.get("id") == "filter_price" for group in result["filters"])
     assert result["meta"]["department_segment_l1"] == "food"
     assert result["subcategories"] == [
         {"id": "cookies", "image": "", "name": "cookies"},
@@ -278,7 +294,7 @@ def test_department_browse_returns_separate_categories_and_flat_subcategories(mo
     assert "cookies" not in scoped_agg_payload
 
 
-def test_department_browse_with_subcategory_suppresses_hierarchy_aggs(monkeypatch):
+def test_department_browse_with_filters_keeps_sibling_category_facets(monkeypatch):
     requests: list[dict] = []
 
     class _DummyClient:
@@ -300,7 +316,38 @@ def test_department_browse_with_subcategory_suppresses_hierarchy_aggs(monkeypatc
                     }
                 }
             if call_idx == 3:
-                return {"aggregations": {}}
+                return {
+                    "aggregations": {
+                        "department_hierarchy_nested": {
+                            "department_scope": {
+                                "category_candidates": {
+                                    "segment2_values": {
+                                        "value": ["biscuits_and_crackers"],
+                                    }
+                                }
+                            }
+                        },
+                        "category_scope_global": {
+                            "doc_count": 999,
+                            "category_scope_filter": {
+                                "doc_count": 555,
+                                "department_hierarchy_nested": {
+                                    "department_scope": {
+                                        "category_candidates": {
+                                            "segment2_values": {
+                                                "value": [
+                                                    "biscuits_and_crackers",
+                                                    "light_bites",
+                                                    "dairy_and_bakery",
+                                                ]
+                                            }
+                                        }
+                                    }
+                                },
+                            },
+                        },
+                    }
+                }
             raise AssertionError(f"Unexpected OpenSearch search call: {call_idx}")
 
     monkeypatch.setattr(browse_module, "_client", _DummyClient())
@@ -315,6 +362,15 @@ def test_department_browse_with_subcategory_suppresses_hierarchy_aggs(monkeypatc
         "parse_dynamic_filters_from_aggs",
         lambda _aggs: [{"id": "filter_price"}],
     )
+    monkeypatch.setattr(
+        browse_module,
+        "parse_category_counts_from_aggregations",
+        lambda _aggs, _departments: {
+            "biscuits_and_crackers": 3,
+            "light_bites": 2,
+            "dairy_and_bakery": 1,
+        },
+    )
 
     result = browse_module.browse_by_department_segment(
         department_segment_l1="food",
@@ -328,10 +384,36 @@ def test_department_browse_with_subcategory_suppresses_hierarchy_aggs(monkeypatc
     )
 
     assert len(requests) == 3
-    assert result["filters"] == [{"id": "filter_price"}]
     assert "categories" not in result
     assert result["subcategories"] == []
+    assert any(group.get("id") == "filter_price" for group in result["filters"])
+    assert any(group.get("id") == "filter_category" for group in result["filters"])
+    assert result["meta"]["department_segment_l1"] == "food"
+
+    products_query = json.dumps(requests[0].get("query", {}), sort_keys=True)
+    assert "food" in products_query
+    assert "biscuits_and_crackers" in products_query
+    assert "cookies" in products_query
+    nested_clauses = [
+        clause
+        for clause in ((requests[0].get("query") or {}).get("bool") or {}).get("filter") or []
+        if isinstance(clause, dict) and isinstance(clause.get("nested"), dict)
+        and clause["nested"].get("path") == "category_hierarchies"
+    ]
+    assert len(nested_clauses) == 1
+    assert nested_clauses[0]["nested"]["query"]["bool"]["filter"] == [
+        {"term": {"category_hierarchies.segments": "food"}},
+        {"term": {"category_hierarchies.segments": "biscuits_and_crackers"}},
+        {"term": {"category_hierarchies.segments": "cookies"}},
+    ]
+
     facets_request = requests[2]
-    assert "category_scope_global" not in facets_request.get("aggs", {})
-    assert "subcategory_scope_global" not in facets_request.get("aggs", {})
+    assert "category_scope_global" in facets_request.get("aggs", {})
+    assert "departments_hierarchy_nested" in facets_request.get("aggs", {})
     assert "department_subcategory_scope_global" not in facets_request.get("aggs", {})
+    scoped_agg_payload = json.dumps(
+        facets_request["aggs"]["category_scope_global"],
+        sort_keys=True,
+    )
+    assert "biscuits_and_crackers" not in scoped_agg_payload
+    assert "cookies" not in scoped_agg_payload

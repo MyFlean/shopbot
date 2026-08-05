@@ -170,6 +170,55 @@ class MacroFilter:
         return {"range": {f: {self.operator: self.value}}}
 
 
+def _coerce_hierarchy_list(
+    raw: Any,
+    *,
+    strip_path: bool = False,
+) -> Optional[List[str]]:
+    """Normalize hierarchy selectors to a deduped lowercased list."""
+    if raw is None:
+        return None
+    parts: List[Any]
+    if isinstance(raw, str):
+        parts = [raw]
+    elif isinstance(raw, (list, tuple)):
+        parts = list(raw)
+    else:
+        return None
+
+    out: List[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        if not isinstance(part, str):
+            continue
+        for token in part.split(","):
+            normalized = token.strip().lower()
+            if not normalized:
+                continue
+            if strip_path and "/" in normalized:
+                normalized = normalized.rsplit("/", 1)[-1]
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            out.append(normalized)
+    return out or None
+
+
+def _hierarchy_level_filter_clause(values: Optional[List[str]]) -> Optional[Dict[str, Any]]:
+    if not values:
+        return None
+    if len(values) == 1:
+        return {"term": {"category_hierarchies.segments": values[0]}}
+    return {
+        "bool": {
+            "should": [
+                {"term": {"category_hierarchies.segments": value}} for value in values
+            ],
+            "minimum_should_match": 1,
+        }
+    }
+
+
 @dataclass
 class SearchFilters:
     """
@@ -260,16 +309,23 @@ class SearchFilters:
     product_ids: Optional[List[str]] = None
     product_ids_exact: bool = False
 
-    # Department selector token for category_hierarchies.segments[1].
-    department_segment_l1: Optional[str] = None
-    # Category selector token for category_hierarchies.segments[2].
-    category_segment_l2: Optional[str] = None
-    # Subcategory selector token for category_hierarchies.segments[3].
-    subcategory_segment_l3: Optional[str] = None
+    # Department selector tokens for category_hierarchies.segments[1].
+    department_segment_l1: Optional[List[str]] = None
+    # Category selector tokens for category_hierarchies.segments[2].
+    category_segment_l2: Optional[List[str]] = None
+    # Subcategory selector tokens for category_hierarchies.segments[3].
+    subcategory_segment_l3: Optional[List[str]] = None
 
     # Pagination / sort
     sort_by: Optional[str] = None
     offset: int = 0
+
+    def __post_init__(self) -> None:
+        self.department_segment_l1 = _coerce_hierarchy_list(self.department_segment_l1)
+        self.category_segment_l2 = _coerce_hierarchy_list(self.category_segment_l2)
+        self.subcategory_segment_l3 = _coerce_hierarchy_list(
+            self.subcategory_segment_l3, strip_path=True
+        )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "SearchFilters":
@@ -389,34 +445,22 @@ class SearchFilters:
         elif isinstance(np_raw, str) and np_raw:
             nutrition_profiles = [np_raw]
 
-        department_segment_l1: Optional[str] = None
         raw_department_segment = d.get("department_segment_l1")
         if raw_department_segment is None:
             raw_department_segment = d.get("department")
-        if isinstance(raw_department_segment, str):
-            normalized_department = raw_department_segment.strip().lower()
-            if normalized_department:
-                department_segment_l1 = normalized_department
+        department_segment_l1 = _coerce_hierarchy_list(raw_department_segment)
 
-        category_segment_l2: Optional[str] = None
         raw_category_segment = d.get("category_segment_l2")
         if raw_category_segment is None:
             raw_category_segment = d.get("category")
-        if isinstance(raw_category_segment, str):
-            normalized_segment = raw_category_segment.strip().lower()
-            if normalized_segment:
-                category_segment_l2 = normalized_segment
+        category_segment_l2 = _coerce_hierarchy_list(raw_category_segment)
 
-        subcategory_segment_l3: Optional[str] = None
         raw_subcategory_segment = d.get("subcategory_segment_l3")
         if raw_subcategory_segment is None:
             raw_subcategory_segment = d.get("subcategory")
-        if isinstance(raw_subcategory_segment, str):
-            normalized_subcategory = raw_subcategory_segment.strip().lower()
-            if normalized_subcategory:
-                if "/" in normalized_subcategory:
-                    normalized_subcategory = normalized_subcategory.rsplit("/", 1)[-1]
-                subcategory_segment_l3 = normalized_subcategory
+        subcategory_segment_l3 = _coerce_hierarchy_list(
+            raw_subcategory_segment, strip_path=True
+        )
 
         sort_by = d.get("sort_by") or d.get("sort")
         offset_raw = d.get("offset") or d.get("from") or 0
@@ -662,41 +706,22 @@ def build_filter_clauses(sf: SearchFilters) -> FilterClauses:
             if clause:
                 fc.append(clause)
 
-    if sf.department_segment_l1:
+    hierarchy_inner: List[Dict[str, Any]] = []
+    for level_values in (
+        sf.department_segment_l1,
+        sf.category_segment_l2,
+        sf.subcategory_segment_l3,
+    ):
+        level_clause = _hierarchy_level_filter_clause(level_values)
+        if level_clause is not None:
+            hierarchy_inner.append(level_clause)
+    if hierarchy_inner:
         fc.append(
             {
                 "nested": {
                     "path": "category_hierarchies",
-                    "query": {
-                        "term": {"category_hierarchies.segments": sf.department_segment_l1}
-                    },
                     "score_mode": "none",
-                }
-            }
-        )
-
-    if sf.category_segment_l2:
-        fc.append(
-            {
-                "nested": {
-                    "path": "category_hierarchies",
-                    "query": {
-                        "term": {"category_hierarchies.segments": sf.category_segment_l2}
-                    },
-                    "score_mode": "none",
-                }
-            }
-        )
-
-    if sf.subcategory_segment_l3:
-        fc.append(
-            {
-                "nested": {
-                    "path": "category_hierarchies",
-                    "query": {
-                        "term": {"category_hierarchies.segments": sf.subcategory_segment_l3}
-                    },
-                    "score_mode": "none",
+                    "query": {"bool": {"filter": hierarchy_inner}},
                 }
             }
         )
@@ -941,9 +966,15 @@ def merge_filters(base: SearchFilters, overlay: SearchFilters) -> SearchFilters:
         product_type_category=overlay.product_type_category or base.product_type_category,
         product_ids=overlay.product_ids or base.product_ids,
         product_ids_exact=overlay.product_ids_exact or base.product_ids_exact,
-        department_segment_l1=overlay.department_segment_l1 or base.department_segment_l1,
-        category_segment_l2=overlay.category_segment_l2 or base.category_segment_l2,
-        subcategory_segment_l3=overlay.subcategory_segment_l3 or base.subcategory_segment_l3,
+        department_segment_l1=_merge_list(
+            base.department_segment_l1, overlay.department_segment_l1
+        ),
+        category_segment_l2=_merge_list(
+            base.category_segment_l2, overlay.category_segment_l2
+        ),
+        subcategory_segment_l3=_merge_list(
+            base.subcategory_segment_l3, overlay.subcategory_segment_l3
+        ),
         sort_by=overlay.sort_by or base.sort_by,
         offset=overlay.offset if overlay.offset else base.offset,
     )

@@ -29,7 +29,7 @@ def test_build_subcategory_terms_aggregation_has_nested_category_scope():
     scripted_metric = (
         nested["aggs"]["category_scope"]["aggs"]["subcategory_candidates"]["aggs"]["segment3_values"]["scripted_metric"]
     )
-    assert scripted_metric["params"]["category"] == "light_bites"
+    assert scripted_metric["params"]["categories"] == ["light_bites"]
 
 
 def test_parse_subcategories_from_aggregations_returns_segment_three_candidates():
@@ -66,52 +66,80 @@ def test_parse_subcategories_from_aggregations_handles_scripted_metric_values():
     assert out == ["ready_to_cook_meals", "pasta_and_soups"]
 
 
-def test_build_filter_clauses_applies_nested_department_segment_filter():
-    sf = SearchFilters.from_dict({"department": "food"})
-    clauses = build_filter_clauses(sf).filter_clauses
-    nested = [
+def _hierarchy_nested_clauses(clauses):
+    return [
         c for c in clauses
         if isinstance(c, dict)
         and isinstance(c.get("nested"), dict)
         and c["nested"].get("path") == "category_hierarchies"
         and isinstance(c["nested"].get("query"), dict)
-        and "term" in c["nested"]["query"]
+        and isinstance(c["nested"]["query"].get("bool"), dict)
+        and isinstance(c["nested"]["query"]["bool"].get("filter"), list)
     ]
+
+
+def test_build_filter_clauses_applies_nested_department_segment_filter():
+    sf = SearchFilters.from_dict({"department": "food"})
+    nested = _hierarchy_nested_clauses(build_filter_clauses(sf).filter_clauses)
     assert nested, "Expected nested category_hierarchies clause for department selector"
-    assert nested[0]["nested"]["query"]["term"]["category_hierarchies.segments"] == "food"
+    assert nested[0]["nested"]["query"]["bool"]["filter"] == [
+        {"term": {"category_hierarchies.segments": "food"}}
+    ]
 
 
 def test_build_filter_clauses_applies_nested_category_segment_filter():
     sf = SearchFilters.from_dict({"category": "light_bites"})
-    clauses = build_filter_clauses(sf).filter_clauses
-    nested = [
-        c for c in clauses
-        if isinstance(c, dict)
-        and isinstance(c.get("nested"), dict)
-        and c["nested"].get("path") == "category_hierarchies"
-        and isinstance(c["nested"].get("query"), dict)
-        and "term" in c["nested"]["query"]
-    ]
+    nested = _hierarchy_nested_clauses(build_filter_clauses(sf).filter_clauses)
     assert nested, "Expected nested category_hierarchies clause for category selector"
-    assert nested[0]["nested"]["query"]["term"]["category_hierarchies.segments"] == "light_bites"
+    assert nested[0]["nested"]["query"]["bool"]["filter"] == [
+        {"term": {"category_hierarchies.segments": "light_bites"}}
+    ]
 
 
 def test_build_filter_clauses_applies_nested_subcategory_segment_filter():
     sf = SearchFilters.from_dict({"subcategory": "chips_and_crisps"})
-    clauses = build_filter_clauses(sf).filter_clauses
-    nested = [
-        c for c in clauses
-        if isinstance(c, dict)
-        and isinstance(c.get("nested"), dict)
-        and c["nested"].get("path") == "category_hierarchies"
-        and isinstance(c["nested"].get("query"), dict)
-        and "term" in c["nested"]["query"]
-    ]
+    nested = _hierarchy_nested_clauses(build_filter_clauses(sf).filter_clauses)
     assert nested, "Expected nested category_hierarchies clause for subcategory selector"
-    assert any(
-        c["nested"]["query"]["term"]["category_hierarchies.segments"] == "chips_and_crisps"
-        for c in nested
-    )
+    assert nested[0]["nested"]["query"]["bool"]["filter"] == [
+        {"term": {"category_hierarchies.segments": "chips_and_crisps"}}
+    ]
+
+
+def test_build_filter_clauses_combines_hierarchy_levels_in_one_nested_bool_filter():
+    sf = SearchFilters.from_dict({
+        "department": "food",
+        "category": "biscuits_and_crackers",
+        "subcategory": "cookies",
+    })
+    nested = _hierarchy_nested_clauses(build_filter_clauses(sf).filter_clauses)
+    assert len(nested) == 1
+    assert nested[0]["nested"]["query"]["bool"]["filter"] == [
+        {"term": {"category_hierarchies.segments": "food"}},
+        {"term": {"category_hierarchies.segments": "biscuits_and_crackers"}},
+        {"term": {"category_hierarchies.segments": "cookies"}},
+    ]
+
+
+def test_build_filter_clauses_ors_multi_value_hierarchy_level():
+    sf = SearchFilters.from_dict({"department": ["food", "beverages"]})
+    nested = _hierarchy_nested_clauses(build_filter_clauses(sf).filter_clauses)
+    assert len(nested) == 1
+    assert nested[0]["nested"]["query"]["bool"]["filter"] == [
+        {
+            "bool": {
+                "should": [
+                    {"term": {"category_hierarchies.segments": "food"}},
+                    {"term": {"category_hierarchies.segments": "beverages"}},
+                ],
+                "minimum_should_match": 1,
+            }
+        }
+    ]
+
+
+def test_from_dict_accepts_comma_separated_hierarchy_string():
+    sf = SearchFilters.from_dict({"category": "a, b, a"})
+    assert sf.category_segment_l2 == ["a", "b"]
 
 
 def test_sync_subcategory_metadata_returns_intersection_in_app_config_order():
@@ -172,7 +200,37 @@ def test_build_category_terms_aggregation_has_nested_department_scope():
             "segment2_values"
         ]["scripted_metric"]
     )
-    assert scripted_metric["params"]["department"] == "food"
+    assert scripted_metric["params"]["departments"] == ["food"]
+
+
+def test_build_department_terms_aggregation_extracts_segment_one():
+    from search_v2.extension.taxonomy import build_department_terms_aggregation
+
+    aggs = build_department_terms_aggregation()
+    nested = aggs["departments_hierarchy_nested"]
+    assert nested["nested"]["path"] == "category_hierarchies"
+    assert "segment1_values" in nested["aggs"]["department_candidates"]["aggs"]
+
+
+def test_build_hierarchy_filter_group_marks_selected_and_skips_zero_counts():
+    from shopping_bot.data_fetchers.dynamic_search_filters import (
+        FILTER_DEPARTMENT_ID,
+        build_hierarchy_filter_group,
+    )
+
+    group = build_hierarchy_filter_group(
+        group_id=FILTER_DEPARTMENT_ID,
+        title="Department",
+        title_key="department",
+        counts={"food": 12, "beverages": 0, "personal_care": 3},
+        selected_values=["food"],
+    )
+    assert group is not None
+    assert group["id"] == FILTER_DEPARTMENT_ID
+    values = {item["value"]: item for item in group["items"]}
+    assert set(values) == {"food", "personal_care"}
+    assert values["food"]["isPreSelected"] is True
+    assert values["personal_care"]["isPreSelected"] is False
 
 
 def test_parse_categories_from_aggregations_returns_segment_two_candidates():

@@ -15,16 +15,31 @@ import logging
 import os
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from shopping_bot.data_fetchers.dynamic_search_filters import (
+    FILTER_CATEGORY_ID,
+    FILTER_DEPARTMENT_ID,
+    FILTER_SUBCATEGORY_ID,
     build_dynamic_price_ranges,
     build_facet_aggregations,
+    build_hierarchy_filter_group,
     build_price_bounds_aggregation,
     parse_dynamic_filters_from_aggs,
 )
 from search_v2.extension.product import to_product_card
+from search_v2.extension.taxonomy import (
+    build_category_terms_aggregation,
+    build_department_terms_aggregation,
+    build_subcategory_terms_aggregation,
+    parse_category_counts_from_aggregations,
+    parse_department_counts_from_aggregations,
+    parse_subcategory_counts_from_aggregations,
+)
+from search_v2.retrieval.filters import SearchFilters, build_filter_clauses
+from search_v2.retrieval.listing import listing_visibility_filter_clause
 
 _log = logging.getLogger("search_v2.extension.search")
 
@@ -289,6 +304,90 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
             price_ranges = build_dynamic_price_ranges(price_min, price_max, target_buckets=4)
             facets_aggs = build_facet_aggregations(price_ranges=price_ranges)
 
+            active_filters = req.filters if isinstance(req.filters, SearchFilters) else SearchFilters()
+            active_departments = list(active_filters.department_segment_l1 or [])
+            active_categories = list(active_filters.category_segment_l2 or [])
+            active_subcategories = list(active_filters.subcategory_segment_l3 or [])
+
+            facets_aggs.update(build_department_terms_aggregation())
+            if active_departments:
+                relaxed_department_filters = replace(
+                    active_filters,
+                    department_segment_l1=None,
+                    category_segment_l2=None,
+                    subcategory_segment_l3=None,
+                )
+                relaxed_clauses = build_filter_clauses(relaxed_department_filters)
+                relaxed_filter_clauses = list(relaxed_clauses.filter_clauses) + [
+                    listing_visibility_filter_clause()
+                ]
+                relaxed_bool: Dict[str, Any] = {"filter": relaxed_filter_clauses}
+                if relaxed_clauses.should_clauses:
+                    relaxed_bool["should"] = relaxed_clauses.should_clauses
+                if relaxed_clauses.must_not_clauses:
+                    relaxed_bool["must_not"] = relaxed_clauses.must_not_clauses
+                facets_aggs["department_scope_global"] = {
+                    "global": {},
+                    "aggs": {
+                        "department_scope_filter": {
+                            "filter": {"bool": relaxed_bool},
+                            "aggs": build_department_terms_aggregation(),
+                        }
+                    },
+                }
+
+            if active_departments:
+                facets_aggs.update(build_category_terms_aggregation(active_departments))
+                if active_categories or active_subcategories:
+                    relaxed_category_filters = replace(
+                        active_filters,
+                        category_segment_l2=None,
+                        subcategory_segment_l3=None,
+                    )
+                    relaxed_clauses = build_filter_clauses(relaxed_category_filters)
+                    relaxed_filter_clauses = list(relaxed_clauses.filter_clauses) + [
+                        listing_visibility_filter_clause()
+                    ]
+                    relaxed_bool = {"filter": relaxed_filter_clauses}
+                    if relaxed_clauses.should_clauses:
+                        relaxed_bool["should"] = relaxed_clauses.should_clauses
+                    if relaxed_clauses.must_not_clauses:
+                        relaxed_bool["must_not"] = relaxed_clauses.must_not_clauses
+                    facets_aggs["category_scope_global"] = {
+                        "global": {},
+                        "aggs": {
+                            "category_scope_filter": {
+                                "filter": {"bool": relaxed_bool},
+                                "aggs": build_category_terms_aggregation(active_departments),
+                            }
+                        },
+                    }
+
+            if active_categories:
+                facets_aggs.update(build_subcategory_terms_aggregation(active_categories))
+                if active_subcategories:
+                    relaxed_subcategory_filters = replace(
+                        active_filters, subcategory_segment_l3=None
+                    )
+                    relaxed_clauses = build_filter_clauses(relaxed_subcategory_filters)
+                    relaxed_filter_clauses = list(relaxed_clauses.filter_clauses) + [
+                        listing_visibility_filter_clause()
+                    ]
+                    relaxed_bool = {"filter": relaxed_filter_clauses}
+                    if relaxed_clauses.should_clauses:
+                        relaxed_bool["should"] = relaxed_clauses.should_clauses
+                    if relaxed_clauses.must_not_clauses:
+                        relaxed_bool["must_not"] = relaxed_clauses.must_not_clauses
+                    facets_aggs["subcategory_scope_global"] = {
+                        "global": {},
+                        "aggs": {
+                            "subcategory_scope_filter": {
+                                "filter": {"bool": relaxed_bool},
+                                "aggs": build_subcategory_terms_aggregation(active_categories),
+                            }
+                        },
+                    }
+
             facets_req = {
                 "size": 0,
                 "track_total_hits": False,
@@ -298,6 +397,63 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
             facets_resp = client.search(facets_req)
             facets_aggs_out = facets_resp.get("aggregations") or {}
             dynamic_filters = parse_dynamic_filters_from_aggs(facets_aggs_out)
+
+            department_source = facets_aggs_out
+            scoped_department = (
+                (facets_aggs_out.get("department_scope_global") or {})
+                .get("department_scope_filter")
+            )
+            if isinstance(scoped_department, dict):
+                department_source = scoped_department
+            department_group = build_hierarchy_filter_group(
+                group_id=FILTER_DEPARTMENT_ID,
+                title="Department",
+                title_key="department",
+                counts=parse_department_counts_from_aggregations(department_source),
+                selected_values=active_departments,
+            )
+            if department_group:
+                dynamic_filters.append(department_group)
+
+            if active_departments:
+                category_source = facets_aggs_out
+                scoped_category = (
+                    (facets_aggs_out.get("category_scope_global") or {})
+                    .get("category_scope_filter")
+                )
+                if isinstance(scoped_category, dict):
+                    category_source = scoped_category
+                category_group = build_hierarchy_filter_group(
+                    group_id=FILTER_CATEGORY_ID,
+                    title="Category",
+                    title_key="category",
+                    counts=parse_category_counts_from_aggregations(
+                        category_source, active_departments
+                    ),
+                    selected_values=active_categories,
+                )
+                if category_group:
+                    dynamic_filters.append(category_group)
+
+            if active_categories:
+                subcategory_source = facets_aggs_out
+                scoped_subcategory = (
+                    (facets_aggs_out.get("subcategory_scope_global") or {})
+                    .get("subcategory_scope_filter")
+                )
+                if isinstance(scoped_subcategory, dict):
+                    subcategory_source = scoped_subcategory
+                subcategory_group = build_hierarchy_filter_group(
+                    group_id=FILTER_SUBCATEGORY_ID,
+                    title="Subcategory",
+                    title_key="subcategory",
+                    counts=parse_subcategory_counts_from_aggregations(
+                        subcategory_source, active_categories
+                    ),
+                    selected_values=active_subcategories,
+                )
+                if subcategory_group:
+                    dynamic_filters.append(subcategory_group)
         except Exception as exc:
             _log.warning("search: failed to compute dynamic search filters (%s)", exc)
 

@@ -15,6 +15,9 @@ FILTER_DIETARY_ID = "filter_preferences"
 FILTER_INGREDIENT_ID = "ingredient_preferences"
 FILTER_NUTRITION_ID = "filter_nutrition"
 FILTER_FLAVOUR_ID = "filter_flavour"
+FILTER_DEPARTMENT_ID = "filter_department"
+FILTER_CATEGORY_ID = "filter_category"
+FILTER_SUBCATEGORY_ID = "filter_subcategory"
 
 _FLEAN_BUCKETS: List[Dict[str, Any]] = [
     {"key": "9_plus", "label_key": "9_plus", "label": "9+ (Excellent)", "value": 9},
@@ -221,6 +224,54 @@ def _humanize_slug(text: str) -> str:
     if not cleaned:
         return ""
     return " ".join(part.capitalize() for part in cleaned.split())
+
+
+def build_hierarchy_filter_group(
+    *,
+    group_id: str,
+    title: str,
+    title_key: str,
+    counts: Optional[Dict[str, int]],
+    selected_values: Optional[List[str]] = None,
+    label_lookup: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build a department/category/subcategory facet group for data.filters."""
+    counts = counts or {}
+    selected = {
+        str(value or "").strip().lower()
+        for value in (selected_values or [])
+        if str(value or "").strip()
+    }
+    labels = label_lookup or {}
+    items: List[Dict[str, Any]] = []
+    for key, count in counts.items():
+        normalized = str(key or "").strip().lower()
+        try:
+            doc_count = int(count or 0)
+        except (TypeError, ValueError):
+            doc_count = 0
+        if not normalized or doc_count <= 0:
+            continue
+        label = str(labels.get(normalized) or "").strip() or _humanize_slug(normalized)
+        items.append(
+            {
+                "id": f"{title_key}_{normalized}",
+                "labelKey": normalized,
+                "label": label,
+                "value": normalized,
+                "count": doc_count,
+                "isPreSelected": normalized in selected,
+            }
+        )
+    if not items:
+        return None
+    items.sort(key=lambda item: str(item.get("label") or ""))
+    return {
+        "id": group_id,
+        "title": title,
+        "titleKey": title_key,
+        "items": items,
+    }
 
 
 def _build_price_item(bucket: Dict[str, Any]) -> Dict[str, Any]:

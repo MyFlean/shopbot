@@ -17,9 +17,12 @@ Returns the wrapped `{success, data:{products}, meta}` shape used by
 
 Accepted params (GET query or POST JSON body):
   - query (string, optional)
-  - department (string, optional)          category_hierarchies.segments[1]
-  - category (string, optional)            category_hierarchies.segments[2]
-  - subcategory (string, optional)         category_hierarchies.segments[3]
+  - department (string|list, optional)     category_hierarchies.segments[1]
+      Multi: ?department=a,b or ?department=a&department=b (POST: string or array)
+  - category (string|list, optional)       category_hierarchies.segments[2]
+      Multi: ?category=a,b or repeated params (POST: string or array)
+  - subcategory (string|list, optional)    category_hierarchies.segments[3]
+      Multi: ?subcategory=a,b or repeated params (POST: string or array)
   - page (int, default 0)
   - size (int, 1..100, default 100)
   - sort_by or sort (alias)
@@ -38,6 +41,8 @@ Accepted params (GET query or POST JSON body):
   - GET also accepts nutrition_profiles as a comma-separated query param
 
 Requires at least one of query/department/category/subcategory/filters.
+Single-value hierarchy without query uses exclusive browse; multi-value hierarchy
+uses the V2 search/filter path (OR within level, AND across levels, same nested row).
 """
 
 from __future__ import annotations
@@ -91,6 +96,57 @@ SORT_ALIASES = {
     "flean_score": "flean_score_desc",
     "price": "price_asc",
 }
+
+
+def _normalize_hierarchy_values(raw_parts: List[Any], *, strip_path: bool = False) -> List[str]:
+    """Dedupe/lower hierarchy tokens from comma-separated and repeated params."""
+    out: List[str] = []
+    seen: set[str] = set()
+    for part in raw_parts:
+        if not isinstance(part, str):
+            continue
+        for token in part.split(","):
+            normalized = token.strip().lower()
+            if not normalized:
+                continue
+            if strip_path and "/" in normalized:
+                normalized = normalized.rsplit("/", 1)[-1]
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            out.append(normalized)
+    return out
+
+
+def _parse_hierarchy_query_param(name: str, *, strip_path: bool = False) -> List[str]:
+    return _normalize_hierarchy_values(list(request.args.getlist(name)), strip_path=strip_path)
+
+
+def _parse_hierarchy_body_param(
+    value: Any,
+    *,
+    field_name: str,
+    strip_path: bool = False,
+) -> Tuple[Optional[List[str]], Optional[Tuple[str, int]]]:
+    """Return (values, error). error is (message, status) when invalid."""
+    if value is None:
+        return [], None
+    if isinstance(value, str):
+        return _normalize_hierarchy_values([value], strip_path=strip_path), None
+    if isinstance(value, list):
+        if not all(isinstance(item, str) for item in value):
+            return None, (f"'{field_name}' must be a string or array of strings", 400)
+        return _normalize_hierarchy_values(value, strip_path=strip_path), None
+    return None, (f"'{field_name}' must be a string or array of strings", 400)
+
+
+def _hierarchy_meta_value(values: List[str]) -> Any:
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    return list(values)
+
 
 # ---------------------------------------------------------------------------
 # V1 → V2 filter translation
@@ -395,9 +451,9 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         body: Dict[str, Any] = {}
         if request.method == "GET":
             query = (request.args.get("query") or "").strip() or None
-            department = (request.args.get("department") or "").strip().lower() or None
-            category = (request.args.get("category") or "").strip().lower() or None
-            subcategory = (request.args.get("subcategory") or "").strip().lower() or None
+            departments = _parse_hierarchy_query_param("department")
+            categories = _parse_hierarchy_query_param("category")
+            subcategories = _parse_hierarchy_query_param("subcategory", strip_path=True)
 
             try:
                 page = max(0, int(request.args.get("page", 0)))
@@ -420,23 +476,21 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                     return _error_response("INVALID_QUERY", "'query' must be a string", 400)
                 query = query.strip() or None
 
-            department = body.get("department")
-            if department is not None:
-                if not isinstance(department, str):
-                    return _error_response("INVALID_DEPARTMENT", "'department' must be a string", 400)
-                department = department.strip().lower() or None
-
-            category = body.get("category")
-            if category is not None:
-                if not isinstance(category, str):
-                    return _error_response("INVALID_CATEGORY", "'category' must be a string", 400)
-                category = category.strip().lower() or None
-
-            subcategory = body.get("subcategory")
-            if subcategory is not None:
-                if not isinstance(subcategory, str):
-                    return _error_response("INVALID_SUBCATEGORY", "'subcategory' must be a string", 400)
-                subcategory = subcategory.strip().lower() or None
+            departments, dept_err = _parse_hierarchy_body_param(
+                body.get("department"), field_name="department"
+            )
+            if dept_err:
+                return _error_response("INVALID_DEPARTMENT", dept_err[0], dept_err[1])
+            categories, cat_err = _parse_hierarchy_body_param(
+                body.get("category"), field_name="category"
+            )
+            if cat_err:
+                return _error_response("INVALID_CATEGORY", cat_err[0], cat_err[1])
+            subcategories, sub_err = _parse_hierarchy_body_param(
+                body.get("subcategory"), field_name="subcategory", strip_path=True
+            )
+            if sub_err:
+                return _error_response("INVALID_SUBCATEGORY", sub_err[0], sub_err[1])
 
             try:
                 page = max(0, int(body.get("page", 0)))
@@ -459,16 +513,29 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 raw_filters = dict(raw_filters)
                 raw_filters["food_type"] = top_food_type
 
+        department_meta = _hierarchy_meta_value(departments)
+        category_meta = _hierarchy_meta_value(categories)
+        subcategory_meta = _hierarchy_meta_value(subcategories)
+        hierarchy_multi = (
+            len(departments) > 1 or len(categories) > 1 or len(subcategories) > 1
+        )
+
         # At least one selector is required
-        if not query and not department and not category and not subcategory and not raw_filters:
+        if (
+            not query
+            and not departments
+            and not categories
+            and not subcategories
+            and not raw_filters
+        ):
             return _error_response(
                 "MISSING_PARAMETER",
                 "At least one of 'query', 'department', 'category', 'subcategory', or 'filters' must be provided",
                 400,
             )
 
-        if (category or department) and _search_engine() == "v1":
-            unsupported = "department" if department else "category"
+        if (categories or departments) and _search_engine() == "v1":
+            unsupported = "department" if departments else "category"
             return _error_response(
                 "UNSUPPORTED_PARAMETER",
                 f"'{unsupported}' selector is supported only on Search V2",
@@ -492,8 +559,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         effective_pincode = _resolve_effective_pincode(body)
 
         log.info(
-            f"UNIFIED_SEARCH_REQUEST | query={query} | department={department} | "
-            f"category={category} | subcategory={subcategory} | "
+            f"UNIFIED_SEARCH_REQUEST | query={query} | department={department_meta} | "
+            f"category={category_meta} | subcategory={subcategory_meta} | "
             f"page={page} | size={size} | sort={resolved_sort} | filters={validated_filters} "
             f"| effective_pincode={effective_pincode}"
         )
@@ -508,6 +575,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         # short-circuit). Query-bearing requests always go through v2_search
         # too, regardless of subcategory (subcategory becomes a filter via
         # category_path_prefix below).
+        # Multi-value hierarchy also uses the search/filter path so OR-within-
+        # level / same-row nested filtering is applied consistently.
         # V2-native unless SEARCH_ENGINE=v1 explicitly. Auto-fallback-to-V1-
         # on-exception was removed (final pre-production pass): live
         # regression across varied queries/filters showed zero exceptions;
@@ -515,36 +584,54 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         # V1_FALLBACK_AUDIT.md.
         filters_only = (
             bool(validated_filters)
-            and not department
-            and not subcategory
-            and not category
+            and not departments
+            and not subcategories
+            and not categories
             and not query
         )
-        selector_department = bool(department) and not query
-        selector_only_category = bool(category) and not query and not subcategory and not department
-        selector_category_with_subcategory = (
-            bool(category) and bool(subcategory) and not query and not department
+        selector_department = (
+            len(departments) == 1 and not query and not hierarchy_multi
         )
-        selector_only_subcategory = bool(subcategory) and not query and not category and not department
+        selector_only_category = (
+            len(categories) == 1
+            and not query
+            and not subcategories
+            and not departments
+            and not hierarchy_multi
+        )
+        selector_category_with_subcategory = (
+            len(categories) == 1
+            and len(subcategories) == 1
+            and not query
+            and not departments
+            and not hierarchy_multi
+        )
+        selector_only_subcategory = (
+            len(subcategories) == 1
+            and not query
+            and not categories
+            and not departments
+            and not hierarchy_multi
+        )
 
-        if _search_engine() != "v1" and (query or filters_only):
+        if _search_engine() != "v1" and (query or filters_only or hierarchy_multi):
             gw_params: Dict[str, Any] = {
                 "q": query or "",
                 "size": size,
                 "offset": page * size,
-                "department": department,
-                "category": category,
-                "subcategory": subcategory,
+                "department": departments or None,
+                "category": categories or None,
+                "subcategory": subcategories or None,
             }
             if sort_raw:
                 gw_params["sort_by"] = resolved_sort
             gw_params.update(_v1_filters_to_gw_params(validated_filters or {}))
-            if department:
-                gw_params["department_segment_l1"] = department
-            if category:
-                gw_params["category_segment_l2"] = category
-            if subcategory:
-                gw_params["subcategory_segment_l3"] = subcategory
+            if departments:
+                gw_params["department_segment_l1"] = departments
+            if categories:
+                gw_params["category_segment_l2"] = categories
+            if subcategories:
+                gw_params["subcategory_segment_l3"] = subcategories
             gw_result = v2_search(gw_params)
             gw_meta = gw_result.get("meta", {}) or {}
             gw_products = gw_result.get("products", [])
@@ -563,9 +650,9 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                     "has_next": returned == size,
                     "has_prev": page > 0,
                     "query": query,
-                    "department": department,
-                    "category": category,
-                    "subcategory": subcategory,
+                    "department": department_meta,
+                    "category": category_meta,
+                    "subcategory": subcategory_meta,
                     "sort_by": resolved_sort,
                     "filters_applied": validated_filters,
                     "took_ms": gw_meta.get("took_ms", 0),
@@ -578,13 +665,13 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
 
         if result is None and _search_engine() != "v1" and selector_department:
             browse_filter_params = _v1_filters_to_gw_params(validated_filters or {})
-            if category:
-                browse_filter_params["category_segment_l2"] = category
-            if subcategory:
-                browse_filter_params["subcategory_segment_l3"] = subcategory
+            if categories:
+                browse_filter_params["category_segment_l2"] = categories
+            if subcategories:
+                browse_filter_params["subcategory_segment_l3"] = subcategories
             browse_filters = SearchFilters.from_dict(browse_filter_params) if browse_filter_params else None
             browse_result = browse_by_department_segment(
-                department_segment_l1=department or "",
+                department_segment_l1=departments[0],
                 page=page,
                 size=size,
                 sort_by=resolved_sort,
@@ -599,9 +686,9 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 "meta": {
                     **browse_meta,
                     "query": query,
-                    "department": department,
-                    "category": category,
-                    "subcategory": subcategory,
+                    "department": department_meta,
+                    "category": category_meta,
+                    "subcategory": subcategory_meta,
                     "filters_applied": validated_filters,
                     "fuzzy_fallback_used": False,
                     "prefix_fallback_used": False,
@@ -613,12 +700,12 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             selector_only_category or selector_category_with_subcategory or selector_only_subcategory
         ):
             browse_filter_params = _v1_filters_to_gw_params(validated_filters or {})
-            if selector_category_with_subcategory and subcategory:
-                browse_filter_params["subcategory_segment_l3"] = subcategory
+            if selector_category_with_subcategory and subcategories:
+                browse_filter_params["subcategory_segment_l3"] = subcategories
             browse_filters = SearchFilters.from_dict(browse_filter_params) if browse_filter_params else None
             if selector_only_category or selector_category_with_subcategory:
                 browse_result = browse_by_category_segment(
-                    category_segment_l2=category or "",
+                    category_segment_l2=categories[0],
                     page=page,
                     size=size,
                     sort_by=resolved_sort,
@@ -626,7 +713,7 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 )
             else:
                 browse_result = browse_by_subcategory_segment(
-                    subcategory_segment_l3=subcategory or "",
+                    subcategory_segment_l3=subcategories[0],
                     page=page,
                     size=size,
                     sort_by=resolved_sort,
@@ -641,9 +728,9 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 "meta": {
                     **browse_meta,
                     "query": query,
-                    "department": department,
-                    "category": category,
-                    "subcategory": subcategory,
+                    "department": department_meta,
+                    "category": category_meta,
+                    "subcategory": subcategory_meta,
                     "filters_applied": validated_filters,
                     "fuzzy_fallback_used": False,
                     "prefix_fallback_used": False,
@@ -660,7 +747,9 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
 
             result = fetcher.search_products_unified(
                 query=query,
-                subcategory=subcategory,
+                subcategory=subcategory_meta if isinstance(subcategory_meta, str) else (
+                    subcategories[0] if subcategories else None
+                ),
                 page=page,
                 size=size,
                 sort_by=resolved_sort,
@@ -705,8 +794,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 )
 
         log.info(
-            f"UNIFIED_SEARCH_COMPLETE | query={query} | department={department} | "
-            f"category={category} | subcategory={subcategory} | "
+            f"UNIFIED_SEARCH_COMPLETE | query={query} | department={department_meta} | "
+            f"category={category_meta} | subcategory={subcategory_meta} | "
             f"total={meta.get('total', 0)} | returned={len(product_cards)}"
         )
 
@@ -715,12 +804,18 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             "products": product_cards,
             "filters": dynamic_filters,
         }
-        if department and not query and not category and not subcategory:
-            response_data["categories"] = result.get("categories", []) if isinstance(result, dict) else []
-        if department and not query and not subcategory:
-            response_data["subcategories"] = result.get("subcategories", []) if isinstance(result, dict) else []
-        if category and not query and not department:
-            response_data["subcategories"] = result.get("subcategories", []) if isinstance(result, dict) else []
+        if departments and not query and not categories and not subcategories:
+            response_data["categories"] = (
+                result.get("categories", []) if isinstance(result, dict) else []
+            )
+        if departments and not query and not subcategories:
+            response_data["subcategories"] = (
+                result.get("subcategories", []) if isinstance(result, dict) else []
+            )
+        elif categories and not query and not departments:
+            response_data["subcategories"] = (
+                result.get("subcategories", []) if isinstance(result, dict) else []
+            )
         return jsonify(_success_response(response_data, meta=meta)), 200
 
     except Exception as exc:

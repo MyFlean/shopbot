@@ -425,7 +425,7 @@ def test_unified_search_category_with_subcategory_filter_returns_full_subcategor
     browse_kwargs = mock_browse_by_category_segment.call_args.kwargs
     assert browse_kwargs["category_segment_l2"] == "dairy_and_bakery"
     assert browse_kwargs["filters"] is not None
-    assert browse_kwargs["filters"].subcategory_segment_l3 == "butter"
+    assert browse_kwargs["filters"].subcategory_segment_l3 == ["butter"]
 
 
 @patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
@@ -558,8 +558,8 @@ def test_unified_search_department_with_category_and_subcategory_filters(
     browse_kwargs = mock_browse_by_department_segment.call_args.kwargs
     assert browse_kwargs["department_segment_l1"] == "food"
     assert browse_kwargs["filters"] is not None
-    assert browse_kwargs["filters"].category_segment_l2 == "biscuits_and_crackers"
-    assert browse_kwargs["filters"].subcategory_segment_l3 == "cookies"
+    assert browse_kwargs["filters"].category_segment_l2 == ["biscuits_and_crackers"]
+    assert browse_kwargs["filters"].subcategory_segment_l3 == ["cookies"]
 
 
 @patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
@@ -653,8 +653,73 @@ def test_unified_search_query_with_department_passes_segment_filter(
     payload = resp.get_json()
     assert "categories" not in payload["data"]
     gw_params = mock_v2_search.call_args.args[0]
-    assert gw_params["department_segment_l1"] == "food"
+    assert gw_params["department_segment_l1"] == ["food"]
     assert gw_params["q"] == "cookies"
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
+@patch("shopping_bot.routes.unified_search.transform_to_product_card")
+@patch("shopping_bot.routes.unified_search.v2_search")
+@patch("shopping_bot.routes.unified_search.browse_by_department_segment")
+def test_unified_search_multi_department_uses_search_path_not_browse(
+    mock_browse_by_department_segment,
+    mock_v2_search,
+    mock_transform_to_product_card,
+    _mock_search_engine,
+    unified_search_client,
+):
+    mock_v2_search.return_value = {
+        "products": [{"id": "prod-1", "visibility": "visible", "category_data": {}}],
+        "filters": [{"id": "filter_department"}],
+        "meta": {"total_hits": 1, "took_ms": 8},
+    }
+    mock_transform_to_product_card.return_value = {
+        "id": "prod-1",
+        "name": "prod-1",
+        "visibility": "visible",
+        "flean_score": 8,
+        "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
+    }
+
+    resp = unified_search_client.get("/rs/v1/search?department=food,beverages")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["meta"]["department"] == ["food", "beverages"]
+    mock_browse_by_department_segment.assert_not_called()
+    gw_params = mock_v2_search.call_args.args[0]
+    assert gw_params["department_segment_l1"] == ["food", "beverages"]
+    assert gw_params["q"] == ""
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
+@patch("shopping_bot.routes.unified_search.transform_to_product_card")
+@patch("shopping_bot.routes.unified_search.v2_search")
+def test_unified_search_repeated_category_params_are_merged(
+    mock_v2_search,
+    mock_transform_to_product_card,
+    _mock_search_engine,
+    unified_search_client,
+):
+    mock_v2_search.return_value = {
+        "products": [{"id": "prod-1", "visibility": "visible", "category_data": {}}],
+        "filters": [],
+        "meta": {"total_hits": 1, "took_ms": 8},
+    }
+    mock_transform_to_product_card.return_value = {
+        "id": "prod-1",
+        "name": "prod-1",
+        "visibility": "visible",
+        "flean_score": 8,
+        "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
+    }
+
+    resp = unified_search_client.get(
+        "/rs/v1/search?department=food&category=biscuits_and_crackers&category=light_bites"
+    )
+    assert resp.status_code == 200
+    gw_params = mock_v2_search.call_args.args[0]
+    assert gw_params["department_segment_l1"] == ["food"]
+    assert gw_params["category_segment_l2"] == ["biscuits_and_crackers", "light_bites"]
 
 
 @patch("shopping_bot.routes.unified_search._search_engine", return_value="v1")

@@ -15,6 +15,7 @@ import asyncio
 import threading as _threading
 from dataclasses import dataclass
 from logging import log
+import logging as _logging
 import math
 import os
 import re
@@ -1519,6 +1520,27 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     else:
         score_cards = _build_score_cards(src, **build_kwargs)
 
+    # ── supplement scorecards (v2 framework): computed on-the-fly from raw label
+    # fields, replacing the percentile cards for f_and_b/supplements leaves that
+    # have a defined weight vector. Falls back silently to percentile cards. ──
+    supplement_scoring: Optional[Dict[str, Any]] = None
+    try:
+        from shopping_bot.scoring.supplement_scorecards import (
+            compute_supplement_scorecards,
+            to_pdp_score_cards,
+        )
+
+        _supp_result = compute_supplement_scorecards(src)
+        if _supp_result is not None:
+            _adapted = to_pdp_score_cards(_supp_result)
+            score_cards = _adapted["score_cards"]
+            flean_badge = _adapted["flean_badge"]
+            supplement_scoring = _adapted["supplement_scoring"]
+    except Exception as exc:  # never let supplement scoring break the PDP
+        _logging.getLogger(__name__).warning(
+            "SUPPLEMENT_SCORECARD_ERROR | id=%s | error=%s", src.get("id"), exc
+        )
+
     # ── notes (static display notes for UI) ──
     notes = {
         "criteria_note": "Per 100 g labels reflect Flean Criteria.",
@@ -1627,6 +1649,8 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     active_ingredients = category_data.get("active_ingredients")
     if active_ingredients is not None:
         pdp_data["active_ingredients"] = active_ingredients
+    if supplement_scoring is not None:
+        pdp_data["supplement_scoring"] = supplement_scoring
     return pdp_data
 
 def _get_current_user_text(ctx) -> str:

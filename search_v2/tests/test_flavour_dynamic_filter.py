@@ -55,3 +55,35 @@ def test_build_filter_clauses_applies_flavour_filters():
         and any("flavour" in str(item) for item in clause["bool"]["should"])
     ]
     assert len(flavour_clauses) == 2
+    first_should = flavour_clauses[0]["bool"]["should"]
+    assert {
+        "term": {
+            "flavour.keyword": {
+                "value": "chocolate",
+                "case_insensitive": True,
+            }
+        }
+    } in first_should
+    assert {"match_phrase": {"flavour": {"query": "chocolate"}}} in first_should
+
+
+def test_build_filter_clauses_normalizes_flavour_slug_underscores():
+    sf = SearchFilters.from_dict({"flavour": ["cafe_mocha"]})
+    clauses = build_filter_clauses(sf).filter_clauses
+    flavour_clauses = [
+        clause
+        for clause in clauses
+        if isinstance(clause, dict)
+        and "flavour" in str(clause)
+    ]
+    assert len(flavour_clauses) == 1
+    should = flavour_clauses[0]["bool"]["should"]
+    assert {
+        "term": {
+            "flavour.keyword": {
+                "value": "cafe mocha",
+                "case_insensitive": True,
+            }
+        }
+    } in should
+    assert {"match_phrase": {"flavour": {"query": "cafe mocha"}}} in should

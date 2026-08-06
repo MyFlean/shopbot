@@ -99,6 +99,7 @@ BASE_PERSONALIZATION_FILTERS: Dict[str, Any] = {
 }
 
 BEST_SELLING_CATEGORY_PATHS: List[str] = [
+    "f_and_b/food/dairy_and_bakery/paneer_and_cream",
     "f_and_b/food/dairy_and_bakery/bread_and_buns",
     "f_and_b/food/biscuits_and_crackers",
     "f_and_b/food/breakfast_essentials/muesli_and_oats",
@@ -108,16 +109,18 @@ BEST_SELLING_TOTAL_PRODUCTS = 6
 BEST_SELLING_FETCH_BUFFER = 13
 BEST_SELLING_PINNED_PRODUCT_ID = "01KXDD92YTPN4YF8VS2EBCAK25"
 SUPPLEMENTS_CATEGORY_PATHS: List[str] = [
-    "f_and_b/supplements/performance/creatine",
-    "f_and_b/supplements/amino_acids/bcaa",
-    "f_and_b/supplements/protein/plant_protein",
+    "f_and_b/supplements/pre_post_workout/pre_workout",
+    "f_and_b/supplements/pre_post_workout/bcaa",
+    "f_and_b/supplements/pre_post_workout/creatine",
+    "f_and_b/supplements/pre_post_workout/eaa",
+    "f_and_b/supplements/protein/whey_blend",
     "f_and_b/supplements/protein/whey_isolate",
     "f_and_b/supplements/protein/whey_concentrate",
     "f_and_b/supplements/protein/whey_hydro",
 ]
 SUPPLEMENTS_PER_CATEGORY = 1
-SUPPLEMENTS_TOTAL_PRODUCTS = 6
-SUPPLEMENTS_FETCH_BUFFER = 9
+SUPPLEMENTS_TOTAL_PRODUCTS = 9
+SUPPLEMENTS_FETCH_BUFFER = 12
 FLEAN_PICKS_HOME_FETCH_PER_SUBCATEGORY = 12
 FLEAN_PICKS_SEE_ALL_FETCH_PER_SUBCATEGORY = 24
 

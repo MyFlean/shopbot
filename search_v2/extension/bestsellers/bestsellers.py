@@ -69,10 +69,23 @@ def fetch_candidates_by_category(paths: List[str], fetch_per_category: int) -> D
     return results
 
 
-def fetch_lab_tested_candidates(limit: int = _LAB_TESTED_FETCH) -> List[Dict[str, Any]]:
-    """Top lab-tested products by flean score (flat listing query with family collapse)."""
+def fetch_lab_tested_candidates(
+    limit: int = _LAB_TESTED_FETCH,
+    category_paths: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Top lab-tested products by flean score (flat listing query with family collapse).
+
+    When ``category_paths`` is non-empty, results are restricted to those paths.
+    """
     if limit <= 0:
         return []
+
+    filters: List[Dict[str, Any]] = [
+        listing_visibility_filter_clause(),
+        {"exists": {"field": "category_data.lab_reports.url"}},
+    ]
+    if category_paths:
+        filters.append({"terms": {"category_paths": list(category_paths)}})
 
     body = apply_flat_listing_defaults(
         {
@@ -80,10 +93,7 @@ def fetch_lab_tested_candidates(limit: int = _LAB_TESTED_FETCH) -> List[Dict[str
             "track_total_hits": False,
             "query": {
                 "bool": {
-                    "filter": [
-                        listing_visibility_filter_clause(),
-                        {"exists": {"field": "category_data.lab_reports.url"}},
-                    ]
+                    "filter": filters
                 }
             },
             "sort": [{"flean_score.adjusted_score": {"order": "desc", "missing": "_last"}}],
@@ -103,7 +113,7 @@ def best_selling(
     fetch_per_category = per_category + fetch_buffer
     lab_cards = [
         to_product_card(src)
-        for src in fetch_lab_tested_candidates()
+        for src in fetch_lab_tested_candidates(category_paths=category_paths)
         if src.get("id")
     ]
     candidates_by_path = fetch_candidates_by_category(category_paths, fetch_per_category)

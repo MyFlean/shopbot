@@ -804,10 +804,18 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             "products": product_cards,
             "filters": dynamic_filters,
         }
-        if departments and not query:
-            response_data["categories"] = result.get("categories", []) if isinstance(result, dict) else []
-        if categories and not query and not departments:
-            response_data["subcategories"] = result.get("subcategories", []) if isinstance(result, dict) else []
+        if departments and not query and not categories and not subcategories:
+            response_data["categories"] = (
+                result.get("categories", []) if isinstance(result, dict) else []
+            )
+        if departments and not query and not subcategories:
+            response_data["subcategories"] = (
+                result.get("subcategories", []) if isinstance(result, dict) else []
+            )
+        elif categories and not query and not departments:
+            response_data["subcategories"] = (
+                result.get("subcategories", []) if isinstance(result, dict) else []
+            )
         return jsonify(_success_response(response_data, meta=meta)), 200
 
     except Exception as exc:

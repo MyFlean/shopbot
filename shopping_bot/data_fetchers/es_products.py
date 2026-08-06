@@ -396,10 +396,16 @@ def _normalize_variant_entries(raw_variants: Any) -> List[Dict[str, Any]]:
         if not variant_id:
             continue
         row: Dict[str, Any] = {"id": variant_id}
+        variant_field = str(item.get("variant_field") or "").strip()
+        if variant_field:
+            row["variant_field"] = variant_field
         if item.get("price") is not None:
             row["price"] = item.get("price")
         if item.get("mrp") is not None:
             row["mrp"] = item.get("mrp")
+        flavour = str(item.get("flavour") or "").strip()
+        if flavour:
+            row["flavour"] = flavour
         size = str(item.get("size") or "").strip()
         if size:
             row["size"] = size

@@ -54,8 +54,10 @@ def test_build_filter_clauses_applies_flavour_filters():
         and isinstance(clause["bool"].get("should"), list)
         and any("flavour" in str(item) for item in clause["bool"]["should"])
     ]
-    assert len(flavour_clauses) == 2
-    first_should = flavour_clauses[0]["bool"]["should"]
+    # Multi-select flavours OR into a single filter clause.
+    assert len(flavour_clauses) == 1
+    should = flavour_clauses[0]["bool"]["should"]
+    assert flavour_clauses[0]["bool"]["minimum_should_match"] == 1
     assert {
         "term": {
             "flavour.keyword": {
@@ -63,8 +65,17 @@ def test_build_filter_clauses_applies_flavour_filters():
                 "case_insensitive": True,
             }
         }
-    } in first_should
-    assert {"match_phrase": {"flavour": {"query": "chocolate"}}} in first_should
+    } in should
+    assert {"match_phrase": {"flavour": {"query": "chocolate"}}} in should
+    assert {
+        "term": {
+            "flavour.keyword": {
+                "value": "vanilla",
+                "case_insensitive": True,
+            }
+        }
+    } in should
+    assert {"match_phrase": {"flavour": {"query": "vanilla"}}} in should
 
 
 def test_build_filter_clauses_normalizes_flavour_slug_underscores():

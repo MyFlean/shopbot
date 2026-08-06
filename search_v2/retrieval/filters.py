@@ -681,29 +681,31 @@ def build_filter_clauses(sf: SearchFilters) -> FilterClauses:
                 })
 
     if sf.flavour:
+        # Multi-select flavour is OR (a product has one flavour). Each token
+        # still matches via case-insensitive keyword or match_phrase.
+        flavour_should: List[Dict[str, Any]] = []
         for flavour_token in sf.flavour:
             # Facet UI values are lowercased; keyword field is case-sensitive.
             # Clients may also send slug form (cafe_mocha) instead of "cafe mocha".
             s = " ".join(str(flavour_token).strip().lower().replace("_", " ").split())
             if not s:
                 continue
+            flavour_should.append(
+                {
+                    "term": {
+                        "flavour.keyword": {
+                            "value": s,
+                            "case_insensitive": True,
+                        }
+                    }
+                }
+            )
+            flavour_should.append({"match_phrase": {"flavour": {"query": s}}})
+        if flavour_should:
             fc.append(
                 {
                     "bool": {
-                        "should": [
-                            # Exact facet match (case-insensitive) on keyword.
-                            {
-                                "term": {
-                                    "flavour.keyword": {
-                                        "value": s,
-                                        "case_insensitive": True,
-                                    }
-                                }
-                            },
-                            # Multi-word / analyzed text fallback (term on text
-                            # only matches single tokens, so use match_phrase).
-                            {"match_phrase": {"flavour": {"query": s}}},
-                        ],
+                        "should": flavour_should,
                         "minimum_should_match": 1,
                     }
                 }

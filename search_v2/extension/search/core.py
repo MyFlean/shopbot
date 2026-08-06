@@ -414,41 +414,67 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
             )
             if department_group:
                 dynamic_filters.append(department_group)
-
-            if active_departments:
+            department_counts = parse_department_counts_from_aggregations(department_source)
+            category_scope_departments = active_departments or list(department_counts.keys())
+            category_counts: Dict[str, int] = {}
+            if category_scope_departments:
                 category_source = facets_aggs_out
-                scoped_category = (
-                    (facets_aggs_out.get("category_scope_global") or {})
-                    .get("category_scope_filter")
+                if active_departments:
+                    scoped_category = (
+                        (facets_aggs_out.get("category_scope_global") or {})
+                        .get("category_scope_filter")
+                    )
+                    if isinstance(scoped_category, dict):
+                        category_source = scoped_category
+                else:
+                    category_facets_resp = client.search(
+                        {
+                            "size": 0,
+                            "track_total_hits": False,
+                            "query": facet_query,
+                            "aggs": build_category_terms_aggregation(category_scope_departments),
+                        }
+                    )
+                    category_source = category_facets_resp.get("aggregations") or {}
+                category_counts = parse_category_counts_from_aggregations(
+                    category_source, category_scope_departments
                 )
-                if isinstance(scoped_category, dict):
-                    category_source = scoped_category
                 category_group = build_hierarchy_filter_group(
                     group_id=FILTER_CATEGORY_ID,
                     title="Category",
                     title_key="category",
-                    counts=parse_category_counts_from_aggregations(
-                        category_source, active_departments
-                    ),
+                    counts=category_counts,
                     selected_values=active_categories,
                 )
                 if category_group:
                     dynamic_filters.append(category_group)
 
-            if active_categories:
+            subcategory_scope_categories = active_categories or list(category_counts.keys())
+            if subcategory_scope_categories:
                 subcategory_source = facets_aggs_out
-                scoped_subcategory = (
-                    (facets_aggs_out.get("subcategory_scope_global") or {})
-                    .get("subcategory_scope_filter")
-                )
-                if isinstance(scoped_subcategory, dict):
-                    subcategory_source = scoped_subcategory
+                if active_categories:
+                    scoped_subcategory = (
+                        (facets_aggs_out.get("subcategory_scope_global") or {})
+                        .get("subcategory_scope_filter")
+                    )
+                    if isinstance(scoped_subcategory, dict):
+                        subcategory_source = scoped_subcategory
+                else:
+                    subcategory_facets_resp = client.search(
+                        {
+                            "size": 0,
+                            "track_total_hits": False,
+                            "query": facet_query,
+                            "aggs": build_subcategory_terms_aggregation(subcategory_scope_categories),
+                        }
+                    )
+                    subcategory_source = subcategory_facets_resp.get("aggregations") or {}
                 subcategory_group = build_hierarchy_filter_group(
                     group_id=FILTER_SUBCATEGORY_ID,
                     title="Subcategory",
                     title_key="subcategory",
                     counts=parse_subcategory_counts_from_aggregations(
-                        subcategory_source, active_categories
+                        subcategory_source, subcategory_scope_categories
                     ),
                     selected_values=active_subcategories,
                 )

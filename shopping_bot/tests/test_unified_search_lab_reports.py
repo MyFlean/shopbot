@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 from flask import Flask
 
+from search_v2.extension.shop_by_goal import GoalConfigError
 from shopping_bot.routes.unified_search import bp as unified_search_bp
 
 
@@ -613,3 +614,271 @@ def test_unified_search_department_selector_rejected_for_v1(
     assert resp.status_code == 400
     payload = resp.get_json()
     assert payload["error"]["code"] == "UNSUPPORTED_PARAMETER"
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v1")
+def test_unified_search_diet_selector_rejected_for_v1(
+    _mock_search_engine,
+    unified_search_client,
+):
+    resp = unified_search_client.get("/rs/v1/search?diet=keto")
+    assert resp.status_code == 400
+    payload = resp.get_json()
+    assert payload["error"]["code"] == "UNSUPPORTED_PARAMETER"
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
+@patch("shopping_bot.routes.unified_search.transform_to_product_card")
+@patch("shopping_bot.routes.unified_search.resolve_goal_selection")
+@patch("shopping_bot.routes.unified_search.resolve_diet_selection")
+@patch("shopping_bot.routes.unified_search.v2_search")
+def test_unified_search_goal_only_routes_to_v2_with_overlay_and_goal_sort(
+    mock_v2_search,
+    mock_resolve_diet_selection,
+    mock_resolve_goal_selection,
+    mock_transform_to_product_card,
+    _mock_search_engine,
+    unified_search_client,
+):
+    mock_resolve_diet_selection.return_value = {}
+    mock_resolve_goal_selection.return_value = {
+        "goal_ids": ["high_protein"],
+        "goal_labels": ["High Protein"],
+        "goal_filter_clauses": [{"term": {"category_data.tags.protein_tags.positive": "high_protein_density"}}],
+        "goal_must_not_clauses": [{"range": {"flean_score.adjusted_score": {"lt": 50}}}],
+        "goal_sort_order": [
+            {"field": "stats.protein_percentiles.subcategory_percentile", "order": "desc"},
+            {"field": "flean_score.adjusted_score", "order": "desc"},
+        ],
+        "goal_sort_by": "protein_desc",
+        "goal_config_version": "1.0",
+    }
+    mock_v2_search.return_value = {
+        "products": [{"id": "prod-1", "visibility": "visible", "category_data": {}}],
+        "filters": [
+            {"id": "filter_category", "title": "Category", "titleKey": "category", "items": []},
+            {"id": "filter_subcategory", "title": "Subcategory", "titleKey": "subcategory", "items": []},
+        ],
+        "meta": {"total_hits": 1, "took_ms": 7},
+    }
+    mock_transform_to_product_card.return_value = {
+        "id": "prod-1",
+        "name": "prod-1",
+        "visibility": "visible",
+        "flean_score": 9,
+        "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
+    }
+
+    resp = unified_search_client.get("/rs/v1/search?goal=high_protein")
+    assert resp.status_code == 200
+    gw_params = mock_v2_search.call_args.args[0]
+    assert gw_params["goal"] == ["high_protein"]
+    assert gw_params["goal_ids"] == ["high_protein"]
+    assert "sort_by" not in gw_params
+    assert gw_params["goal_sort_order"]
+    assert gw_params["goal_filter_clauses"]
+    payload = resp.get_json()
+    assert payload["meta"]["goal"] == "high_protein"
+    assert payload["meta"]["sort_by"] == "protein_desc"
+    filter_ids = [flt["id"] for flt in payload["data"]["filters"]]
+    assert "filter_category" in filter_ids
+    assert "filter_subcategory" in filter_ids
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
+@patch("shopping_bot.routes.unified_search.transform_to_product_card")
+@patch("shopping_bot.routes.unified_search.resolve_goal_selection")
+@patch("shopping_bot.routes.unified_search.resolve_diet_selection")
+@patch("shopping_bot.routes.unified_search.v2_search")
+def test_unified_search_goal_with_relevance_uses_goal_default_sort(
+    mock_v2_search,
+    mock_resolve_diet_selection,
+    mock_resolve_goal_selection,
+    mock_transform_to_product_card,
+    _mock_search_engine,
+    unified_search_client,
+):
+    mock_resolve_diet_selection.return_value = {}
+    mock_resolve_goal_selection.return_value = {
+        "goal_ids": ["high_protein"],
+        "goal_labels": ["High Protein"],
+        "goal_filter_clauses": [{"term": {"category_data.tags.protein_tags.positive": "high_protein_density"}}],
+        "goal_must_not_clauses": [{"range": {"flean_score.adjusted_score": {"lt": 50}}}],
+        "goal_sort_order": [
+            {"field": "stats.protein_percentiles.subcategory_percentile", "order": "desc"},
+            {"field": "flean_score.adjusted_score", "order": "desc"},
+        ],
+        "goal_sort_by": "protein_desc",
+        "goal_config_version": "1.0",
+    }
+    mock_v2_search.return_value = {
+        "products": [{"id": "prod-1", "visibility": "visible", "category_data": {}}],
+        "filters": [
+            {"id": "filter_category", "title": "Category", "titleKey": "category", "items": []},
+            {"id": "filter_subcategory", "title": "Subcategory", "titleKey": "subcategory", "items": []},
+        ],
+        "meta": {"total_hits": 1, "took_ms": 7},
+    }
+    mock_transform_to_product_card.return_value = {
+        "id": "prod-1",
+        "name": "prod-1",
+        "visibility": "visible",
+        "flean_score": 9,
+        "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
+    }
+
+    resp = unified_search_client.get("/rs/v1/search?goal=high_protein&sort_by=relevance")
+    assert resp.status_code == 200
+    gw_params = mock_v2_search.call_args.args[0]
+    assert "sort_by" not in gw_params
+    assert gw_params["goal_sort_order"]
+    payload = resp.get_json()
+    assert payload["meta"]["sort_by"] == "protein_desc"
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
+@patch(
+    "shopping_bot.routes.unified_search.resolve_goal_selection",
+    side_effect=GoalConfigError(
+        "GOAL_CONFIG_FETCH_FAILED",
+        "Failed to fetch goal config",
+        503,
+    ),
+)
+def test_unified_search_goal_config_failure_hard_fails(
+    _mock_resolve_goal_selection,
+    _mock_search_engine,
+    unified_search_client,
+):
+    resp = unified_search_client.get("/rs/v1/search?goal=high_protein")
+    assert resp.status_code == 503
+    payload = resp.get_json()
+    assert payload["error"]["code"] == "GOAL_CONFIG_FETCH_FAILED"
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
+@patch(
+    "shopping_bot.routes.unified_search.resolve_diet_selection",
+    side_effect=GoalConfigError(
+        "GOAL_CONFIG_FETCH_FAILED",
+        "Failed to fetch diet config",
+        503,
+    ),
+)
+def test_unified_search_diet_config_failure_hard_fails(
+    _mock_resolve_diet_selection,
+    _mock_search_engine,
+    unified_search_client,
+):
+    resp = unified_search_client.get("/rs/v1/search?diet=keto")
+    assert resp.status_code == 503
+    payload = resp.get_json()
+    assert payload["error"]["code"] == "GOAL_CONFIG_FETCH_FAILED"
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
+@patch("shopping_bot.routes.unified_search.transform_to_product_card")
+@patch("shopping_bot.routes.unified_search.resolve_goal_selection")
+@patch("shopping_bot.routes.unified_search.resolve_diet_selection")
+@patch("shopping_bot.routes.unified_search.browse_by_department_segment")
+def test_unified_search_department_with_goal_passes_goal_overlays_to_browse_filters(
+    mock_browse_by_department_segment,
+    mock_resolve_diet_selection,
+    mock_resolve_goal_selection,
+    mock_transform_to_product_card,
+    _mock_search_engine,
+    unified_search_client,
+):
+    mock_resolve_diet_selection.return_value = {}
+    mock_resolve_goal_selection.return_value = {
+        "goal_ids": ["high_protein"],
+        "goal_labels": ["High Protein"],
+        "goal_filter_clauses": [{"term": {"category_data.tags.protein_tags.positive": "high_protein_density"}}],
+        "goal_must_not_clauses": [{"range": {"flean_score.adjusted_score": {"lt": 50}}}],
+        "goal_sort_order": [
+            {"field": "stats.protein_percentiles.subcategory_percentile", "order": "desc"},
+            {"field": "flean_score.adjusted_score", "order": "desc"},
+        ],
+        "goal_sort_by": "protein_desc",
+        "goal_config_version": "1.0",
+    }
+    mock_browse_by_department_segment.return_value = {
+        "products": [{"id": "prod-1", "visibility": "visible", "category_data": {}}],
+        "filters": [],
+        "categories": [{"id": "light_bites", "image": "img", "name": "Light Bites"}],
+        "meta": {"total": 1, "took_ms": 11, "engine": "v2"},
+    }
+    mock_transform_to_product_card.return_value = {
+        "id": "prod-1",
+        "name": "prod-1",
+        "visibility": "visible",
+        "flean_score": 9,
+        "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
+    }
+
+    resp = unified_search_client.get("/rs/v1/search?department=food&goal=high_protein")
+    assert resp.status_code == 200
+    browse_kwargs = mock_browse_by_department_segment.call_args.kwargs
+    assert browse_kwargs["sort_by"] is None
+    assert browse_kwargs["filters"] is not None
+    assert browse_kwargs["filters"].goal_ids == ["high_protein"]
+    assert browse_kwargs["filters"].goal_filter_clauses
+    assert browse_kwargs["filters"].sort_order
+    payload = resp.get_json()
+    assert payload["meta"]["goal"] == "high_protein"
+
+
+@patch("shopping_bot.routes.unified_search._search_engine", return_value="v2")
+@patch("shopping_bot.routes.unified_search.transform_to_product_card")
+@patch("shopping_bot.routes.unified_search.resolve_goal_selection")
+@patch("shopping_bot.routes.unified_search.resolve_diet_selection")
+@patch("shopping_bot.routes.unified_search.v2_search")
+def test_unified_search_diet_only_routes_to_v2_with_overlay_and_diet_sort(
+    mock_v2_search,
+    mock_resolve_diet_selection,
+    mock_resolve_goal_selection,
+    mock_transform_to_product_card,
+    _mock_search_engine,
+    unified_search_client,
+):
+    mock_resolve_goal_selection.return_value = {}
+    mock_resolve_diet_selection.return_value = {
+        "diet_ids": ["keto"],
+        "diet_labels": ["Keto"],
+        "diet_filter_clauses": [{"range": {"category_data.nutritional.nutri_breakdown.carbohydrate g": {"lte": 12}}}],
+        "diet_must_not_clauses": [{"range": {"category_data.nutritional.nutri_breakdown.added sugar g": {"gt": 4}}}],
+        "diet_sort_order": [
+            {"field": "category_data.nutritional.nutri_breakdown.carbohydrate g", "order": "asc"},
+            {"field": "flean_score.adjusted_score", "order": "desc"},
+        ],
+        "diet_sort_by": "relevance",
+        "diet_config_version": "1.0",
+    }
+    mock_v2_search.return_value = {
+        "products": [{"id": "prod-1", "visibility": "visible", "category_data": {}}],
+        "filters": [
+            {"id": "filter_category", "title": "Category", "titleKey": "category", "items": []},
+            {"id": "filter_subcategory", "title": "Subcategory", "titleKey": "subcategory", "items": []},
+        ],
+        "meta": {"total_hits": 1, "took_ms": 7},
+    }
+    mock_transform_to_product_card.return_value = {
+        "id": "prod-1",
+        "name": "prod-1",
+        "visibility": "visible",
+        "flean_score": 9,
+        "variants": [{"id": "variant-1", "price": 99.0, "mrp": 120.0, "size": "500 g", "image": "img"}],
+    }
+
+    resp = unified_search_client.get("/rs/v1/search?diet=keto")
+    assert resp.status_code == 200
+    gw_params = mock_v2_search.call_args.args[0]
+    assert gw_params["diet"] == ["keto"]
+    assert gw_params["diet_ids"] == ["keto"]
+    assert gw_params["diet_sort_order"]
+    assert gw_params["diet_filter_clauses"]
+    payload = resp.get_json()
+    assert payload["meta"]["diet"] == "keto"
+    filter_ids = [flt["id"] for flt in payload["data"]["filters"]]
+    assert "filter_category" in filter_ids
+    assert "filter_subcategory" in filter_ids

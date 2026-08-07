@@ -19,6 +19,12 @@ FILTER_DEPARTMENT_ID = "filter_department"
 FILTER_CATEGORY_ID = "filter_category"
 FILTER_SUBCATEGORY_ID = "filter_subcategory"
 
+# ES keyword subfield for flavour facet aggregation and filter term clauses.
+# Mapping: search_terms.filter_terms.flavours is text; terms aggs require .keyword.
+FLAVOUR_FILTER_FIELD = "search_terms.filter_terms.flavours.keyword"
+# Legacy root flavour keyword — used until search_terms is indexed on all products.
+FLAVOUR_FILTER_FIELD_FALLBACK = "flavour.keyword"
+
 _FLEAN_BUCKETS: List[Dict[str, Any]] = [
     {"key": "9_plus", "label_key": "9_plus", "label": "9+ (Excellent)", "value": 9},
     {"key": "8_plus", "label_key": "8_plus", "label": "8+ (Very Good)", "value": 8},
@@ -306,15 +312,6 @@ def _build_price_item(bucket: Dict[str, Any]) -> Dict[str, Any]:
 def build_facet_aggregations(price_ranges: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """Build aggregation map for supported dynamic filters."""
     aggs: Dict[str, Any] = {
-        "flean_score_counts": {
-            "filters": {
-                "filters": {
-                    "9_plus": {"script": {"script": {"lang": "painless", "source": _FLEAN_BADGE_SCRIPT, "params": {"min_badge": 9.0}}}},
-                    "8_plus": {"script": {"script": {"lang": "painless", "source": _FLEAN_BADGE_SCRIPT, "params": {"min_badge": 8.0}}}},
-                    "7_plus": {"script": {"script": {"lang": "painless", "source": _FLEAN_BADGE_SCRIPT, "params": {"min_badge": 7.0}}}},
-                }
-            }
-        },
         "dietary_preferences": {
             "terms": {
                 "field": "category_data.tags.dietary_tags.keyword",
@@ -329,14 +326,16 @@ def build_facet_aggregations(price_ranges: Optional[List[Dict[str, Any]]] = None
                 "min_doc_count": 1,
             }
         },
-        "nutrition_profile_counts": {
-            "filters": {
-                "filters": {bucket["key"]: bucket["query"] for bucket in _NUTRITION_BUCKETS}
-            }
-        },
         "flavour_options": {
             "terms": {
-                "field": "flavour.keyword",
+                "field": FLAVOUR_FILTER_FIELD,
+                "size": 30,
+                "min_doc_count": 1,
+            }
+        },
+        "flavour_options_legacy": {
+            "terms": {
+                "field": FLAVOUR_FILTER_FIELD_FALLBACK,
                 "size": 30,
                 "min_doc_count": 1,
             }
@@ -377,34 +376,6 @@ def parse_dynamic_filters_from_aggs(aggregations: Optional[Dict[str, Any]]) -> L
                 "title": "Price",
                 "titleKey": "price_range",
                 "items": price_items,
-            }
-        )
-
-    flean_items: List[Dict[str, Any]] = []
-    flean_buckets = ((aggregations.get("flean_score_counts") or {}).get("buckets") or {})
-    if isinstance(flean_buckets, dict):
-        for bucket_meta in _FLEAN_BUCKETS:
-            bucket = flean_buckets.get(bucket_meta["key"]) or {}
-            count = int(bucket.get("doc_count", 0) or 0)
-            if count <= 0:
-                continue
-            flean_items.append(
-                {
-                    "id": bucket_meta["key"],
-                    "labelKey": bucket_meta["label_key"],
-                    "label": bucket_meta["label"],
-                    "value": bucket_meta["value"],
-                    "count": count,
-                    "isPreSelected": False,
-                }
-            )
-    if flean_items:
-        groups.append(
-            {
-                "id": FILTER_FLEAN_SCORE_ID,
-                "title": "Flean Score",
-                "titleKey": "flean_score",
-                "items": flean_items,
             }
         )
 
@@ -466,36 +437,11 @@ def parse_dynamic_filters_from_aggs(aggregations: Optional[Dict[str, Any]]) -> L
             }
         )
 
-    nutrition_items: List[Dict[str, Any]] = []
-    nutrition_buckets = ((aggregations.get("nutrition_profile_counts") or {}).get("buckets") or {})
-    if isinstance(nutrition_buckets, dict):
-        for bucket_meta in _NUTRITION_BUCKETS:
-            bucket = nutrition_buckets.get(bucket_meta["key"]) or {}
-            count = int(bucket.get("doc_count", 0) or 0)
-            if count <= 0:
-                continue
-            nutrition_items.append(
-                {
-                    "id": bucket_meta["id"],
-                    "labelKey": bucket_meta["labelKey"],
-                    "label": bucket_meta["label"],
-                    "value": bucket_meta["key"],
-                    "count": count,
-                    "isPreSelected": False,
-                }
-            )
-    if nutrition_items:
-        groups.append(
-            {
-                "id": FILTER_NUTRITION_ID,
-                "title": "Nutrition Preferences",
-                "titleKey": "nutrition_profiles",
-                "items": nutrition_items,
-            }
-        )
-
     flavour_items: List[Dict[str, Any]] = []
-    for bucket in ((aggregations.get("flavour_options") or {}).get("buckets") or []):
+    flavour_buckets_raw = ((aggregations.get("flavour_options") or {}).get("buckets") or [])
+    if not flavour_buckets_raw:
+        flavour_buckets_raw = ((aggregations.get("flavour_options_legacy") or {}).get("buckets") or [])
+    for bucket in flavour_buckets_raw:
         if not isinstance(bucket, dict):
             continue
         key = str(bucket.get("key", "")).strip()

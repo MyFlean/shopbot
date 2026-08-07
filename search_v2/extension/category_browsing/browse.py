@@ -570,7 +570,7 @@ def _browse_by_filters(
     if subcategory_counts:
         subcategory_group = build_hierarchy_filter_group(
             group_id=FILTER_SUBCATEGORY_ID,
-            title="Subcategory",
+            title="Product Types",
             title_key="subcategory",
             counts=subcategory_counts,
             selected_values=active_subcategories,

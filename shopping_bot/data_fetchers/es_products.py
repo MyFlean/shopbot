@@ -1513,6 +1513,9 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "level": level,
         "level_text": level_text,
         "color": level_color,
+        "hide_score": bool(flean_score_data.get("hide_score"))
+        if isinstance(flean_score_data, dict) and flean_score_data.get("hide_score") is not None
+        else False,
     }
 
     # ── score_cards (config-driven: only build cards listed in Redis config) ──

@@ -583,3 +583,15 @@ def test_get_redis_client_uses_lazy_initializer():
     with app.app_context():
         assert _get_redis_client() is mock_ctx.redis
     app.extensions["_get_or_init_redis"].assert_called_once()
+
+
+@patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")
+def test_transform_to_pdp_flean_badge_includes_hide_score(mock_get_config):
+    mock_get_config.return_value = []
+    src = _rich_src(flean_score={"adjusted_score": 85.0, "hide_score": True})
+    pdp = transform_to_pdp(src)
+    assert pdp["flean_badge"]["hide_score"] is True
+
+    src_without_flag = _rich_src(flean_score={"adjusted_score": 85.0})
+    pdp_without_flag = transform_to_pdp(src_without_flag)
+    assert pdp_without_flag["flean_badge"]["hide_score"] is False

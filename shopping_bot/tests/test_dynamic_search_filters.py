@@ -20,13 +20,6 @@ def test_parse_dynamic_filters_skips_zero_count_buckets():
                 "100_199": {"key": "100_199", "from": 100, "to": 200, "doc_count": 0},
             }
         },
-        "flean_score_counts": {
-            "buckets": {
-                "9_plus": {"doc_count": 0},
-                "8_plus": {"doc_count": 4},
-                "7_plus": {"doc_count": 2},
-            }
-        },
         "dietary_preferences": {
             "buckets": [
                 {"key": "gluten_free", "doc_count": 5},
@@ -39,16 +32,6 @@ def test_parse_dynamic_filters_skips_zero_count_buckets():
                 {"key": "no_maida", "doc_count": 0},
             ]
         },
-        "nutrition_profile_counts": {
-            "buckets": {
-                "high_protein": {"doc_count": 8},
-                "low_carb": {"doc_count": 0},
-                "high_fiber": {"doc_count": 2},
-                "low_sugar": {"doc_count": 4},
-                "low_sodium": {"doc_count": 0},
-                "low_fat": {"doc_count": 0},
-            }
-        },
     }
 
     filters = parse_dynamic_filters_from_aggs(aggs)
@@ -58,21 +41,14 @@ def test_parse_dynamic_filters_skips_zero_count_buckets():
     assert len(by_id["filter_price"]["items"]) == 1
     assert by_id["filter_price"]["items"][0]["count"] == 3
 
-    assert "filter_flean_score" in by_id
-    flean_label_keys = [item["labelKey"] for item in by_id["filter_flean_score"]["items"]]
-    assert flean_label_keys == ["8_plus", "7_plus"]
+    assert "filter_flean_score" not in by_id
+    assert "filter_nutrition" not in by_id
 
     assert "filter_preferences" in by_id
     assert [item["value"] for item in by_id["filter_preferences"]["items"]] == ["gluten_free"]
 
     assert "ingredient_preferences" in by_id
     assert [item["value"] for item in by_id["ingredient_preferences"]["items"]] == ["no_palm_oil"]
-    assert "filter_nutrition" in by_id
-    assert [item["value"] for item in by_id["filter_nutrition"]["items"]] == [
-        "high_protein",
-        "high_fiber",
-        "low_sugar",
-    ]
 
 
 def test_parse_dynamic_filters_uses_price_bucket_map_key_when_bucket_key_missing():
@@ -84,10 +60,8 @@ def test_parse_dynamic_filters_uses_price_bucket_map_key_when_bucket_key_missing
                 "200_299": {"from": 200, "to": 300, "doc_count": 2},
             }
         },
-        "flean_score_counts": {"buckets": {}},
         "dietary_preferences": {"buckets": []},
         "ingredient_preferences": {"buckets": []},
-        "nutrition_profile_counts": {"buckets": {}},
     }
 
     filters = parse_dynamic_filters_from_aggs(aggs)
@@ -101,7 +75,6 @@ def test_parse_dynamic_filters_excludes_pcos_friendly():
     aggs = {
         "dietary_preferences": {"buckets": []},
         "ingredient_preferences": {"buckets": [{"key": "pcos_friendly", "doc_count": 7}]},
-        "flean_score_counts": {"buckets": {}},
     }
 
     filters = parse_dynamic_filters_from_aggs(aggs)

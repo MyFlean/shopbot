@@ -348,7 +348,7 @@ def get_product_detail(product_id: str) -> Tuple[Dict[str, Any], int]:
         visibility, in_stock (bool: true when ES `visibility` normalizes to "visible", case-insensitive;
         if `pincode` query param is set and Redis has a validation cache entry for this product+pincode,
         `_get_cached_in_stock_override` may replace in_stock — see that helper)
-      - flean_badge: score (float|null), score_display (string), level, level_text
+      - flean_badge: score (float|null), score_display (string), level, level_text, hide_score (bool)
         (fallback from adjusted_score: score is adjusted_score/10, score_display is full adjusted score as string; N/A if absent)
       - score_cards: named object with keys {protein, fiber, sweeteners, oils, additives, preservatives,
                      watch_outs, calories, flean_rank, natural_sugar, glycemic_index, hydration, vitamins, minerals,

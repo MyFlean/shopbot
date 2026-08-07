@@ -2195,3 +2195,4 @@ def refresh_data() -> tuple[Dict[str, Any], int]:
 def reload_cache() -> tuple[Dict[str, Any], int]:
     """Alias for refresh_data (backwards compatibility)."""
     return refresh_data()
+

@@ -411,6 +411,17 @@ def _normalize_variant_entries(raw_variants: Any) -> List[Dict[str, Any]]:
         image = str(item.get("image") or "").strip()
         if image:
             row["image"] = image
+        availability = item.get("availability")
+        if isinstance(availability, bool):
+            row["availability"] = availability
+        elif isinstance(availability, (int, float)):
+            row["availability"] = bool(availability)
+        elif isinstance(availability, str):
+            normalized = availability.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                row["availability"] = True
+            elif normalized in {"0", "false", "no", "off"}:
+                row["availability"] = False
         out.append(row)
     return out
 

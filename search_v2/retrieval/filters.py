@@ -15,6 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from shopping_bot.data_fetchers.dynamic_search_filters import (
+    FLAVOUR_FILTER_FIELD,
+    FLAVOUR_FILTER_FIELD_FALLBACK,
+)
+
 # ── Availability channel paths ─────────────────────────────────────────────────
 _AVAILABILITY_IN_STOCK_PATHS = [
     "availability.in_stock",
@@ -269,7 +274,7 @@ class SearchFilters:
     # (e.g. "no_palm_oil", "preservative_free"). Each tag is an AND requirement.
     ingredient_tags: Optional[List[str]] = None
 
-    # Flavour tags (root-level field `flavour`) used for dynamic flavour filtering.
+    # Flavour tags (search_terms.filter_terms.flavours.keyword) for dynamic flavour filtering.
     flavour: Optional[List[str]] = None
 
     # Food type: "veg" excludes products with "Non Veg" in description;
@@ -682,7 +687,8 @@ def build_filter_clauses(sf: SearchFilters) -> FilterClauses:
 
     if sf.flavour:
         # Multi-select flavour is OR (a product has one flavour). Each token
-        # still matches via case-insensitive keyword or match_phrase.
+        # matches via case-insensitive term on search_terms.filter_terms.flavours.keyword,
+        # with legacy flavour.keyword fallback until search_terms is indexed.
         flavour_should: List[Dict[str, Any]] = []
         for flavour_token in sf.flavour:
             # Facet UI values are lowercased; keyword field is case-sensitive.
@@ -690,17 +696,32 @@ def build_filter_clauses(sf: SearchFilters) -> FilterClauses:
             s = " ".join(str(flavour_token).strip().lower().replace("_", " ").split())
             if not s:
                 continue
-            flavour_should.append(
+            token_should = [
                 {
                     "term": {
-                        "flavour.keyword": {
+                        FLAVOUR_FILTER_FIELD: {
                             "value": s,
                             "case_insensitive": True,
                         }
                     }
+                },
+                {
+                    "term": {
+                        FLAVOUR_FILTER_FIELD_FALLBACK: {
+                            "value": s,
+                            "case_insensitive": True,
+                        }
+                    }
+                },
+            ]
+            flavour_should.append(
+                {
+                    "bool": {
+                        "should": token_should,
+                        "minimum_should_match": 1,
+                    }
                 }
             )
-            flavour_should.append({"match_phrase": {"flavour": {"query": s}}})
         if flavour_should:
             fc.append(
                 {

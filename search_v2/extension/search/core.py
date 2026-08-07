@@ -445,7 +445,7 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
                     subcategory_source = scoped_subcategory
                 subcategory_group = build_hierarchy_filter_group(
                     group_id=FILTER_SUBCATEGORY_ID,
-                    title="Subcategory",
+                    title="Products",
                     title_key="subcategory",
                     counts=parse_subcategory_counts_from_aggregations(
                         subcategory_source, active_categories

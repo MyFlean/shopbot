@@ -105,6 +105,18 @@ _CATEGORY_ALIAS_OVERRIDES: Dict[str, str] = {
     "veggie": "veggies",
 }
 
+# Shopbot Phase-1 ranking override for broad protein supplement queries:
+# keep this as a medium-tier steering signal (never a hard gate), so generic
+# protein queries can still return non-supplement products when relevant while
+# strongly preferring supplement taxonomy.
+_PROTEIN_SUPPLEMENT_OVERRIDES: Dict[str, Tuple[str, str]] = {
+    # query_text: (resolved_product_type, dominant_category_leaf)
+    # Dominant category must remain a category-level segment (lvl-2), not the
+    # department-level "supplements" segment.
+    "protein": ("whey protein", "protein"),
+    "protein powder": ("whey protein", "protein"),
+}
+
 
 def _build_category_alias_map(categories) -> Dict[str, str]:
     """{normalized query phrase -> catalog dominant_category leaf}, derived
@@ -366,6 +378,19 @@ class ProductIntentExtractor:
                     fresh_produce_exact=exact_match,
                     source="fresh_produce",
                 )
+
+        normalized = " ".join(tokens)
+        override = _PROTEIN_SUPPLEMENT_OVERRIDES.get(normalized)
+        if override is not None:
+            product_type, dominant_category = override
+            return ProductIntentResult(
+                primary_product=product_type,
+                modifiers=[],
+                confidence=CATEGORY_FALLBACK_CONFIDENCE,
+                tier="medium",
+                dominant_category=dominant_category,
+                source="category_fallback",
+            )
 
         if not self._lexicon:
             return ProductIntentResult()

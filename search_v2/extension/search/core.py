@@ -220,9 +220,16 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
         sort_by = (req.filters.sort_by or "").strip().lower()
         is_explicit_non_relevance_sort = bool(sort_by) and sort_by != "relevance"
 
+        # Prefer explicit subcategory if provided, otherwise let business
+        # ranking infer per-item leaf categories from category_hierarchies.
+        requested_subcategory = params.get("subcategory", "_default")
+        ranking_subcategory = (
+            requested_subcategory if isinstance(requested_subcategory, str) and requested_subcategory.strip() else "_default"
+        )
+
         ranked = apply_business_ranking(
             hybrid_result.items,
-            subcategory=params.get("subcategory", "_default"),
+            subcategory=ranking_subcategory,
             settings=SETTINGS,
             resort=not is_explicit_non_relevance_sort,
             product_type=req.filters.product_type,

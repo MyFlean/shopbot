@@ -41,6 +41,7 @@ No LLM anywhere in this file.
 """
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from search_v2.config.settings import SearchV2Settings, SETTINGS
@@ -99,9 +100,17 @@ FIELD_WEIGHTS = {
     "description": 1.0,
 }
 CATEGORY_HIERARCHIES_BOOST = 0.8
+SUPPLEMENT_DEPARTMENT_BOOST = 3.0
+SUPPLEMENT_PROTEIN_CATEGORY_BOOST = 5.5
+SUPPLEMENT_PRE_POST_WORKOUT_CATEGORY_BOOST = 4.0
 
 _BRAND_FIELDS = {"brand", "brand.camel", "brand.phonetic"}
 _NAME_FIELDS = {"name", "name.camel", "name.phonetic"}
+_PROTEIN_SUPPLEMENT_QUERY_PATTERN = re.compile(r"^protein(?:\s+powder)?$")
+_SUPPLEMENT_PROTEIN_CATEGORIES = (
+    ("protein", SUPPLEMENT_PROTEIN_CATEGORY_BOOST),
+    ("pre_post_workout", SUPPLEMENT_PRE_POST_WORKOUT_CATEGORY_BOOST),
+)
 
 
 def _core_text(text: str, health_intent_matched_phrases: Tuple[str, ...]) -> str:
@@ -112,6 +121,11 @@ def _core_text(text: str, health_intent_matched_phrases: Tuple[str, ...]) -> str
         descriptor_words.update(phrase.lower().split())
     core_words = [w for w in text.split() if w.lower() not in descriptor_words]
     return " ".join(core_words).strip()
+
+
+def _is_protein_supplement_query(text: str) -> bool:
+    normalized = " ".join(text.lower().split())
+    return bool(_PROTEIN_SUPPLEMENT_QUERY_PATTERN.fullmatch(normalized))
 
 # General linguistic markers of a PROCESSED/DERIVATIVE product, not specific
 # to any one product. This is what makes "apple should rank fresh apple
@@ -298,6 +312,45 @@ def _field_match_clauses(
         }
     })
 
+    if _is_protein_supplement_query(text):
+        clauses.append(
+            {
+                "nested": {
+                    "path": "category_hierarchies",
+                    "score_mode": "max",
+                    "query": {
+                        "bool": {
+                            "filter": [
+                                {"term": {"category_hierarchies.segments": "supplements"}},
+                            ],
+                            "should": [
+                                *[
+                                    {
+                                        "term": {
+                                            "category_hierarchies.segments": {
+                                                "value": category_segment,
+                                                "boost": category_boost,
+                                            }
+                                        }
+                                    }
+                                    for category_segment, category_boost in _SUPPLEMENT_PROTEIN_CATEGORIES
+                                ],
+                                {
+                                    "term": {
+                                        "category_hierarchies.segments": {
+                                            "value": "supplements",
+                                            "boost": SUPPLEMENT_DEPARTMENT_BOOST,
+                                        }
+                                    }
+                                }
+                            ],
+                            "minimum_should_match": 1,
+                        }
+                    },
+                }
+            }
+        )
+
     # Commodity / base-product boost — taxonomy-driven, no LLMs, no manually-
     # maintained keyword lists. Fires only when the query normalizes to match
     # a stored leaf_category value (leaf_category is a keyword field).
@@ -386,6 +439,8 @@ def build_derivative_demotion_negative_query(query: ProcessedQuery) -> Optional[
         query_words.update(variant.text.lower().split())
 
     active_markers = [m for m in DERIVATIVE_MARKER_TERMS if m not in query_words]
+    if any(_is_protein_supplement_query(variant.text) for variant in query.variants):
+        active_markers = [marker for marker in active_markers if marker != "powder"]
     if not active_markers:
         return None
 

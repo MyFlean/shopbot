@@ -409,6 +409,214 @@
       }
     ]
   },
+  "whey_blend": {
+    "bonuses": [
+      {
+        "field": "stats.protein_percentiles.subcategory_percentile",
+        "weight": 1.35,
+        "threshold": 45
+      },
+      {
+        "field": "stats.simplicity_percentiles.subcategory_percentile",
+        "weight": 1.2,
+        "threshold": 55
+      }
+    ],
+    "penalties": [
+      {
+        "field": "stats.sugar_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 85
+      },
+      {
+        "field": "stats.additives_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 80
+      }
+    ]
+  },
+  "whey_isolate": {
+    "bonuses": [
+      {
+        "field": "stats.protein_percentiles.subcategory_percentile",
+        "weight": 1.35,
+        "threshold": 45
+      },
+      {
+        "field": "stats.simplicity_percentiles.subcategory_percentile",
+        "weight": 1.2,
+        "threshold": 55
+      }
+    ],
+    "penalties": [
+      {
+        "field": "stats.sugar_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 85
+      },
+      {
+        "field": "stats.additives_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 80
+      }
+    ]
+  },
+  "whey_concentrate": {
+    "bonuses": [
+      {
+        "field": "stats.protein_percentiles.subcategory_percentile",
+        "weight": 1.35,
+        "threshold": 45
+      },
+      {
+        "field": "stats.simplicity_percentiles.subcategory_percentile",
+        "weight": 1.2,
+        "threshold": 55
+      }
+    ],
+    "penalties": [
+      {
+        "field": "stats.sugar_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 85
+      },
+      {
+        "field": "stats.additives_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 80
+      }
+    ]
+  },
+  "plant_protein": {
+    "bonuses": [
+      {
+        "field": "stats.protein_percentiles.subcategory_percentile",
+        "weight": 1.35,
+        "threshold": 45
+      },
+      {
+        "field": "stats.wholefood_percentiles.subcategory_percentile",
+        "weight": 1.25,
+        "threshold": 50
+      }
+    ],
+    "penalties": [
+      {
+        "field": "stats.sugar_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 85
+      },
+      {
+        "field": "stats.additives_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 80
+      }
+    ]
+  },
+  "pre_workout": {
+    "bonuses": [
+      {
+        "field": "stats.protein_percentiles.subcategory_percentile",
+        "weight": 1.2,
+        "threshold": 50
+      },
+      {
+        "field": "stats.simplicity_percentiles.subcategory_percentile",
+        "weight": 1.2,
+        "threshold": 55
+      }
+    ],
+    "penalties": [
+      {
+        "field": "stats.sugar_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 80
+      },
+      {
+        "field": "stats.additives_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 80
+      }
+    ]
+  },
+  "bcaa": {
+    "bonuses": [
+      {
+        "field": "stats.protein_percentiles.subcategory_percentile",
+        "weight": 1.2,
+        "threshold": 50
+      },
+      {
+        "field": "stats.simplicity_percentiles.subcategory_percentile",
+        "weight": 1.2,
+        "threshold": 55
+      }
+    ],
+    "penalties": [
+      {
+        "field": "stats.sugar_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 80
+      },
+      {
+        "field": "stats.additives_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 80
+      }
+    ]
+  },
+  "creatine": {
+    "bonuses": [
+      {
+        "field": "stats.protein_percentiles.subcategory_percentile",
+        "weight": 1.2,
+        "threshold": 50
+      },
+      {
+        "field": "stats.simplicity_percentiles.subcategory_percentile",
+        "weight": 1.2,
+        "threshold": 55
+      }
+    ],
+    "penalties": [
+      {
+        "field": "stats.sugar_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 80
+      },
+      {
+        "field": "stats.additives_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 80
+      }
+    ]
+  },
+  "eaa": {
+    "bonuses": [
+      {
+        "field": "stats.protein_percentiles.subcategory_percentile",
+        "weight": 1.2,
+        "threshold": 50
+      },
+      {
+        "field": "stats.simplicity_percentiles.subcategory_percentile",
+        "weight": 1.2,
+        "threshold": 55
+      }
+    ],
+    "penalties": [
+      {
+        "field": "stats.sugar_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 80
+      },
+      {
+        "field": "stats.additives_penalty_percentiles.subcategory_percentile",
+        "weight": 0.85,
+        "threshold": 80
+      }
+    ]
+  },
   "_default": {
     "bonuses": [
       {

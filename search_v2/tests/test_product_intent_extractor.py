@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from search_v2.query_processing.product_intent_extractor import resolve_head_term
+from search_v2.query_processing.product_intent_extractor import ProductIntentExtractor, resolve_head_term
 
 HIGH = 0.55
 LOW = 0.25
@@ -128,6 +128,36 @@ class TestDegradesToShorterCandidate_WhenLongerOneIsNotValid:
         tokens = "black tea".split()
         result = resolve_head_term(tokens, lexicon, min_confidence=LOW)
         assert result[0] == "tea"
+
+
+class _FakeSettings:
+    PRODUCT_INTENT_HIGH_CONFIDENCE = HIGH
+    PRODUCT_INTENT_LOW_CONFIDENCE = LOW
+
+
+def test_protein_query_gets_medium_supplement_override():
+    extractor = ProductIntentExtractor(LEXICON, settings=_FakeSettings())
+    result = extractor.extract("protein")
+    assert result.primary_product == "whey protein"
+    assert result.tier == "medium"
+    assert result.dominant_category == "protein"
+
+
+def test_protein_powder_query_gets_medium_supplement_override():
+    extractor = ProductIntentExtractor(LEXICON, settings=_FakeSettings())
+    result = extractor.extract("protein powder")
+    assert result.primary_product == "whey protein"
+    assert result.tier == "medium"
+    assert result.dominant_category == "protein"
+
+
+def test_specific_query_still_resolves_without_override():
+    lexicon = dict(LEXICON, **{"protein bar": {"confidence": 0.73, "dominant_category": "energy_bars"}})
+    extractor = ProductIntentExtractor(lexicon, settings=_FakeSettings())
+    result = extractor.extract("protein bar")
+    assert result.primary_product == "protein bar"
+    assert result.tier == "high"
+    assert result.dominant_category == "energy_bars"
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ def test_variant_normalizer_preserves_variant_field_and_value_key():
             "size": "500 g",
             "price": 99.0,
             "image": "img-size",
+            "availability": True,
         },
         {
             "id": "v-flavour",
@@ -34,6 +35,7 @@ def test_variant_normalizer_preserves_variant_field_and_value_key():
             "flavour": "Cafe Latte",
             "mrp": 120.0,
             "image": "img-flavour",
+            "availability": False,
         },
     ])
     assert rows == [
@@ -43,6 +45,7 @@ def test_variant_normalizer_preserves_variant_field_and_value_key():
             "size": "500 g",
             "price": 99.0,
             "image": "img-size",
+            "availability": True,
         },
         {
             "id": "v-flavour",
@@ -50,6 +53,7 @@ def test_variant_normalizer_preserves_variant_field_and_value_key():
             "flavour": "Cafe Latte",
             "mrp": 120.0,
             "image": "img-flavour",
+            "availability": False,
         },
     ]
 

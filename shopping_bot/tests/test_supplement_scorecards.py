@@ -101,12 +101,31 @@ def test_protein_quality_card_is_97():
     assert r.detail["protein_pct_score"] == 88
 
 
-def test_purity_recovery_band_costs_15():
+def test_label_trust_integrity_recovery_band():
     f = _avvatar_features()
-    r = ss.score_purity(f)
-    # 0.819 recovery -> 75-85% band -> -15; base 100; flavour -3 present -> allow either.
-    assert r.score in (85, 82)  # 85 (recovery only) or 82 (with -3 flavour)
+    r = ss.score_label_trust(f)
+    # Integrity: 0.819 recovery -> -15; flavour -3 -> 82
+    assert r.detail["integrity"] in (85, 82)
+    assert r.detail["disclosure"] == 92  # panel, amino, scoop, batch present
+    assert r.detail["verification"] == 0  # no third-party certs (capped path)
     assert "label_claim_unverified" in r.tags
+    assert "no_third_party_testing" in r.tags
+    # 40/25/35 blend of integrity/disclosure/verification
+    expected = round(
+        (r.detail["integrity"] * 40 + r.detail["disclosure"] * 25 + r.detail["verification"] * 35) / 100
+    )
+    assert r.score == expected
+
+
+def test_label_trust_no_double_proprietary_blend():
+    f = _avvatar_features()
+    f.raw_text = f.raw_text + ", proprietary blend"
+    r = ss.score_label_trust(f)
+    assert "proprietary_blend" in r.tags
+    assert r.tags.count("proprietary_blend") == 1
+    # Disclosure takes the -40; integrity must not also apply -20 for prop blend.
+    assert r.detail["disclosure"] == 52  # 92 - 40
+    assert r.detail["integrity"] in (85, 82)  # recovery/flavour only
 
 
 def test_digestibility_isolate_two_gums_is_97():
@@ -114,9 +133,18 @@ def test_digestibility_isolate_two_gums_is_97():
     assert ss.score_digestibility(f).score == 97
 
 
-def test_lean_formula_is_100():
-    f = _avvatar_features()
-    assert ss.score_lean_formula(f).score == 100
+def test_digestibility_subtitle_new_tier_tags():
+    adapted = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(_protein_src()))
+    dig = adapted["score_cards"]["digestibility"]
+    assert dig["title"] == "Digestibility"
+    assert dig["value"] == "Best"
+    assert dig["score"] == 100  # WPI +5, no gums
+    assert dig["subtitle_new"] == [
+        {"tag_label": "Easy to digest", "color_code": "#2E7D32"},
+        {"tag_label": "Added digestive enzymes", "color_code": "#2E7D32"},
+        {"tag_label": "Lactose free", "color_code": "#2E7D32"},
+    ]
+    assert dig["subtitle"].startswith("Score:")
 
 
 def test_sweeteners_dual_artificial_is_64():
@@ -125,33 +153,119 @@ def test_sweeteners_dual_artificial_is_64():
     assert r.score == 64  # anchor 72 (sucralose/aceK) - 8 for the second
     assert "contains_artificial_sweeteners" in r.tags
     assert "multiple_artificial_sweeteners" in r.tags
+    assert set(r.detail["detected_names"]) == {"Sucralose", "Ace-K"}
+    # Same severity → deterministic single primary (alphabetical among ties)
+    assert r.detail["primary_name"] == "Ace-K"
 
 
-def test_transparency_base_92():
+def test_sweeteners_pdp_value_names_and_subtitle_new_tags():
+    adapted = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(_protein_src()))
+    sw = adapted["score_cards"]["sweeteners"]
+    # _protein_src uses sucralose only
+    assert sw["value"] == "Sucralose"
+    assert " · " not in sw["value"]
+    assert sw["value"] not in ("Best", "Top", "Average", "Poor", "Worst")
+    labels = [e["tag_label"] for e in sw["subtitle_new"]]
+    assert any("artificial" in lab.lower() for lab in labels)
+    assert all(len(lab.split()) <= 2 for lab in labels)
+    assert all("tag_label" in e and "color_code" in e for e in sw["subtitle_new"])
+    assert sw["score"] is not None
+
+
+def test_sweeteners_pdp_dual_value_is_single_worst_name():
     f = _avvatar_features()
-    # Has panel, amino profile, scoop, servings, batch -> only the +8 credit is missing.
-    assert ss.score_transparency(f).score == 92
+    card = {
+        "score": 64,
+        "tags": ["contains_artificial_sweeteners", "multiple_artificial_sweeteners"],
+        "detail": {
+            "detected_names": ["Sucralose", "Ace-K"],
+            "primary_name": "Ace-K",
+        },
+    }
+    sw = ss.present_sweeteners(f, card)
+    assert sw["value"] == "Ace-K"
+    assert " · " not in sw["value"]
+    labels = [e["tag_label"] for e in sw["subtitle_new"]]
+    assert "Artificial sweeteners" in labels
+    assert "Multiple artificial" in labels
+    assert all(len(lab.split()) <= 2 for lab in labels)
+
+
+def test_sweeteners_unsweetened_value():
+    src = _protein_src()
+    src["ingredients"]["normalised"] = (
+        "{'oils': [], 'additives': [], 'sweeteners': [], "
+        "'protein_ingredients': ['whey protein isolate']}"
+    )
+    src["category_data"]["nutritional"]["nutri_breakdown"]["added sugar g"] = 0.0
+    sw = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(src))["score_cards"]["sweeteners"]
+    assert sw["value"] == "Unsweetened"
 
 
 def test_serving_honesty_standard_is_100():
     f = _avvatar_features()
-    assert ss.score_serving_honesty(f).score == 100
+    r = ss.score_serving_honesty(f)
+    assert r.score == 100
+    assert "standard_serving" in r.tags
+    assert "scoop_stated" in r.tags
+    assert "pack_math_checks" in r.tags
 
 
-# ── Composite engine reconciles to 88.28 with the whey-isolate weight vector ──
+def test_serving_honesty_icon_and_subtitle_new():
+    ss.clear_config_cache()
+    adapted = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(_protein_src()))
+    sh = adapted["score_cards"]["serving_honesty"]
+    assert sh["title"] == "Serving Honesty"
+    assert sh["value"] == "Best"
+    assert sh["icon_url"] == "https://img.flean.ai/assets/Pdp-Icons/serving.png"
+    assert sh["subtitle_new"] == [
+        {"tag_label": "Standard serving", "color_code": "#2E7D32"},
+        {"tag_label": "Scoop stated", "color_code": "#2E7D32"},
+        {"tag_label": "Pack checks", "color_code": "#2E7D32"},
+    ]
+    assert sh["subtitle"].startswith("Score:")
+
+
+def test_label_trust_and_heavy_metals_subtitle_new():
+    ss.clear_config_cache()
+    adapted = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(_protein_src()))
+    lt = adapted["score_cards"]["label_trust"]
+    assert lt["title"] == "Label Trust"
+    assert lt["value"] in ("Best", "Top", "Average", "Poor", "Worst")
+    assert lt["subtitle_new"]
+    assert all("tag_label" in e and "color_code" in e for e in lt["subtitle_new"])
+    assert len(lt["subtitle_new"]) <= 3
+    hm = adapted["score_cards"]["heavy_metals"]
+    assert hm["title"] == "Heavy metals"
+    assert hm["subtitle_new"]
+    assert all("tag_label" in e and "color_code" in e for e in hm["subtitle_new"])
+    assert "purity" not in adapted["score_cards"]
+    assert "transparency" not in adapted["score_cards"]
+    assert "testing_trust" not in adapted["score_cards"]
+    assert "contaminant_safety" not in adapted["score_cards"]
+
+
+# ── Composite engine with merged Label Trust weight vector ──
 def test_composite_reconciles_to_worked_example():
-    # v2 card scores from worked example section 3.
+    ss.clear_config_cache()
+    # Pillar scores from worked example; Label Trust = 40/25/35 blend.
+    label_trust = round((85 * 40 + 92 * 25 + 76 * 35) / 100)  # 84
     scores = {
         "protein_quality": 97, "amino_acid_profile": 90, "protein_efficiency": 95,
-        "digestibility": 97, "lean_formula": 100, "purity": 85, "transparency": 92,
-        "testing_trust": 76, "contaminant_safety": 55, "sweeteners": 64, "serving_honesty": 100,
+        "digestibility": 97, "label_trust": label_trust,
+        "heavy_metals": 55, "sweeteners": 64, "serving_honesty": 100,
     }
     weights = ss._weight_vector("Whey Isolate")
     applicable = {k: w for k, w in weights.items() if w > 0}
     total = sum(applicable[k] for k in scores)
     composite = sum(scores[k] * applicable[k] for k in scores) / total
-    assert approx(composite, 88.28, tol=0.05)
+    # Lean Formula removed; its weight folded into Digestibility (14).
+    assert approx(composite, 88.48, tol=0.05)
     assert total == 100  # all applicable cards present, no renormalisation needed
+    assert applicable["label_trust"] == 26.0
+    assert applicable["digestibility"] == 14.0
+    assert applicable["heavy_metals"] == 6.0
+    assert "lean_formula" not in applicable
 
 
 def test_weight_vectors_sum_to_100():
@@ -225,3 +339,368 @@ def test_stimulant_over_400mg_caffeine_caps_at_25():
     r = ss.score_stimulant_balance(f)
     assert r.score <= 25
     assert "exceeds_safe_caffeine_dose" in r.tags
+
+
+# ── Category audit presentations (Protein / Creatine / Pre-workout / EAA) ─────
+def _protein_src(**overrides):
+    src = {
+        "id": "prot-1",
+        "price": 3500,
+        "size": "1kg",
+        "category_paths": ["f_and_b/supplements/protein/whey_isolate"],
+        "stats": {"protein_percentiles": {"subcategory_percentile": 82.0}},
+        "category_data": {
+            "serving_size": "35 g",
+            "servings_per_container": 28,
+            "nutritional": {
+                "qty": "100 g",
+                "nutri_breakdown": {
+                    "protein g": 80.0,
+                    "energy kcal": 360.0,
+                    "total fat g": 1.0,
+                    "carbohydrate g": 5.0,
+                    "sodium mg": 200.0,
+                    "added sugar g": 0.0,
+                },
+            },
+            "found_amino_acid_profile": {
+                "qty": "100 g",
+                "total_eaa_g": "45.0",
+                "total_bcaa_g": "20.0",
+                "essential_amino_acids": {
+                    "leucine g": "10.5",
+                    "isoleucine g": "5.0",
+                    "valine g": "5.0",
+                    "lysine g": "8.0",
+                    "threonine g": "5.0",
+                    "methionine g": "2.0",
+                    "phenylalanine g": "3.0",
+                    "tryptophan g": "1.5",
+                    "histidine g": "2.0",
+                },
+                "non_essential_amino_acids": {"glutamic acid g": "15.0"},
+            },
+            "certifications": [],
+        },
+        "ingredients": {
+            "raw_text": "Whey Protein Isolate, cocoa, sucralose, batch 1",
+            "normalised": "{'oils': [], 'additives': [], 'sweeteners': ['ins955'], 'protein_ingredients': ['whey protein isolate']}",
+        },
+    }
+    src.update(overrides)
+    return src
+
+
+def test_protein_audit_presentation_order_and_metrics():
+    out = ss.compute_supplement_scorecards(_protein_src())
+    assert out is not None
+    adapted = ss.to_pdp_score_cards(out)
+    pe = adapted["score_cards"]["protein_efficiency"]
+    assert pe["order"] == 1
+    assert pe["title"] == "Protein"
+    assert pe["value"] == "28 g / Scoop"  # 80 * 35/100
+    assert len(pe["subtitle_new"]) == 1
+    assert pe["subtitle_new"][0]["tag_label"].endswith("/g")
+    assert pe["subtitle"].startswith("Score:")
+    # Flat shape preserved
+    for k in ("title", "value", "subtitle", "subtitle_new", "score", "status", "status_label", "color", "theme", "tags", "order", "visible"):
+        assert k in pe
+    assert "detail" not in pe
+    # Other cards still present
+    assert "protein_quality" in adapted["score_cards"]
+    assert adapted["score_cards"]["protein_quality"]["order"] >= 2
+
+
+def test_protein_quality_subtitle_new_array():
+    adapted = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(_protein_src()))
+    pq = adapted["score_cards"]["protein_quality"]
+    assert pq["title"] == "Protein Quality"
+    assert pq["value"] in ("Best", "Top", "Average", "Poor", "Worst")
+    assert pq["subtitle_new"] == [
+        {"tag_label": "Complete amino profile", "color_code": "#2E7D32"},
+        {"tag_label": "80% protein", "color_code": "#2E7D32"},
+        {"tag_label": "Single source", "color_code": "#2E7D32"},
+    ]
+    assert pq["subtitle"].startswith("Score:")
+    assert pq["score"] is not None
+
+
+def test_protein_quality_incomplete_without_full_eaa_panel():
+    src = _protein_src()
+    # Only 3 EAAs published → completeness 0 → Incomplete amino profile
+    src["category_data"]["found_amino_acid_profile"]["essential_amino_acids"] = {
+        "leucine g": "10.5",
+        "isoleucine g": "5.0",
+        "valine g": "5.0",
+    }
+    pq = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(src))["score_cards"]["protein_quality"]
+    assert pq["value"] in ("Best", "Top", "Average", "Poor", "Worst")
+    labels = [e["tag_label"] for e in pq["subtitle_new"]]
+    assert "Incomplete amino profile" in labels
+    assert "80% protein" in labels
+    assert "Single source" in labels
+    assert pq["subtitle_new"][0]["color_code"] == "#C62828"
+
+
+def test_protein_audit_subtitle_new_only_cost_per_gram():
+    src = _protein_src()
+    src["category_data"].pop("found_amino_acid_profile")
+    src["category_data"].pop("amino_acid_profile", None)
+    pe = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(src))["score_cards"]["protein_efficiency"]
+    labels = [e["tag_label"] for e in pe.get("subtitle_new", [])]
+    assert len(labels) == 1
+    assert labels[0].endswith("/g")
+    assert "Amino profile not yet verified" not in labels
+    assert "Verified real" not in labels
+    assert "scoop purity" not in " ".join(labels)
+    assert "Top " not in " ".join(labels)
+
+
+def test_creatine_audit_cost_and_not_assayed():
+    src = {
+        "id": "cre-1",
+        "price": 1000,
+        "size": "250 g",
+        "category_paths": ["f_and_b/supplements/performance/creatine"],
+        "category_data": {
+            "serving_size": "5 g",
+            "servings_per_container": 50,
+            "active_ingredients": {"creatine monohydrate g": 5.0},
+            "nutritional": {"qty": "5 g", "nutri_breakdown": {}},
+            "certifications": [],
+        },
+        "ingredients": {"raw_text": "creatine monohydrate", "normalised": "{}"},
+    }
+    out = ss.compute_supplement_scorecards(src)
+    adapted = ss.to_pdp_score_cards(out)
+    card = adapted["score_cards"]["clinical_dose"]
+    assert card["order"] == 1
+    assert card["title"] == "Creatine"
+    assert card["value"] in ("Best", "Top", "Average", "Poor", "Worst")
+    assert "₹20/5 g dose" in card["subtitle"]
+    assert "Tub lasts 50 days" in card["subtitle"]
+    assert "Not assayed." in card["subtitle"]
+    assert card["subtitle_new"]
+    assert all("tag_label" in e and "color_code" in e for e in card["subtitle_new"])
+    assert any("clinical" in e["tag_label"].lower() or "dosed" in e["tag_label"].lower()
+               for e in card["subtitle_new"])
+
+
+def test_creatine_audit_proprietary_blend_still_emits():
+    src = {
+        "id": "cre-2",
+        "price": 1000,
+        "size": "250 g",
+        "category_paths": ["f_and_b/supplements/performance/creatine"],
+        "category_data": {
+            "serving_size": "5 g",
+            "servings_per_container": 50,
+            "active_ingredients": {},
+            "nutritional": {"qty": "5 g", "nutri_breakdown": {}},
+            "certifications": [],
+        },
+        "ingredients": {
+            "raw_text": "proprietary blend of creatine and additives",
+            "normalised": "{}",
+        },
+    }
+    out = ss.compute_supplement_scorecards(src)
+    card = ss.to_pdp_score_cards(out)["score_cards"]["clinical_dose"]
+    assert card["value"] == "Doses not disclosed by brand"
+    assert "doses_not_disclosed" in card["tags"]
+    assert card["visible"] is True
+    assert card["color"] == "#9CA3AF"
+
+
+def test_preworkout_audit_espresso_and_capped_bars():
+    src = {
+        "id": "pw-1",
+        "price": 2000,
+        "size": "300 g",
+        "category_paths": ["f_and_b/supplements/performance/pre_workout"],
+        "category_data": {
+            "serving_size": "15 g",
+            "servings_per_container": 20,
+            "active_ingredients": {
+                "caffeine anhydrous mg": 189.0,  # 189/63 = 3.0 espressos
+                "beta-alanine g": 4.0,           # 4/3.2 -> 125% -> capped 100%
+                "l-citrulline g": 3.0,           # 3/6 = 50%
+                "l-tyrosine g": 0.5,             # not in clinical table -> omitted from bars
+            },
+            "nutritional": {"qty": "15 g", "nutri_breakdown": {}},
+            "certifications": [],
+        },
+        "ingredients": {"raw_text": "caffeine, beta alanine, citrulline", "normalised": "{}"},
+    }
+    out = ss.compute_supplement_scorecards(src)
+    card = ss.to_pdp_score_cards(out)["score_cards"]["clinical_dose"]
+    assert card["order"] == 1
+    assert card["title"] == "Pre-Workout"
+    assert card["value"] in ("Best", "Top", "Average", "Poor", "Worst")
+    assert "3.0 espressos" in card["subtitle"]
+    assert "Beta-alanine 100%" in card["subtitle"]  # capped, not 125%
+    assert "140%" not in card["subtitle"]
+    assert "Citrulline 50%" in card["subtitle"]
+    assert card["subtitle_new"]
+    assert all("tag_label" in e and "color_code" in e for e in card["subtitle_new"])
+
+
+def test_preworkout_proprietary_greyed():
+    src = {
+        "id": "pw-2",
+        "price": 2000,
+        "size": "300 g",
+        "category_paths": ["f_and_b/supplements/performance/pre_workout"],
+        "category_data": {
+            "serving_size": "15 g",
+            "active_ingredients": {},
+            "nutritional": {"qty": "15 g", "nutri_breakdown": {}},
+            "certifications": [],
+        },
+        "ingredients": {
+            "raw_text": "proprietary blend energy matrix",
+            "normalised": "{}",
+        },
+    }
+    card = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(src))["score_cards"]["clinical_dose"]
+    assert card["value"] == "Doses not disclosed by brand"
+    assert "doses_not_disclosed" in card["tags"]
+    assert card["color"] == "#9CA3AF"
+
+
+def test_eaa_audit_complete_and_cost():
+    src = {
+        "id": "eaa-1",
+        "price": 1800,
+        "size": "300 g",
+        "category_paths": ["f_and_b/supplements/amino_acids/eaa"],
+        "category_data": {
+            "serving_size": "15 g",
+            "servings_per_container": 20,
+            "nutritional": {"qty": "15 g", "nutri_breakdown": {"protein g": 10.0}},
+            "found_amino_acid_profile": {
+                "qty": "15 g",
+                "total_eaa_g": "10.0",
+                "total_bcaa_g": "5.0",
+                "essential_amino_acids": {
+                    "leucine g": "2.5",
+                    "isoleucine g": "1.25",
+                    "valine g": "1.25",
+                    "lysine g": "1.0",
+                    "threonine g": "0.8",
+                    "methionine g": "0.5",
+                    "phenylalanine g": "0.7",
+                    "tryptophan g": "0.3",
+                    "histidine g": "0.5",
+                },
+            },
+            "certifications": [],
+        },
+        "ingredients": {"raw_text": "essential amino acids", "normalised": "{}"},
+    }
+    out = ss.compute_supplement_scorecards(src)
+    card = ss.to_pdp_score_cards(out)["score_cards"]["recovery_formula"]
+    assert card["order"] == 1
+    assert card["title"] == "EAA"
+    assert card["value"] == "9/9 complete"
+    assert "Leucine 2.5 g (MPS 2.5 g)" in card["subtitle"]
+    assert "/g EAA" in card["subtitle"]
+
+
+def test_eaa_audit_bcaa_only_headline():
+    src = {
+        "id": "bcaa-1",
+        "price": 1200,
+        "size": "250 g",
+        "category_paths": ["f_and_b/supplements/amino_acids/bcaa"],
+        "category_data": {
+            "serving_size": "10 g",
+            "servings_per_container": 25,
+            "nutritional": {"qty": "10 g", "nutri_breakdown": {}},
+            "found_amino_acid_profile": {
+                "qty": "10 g",
+                "total_eaa_g": "5.0",
+                "total_bcaa_g": "5.0",
+                "essential_amino_acids": {
+                    "leucine g": "2.5",
+                    "isoleucine g": "1.25",
+                    "valine g": "1.25",
+                },
+            },
+            "certifications": [],
+        },
+        "ingredients": {"raw_text": "bcaa 2:1:1", "normalised": "{}"},
+    }
+    card = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(src))["score_cards"]["recovery_formula"]
+    assert card["title"] == "EAA"
+    assert card["value"] == "BCAA-only"
+
+
+def test_settings_threshold_change_updates_preworkout_bars(monkeypatch):
+    """Dose bars read clinical thresholds from settings — one source of truth."""
+    cfg = ss.load_config()
+    original = cfg["settings"]["clinical_thresholds"]["beta_alanine"]["threshold"]
+    cfg["settings"]["clinical_thresholds"]["beta_alanine"]["threshold"] = 8.0
+    ss._config_cache = cfg
+    try:
+        src = {
+            "id": "pw-3",
+            "price": 2000,
+            "size": "300 g",
+            "category_paths": ["f_and_b/supplements/performance/pre_workout"],
+            "category_data": {
+                "serving_size": "15 g",
+                "active_ingredients": {
+                    "caffeine mg": 200.0,
+                    "beta-alanine g": 3.2,  # was 100% at 3.2 threshold; now 40% at 8.0
+                },
+                "nutritional": {"qty": "15 g", "nutri_breakdown": {}},
+                "certifications": [],
+            },
+            "ingredients": {"raw_text": "caffeine beta alanine", "normalised": "{}"},
+        }
+        card = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(src))["score_cards"]["clinical_dose"]
+        assert "Beta-alanine 40%" in card["subtitle"]
+    finally:
+        cfg["settings"]["clinical_thresholds"]["beta_alanine"]["threshold"] = original
+        ss.clear_config_cache()
+
+
+def test_clinical_dose_on_multivitamin_keeps_default_title():
+    src = {
+        "id": "mv-1",
+        "price": 500,
+        "size": "60 tablets",
+        "category_paths": ["f_and_b/supplements/vitamins/multivitamin"],
+        "category_data": {
+            "active_ingredients": {"vitamin d3 iu": 600.0},
+            "nutritional": {"qty": "1 tablet", "nutri_breakdown": {}},
+            "certifications": [],
+        },
+        "ingredients": {"raw_text": "vitamin d3", "normalised": "{}"},
+    }
+    # multivitamin may or may not map — check leaf mapping
+    leaf = ss.leaf_category(src)
+    col = ss.LEAF_TO_WEIGHT_COLUMN.get(ss._norm_token(leaf))
+    if col != "Multivitamin":
+        src["category_paths"] = ["f_and_b/supplements/multivitamin"]
+    out = ss.compute_supplement_scorecards(src)
+    if out is None:
+        pytest.skip("multivitamin leaf not mapped in this fixture")
+    card = out["cards"]["clinical_dose"]
+    assert card["title"] == "Clinical Dose"  # not Creatine/Pre-Workout audit
+    adapted = ss.to_pdp_score_cards(out)["score_cards"]["clinical_dose"]
+    assert adapted["value"] in ("Best", "Top", "Average", "Poor", "Worst")
+    assert adapted["subtitle_new"]
+    assert all("tag_label" in e and "color_code" in e for e in adapted["subtitle_new"])
+
+
+def test_supplement_flean_badge_includes_hide_score():
+    src = _protein_src(flean_score={"adjusted_score": 85.0, "hide_score": True})
+    adapted = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(src))
+    assert adapted["flean_badge"]["hide_score"] is True
+
+    src_default = _protein_src()
+    adapted_default = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(src_default))
+    assert adapted_default["flean_badge"]["hide_score"] is False
+

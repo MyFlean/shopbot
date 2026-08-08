@@ -45,6 +45,18 @@ def to_product_card(source: Dict[str, Any], rank: int = 0, score: float = 0.0) -
     dietary_labels = claims.get("dietary_labels") or []
     avg_rating = review.get("avg_rating")
 
+    flean_score_data = source.get("flean_score") or {}
+    if isinstance(flean_score_data, dict):
+        flean_score_value = flean_score_data.get("adjusted_score")
+        hide_score = (
+            bool(flean_score_data.get("hide_score"))
+            if flean_score_data.get("hide_score") is not None
+            else False
+        )
+    else:
+        flean_score_value = flean_score_data
+        hide_score = False
+
     protein_g = nutrition.get("protein_g") or nutrition.get("protein g")
     carbs_g = nutrition.get("carbs_g") or nutrition.get("carbohydrates g") or nutrition.get("carbs g")
     fat_g = nutrition.get("fat_g") or nutrition.get("total fat g") or nutrition.get("fat g")
@@ -90,7 +102,8 @@ def to_product_card(source: Dict[str, Any], rank: int = 0, score: float = 0.0) -
         "dietary_labels": dietary_labels if isinstance(dietary_labels, list) else [],
         "package_claims": claims,
         "flean_percentile": score_pcts.get("subcategory_percentile"),
-        "flean_score": (source.get("flean_score") or {}).get("adjusted_score"),
+        "flean_score": flean_score_value,
+        "hide_score": hide_score,
         "bonus_percentiles": {k: v for k, v in bonus_percentiles.items() if v is not None},
         "penalty_percentiles": {k: v for k, v in penalty_percentiles.items() if v is not None},
         "image": image,

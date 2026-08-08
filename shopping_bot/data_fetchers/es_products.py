@@ -464,6 +464,11 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         flean_percentile = None
         if stats.get("adjusted_score_percentiles"):
             flean_percentile = stats["adjusted_score_percentiles"].get("subcategory_percentile")
+        hide_score = (
+            bool(flean_score_data.get("hide_score"))
+            if isinstance(flean_score_data, dict) and flean_score_data.get("hide_score") is not None
+            else False
+        )
     else:
         # Pre-transformed format from _transform_results
         nutrition = {
@@ -484,6 +489,7 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if flean_score is not None:
             flean_score = _round_flean_score_whole(flean_score)
         flean_percentile = src.get("flean_percentile")
+        hide_score = bool(src.get("hide_score", False))
 
     macro_tags = _generate_macro_tags(nutrition)
     nutrition_clean = {k: v for k, v in nutrition.items() if v is not None}
@@ -504,6 +510,7 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "nutrition": nutrition_clean if nutrition_clean else None,
         "flean_score": flean_score,
         "flean_percentile": flean_percentile,
+        "hide_score": hide_score,
         "in_stock": True,
         "variants": _normalize_variant_entries(src.get("variants")),
     }

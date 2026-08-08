@@ -1,4 +1,36 @@
 {
+  "settings": {
+    "clinical_thresholds": {
+      "creatine": {"threshold": 3.0, "unit": "g", "weight": 1.0, "label": "Creatine"},
+      "beta_alanine": {"threshold": 3.2, "unit": "g", "weight": 0.7, "label": "Beta-alanine"},
+      "citrulline": {"threshold": 6.0, "unit": "g", "weight": 1.0, "label": "Citrulline"},
+      "caffeine": {"threshold": 200.0, "unit": "mg", "weight": 1.0, "label": "Caffeine"},
+      "leucine": {"threshold": 2.5, "unit": "g", "weight": 1.0, "label": "Leucine"},
+      "betaine": {"threshold": 2.5, "unit": "g", "weight": 0.5, "label": "Betaine"},
+      "taurine": {"threshold": 1.5, "unit": "g", "weight": 0.4, "label": "Taurine"},
+      "theanine": {"threshold": 150.0, "unit": "mg", "weight": 0.4, "label": "Theanine"},
+      "nitrate": {"threshold": 500.0, "unit": "mg", "weight": 0.8, "label": "Nitrate"},
+      "glycerol": {"threshold": 2.0, "unit": "g", "weight": 0.5, "label": "Glycerol"},
+      "ashwagandha": {"threshold": 450.0, "unit": "mg", "weight": 0.6, "label": "Ashwagandha"},
+      "vitamin_d3": {"threshold": 600.0, "unit": "iu", "weight": 0.7, "label": "Vitamin D3"},
+      "epa_dha": {"threshold": 750.0, "unit": "mg", "weight": 1.0, "label": "EPA+DHA"}
+    },
+    "creatine_effective_dose_g": 5.0,
+    "amino_integrity": {
+      "leucine_pct_of_protein_min": 10.0,
+      "eaa_pct_of_protein_min": 40.0
+    },
+    "espresso_caffeine_mg": 63.0,
+    "caffeine_source_tokens": [
+      "caffeine",
+      "green_tea",
+      "green tea",
+      "guarana",
+      "caffeine_anhydrous",
+      "caffeine anhydrous"
+    ],
+    "mps_leucine_g": 2.5
+  },
   "weight_columns": [
     "Whey Isolate",
     "Whey Concentrate",
@@ -37,8 +69,8 @@
       "Mass Gainer": 10.0,
       "Creatine": 0.0,
       "Pre-Workout": 0.0,
-      "BCAA": 10.0,
-      "EAA": 11.0,
+      "BCAA": 14.0,
+      "EAA": 15.0,
       "Multivitamin": 0.0,
       "Omega-3 / Fish Oil": 0.0
     },
@@ -57,12 +89,12 @@
       "Omega-3 / Fish Oil": 0.0
     },
     "Digestibility": {
-      "Whey Isolate": 5.0,
-      "Whey Concentrate": 6.0,
-      "Whey Blend": 6.0,
-      "Casein": 6.0,
-      "Plant Protein": 7.0,
-      "Mass Gainer": 8.0,
+      "Whey Isolate": 14.0,
+      "Whey Concentrate": 15.0,
+      "Whey Blend": 15.0,
+      "Casein": 15.0,
+      "Plant Protein": 15.0,
+      "Mass Gainer": 18.0,
       "Creatine": 0.0,
       "Pre-Workout": 0.0,
       "BCAA": 0.0,
@@ -70,63 +102,21 @@
       "Multivitamin": 0.0,
       "Omega-3 / Fish Oil": 0.0
     },
-    "Lean Formula": {
-      "Whey Isolate": 9.0,
-      "Whey Concentrate": 9.0,
-      "Whey Blend": 9.0,
-      "Casein": 9.0,
-      "Plant Protein": 8.0,
-      "Mass Gainer": 10.0,
-      "Creatine": 0.0,
-      "Pre-Workout": 0.0,
-      "BCAA": 4.0,
-      "EAA": 4.0,
-      "Multivitamin": 0.0,
-      "Omega-3 / Fish Oil": 0.0
+    "Label Trust": {
+      "Whey Isolate": 26.0,
+      "Whey Concentrate": 26.0,
+      "Whey Blend": 26.0,
+      "Casein": 26.0,
+      "Plant Protein": 23.0,
+      "Mass Gainer": 28.0,
+      "Creatine": 51.0,
+      "Pre-Workout": 27.0,
+      "BCAA": 30.0,
+      "EAA": 30.0,
+      "Multivitamin": 44.0,
+      "Omega-3 / Fish Oil": 44.0
     },
-    "Purity & Label Integrity": {
-      "Whey Isolate": 9.0,
-      "Whey Concentrate": 9.0,
-      "Whey Blend": 9.0,
-      "Casein": 9.0,
-      "Plant Protein": 8.0,
-      "Mass Gainer": 10.0,
-      "Creatine": 24.0,
-      "Pre-Workout": 5.0,
-      "BCAA": 9.0,
-      "EAA": 9.0,
-      "Multivitamin": 10.0,
-      "Omega-3 / Fish Oil": 12.0
-    },
-    "Transparency": {
-      "Whey Isolate": 5.0,
-      "Whey Concentrate": 5.0,
-      "Whey Blend": 5.0,
-      "Casein": 5.0,
-      "Plant Protein": 5.0,
-      "Mass Gainer": 6.0,
-      "Creatine": 7.0,
-      "Pre-Workout": 10.0,
-      "BCAA": 8.0,
-      "EAA": 8.0,
-      "Multivitamin": 14.0,
-      "Omega-3 / Fish Oil": 10.0
-    },
-    "Testing & Trust": {
-      "Whey Isolate": 12.0,
-      "Whey Concentrate": 12.0,
-      "Whey Blend": 12.0,
-      "Casein": 12.0,
-      "Plant Protein": 10.0,
-      "Mass Gainer": 12.0,
-      "Creatine": 20.0,
-      "Pre-Workout": 12.0,
-      "BCAA": 13.0,
-      "EAA": 13.0,
-      "Multivitamin": 20.0,
-      "Omega-3 / Fish Oil": 22.0
-    },
-    "Contaminant Safety": {
+    "Heavy metals": {
       "Whey Isolate": 6.0,
       "Whey Concentrate": 6.0,
       "Whey Blend": 6.0,
@@ -508,128 +498,67 @@
       "required_inputs": "ingredients.normalised.additives; ingredients.normalised.protein_ingredients; active_ingredients; ingredients.raw_text",
       "missing_rule": "If ingredients.raw_text is absent -> NOT SCORABLE. Do not default to 100; an undisclosed formula is not a clean one."
     },
-    "Lean Formula": {
-      "applies_to": "protein/*, bcaa, eaa",
-      "status": "REVISED",
-      "purpose": "Fitness-friendly nutrition profile",
-      "tier_tags": {
-        "best": [
-          "zero_added_sugar",
-          "low_fat",
-          "low_carb",
-          "low_sodium"
-        ],
-        "top": [
-          "fitness_friendly",
-          "low_added_sugar"
-        ],
-        "average": [
-          "balanced_nutrition"
-        ],
-        "poor": [
-          "high_calorie",
-          "moderate_added_sugar"
-        ],
-        "worst": [
-          "high_sugar",
-          "high_fat",
-          "high_sodium"
-        ]
-      },
-      "required_inputs": "nutritional.added sugar g; total fat g; carbohydrate g; sodium mg",
-      "missing_rule": "Score only the sub-metrics present and average those; if fewer than 2 of 4 are present -> NOT SCORABLE. Absent added-sugar field: use total sugar and tag sugar_type_unclear."
-    },
-    "Purity & Label Integrity": {
+    "Label Trust": {
       "applies_to": "All",
-      "status": "REVISED + RENAMED",
-      "purpose": "Fillers, adulteration and whether the label can be believed",
+      "status": "MERGED (Purity + Transparency + Testing & Trust)",
+      "purpose": "Honest label, open formula, and independent verification",
       "tier_tags": {
         "best": [
-          "no_fillers",
           "label_verified",
-          "pharmaceutical_grade",
-          "99_9_percent_pure"
+          "open_formula",
+          "nsf_certified_for_sport"
         ],
         "top": [
           "high_purity",
-          "minimal_fillers"
+          "transparent_formula",
+          "third_party_lab_tested"
         ],
         "average": [
-          "acceptable_purity",
-          "some_bulking_agents"
+          "mostly_transparent",
+          "gmp_facility"
         ],
         "poor": [
           "contains_fillers",
-          "maltodextrin_bulked"
-        ],
-        "worst": [
-          "suspected_amino_spiking",
-          "heavy_fillers",
-          "label_mismatch"
-        ]
-      },
-      "required_inputs": "ingredients.raw_text; ingredients.normalised.*; amino_acid_profile (all); nutritional.protein g; nutritional.qty",
-      "missing_rule": "Amino-recovery test requires a full AA profile; if absent, skip that clause and tag spiking_check_unavailable - do NOT award the points by default."
-    },
-    "Transparency": {
-      "applies_to": "All",
-      "status": "REVISED",
-      "purpose": "How completely the formulation is disclosed",
-      "tier_tags": {
-        "best": [
-          "fully_transparent",
-          "exact_ingredient_amounts",
-          "open_formula"
-        ],
-        "top": [
-          "transparent_formula",
-          "full_nutrition_panel"
-        ],
-        "average": [
-          "mostly_transparent"
-        ],
-        "poor": [
           "partial_disclosure",
-          "hidden_quantities"
-        ],
-        "worst": [
-          "proprietary_blend",
-          "undisclosed_dosages"
-        ]
-      },
-      "required_inputs": "ingredients.raw_text; nutritional.*; amino_acid_profile; active_ingredients; servings_per_container",
-      "missing_rule": "Always scorable - absence of disclosure IS the signal. This card never returns NOT SCORABLE."
-    },
-    "Testing & Trust": {
-      "applies_to": "All",
-      "status": "REVISED",
-      "purpose": "Independent verification of what is in the tub",
-      "tier_tags": {
-        "best": [
-          "nsf_certified_for_sport",
-          "informed_choice",
-          "heavy_metal_tested",
-          "banned_substance_certified"
-        ],
-        "top": [
-          "third_party_lab_tested",
-          "trustified_certified",
-          "batch_coa_available"
-        ],
-        "average": [
-          "gmp_facility",
-          "fssai_licensed"
-        ],
-        "poor": [
           "unverified_testing_claim"
         ],
         "worst": [
-          "no_quality_assurance",
+          "suspected_amino_spiking",
+          "proprietary_blend",
           "no_third_party_testing"
         ]
       },
-      "required_inputs": "category_data.certifications[]; tags; ingredients.raw_text",
-      "missing_rule": "Always scorable - absence of certification IS the score. Never NOT SCORABLE."
+      "required_inputs": "ingredients.raw_text; nutritional.*; amino_acid_profile; active_ingredients; certifications[]; servings_per_container",
+      "missing_rule": "Always scorable. Integrity pillar may be absent without raw text/recovery; blend renormalises over disclosure + verification. Proprietary blend is penalised once (disclosure)."
+    },
+    "Serving Honesty": {
+      "applies_to": "All",
+      "status": "REVISED",
+      "purpose": "Whether the stated serving size and pack math are honest and usable",
+      "tier_tags": {
+        "best": [
+          "standard_serving",
+          "scoop_stated",
+          "pack_math_checks"
+        ],
+        "top": [
+          "clear_serving",
+          "honest_scoop"
+        ],
+        "average": [
+          "typical_serving"
+        ],
+        "poor": [
+          "inflated_serving_size",
+          "scoop_unstated"
+        ],
+        "worst": [
+          "misleading_serving",
+          "pack_math_mismatch"
+        ]
+      },
+      "required_inputs": "serving_size; servings_per_container; pack weight / size",
+      "missing_rule": "Always scorable. Missing scoop or pack inconsistency is the signal; floor score 35."
     },
     "Sweeteners": {
       "applies_to": "All",
@@ -773,9 +702,9 @@
       "required_inputs": "amino_acid_profile; total_amino_acids; active_ingredients",
       "missing_rule": "If no AA data at all -> NOT SCORABLE. A BCAA/EAA product without an AA breakdown should also trigger the Transparency penalty."
     },
-    "Contaminant Safety": {
+    "Heavy metals": {
       "applies_to": "All",
-      "status": "NEW CARD",
+      "status": "RENAMED (was Contaminant Safety)",
       "purpose": "Heavy metals, microbial and pesticide contamination risk",
       "tier_tags": {
         "best": [

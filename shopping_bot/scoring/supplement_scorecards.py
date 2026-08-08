@@ -121,11 +121,8 @@ CARD_KEY_TO_NAME: Dict[str, str] = {
     "protein_efficiency": "Protein Efficiency",
     "bioavailability": "Bioavailability",
     "digestibility": "Digestibility",
-    "lean_formula": "Lean Formula",
-    "purity": "Purity & Label Integrity",
-    "transparency": "Transparency",
-    "testing_trust": "Testing & Trust",
-    "contaminant_safety": "Contaminant Safety",
+    "label_trust": "Label Trust",
+    "heavy_metals": "Heavy metals",
     "sweeteners": "Sweeteners",
     "serving_honesty": "Serving Honesty",
     "clinical_dose": "Clinical Dose",
@@ -179,23 +176,6 @@ PUMP_BETA_ALANINE_LADDER = _Ladder(((1.6, 25), (2.0, 60), (2.4, 75), (2.8, 88), 
 DOSE_RATIO_LADDER = _Ladder(((0.35, 15), (0.50, 50), (0.60, 62), (0.70, 72), (0.80, 82), (0.90, 90), (1.00, 100)), below=15)
 
 
-def _step(value: Optional[float], bands: Tuple[Tuple[float, float], ...], default: float) -> Optional[float]:
-    """Step ladder with `value <= threshold` semantics (Lean Formula sub-scores)."""
-    if value is None:
-        return None
-    for threshold, score in bands:
-        if value <= threshold:
-            return score
-    return default
-
-
-# Lean Formula sub-score bands (sheet 01 row 7 / sheet 03 row 42 for sodium).
-SUGAR_BANDS = ((0, 100), (1, 95), (2, 88), (3, 78), (5, 62), (8, 42))       # else 20
-FAT_BANDS = ((1.5, 100), (2, 95), (3, 88), (4, 78), (6, 62), (8, 45))        # >=8 -> 28
-CARB_BANDS = ((2, 100), (3, 95), (5, 85), (8, 70), (12, 52), (18, 35))       # >=18 -> 20
-SODIUM_BANDS = ((100, 100), (150, 92), (200, 84), (300, 70), (400, 52), (500, 35))  # >=500 -> 20
-
-
 # ── Sweetener anchors (sheet 01 row 11). Lower = worse. ───────────────────────
 SWEETENER_ANCHOR: Dict[str, float] = {
     "stevia": 97, "reba": 97, "steviol": 97,
@@ -209,8 +189,35 @@ SWEETENER_ANCHOR: Dict[str, float] = {
     "saccharin": 66, "ins954": 66,
     "aspartame": 65, "ins951": 65,
 }
+# Canonical display names for PDP value (match the scoring ladder labels).
+SWEETENER_DISPLAY_NAME: Dict[str, str] = {
+    "stevia": "Stevia", "reba": "Stevia", "steviol": "Stevia",
+    "monk_fruit": "Monk fruit", "monkfruit": "Monk fruit", "luo_han_guo": "Monk fruit",
+    "erythritol": "Erythritol",
+    "xylitol": "Xylitol", "maltitol": "Maltitol", "sorbitol": "Sorbitol",
+    "neotame": "Neotame", "ins961": "Neotame",
+    "sucralose": "Sucralose", "ins955": "Sucralose",
+    "acesulfame": "Ace-K", "acesulfame_k": "Ace-K", "ins950": "Ace-K", "ace_k": "Ace-K",
+    "saccharin": "Saccharin", "ins954": "Saccharin",
+    "aspartame": "Aspartame", "ins951": "Aspartame",
+}
 # Non-nutritive sweeteners that count toward the stacking penalty / caution tags.
 ARTIFICIAL_SWEETENER_INS = frozenset({"ins950", "ins951", "ins954", "ins955", "ins961"})
+
+_SWEETENER_NEGATIVE_TAGS = frozenset({
+    "contains_artificial_sweeteners",
+    "multiple_artificial_sweeteners",
+    "high_artificial_sweetener_load",
+    "high_added_sugar",
+})
+_SWEETENER_POSITIVE_TAGS = frozenset({
+    "unsweetened",
+    "stevia_sweetened",
+    "monk_fruit_sweetened",
+    "naturally_sweetened",
+    "low_artificial_sweetener_load",
+    "single_natural_sweetener",
+})
 
 # Hydrocolloid gums penalised in Digestibility (sheet 06: lecithin INS322 excluded).
 HYDROCOLLOID_GUM_INS = frozenset({"ins412", "ins415", "ins417", "ins466"})
@@ -260,6 +267,36 @@ def load_config() -> Dict[str, Any]:
         with _CONFIG_PATH.open(encoding="utf-8") as f:
             _config_cache = json.load(f)
     return _config_cache
+
+
+def clear_config_cache() -> None:
+    """Invalidate cached config (tests / hot-reload)."""
+    global _config_cache
+    _config_cache = None
+
+
+def get_settings() -> Dict[str, Any]:
+    return load_config().get("settings") or {}
+
+
+def get_clinical_thresholds() -> Dict[str, Tuple[float, str, float]]:
+    """active_key -> (threshold, unit, importance_weight) from settings."""
+    raw = get_settings().get("clinical_thresholds") or {}
+    out: Dict[str, Tuple[float, str, float]] = {}
+    for key, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        out[key] = (
+            float(entry.get("threshold", 0)),
+            str(entry.get("unit", "g")),
+            float(entry.get("weight", 1.0)),
+        )
+    return out
+
+
+def get_clinical_label(active_key: str) -> str:
+    entry = (get_settings().get("clinical_thresholds") or {}).get(active_key) or {}
+    return str(entry.get("label") or active_key.replace("_", " ").title())
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -350,6 +387,8 @@ class SupplementFeatures:
     eaa_share_of_total_aa: Optional[float] = None
     eaa_count: int = 0
     has_amino_profile: bool = False
+    leucine_pct_of_protein: Optional[float] = None
+    eaa_pct_of_protein: Optional[float] = None
     # ingredients
     protein_ingredients: List[str] = field(default_factory=list)
     additives: List[str] = field(default_factory=list)
@@ -363,6 +402,11 @@ class SupplementFeatures:
     price: Optional[float] = None
     scoop_stated: bool = False
     pack_weight_g: Optional[float] = None
+    has_proprietary_blend: bool = False
+    total_caffeine_mg: Optional[float] = None
+    creatine_purity_verified: bool = False
+    creatine_purity_pct: Optional[float] = None
+    protein_percentile: Optional[float] = None
 
 
 def extract_features(src: Dict[str, Any]) -> SupplementFeatures:
@@ -433,8 +477,10 @@ def extract_features(src: Dict[str, Any]) -> SupplementFeatures:
     if protein_100:
         if leucine_100 is not None:
             f.leucine_per_25g_protein = leucine_100 / protein_100 * 25.0
+            f.leucine_pct_of_protein = leucine_100 / protein_100 * 100.0
         if eaa_100 is not None:
             f.eaa_per_25g_protein = eaa_100 / protein_100 * 25.0
+            f.eaa_pct_of_protein = eaa_100 / protein_100 * 100.0
         if bcaa_100 is not None:
             f.bcaa_per_25g_protein = bcaa_100 / protein_100 * 25.0
         total_aa_100 = sum(x for x in (eaa_100, neaa_100, cond_100) if x is not None) or None
@@ -460,6 +506,8 @@ def extract_features(src: Dict[str, Any]) -> SupplementFeatures:
     raw = (src.get("ingredients") or {}).get("raw_text") or ""
     f.raw_text = str(raw)
     f.has_raw_text = bool(f.raw_text.strip())
+    text_l = f.raw_text.lower()
+    f.has_proprietary_blend = "proprietary" in text_l and "blend" in text_l
 
     actives = cd.get("active_ingredients")
     if isinstance(actives, dict) and actives:
@@ -471,7 +519,68 @@ def extract_features(src: Dict[str, Any]) -> SupplementFeatures:
         f.active_ingredients = parsed
         f.has_actives = bool(parsed)
     f.certifications = [c for c in (cd.get("certifications") or []) if isinstance(c, dict)]
+
+    f.total_caffeine_mg = _sum_caffeine_mg(f)
+    f.creatine_purity_verified, f.creatine_purity_pct = _creatine_purity_evidence(f, cd, src)
+
+    stats = src.get("stats") if isinstance(src.get("stats"), dict) else {}
+    f.protein_percentile = _num(
+        (stats.get("protein_percentiles") or {}).get("subcategory_percentile")
+    )
     return f
+
+
+def _sum_caffeine_mg(f: SupplementFeatures) -> Optional[float]:
+    tokens = [str(t).lower() for t in (get_settings().get("caffeine_source_tokens") or [])]
+    if not tokens:
+        tokens = ["caffeine", "green_tea", "guarana"]
+    total = 0.0
+    found = False
+    for raw_name, val in f.active_ingredients.items():
+        tok = _norm_token(raw_name)
+        raw_l = raw_name.lower()
+        if not any(t.replace(" ", "_") in tok or t in raw_l for t in tokens):
+            continue
+        unit = "mg" if "mg" in raw_l else ("g" if re.search(r"\bg\b", raw_l) or raw_l.endswith(" g") else "mg")
+        total += _to_threshold_unit(val, unit, "mg")
+        found = True
+    return total if found else None
+
+
+def _creatine_purity_evidence(
+    f: SupplementFeatures,
+    cd: Dict[str, Any],
+    src: Dict[str, Any],
+) -> Tuple[bool, Optional[float]]:
+    """Return (verified, assay_pct) when numeric creatine purity evidence exists."""
+    # certifications: name creatine_purity_verified or assay fields
+    for cert in f.certifications:
+        name = _norm_token(cert.get("name") or "")
+        if "creatine_purity" in name or name == "creatine_purity_verified":
+            pct = _num(cert.get("purity_pct") or cert.get("assay_pct") or cert.get("value"))
+            return True, pct
+        if "creapure" in name:
+            pct = _num(cert.get("purity_pct") or cert.get("assay_pct"))
+            return True, pct if pct is not None else 99.9
+
+    tags = cd.get("tags") if isinstance(cd.get("tags"), dict) else {}
+    raw_tags = tags.get("raw_tags") or tags.get("ingredient_tags") or []
+    if isinstance(raw_tags, list):
+        for t in raw_tags:
+            if _norm_token(str(t)) in ("creatine_purity_verified", "creapure_sourced"):
+                return True, None
+
+    # Structured assay on category_data
+    assay = cd.get("creatine_purity_pct") or cd.get("creatine_assay_pct")
+    if assay is not None:
+        return True, _num(assay)
+
+    # Evidence blob
+    evidence = cd.get("evidence") if isinstance(cd.get("evidence"), dict) else {}
+    if evidence.get("creatine_purity_verified"):
+        return True, _num(evidence.get("creatine_purity_pct"))
+
+    return False, None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -705,35 +814,22 @@ def score_digestibility(f: SupplementFeatures) -> CardResult:
     return CardResult("digestibility", name, score, True, _tier_tags(name, score), {"gum_count": n_gums})
 
 
-def score_lean_formula(f: SupplementFeatures) -> CardResult:
-    name = "Lean Formula"
-    is_gainer = f.weight_column == "Mass Gainer"
-    subs: Dict[str, Optional[float]] = {
-        "added_sugar": _step(f.added_sugar_g if f.added_sugar_g is not None else f.total_sugar_g, SUGAR_BANDS, 20),
-        "fat": _step(f.total_fat_g, FAT_BANDS, 28),
-        "sodium": _step(f.sodium_mg, SODIUM_BANDS, 20),
-    }
-    if is_gainer:
-        # Carbohydrate quantity is the product's purpose; score carb *source* instead.
-        malto = any("malto" in a or "dextrose" in a for a in f.additives) or "maltodextrin" in f.raw_text.lower()
-        subs["carb_source"] = 45.0 if malto else 90.0
-    else:
-        subs["carb"] = _step(f.carb_g, CARB_BANDS, 20)
-    present = {k: v for k, v in subs.items() if v is not None}
-    if len(present) < 2:
-        return CardResult("lean_formula", name, None, False)
-    score = round(_clamp(sum(present.values()) / len(present)))
-    return CardResult("lean_formula", name, score, True, _tier_tags(name, score), {"subs": present})
+def _cert_tokens(f: SupplementFeatures) -> List[Tuple[str, bool]]:
+    """Return [(normalised_name, verified)] for declared certifications."""
+    out = []
+    for c in f.certifications:
+        nm = _norm_token(str(c.get("name", "")))
+        out.append((nm, bool(c.get("verified", True))))
+    return out
 
 
-def score_purity(f: SupplementFeatures) -> CardResult:
-    name = "Purity & Label Integrity"
+def _pillar_label_integrity(f: SupplementFeatures) -> Tuple[Optional[float], List[str], Dict[str, Any]]:
+    """Purity pillar without proprietary_blend (deduped into disclosure)."""
     if not f.has_raw_text and f.amino_acid_recovery is None:
-        return CardResult("purity", name, None, False)
+        return None, [], {}
     score = 100.0
     tags: List[str] = []
     text = f.raw_text.lower()
-    # Filler penalties.
     first3 = ", ".join(text.split(",")[:3])
     if re.search(r"maltodextrin|dextrose|starch", first3):
         score -= 20
@@ -744,14 +840,12 @@ def score_purity(f: SupplementFeatures) -> CardResult:
         score -= 8
     if "flavour" in text or "flavor" in text:
         score -= 3
-    # Adulteration: free amino acids as separate ingredients in a protein product.
     if f.is_protein_category:
         for amino in SPIKING_FREE_AMINOS:
             if re.search(rf"\b{amino}\b", text):
                 score -= 25
                 tags.append("suspected_amino_spiking")
                 break
-    # Amino recovery ladder (sheet 03 row 39).
     rec = f.amino_acid_recovery
     if rec is not None:
         if rec < 0.75:
@@ -764,30 +858,27 @@ def score_purity(f: SupplementFeatures) -> CardResult:
             score -= 8
     else:
         tags.append("spiking_check_unavailable")
-    # Label integrity: protein % below category floor.
     floor = {"Whey Isolate": 75, "Whey Concentrate": 70, "Whey Blend": 65}.get(f.weight_column or "")
     if floor and f.protein_pct_by_weight is not None and f.protein_pct_by_weight < floor:
         score -= 15
         tags.append("label_mismatch")
-    if "proprietary" in text and "blend" in text:
-        score -= 20
-        tags.append("proprietary_blend")
-    elif len(f.protein_ingredients) >= 2:
+    # Multi-source blend penalty only (proprietary_blend lives in disclosure).
+    if not ("proprietary" in text and "blend" in text) and len(f.protein_ingredients) >= 2:
         score -= 10
-    score = round(_clamp(score))
-    return CardResult("purity", name, score, True, _tier_tags(name, score) + tags, {"recovery": rec})
+    return round(_clamp(score)), tags, {"recovery": rec}
 
 
-def score_transparency(f: SupplementFeatures) -> CardResult:
-    name = "Transparency"  # always scorable (sheet N-rule row 9)
+def _pillar_disclosure(f: SupplementFeatures) -> Tuple[float, List[str]]:
+    """Transparency pillar — always scorable; absence of disclosure is the signal."""
     score = 92.0
     tags: List[str] = []
     text = f.raw_text.lower()
     if "proprietary" in text and "blend" in text:
         score -= 40
         tags.append("proprietary_blend")
-    # Active doses undisclosed (only meaningful where actives are expected).
-    expects_actives = f.weight_column in {"Creatine", "Pre-Workout", "BCAA", "EAA", "Multivitamin", "Omega-3 / Fish Oil"}
+    expects_actives = f.weight_column in {
+        "Creatine", "Pre-Workout", "BCAA", "EAA", "Multivitamin", "Omega-3 / Fish Oil",
+    }
     if expects_actives and not f.has_actives:
         score -= 25
         tags.append("undisclosed_dosages")
@@ -801,22 +892,11 @@ def score_transparency(f: SupplementFeatures) -> CardResult:
         score -= 8
     if not re.search(r"batch|lot|mfg|manufactur", text):
         score -= 6
-    score = round(_clamp(score))
-    return CardResult("transparency", name, score, True, _tier_tags(name, score) + tags)
+    return round(_clamp(score)), tags
 
 
-def _cert_tokens(f: SupplementFeatures) -> List[Tuple[str, bool]]:
-    """Return [(normalised_name, verified)] for declared certifications."""
-    out = []
-    for c in f.certifications:
-        nm = _norm_token(str(c.get("name", "")))
-        out.append((nm, bool(c.get("verified", True))))
-    # Also scan raw_text/tags for common testing claims.
-    return out
-
-
-def score_testing_trust(f: SupplementFeatures) -> CardResult:
-    name = "Testing & Trust"  # always scorable (sheet N-rule row 10)
+def _pillar_verification(f: SupplementFeatures) -> Tuple[float, List[str], Dict[str, Any]]:
+    """Testing & Trust pillar — always scorable."""
     score = 0.0
     has_third_party = False
     for nm, verified in _cert_tokens(f):
@@ -829,20 +909,64 @@ def score_testing_trust(f: SupplementFeatures) -> CardResult:
             continue
         pts, tp = credit
         if not verified:
-            pts *= 0.5  # expired / unlisted -> 50% (sheet 01 row 10 hard-cap clause)
+            pts *= 0.5
         score += pts
         has_third_party = has_third_party or tp
     if not has_third_party:
-        score = min(score, 30.0)  # hard cap when no third-party evidence
+        score = min(score, 30.0)
     score = round(_clamp(score))
-    tags = _tier_tags(name, score)
+    tags: List[str] = []
     if not has_third_party:
         tags.append("no_third_party_testing")
-    return CardResult("testing_trust", name, score, True, tags, {"third_party": has_third_party})
+    return score, tags, {"third_party": has_third_party}
 
 
-def score_contaminant_safety(f: SupplementFeatures) -> CardResult:
-    name = "Contaminant Safety"  # always scorable (sheet N-rule row 16)
+_LABEL_TRUST_PILLAR_WEIGHTS = {
+    "integrity": 40.0,
+    "disclosure": 25.0,
+    "verification": 35.0,
+}
+
+
+def score_label_trust(f: SupplementFeatures) -> CardResult:
+    """Blend purity + transparency + testing into one Label Trust card."""
+    name = "Label Trust"
+    integrity, i_tags, i_detail = _pillar_label_integrity(f)
+    disclosure, d_tags = _pillar_disclosure(f)
+    verification, v_tags, v_detail = _pillar_verification(f)
+
+    pillars: Dict[str, float] = {
+        "disclosure": float(disclosure),
+        "verification": float(verification),
+    }
+    if integrity is not None:
+        pillars["integrity"] = float(integrity)
+
+    wsum = sum(_LABEL_TRUST_PILLAR_WEIGHTS[k] for k in pillars)
+    score = round(_clamp(
+        sum(pillars[k] * _LABEL_TRUST_PILLAR_WEIGHTS[k] for k in pillars) / wsum
+    ))
+
+    fact_tags: List[str] = []
+    for tag in i_tags + d_tags + v_tags:
+        if tag not in fact_tags:
+            fact_tags.append(tag)
+
+    return CardResult(
+        "label_trust", name, score, True,
+        _tier_tags(name, score) + fact_tags,
+        {
+            "integrity": integrity,
+            "disclosure": disclosure,
+            "verification": verification,
+            "recovery": i_detail.get("recovery"),
+            "third_party": v_detail.get("third_party"),
+        },
+    )
+
+
+def score_heavy_metals(f: SupplementFeatures) -> CardResult:
+    name = "Heavy metals"  # always scorable
     score = 55.0
     tags: List[str] = []
     cert_names = " ".join(nm for nm, _v in _cert_tokens(f))
@@ -861,8 +985,9 @@ def score_contaminant_safety(f: SupplementFeatures) -> CardResult:
         score += 8
     if "prop65" in cert_names or "prop 65" in text:
         score += 7
-    # Risk penalties.
-    is_plant = f.weight_column == "Plant Protein" or any(w in " ".join(f.protein_ingredients) for w in ("rice", "pea", "hemp"))
+    is_plant = f.weight_column == "Plant Protein" or any(
+        w in " ".join(f.protein_ingredients) for w in ("rice", "pea", "hemp")
+    )
     is_botanical = bool(re.search(r"ashwagandha|extract|herb|botanical", text))
     if is_botanical and not has_hm:
         score -= 15
@@ -874,7 +999,55 @@ def score_contaminant_safety(f: SupplementFeatures) -> CardResult:
     score = round(_clamp(score))
     if not has_hm:
         tags.append("no_contaminant_testing")
-    return CardResult("contaminant_safety", name, score, True, _tier_tags(name, score) + tags)
+    return CardResult("heavy_metals", name, score, True, _tier_tags(name, score) + tags)
+
+
+def _detect_sweetener_display_names(f: SupplementFeatures) -> List[str]:
+    """Return canonical sweetener labels present on the product (ordered, unique)."""
+    names: List[str] = []
+    seen: set = set()
+
+    def _add(label: str) -> None:
+        if label not in seen:
+            seen.add(label)
+            names.append(label)
+
+    for s in f.sweeteners:
+        tok = _norm_token(s)
+        matched = None
+        for key, label in SWEETENER_DISPLAY_NAME.items():
+            if key in tok:
+                matched = label
+                break
+        if matched:
+            _add(matched)
+        elif tok:
+            # Unknown non-nutritive token — surface a cleaned token, not the INS code alone.
+            _add(tok.replace("_", " ").title())
+    if f.added_sugar_g is not None and f.added_sugar_g > 5:
+        _add("Added sugar")
+    return names
+
+
+def _sweetener_label_severity(label: str) -> float:
+    """Lower = worse (more to avoid). Used to pick the single value name."""
+    if label == "Added sugar":
+        return 55.0
+    if label == "Unsweetened":
+        return 100.0
+    scores = [
+        SWEETENER_ANCHOR[k]
+        for k, v in SWEETENER_DISPLAY_NAME.items()
+        if v == label and k in SWEETENER_ANCHOR
+    ]
+    return min(scores) if scores else 72.0
+
+
+def _worst_sweetener_name(names: List[str]) -> str:
+    """Pick the single worst (most avoidable) sweetener label."""
+    if not names:
+        return "Unsweetened"
+    return min(names, key=lambda n: (_sweetener_label_severity(n), n))
 
 
 def score_sweeteners(f: SupplementFeatures) -> CardResult:
@@ -883,11 +1056,23 @@ def score_sweeteners(f: SupplementFeatures) -> CardResult:
     added_sugar = f.added_sugar_g
     if not sweeteners and not f.has_raw_text:
         return CardResult("sweeteners", name, None, False)
+    display_names = _detect_sweetener_display_names(f)
     if not sweeteners:
         # No sweetener system detected.
         base = 55.0 if (added_sugar and added_sugar > 5) else 100.0
         score = round(base)
-        return CardResult("sweeteners", name, score, True, _tier_tags(name, score))
+        if not display_names:
+            display_names = ["Added sugar"] if base < 100 else ["Unsweetened"]
+        primary = _worst_sweetener_name(display_names)
+        return CardResult(
+            "sweeteners", name, score, True, _tier_tags(name, score),
+            {
+                "anchor": base,
+                "artificial": 0,
+                "detected_names": display_names,
+                "primary_name": primary,
+            },
+        )
     anchors = []
     artificial = 0
     for s in sweeteners:
@@ -913,13 +1098,22 @@ def score_sweeteners(f: SupplementFeatures) -> CardResult:
         tags.append("contains_artificial_sweeteners")
     if artificial >= 2:
         tags.append("multiple_artificial_sweeteners")
-    return CardResult("sweeteners", name, score, True, tags, {"anchor": anchor, "artificial": artificial})
+    primary = _worst_sweetener_name(display_names)
+    return CardResult(
+        "sweeteners", name, score, True, tags,
+        {
+            "anchor": anchor,
+            "artificial": artificial,
+            "detected_names": display_names,
+            "primary_name": primary,
+        },
+    )
 
 
 # ── Actives-based cards (Clinical Dose / Stimulant / Pump / Recovery) ─────────
-# Clinical-dose reference thresholds (sheet 03), converted to (grams-or-mg, unit).
-CLINICAL_THRESHOLDS: Dict[str, Tuple[float, str, float]] = {
-    # active_key: (threshold, unit, importance_weight)
+# Clinical-dose reference thresholds live in settings.clinical_thresholds (JSON).
+# Fallback defaults match framework v2 sheet 03 when settings are missing.
+_DEFAULT_CLINICAL_THRESHOLDS: Dict[str, Tuple[float, str, float]] = {
     "creatine": (3.0, "g", 1.0),
     "beta_alanine": (3.2, "g", 0.7),
     "citrulline": (6.0, "g", 1.0),
@@ -934,6 +1128,16 @@ CLINICAL_THRESHOLDS: Dict[str, Tuple[float, str, float]] = {
     "vitamin_d3": (600.0, "iu", 0.7),
     "epa_dha": (750.0, "mg", 1.0),
 }
+
+
+def _clinical_thresholds() -> Dict[str, Tuple[float, str, float]]:
+    loaded = get_clinical_thresholds()
+    return loaded if loaded else dict(_DEFAULT_CLINICAL_THRESHOLDS)
+
+
+# Back-compat alias used by older tests / imports.
+CLINICAL_THRESHOLDS = _DEFAULT_CLINICAL_THRESHOLDS
+
 _PRIMARY_ACTIVE_BY_COLUMN = {
     "Creatine": "creatine", "Pre-Workout": "caffeine", "BCAA": "leucine",
     "EAA": "leucine", "Multivitamin": "vitamin_d3", "Omega-3 / Fish Oil": "epa_dha",
@@ -977,17 +1181,19 @@ def _to_threshold_unit(value: float, unit: str, threshold_unit: str) -> float:
 
 def score_clinical_dose(f: SupplementFeatures) -> CardResult:
     name = "Clinical Dose"
+    thresholds = _clinical_thresholds()
     if not f.has_actives:
         return CardResult("clinical_dose", name, 25.0, True,
                           _tier_tags(name, 25.0) + ["undisclosed_dosages"], {"reason": "no_actives"})
     primary = _PRIMARY_ACTIVE_BY_COLUMN.get(f.weight_column or "")
     sub_scores: List[Tuple[str, float, float]] = []  # (key, score, weight)
+    dose_ratios: Dict[str, float] = {}
     primary_ratio = None
     for raw_name in f.active_ingredients:
         key = _match_active_key(raw_name)
-        if key is None or key not in CLINICAL_THRESHOLDS:
+        if key is None or key not in thresholds:
             continue
-        threshold, tunit, weight = CLINICAL_THRESHOLDS[key]
+        threshold, tunit, weight = thresholds[key]
         amt = _active_amount(f, key)
         if amt is None:
             continue
@@ -995,6 +1201,7 @@ def score_clinical_dose(f: SupplementFeatures) -> CardResult:
         if key == "citrulline" and "malate" in _norm_token(raw_name):
             val *= 0.5  # Citrulline Malate 2:1 -> pure citrulline (sheet 03 row 4)
         ratio = val / threshold if threshold else 0
+        dose_ratios[key] = ratio
         s = DOSE_RATIO_LADDER.score(ratio)
         sub_scores.append((key, s if s is not None else 15.0, weight))
         if key == primary:
@@ -1009,7 +1216,7 @@ def score_clinical_dose(f: SupplementFeatures) -> CardResult:
         tags.append("underdosed")
     score = round(_clamp(score))
     return CardResult("clinical_dose", name, score, True, _tier_tags(name, score) + tags,
-                      {"primary": primary, "primary_ratio": primary_ratio})
+                      {"primary": primary, "primary_ratio": primary_ratio, "dose_ratios": dose_ratios})
 
 
 def score_stimulant_balance(f: SupplementFeatures) -> CardResult:
@@ -1104,11 +1311,19 @@ def score_recovery_formula(f: SupplementFeatures) -> CardResult:
         return CardResult("recovery_formula", name, None, False)
     wsum = sum(w for _s, w in present.values())
     score = sum(s * w for s, w in present.values()) / wsum
-    bcaa_only = f.eaa_count and f.eaa_count < 9 and f.eaa_count <= 3
+    bcaa_only = bool(f.eaa_count and f.eaa_count < 9 and f.eaa_count <= 3)
     if bcaa_only:
         score = min(score, 55.0)  # BCAA-only cap (sheet 01 row 15)
     score = round(_clamp(score))
-    return CardResult("recovery_formula", name, score, True, _tier_tags(name, score))
+    return CardResult(
+        "recovery_formula", name, score, True, _tier_tags(name, score),
+        {
+            "eaa_count": f.eaa_count,
+            "leucine_g_per_serving": f.leucine_g_per_serving,
+            "eaa_g_per_serving": f.eaa_g_per_serving,
+            "bcaa_only": bcaa_only,
+        },
+    )
 
 
 def score_serving_honesty(f: SupplementFeatures) -> CardResult:
@@ -1140,11 +1355,8 @@ CARD_SCORERS = {
     "protein_efficiency": score_protein_efficiency,
     "bioavailability": score_bioavailability,
     "digestibility": score_digestibility,
-    "lean_formula": score_lean_formula,
-    "purity": score_purity,
-    "transparency": score_transparency,
-    "testing_trust": score_testing_trust,
-    "contaminant_safety": score_contaminant_safety,
+    "label_trust": score_label_trust,
+    "heavy_metals": score_heavy_metals,
     "sweeteners": score_sweeteners,
     "serving_honesty": score_serving_honesty,
     "clinical_dose": score_clinical_dose,
@@ -1152,6 +1364,680 @@ CARD_SCORERS = {
     "pump_formula": score_pump_formula,
     "recovery_formula": score_recovery_formula,
 }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Audit presenters (buyer-facing value/subtitle/tags; scores unchanged)
+# ══════════════════════════════════════════════════════════════════════════════
+_MUTED_TIER = {"status": "average", "status_label": "Average", "color": "#9CA3AF", "theme": "average"}
+
+# Match es_products highlight subtitle_new palette so Flutter renders identically.
+_SUBTITLE_POSITIVE = "#2E7D32"
+_SUBTITLE_NEUTRAL = "#B49A61"
+_SUBTITLE_NEGATIVE = "#C62828"
+
+
+def _subtitle_entry(label: str, sentiment: str = "positive") -> Dict[str, str]:
+    color = {
+        "positive": _SUBTITLE_POSITIVE,
+        "neutral": _SUBTITLE_NEUTRAL,
+        "negative": _SUBTITLE_NEGATIVE,
+    }.get(sentiment, _SUBTITLE_NEUTRAL)
+    return {"tag_label": label, "color_code": color}
+
+
+def _fmt_rupees(v: float) -> str:
+    if abs(v - round(v)) < 1e-9:
+        return f"₹{v:.0f}"
+    if v >= 100:
+        return f"₹{v:.0f}"
+    if v >= 10:
+        return f"₹{v:.1f}"
+    return f"₹{v:.2f}"
+
+
+def _amino_integrity_ok(f: SupplementFeatures) -> bool:
+    gates = get_settings().get("amino_integrity") or {}
+    leu_min = float(gates.get("leucine_pct_of_protein_min", 10.0))
+    eaa_min = float(gates.get("eaa_pct_of_protein_min", 40.0))
+    if f.leucine_pct_of_protein is None or f.eaa_pct_of_protein is None:
+        return False
+    return f.leucine_pct_of_protein >= leu_min and f.eaa_pct_of_protein >= eaa_min
+
+
+def _doses_undisclosed(f: SupplementFeatures, card: Dict[str, Any]) -> bool:
+    tags = card.get("tags") or []
+    return (
+        f.has_proprietary_blend
+        or not f.has_actives
+        or "undisclosed_dosages" in tags
+        or (card.get("detail") or {}).get("reason") == "no_actives"
+    )
+
+
+def present_protein_quality(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep Protein Quality tier value; emit facts as ``subtitle_new`` array.
+
+    Same shape as non-supplement cards::
+        [{"tag_label": "Complete amino profile", "color_code": "#2E7D32"}, ...]
+    Legacy ``subtitle`` stays a short fallback (Score: N).
+    """
+    out = dict(card)
+    out["title"] = "Protein Quality"
+    tags = list(card.get("tags") or [])
+    detail = card.get("detail") or {}
+
+    # Keep scorer tier label in value (Best / Top / Average / …).
+    if not out.get("value") and card.get("score") is not None:
+        out["value"] = tier_for_score(card["score"])["label"]
+
+    subtitle_new: List[Dict[str, str]] = []
+    completeness = detail.get("completeness")
+    if completeness is not None and completeness >= 100:
+        subtitle_new.append(_subtitle_entry("Complete amino profile", "positive"))
+        if "complete_protein" not in tags:
+            tags.append("complete_protein")
+    elif completeness is not None:
+        subtitle_new.append(_subtitle_entry("Incomplete amino profile", "negative"))
+        if "incomplete_amino_profile" not in tags:
+            tags.append("incomplete_amino_profile")
+    elif not f.has_amino_profile:
+        subtitle_new.append(_subtitle_entry("Amino profile unknown", "neutral"))
+
+    pct = f.protein_pct_by_weight
+    if pct is not None:
+        sentiment = "positive" if pct >= 75 else ("neutral" if pct >= 60 else "negative")
+        subtitle_new.append(_subtitle_entry(f"{pct:.0f}% protein", sentiment))
+
+    if len(f.protein_ingredients) == 1:
+        subtitle_new.append(_subtitle_entry("Single source", "positive"))
+    elif len(f.protein_ingredients) > 1:
+        subtitle_new.append(_subtitle_entry("Multi-source blend", "neutral"))
+
+    if subtitle_new:
+        out["subtitle_new"] = subtitle_new
+    out["subtitle"] = f"Score: {card.get('score')}" if card.get("score") is not None else ""
+    out["tags"] = tags
+    return out
+
+
+def present_protein_audit(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    """Overwrite Protein Efficiency slot with Protein audit presentation.
+
+    ``subtitle_new`` only carries cost-per-gram protein when price, protein_g,
+    and servings_per_container are all available.
+    """
+    out = dict(card)
+    out["title"] = "Protein"
+    tags = list(card.get("tags") or [])
+
+    if f.protein_g is not None:
+        out["value"] = f"{f.protein_g:.0f} g / Scoop"
+    else:
+        out["value"] = card.get("value") or "—"
+
+    if f.protein_percentile is not None:
+        out["percentile"] = round(f.protein_percentile, 1)
+
+    subtitle_new: List[Dict[str, str]] = []
+    if (
+        f.price is not None
+        and f.protein_g
+        and f.servings_per_container
+        and f.protein_g * f.servings_per_container > 0
+    ):
+        cost = f.price / (f.protein_g * f.servings_per_container)
+        subtitle_new.append(_subtitle_entry(f"{_fmt_rupees(cost)}/g", "neutral"))
+
+    if subtitle_new:
+        out["subtitle_new"] = subtitle_new
+    out["subtitle"] = f"Score: {card.get('score')}" if card.get("score") is not None else ""
+    out["tags"] = tags
+    return out
+
+
+def _humanize_tag(tag: str) -> str:
+    return str(tag).replace("_", " ").strip().capitalize()
+
+
+def _two_word_label(label: str) -> str:
+    """Clamp a display label to at most two words."""
+    words = [w for w in str(label).split() if w]
+    return " ".join(words[:2]) if words else str(label)
+
+
+# Short buyer-facing labels for Sweeteners subtitle_new (max 2 words).
+_SWEETENER_TAG_LABELS: Dict[str, str] = {
+    "unsweetened": "Unsweetened",
+    "stevia_sweetened": "Stevia sweetened",
+    "monk_fruit_sweetened": "Monk fruit",
+    "naturally_sweetened": "Naturally sweetened",
+    "low_artificial_sweetener_load": "Low artificial",
+    "single_natural_sweetener": "Single natural",
+    "mixed_sweetener_system": "Mixed sweeteners",
+    "contains_artificial_sweeteners": "Artificial sweeteners",
+    "multiple_artificial_sweeteners": "Multiple artificial",
+    "high_artificial_sweetener_load": "High artificial",
+    "high_added_sugar": "Added sugar",
+}
+
+
+def _sweetener_tag_label(tag: str) -> str:
+    if tag in _SWEETENER_TAG_LABELS:
+        return _SWEETENER_TAG_LABELS[tag]
+    return _two_word_label(_humanize_tag(tag))
+
+
+def present_sweeteners(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    """Sweeteners: value = worst single sweetener; subtitle_new = ≤2-word tags."""
+    out = dict(card)
+    out["title"] = "Sweeteners"
+    tags = list(card.get("tags") or [])
+    detail = card.get("detail") or {}
+
+    names = list(detail.get("detected_names") or _detect_sweetener_display_names(f))
+    primary = detail.get("primary_name") or _worst_sweetener_name(names)
+    out["value"] = primary
+
+    # Prefer score-derived status_label for color coding; keep status from scorer.
+    if card.get("score") is not None and not out.get("status_label"):
+        out["status_label"] = tier_for_score(card["score"])["label"]
+
+    subtitle_new: List[Dict[str, str]] = []
+    for tag in tags:
+        if tag in _SWEETENER_NEGATIVE_TAGS:
+            sentiment = "negative"
+        elif tag in _SWEETENER_POSITIVE_TAGS:
+            sentiment = "positive"
+        else:
+            sentiment = "neutral"
+        subtitle_new.append(_subtitle_entry(_sweetener_tag_label(tag), sentiment))
+
+    if subtitle_new:
+        out["subtitle_new"] = subtitle_new
+    out["subtitle"] = f"Score: {card.get('score')}" if card.get("score") is not None else ""
+    out["tags"] = tags
+    return out
+
+
+_DIGESTIBILITY_POSITIVE_TAGS = frozenset({
+    "easy_to_digest",
+    "added_digestive_enzymes",
+    "lactose_free",
+    "gut_friendly",
+    "low_lactose",
+})
+_DIGESTIBILITY_NEGATIVE_TAGS = frozenset({
+    "heavy_formula",
+    "high_thickener_load",
+    "hard_to_digest",
+    "high_lactose_load",
+})
+
+
+def present_digestibility(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    """Digestibility: keep tier value; emit tier tags as ``subtitle_new``."""
+    out = dict(card)
+    out["title"] = "Digestibility"
+    tags = list(card.get("tags") or [])
+
+    if card.get("score") is not None:
+        tier = tier_for_score(card["score"])
+        out["value"] = tier["label"]
+        if not out.get("status_label"):
+            out["status_label"] = tier["label"]
+
+    subtitle_new: List[Dict[str, str]] = []
+    for tag in tags:
+        if tag in _DIGESTIBILITY_NEGATIVE_TAGS:
+            sentiment = "negative"
+        elif tag in _DIGESTIBILITY_POSITIVE_TAGS:
+            sentiment = "positive"
+        else:
+            sentiment = "neutral"
+        subtitle_new.append(_subtitle_entry(_humanize_tag(tag), sentiment))
+
+    if subtitle_new:
+        out["subtitle_new"] = subtitle_new
+    out["subtitle"] = f"Score: {card.get('score')}" if card.get("score") is not None else ""
+    out["tags"] = tags
+    return out
+
+
+_LABEL_TRUST_NEGATIVE_TAGS = frozenset({
+    "proprietary_blend",
+    "undisclosed_dosages",
+    "suspected_amino_spiking",
+    "maltodextrin_bulked",
+    "label_mismatch",
+    "label_claim_unverified",
+    "no_third_party_testing",
+    "no_amino_profile_published",
+    "contains_fillers",
+    "heavy_fillers",
+    "partial_disclosure",
+    "hidden_quantities",
+    "unverified_testing_claim",
+    "no_quality_assurance",
+})
+_LABEL_TRUST_POSITIVE_TAGS = frozenset({
+    "no_fillers",
+    "label_verified",
+    "pharmaceutical_grade",
+    "high_purity",
+    "minimal_fillers",
+    "fully_transparent",
+    "exact_ingredient_amounts",
+    "open_formula",
+    "transparent_formula",
+    "full_nutrition_panel",
+    "nsf_certified_for_sport",
+    "informed_choice",
+    "banned_substance_certified",
+    "third_party_lab_tested",
+    "trustified_certified",
+    "batch_coa_available",
+})
+_LABEL_TRUST_TAG_LABELS: Dict[str, str] = {
+    "proprietary_blend": "Proprietary blend",
+    "undisclosed_dosages": "Hidden doses",
+    "suspected_amino_spiking": "Amino spiking",
+    "maltodextrin_bulked": "Maltodextrin bulk",
+    "label_mismatch": "Label mismatch",
+    "label_claim_unverified": "Unverified claim",
+    "no_third_party_testing": "No lab testing",
+    "no_amino_profile_published": "No amino profile",
+    "spiking_check_unavailable": "Spiking unchecked",
+    "open_formula": "Open formula",
+    "fully_transparent": "Fully transparent",
+    "label_verified": "Label verified",
+    "nsf_certified_for_sport": "NSF Sport",
+    "informed_choice": "Informed Choice",
+    "third_party_lab_tested": "Lab tested",
+    "batch_coa_available": "Batch COA",
+    "no_fillers": "No fillers",
+    "high_purity": "High purity",
+}
+
+_HEAVY_METALS_NEGATIVE_TAGS = frozenset({
+    "no_contaminant_testing",
+    "untested_botanical_blend",
+    "high_risk_formulation",
+})
+_HEAVY_METALS_POSITIVE_TAGS = frozenset({
+    "heavy_metal_tested",
+    "below_prop65_limits",
+    "pesticide_screened",
+    "contaminant_panel_published",
+})
+_HEAVY_METALS_TAG_LABELS: Dict[str, str] = {
+    "no_contaminant_testing": "Untested metals",
+    "untested_botanical_blend": "Untested botanicals",
+    "high_risk_formulation": "High risk",
+    "heavy_metal_tested": "Metals tested",
+    "below_prop65_limits": "Prop65 clear",
+    "pesticide_screened": "Pesticide screened",
+    "contaminant_panel_published": "Panel published",
+    "gmp_facility_only": "GMP only",
+}
+
+
+def _pick_subtitle_tags(tags: List[str], negative: frozenset, positive: frozenset, limit: int = 3) -> List[str]:
+    """Prefer actionable failures, then proofs; fall back to remaining tier tags."""
+    neg = [t for t in tags if t in negative]
+    pos = [t for t in tags if t in positive]
+    other = [t for t in tags if t not in negative and t not in positive]
+    picked: List[str] = []
+    for group in (neg, pos, other):
+        for t in group:
+            if t not in picked:
+                picked.append(t)
+            if len(picked) >= limit:
+                return picked
+    return picked
+
+
+def _present_tier_tag_card(
+    card: Dict[str, Any],
+    title: str,
+    negative: frozenset,
+    positive: frozenset,
+    label_map: Dict[str, str],
+    chip_limit: int = 3,
+) -> Dict[str, Any]:
+    out = dict(card)
+    out["title"] = title
+    tags = list(card.get("tags") or [])
+
+    if card.get("score") is not None:
+        tier = tier_for_score(card["score"])
+        out["value"] = tier["label"]
+        if not out.get("status_label"):
+            out["status_label"] = tier["label"]
+
+    subtitle_new: List[Dict[str, str]] = []
+    for tag in _pick_subtitle_tags(tags, negative, positive, limit=chip_limit):
+        if tag in negative:
+            sentiment = "negative"
+        elif tag in positive:
+            sentiment = "positive"
+        else:
+            sentiment = "neutral"
+        label = label_map.get(tag) or _two_word_label(_humanize_tag(tag))
+        subtitle_new.append(_subtitle_entry(label, sentiment))
+
+    if subtitle_new:
+        out["subtitle_new"] = subtitle_new
+    out["subtitle"] = f"Score: {card.get('score')}" if card.get("score") is not None else ""
+    out["tags"] = tags
+    return out
+
+
+def present_label_trust(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    return _present_tier_tag_card(
+        card, "Label Trust",
+        _LABEL_TRUST_NEGATIVE_TAGS, _LABEL_TRUST_POSITIVE_TAGS, _LABEL_TRUST_TAG_LABELS,
+    )
+
+
+def present_heavy_metals(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    return _present_tier_tag_card(
+        card, "Heavy metals",
+        _HEAVY_METALS_NEGATIVE_TAGS, _HEAVY_METALS_POSITIVE_TAGS, _HEAVY_METALS_TAG_LABELS,
+    )
+
+
+_SERVING_HONESTY_POSITIVE_TAGS = frozenset({
+    "standard_serving",
+    "scoop_stated",
+    "pack_math_checks",
+    "clear_serving",
+    "honest_scoop",
+})
+_SERVING_HONESTY_NEGATIVE_TAGS = frozenset({
+    "inflated_serving_size",
+    "scoop_unstated",
+    "misleading_serving",
+    "pack_math_mismatch",
+})
+_SERVING_HONESTY_TAG_LABELS: Dict[str, str] = {
+    "standard_serving": "Standard serving",
+    "scoop_stated": "Scoop stated",
+    "pack_math_checks": "Pack checks",
+    "clear_serving": "Clear serving",
+    "honest_scoop": "Honest scoop",
+    "typical_serving": "Typical serving",
+    "inflated_serving_size": "Inflated serving",
+    "scoop_unstated": "Scoop missing",
+    "misleading_serving": "Misleading serving",
+    "pack_math_mismatch": "Pack mismatch",
+}
+
+
+def present_serving_honesty(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    return _present_tier_tag_card(
+        card, "Serving Honesty",
+        _SERVING_HONESTY_NEGATIVE_TAGS, _SERVING_HONESTY_POSITIVE_TAGS, _SERVING_HONESTY_TAG_LABELS,
+    )
+
+
+_CLINICAL_DOSE_POSITIVE_TAGS = frozenset({
+    "clinically_dosed",
+    "evidence_based_dose",
+    "full_clinical_dose",
+    "well_dosed",
+    "near_clinical_dose",
+})
+_CLINICAL_DOSE_NEGATIVE_TAGS = frozenset({
+    "underdosed",
+    "sub_clinical",
+    "severely_underdosed",
+    "ineffective_dose",
+    "fairy_dusted",
+    "undisclosed_dosages",
+    "doses_not_disclosed",
+})
+_CLINICAL_DOSE_TAG_LABELS: Dict[str, str] = {
+    "clinically_dosed": "Clinically dosed",
+    "evidence_based_dose": "Evidence based",
+    "full_clinical_dose": "Full clinical",
+    "well_dosed": "Well dosed",
+    "near_clinical_dose": "Near clinical",
+    "moderately_dosed": "Moderate dose",
+    "partial_dose": "Partial dose",
+    "underdosed": "Underdosed",
+    "sub_clinical": "Sub clinical",
+    "severely_underdosed": "Severely underdosed",
+    "ineffective_dose": "Ineffective dose",
+    "fairy_dusted": "Fairy dusted",
+    "undisclosed_dosages": "Doses hidden",
+    "doses_not_disclosed": "Doses hidden",
+}
+
+
+def _attach_clinical_tier_subtitle(out: Dict[str, Any], tags: List[str]) -> None:
+    presented = _present_tier_tag_card(
+        {**out, "tags": tags},
+        out.get("title") or "Clinical Dose",
+        _CLINICAL_DOSE_NEGATIVE_TAGS,
+        _CLINICAL_DOSE_POSITIVE_TAGS,
+        _CLINICAL_DOSE_TAG_LABELS,
+    )
+    if presented.get("subtitle_new"):
+        out["subtitle_new"] = presented["subtitle_new"]
+
+
+def present_clinical_dose(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    """Clinical Dose: value = tier label; subtitle_new = tier tags."""
+    out = dict(card)
+    out["title"] = "Clinical Dose"
+    tags = list(card.get("tags") or [])
+
+    if "undisclosed_dosages" in tags or not f.has_actives:
+        out["value"] = "Doses not disclosed by brand"
+        out.update(_MUTED_TIER)
+    elif card.get("score") is not None:
+        tier = tier_for_score(card["score"])
+        out["value"] = tier["label"]
+        if not out.get("status_label"):
+            out["status_label"] = tier["label"]
+
+    _attach_clinical_tier_subtitle(out, tags)
+    out["subtitle"] = f"Score: {card.get('score')}" if card.get("score") is not None else ""
+    out["tags"] = tags
+    return out
+
+
+def present_creatine_audit(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(card)
+    out["title"] = "Creatine"
+    tags = list(card.get("tags") or [])
+    dose_g = float(get_settings().get("creatine_effective_dose_g", 5.0))
+
+    # Proprietary blend: honest disclosure message (still emit the card).
+    if f.has_proprietary_blend:
+        out["value"] = "Doses not disclosed by brand"
+        out.update(_MUTED_TIER)
+        if "doses_not_disclosed" not in tags:
+            tags.append("doses_not_disclosed")
+        out["tags"] = tags
+        out["subtitle"] = "Proprietary blend — amounts hidden"
+        _attach_clinical_tier_subtitle(out, tags)
+        return out
+
+    if card.get("score") is not None:
+        tier = tier_for_score(card["score"])
+        out["value"] = tier["label"]
+        if not out.get("status_label"):
+            out["status_label"] = tier["label"]
+
+    parts: List[str] = []
+    if f.price is not None and f.pack_weight_g and f.pack_weight_g > 0 and dose_g > 0:
+        doses_in_tub = f.pack_weight_g / dose_g
+        cost = f.price / doses_in_tub
+        parts.append(f"{_fmt_rupees(cost)}/{dose_g:.0f} g dose")
+        parts.append(f"Tub lasts {doses_in_tub:.0f} days")
+    if f.creatine_purity_verified and f.creatine_purity_pct is not None:
+        parts.append(f"{f.creatine_purity_pct:.1f}% assayed")
+    elif f.creatine_purity_verified:
+        parts.append("Assayed")
+    else:
+        parts.append("Not assayed.")
+    out["subtitle"] = " · ".join(parts) if parts else f"Score: {card.get('score')}"
+
+    if f.creatine_purity_verified and "creatine_purity_verified" not in tags:
+        tags.append("creatine_purity_verified")
+    out["tags"] = tags
+    _attach_clinical_tier_subtitle(out, tags)
+    return out
+
+
+def present_preworkout_audit(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(card)
+    out["title"] = "Pre-Workout"
+    tags = list(card.get("tags") or [])
+    espresso_mg = float(get_settings().get("espresso_caffeine_mg", 63.0))
+
+    if f.has_proprietary_blend or not f.has_actives or "undisclosed_dosages" in tags:
+        out["value"] = "Doses not disclosed by brand"
+        out.update(_MUTED_TIER)
+        if "doses_not_disclosed" not in tags:
+            tags.append("doses_not_disclosed")
+        out["subtitle"] = "Doses not disclosed by brand"
+        out["tags"] = tags
+        _attach_clinical_tier_subtitle(out, tags)
+        return out
+
+    if card.get("score") is not None:
+        tier = tier_for_score(card["score"])
+        out["value"] = tier["label"]
+        if not out.get("status_label"):
+            out["status_label"] = tier["label"]
+
+    thresholds = _clinical_thresholds()
+    ratios = (card.get("detail") or {}).get("dose_ratios") or {}
+    if not ratios:
+        for raw_name in f.active_ingredients:
+            key = _match_active_key(raw_name)
+            if key is None or key not in thresholds:
+                continue
+            threshold, tunit, _w = thresholds[key]
+            amt = _active_amount(f, key)
+            if amt is None:
+                continue
+            val = _to_threshold_unit(amt[0], amt[1], tunit)
+            if key == "citrulline" and "malate" in _norm_token(raw_name):
+                val *= 0.5
+            ratios[key] = val / threshold if threshold else 0.0
+
+    bar_parts: List[str] = []
+    caff = f.total_caffeine_mg
+    if caff is None:
+        amt = _active_amount(f, "caffeine")
+        if amt:
+            caff = _to_threshold_unit(amt[0], amt[1], "mg")
+    if caff is not None and espresso_mg > 0:
+        bar_parts.append(f"{caff / espresso_mg:.1f} espressos")
+    for key, ratio in ratios.items():
+        pct = min(100.0, max(0.0, float(ratio) * 100.0))
+        bar_parts.append(f"{get_clinical_label(key)} {pct:.0f}%")
+    out["subtitle"] = " · ".join(bar_parts) if bar_parts else f"Score: {card.get('score')}"
+    out["tags"] = tags
+    _attach_clinical_tier_subtitle(out, tags)
+    return out
+
+
+def present_eaa_audit(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(card)
+    out["title"] = "EAA"
+    tags = list(card.get("tags") or [])
+    mps = float(get_settings().get("mps_leucine_g", 2.5))
+    detail = card.get("detail") or {}
+    bcaa_only = bool(detail.get("bcaa_only")) or (f.eaa_count > 0 and f.eaa_count <= 3)
+
+    if not card.get("scorable") or card.get("score") is None:
+        out["scorable"] = True
+        out["score"] = card.get("score")
+        out["value"] = "Amino profile not disclosed"
+        out.update(_MUTED_TIER)
+        out["subtitle"] = "Amino profile not disclosed"
+        if "amino_profile_not_disclosed" not in tags:
+            tags.append("amino_profile_not_disclosed")
+        out["tags"] = tags
+        # Ensure status fields exist for PDP
+        if out.get("score") is None:
+            out["score"] = 0
+        return out
+
+    if bcaa_only:
+        out["value"] = "BCAA-only"
+    else:
+        count = f.eaa_count or int(detail.get("eaa_count") or 0)
+        out["value"] = f"{count}/9 complete"
+
+    parts: List[str] = []
+    leu = f.leucine_g_per_serving if f.leucine_g_per_serving is not None else detail.get("leucine_g_per_serving")
+    if leu is not None:
+        parts.append(f"Leucine {float(leu):.1f} g (MPS {mps:g} g)")
+    eaa_g = f.eaa_g_per_serving if f.eaa_g_per_serving is not None else detail.get("eaa_g_per_serving")
+    if (
+        f.price is not None
+        and eaa_g
+        and f.servings_per_container
+        and float(eaa_g) * f.servings_per_container > 0
+    ):
+        cost = f.price / (float(eaa_g) * f.servings_per_container)
+        parts.append(f"{_fmt_rupees(cost)}/g EAA")
+    out["subtitle"] = " · ".join(parts) if parts else f"Score: {card.get('score')}"
+    out["tags"] = tags
+    return out
+
+
+def audit_slot_for(weight_column: Optional[str], card_key: str) -> Optional[str]:
+    """Return audit kind if this card key should get audit presentation for the leaf."""
+    if card_key == "protein_efficiency" and weight_column in PROTEIN_LEAVES:
+        return "protein"
+    if card_key == "clinical_dose" and weight_column == "Creatine":
+        return "creatine"
+    if card_key == "clinical_dose" and weight_column == "Pre-Workout":
+        return "pre_workout"
+    if card_key == "recovery_formula" and weight_column in ("EAA", "BCAA"):
+        return "eaa"
+    return None
+
+
+def apply_audit_presentation(
+    cards: Dict[str, Dict[str, Any]],
+    features: SupplementFeatures,
+) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    for key, card in cards.items():
+        kind = audit_slot_for(features.weight_column, key)
+        if key == "protein_quality" and features.weight_column in PROTEIN_LEAVES and card.get("scorable"):
+            out[key] = present_protein_quality(features, card)
+        elif key == "sweeteners" and card.get("scorable"):
+            out[key] = present_sweeteners(features, card)
+        elif key == "digestibility" and card.get("scorable"):
+            out[key] = present_digestibility(features, card)
+        elif key == "label_trust" and card.get("scorable"):
+            out[key] = present_label_trust(features, card)
+        elif key == "heavy_metals" and card.get("scorable"):
+            out[key] = present_heavy_metals(features, card)
+        elif key == "serving_honesty" and card.get("scorable"):
+            out[key] = present_serving_honesty(features, card)
+        elif kind == "protein":
+            out[key] = present_protein_audit(features, card)
+        elif kind == "creatine":
+            out[key] = present_creatine_audit(features, card)
+        elif kind == "pre_workout":
+            out[key] = present_preworkout_audit(features, card)
+        elif key == "clinical_dose" and card.get("scorable"):
+            out[key] = present_clinical_dose(features, card)
+        elif kind == "eaa":
+            out[key] = present_eaa_audit(features, card)
+        else:
+            out[key] = card
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1214,23 +2100,38 @@ def compute_supplement_scorecards(src: Dict[str, Any]) -> Optional[Dict[str, Any
     if dropped:
         all_tags.append("data_incomplete")
 
+    cards_dict = {k: _card_to_dict(c, applicable.get(k, 0.0)) for k, c in cards.items()}
+    cards_dict = apply_audit_presentation(cards_dict, features)
+
+    es_flean = src.get("flean_score") if isinstance(src.get("flean_score"), dict) else {}
+    hide_score = (
+        bool(es_flean.get("hide_score"))
+        if es_flean.get("hide_score") is not None
+        else False
+    )
+
     return {
         "leaf_category": features.leaf,
         "weight_column": features.weight_column,
-        "cards": {k: _card_to_dict(c, applicable.get(k, 0.0)) for k, c in cards.items()},
+        "cards": cards_dict,
         "flean_score": flean_score,
+        "hide_score": hide_score,
         "composite_before_deduction": round(composite, 2),
         "confidence_deduction": confidence_deduction,
         "cards_dropped": len(dropped),
         "dropped_cards": dropped,
         "tags": all_tags,
         "features": _features_summary(features),
+        "_features": features,  # for PDP adapter; stripped before API if needed
     }
 
 
 def _card_to_dict(c: CardResult, weight: float) -> Dict[str, Any]:
     if not c.scorable or c.score is None:
-        return {"title": c.name, "scorable": False, "weight": weight, "score": None, "tags": c.tags}
+        return {
+            "title": c.name, "scorable": False, "weight": weight, "score": None,
+            "tags": c.tags, "detail": c.detail,
+        }
     tier = tier_for_score(c.score)
     return {
         "title": c.name, "scorable": True, "weight": weight, "score": c.score,
@@ -1244,10 +2145,15 @@ SUPPLEMENT_CARD_ICONS: Dict[str, str] = {
     "protein_quality": "https://img.flean.ai/assets/Pdp-Icons/02.svg",
     "amino_acid_profile": "https://img.flean.ai/assets/Pdp-Icons/02.svg",
     "protein_efficiency": "https://img.flean.ai/assets/Pdp-Icons/02.svg",
-    "lean_formula": "https://img.flean.ai/assets/Pdp-Icons/06.svg",
     "sweeteners": "https://img.flean.ai/assets/Pdp-Icons/03.svg",
     "digestibility": "https://img.flean.ai/assets/Pdp-Icons/gut1.svg",
     "additives": "https://img.flean.ai/assets/Pdp-Icons/additives1.svg",
+    "label_trust": "https://img.flean.ai/assets/Pdp-Icons/01.svg",
+    "heavy_metals": "https://img.flean.ai/assets/Pdp-Icons/preservatives1.svg",
+    "serving_honesty": "https://img.flean.ai/assets/Pdp-Icons/serving.png",
+    "clinical_dose": "https://img.flean.ai/assets/Pdp-Icons/02.svg",
+    "recovery_formula": "https://img.flean.ai/assets/Pdp-Icons/02.svg",
+    "bioavailability": "https://img.flean.ai/assets/Pdp-Icons/bioavailable.png",
 }
 
 
@@ -1256,35 +2162,63 @@ def to_pdp_score_cards(result: Dict[str, Any]) -> Dict[str, Any]:
     shape consumed by Flutter, plus a computed ``flean_badge`` and a
     ``supplement_scoring`` detail block.
     """
+    weight_column = result.get("weight_column")
+    cards_src = result["cards"]
+    features: Optional[SupplementFeatures] = result.get("_features")
+
+    # Identify the audit card key for this leaf (pinned to order 1).
+    audit_key: Optional[str] = None
+    for key in cards_src:
+        if audit_slot_for(weight_column, key):
+            audit_key = key
+            break
+
+    # Build ordered entry list: audit first, then weight-desc, then display-only.
+    def _sort_key(item: Tuple[str, Dict[str, Any]]) -> Tuple[int, float]:
+        key, c = item
+        if key == audit_key:
+            return (0, 0.0)
+        weight = c.get("weight", 0.0) or 0.0
+        return (1 if weight > 0 else 2, -weight)
+
+    entries = sorted(cards_src.items(), key=_sort_key)
     cards_out: Dict[str, Any] = {}
-    # Applicable (weight>0) cards ordered by descending weight; then display-only.
-    entries = list(result["cards"].items())
-    entries.sort(key=lambda kv: (kv[1].get("weight", 0.0) <= 0, -kv[1].get("weight", 0.0)))
     order = 0
     for key, c in entries:
+        weight = c.get("weight", 0.0) or 0.0
+        is_audit = key == audit_key
+        # Skip unscorable unless it's an EAA audit that we force-emit.
         if not c.get("scorable"):
-            continue
-        weight = c.get("weight", 0.0)
-        # Skip weight-0 cards except the display-only Bioavailability badge.
-        if weight <= 0 and key != "bioavailability":
+            if not (is_audit and audit_slot_for(weight_column, key) == "eaa"):
+                continue
+        if weight <= 0 and key != "bioavailability" and not is_audit:
             continue
         order += 1
+        # Ensure muted EAA unscorable still has display fields
+        value = c.get("value")
+        status = c.get("status")
+        if value is None and c.get("score") is not None:
+            tier = tier_for_score(c["score"])
+            value = tier["label"]
+            status = tier["status"]
         card: Dict[str, Any] = {
-            "title": c["title"],
-            "value": c["value"],
-            "subtitle": f"Score: {c['score']}",
-            "score": c["score"],
-            "percentile": None,
-            "status": c["status"],
-            "status_label": c["status_label"],
-            "color": c["color"],
-            "theme": c["theme"],
+            "title": c.get("title") or CARD_KEY_TO_NAME.get(key, key),
+            "value": value if value is not None else "—",
+            "subtitle": c.get("subtitle") or (f"Score: {c['score']}" if c.get("score") is not None else ""),
+            "score": c.get("score"),
+            "percentile": c.get("percentile"),
+            "status": status or c.get("status") or "average",
+            "status_label": c.get("status_label") or c.get("value") or status or "Average",
+            "color": c.get("color") or "#F2E9BB80",
+            "theme": c.get("theme") or c.get("status") or "average",
             "weight": weight,
-            "display_only": weight <= 0,
+            "display_only": weight <= 0 and not is_audit,
             "tags": c.get("tags", []),
             "visible": True,
             "order": order,
         }
+        if c.get("subtitle_new"):
+            card["subtitle_new"] = c["subtitle_new"]
         icon = SUPPLEMENT_CARD_ICONS.get(key)
         if icon:
             card["icon_url"] = icon
@@ -1298,6 +2232,7 @@ def to_pdp_score_cards(result: Dict[str, Any]) -> Dict[str, Any]:
         "level": tier["status"],
         "level_text": tier["label"],
         "color": tier["color"],
+        "hide_score": bool(result.get("hide_score", False)),
     }
     supplement_scoring = {
         "framework_version": "v2.0",
@@ -1322,4 +2257,10 @@ def _features_summary(f: SupplementFeatures) -> Dict[str, Any]:
         "eaa_per_25g_protein": f.eaa_per_25g_protein,
         "bcaa_per_25g_protein": f.bcaa_per_25g_protein,
         "amino_acid_recovery": f.amino_acid_recovery,
+        "leucine_pct_of_protein": f.leucine_pct_of_protein,
+        "eaa_pct_of_protein": f.eaa_pct_of_protein,
+        "total_caffeine_mg": f.total_caffeine_mg,
+        "has_proprietary_blend": f.has_proprietary_blend,
+        "creatine_purity_verified": f.creatine_purity_verified,
+        "protein_percentile": f.protein_percentile,
     }

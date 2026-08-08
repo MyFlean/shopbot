@@ -39,7 +39,7 @@ from search_v2.retrieval.listing import (
     listing_visibility_filter_clause,
 )
 from search_v2.retrieval.opensearch_client import OpenSearchClient
-from search_v2.retrieval.sorting import build_sort_clauses
+from search_v2.retrieval.sorting import build_sort_clauses, build_sort_clauses_from_order
 
 _client: Optional[OpenSearchClient] = None
 _SUBCATEGORY_SCOPE_GLOBAL_AGG = "subcategory_scope_global"
@@ -180,7 +180,11 @@ def _browse_by_filters(
         "query": query,
         "track_total_hits": True,
     }
-    sort_clauses = build_sort_clauses(sort_by or "flean_score_desc")
+    sort_clauses = None
+    if filters and filters.sort_order and not sort_by:
+        sort_clauses = build_sort_clauses_from_order(filters.sort_order)
+    if not sort_clauses:
+        sort_clauses = build_sort_clauses(sort_by or "flean_score_desc")
     if sort_clauses:
         body["sort"] = sort_clauses
     body = apply_flat_listing_defaults(body)

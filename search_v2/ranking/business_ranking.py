@@ -75,6 +75,21 @@ def _get_nested(source: Dict[str, Any], dotted_path: str) -> Any:
     return value
 
 
+def _effective_subcategory(source: Dict[str, Any], requested_subcategory: str) -> str:
+    if requested_subcategory and requested_subcategory != "_default":
+        return requested_subcategory
+    for hierarchy in source.get("category_hierarchies") or []:
+        if not isinstance(hierarchy, dict):
+            continue
+        segments = hierarchy.get("segments") or []
+        if not segments:
+            continue
+        leaf = segments[-1]
+        if isinstance(leaf, str) and leaf.strip():
+            return leaf.strip().lower()
+    return "_default"
+
+
 _scoring_rules_cache: Optional[Dict[str, Any]] = None
 
 
@@ -532,13 +547,14 @@ def apply_business_ranking(
     for item in items:
         relevance_score = float(getattr(item, "fused_score", 0.0) or 0.0)
         source = getattr(item, "source", {}) or {}
+        rule_subcategory = _effective_subcategory(source, subcategory)
 
         multiplier = 1.0
         breakdown: Dict[str, float] = {}
         if settings.ENABLE_BUSINESS_RANKING:
             rule_weights = getattr(settings, "BUSINESS_RULE_WEIGHTS", {})
             for rule in rules:
-                component = rule(source, subcategory, settings)
+                component = rule(source, rule_subcategory, settings)
                 weight = rule_weights.get(rule.__name__, 1.0)
                 # Scale the rule's DEVIATION from neutral (1.0) by its weight.
                 # weight=1.0 → full effect (multiplier *= component)

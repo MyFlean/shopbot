@@ -17,6 +17,10 @@ Returns the wrapped `{success, data:{products}, meta}` shape used by
 
 Accepted params (GET query or POST JSON body):
   - query (string, optional)
+  - goal (string|list, optional)
+      Multi: ?goal=a,b or ?goal=a&goal=b (POST: string or array)
+  - diet (string|list, optional)
+      Multi: ?diet=a,b or ?diet=a&diet=b (POST: string or array)
   - department (string|list, optional)     category_hierarchies.segments[1]
       Multi: ?department=a,b or ?department=a&department=b (POST: string or array)
   - category (string|list, optional)       category_hierarchies.segments[2]
@@ -40,7 +44,7 @@ Accepted params (GET query or POST JSON body):
   - Top-level food_type also accepted (simple_search quirk); folded into filters.food_type
   - GET also accepts nutrition_profiles as a comma-separated query param
 
-Requires at least one of query/department/category/subcategory/filters.
+Requires at least one of query/goal/diet/department/category/subcategory/filters.
 Single-value hierarchy without query uses exclusive browse; multi-value hierarchy
 uses the V2 search/filter path (OR within level, AND across levels, same nested row).
 """
@@ -60,6 +64,11 @@ from search_v2.extension.category_browsing import (
     browse_by_subcategory_segment,
 )
 from search_v2.extension.search import search as v2_search
+from search_v2.extension.shop_by_goal import (
+    GoalConfigError,
+    resolve_diet_selection,
+    resolve_goal_selection,
+)
 from search_v2.retrieval.filters import SearchFilters
 from ..utils.pincode_mapping import try_resolve_canonical_pincode
 from .product_api import (
@@ -451,6 +460,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         body: Dict[str, Any] = {}
         if request.method == "GET":
             query = (request.args.get("query") or "").strip() or None
+            goals = _parse_hierarchy_query_param("goal")
+            diets = _parse_hierarchy_query_param("diet")
             departments = _parse_hierarchy_query_param("department")
             categories = _parse_hierarchy_query_param("category")
             subcategories = _parse_hierarchy_query_param("subcategory", strip_path=True)
@@ -476,6 +487,16 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                     return _error_response("INVALID_QUERY", "'query' must be a string", 400)
                 query = query.strip() or None
 
+            goals, goal_err = _parse_hierarchy_body_param(
+                body.get("goal"), field_name="goal"
+            )
+            if goal_err:
+                return _error_response("INVALID_GOAL", goal_err[0], goal_err[1])
+            diets, diet_err = _parse_hierarchy_body_param(
+                body.get("diet"), field_name="diet"
+            )
+            if diet_err:
+                return _error_response("INVALID_DIET", diet_err[0], diet_err[1])
             departments, dept_err = _parse_hierarchy_body_param(
                 body.get("department"), field_name="department"
             )
@@ -513,6 +534,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 raw_filters = dict(raw_filters)
                 raw_filters["food_type"] = top_food_type
 
+        goal_meta = _hierarchy_meta_value(goals)
+        diet_meta = _hierarchy_meta_value(diets)
         department_meta = _hierarchy_meta_value(departments)
         category_meta = _hierarchy_meta_value(categories)
         subcategory_meta = _hierarchy_meta_value(subcategories)
@@ -523,6 +546,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         # At least one selector is required
         if (
             not query
+            and not goals
+            and not diets
             and not departments
             and not categories
             and not subcategories
@@ -530,7 +555,15 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         ):
             return _error_response(
                 "MISSING_PARAMETER",
-                "At least one of 'query', 'department', 'category', 'subcategory', or 'filters' must be provided",
+                "At least one of 'query', 'goal', 'diet', 'department', 'category', 'subcategory', or 'filters' must be provided",
+                400,
+            )
+
+        if (goals or diets) and _search_engine() == "v1":
+            unsupported = "goal" if goals else "diet"
+            return _error_response(
+                "UNSUPPORTED_PARAMETER",
+                f"'{unsupported}' selector is supported only on Search V2",
                 400,
             )
 
@@ -544,6 +577,45 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
 
         # Resolve sort (with catalogue aliases) and validate
         resolved_sort = _resolve_sort(sort_raw, has_query=bool(query))
+        goal_overlays: Dict[str, Any] = {}
+        diet_overlays: Dict[str, Any] = {}
+        if goals:
+            try:
+                goal_overlays = resolve_goal_selection(goals)
+            except GoalConfigError as exc:
+                log.error(
+                    "UNIFIED_SEARCH_GOAL_CONFIG_ERROR | goals=%s | code=%s | error=%s",
+                    goals,
+                    exc.code,
+                    exc.message,
+                )
+                return _error_response(exc.code, exc.message, exc.status_code)
+        if diets:
+            try:
+                diet_overlays = resolve_diet_selection(diets)
+            except GoalConfigError as exc:
+                log.error(
+                    "UNIFIED_SEARCH_DIET_CONFIG_ERROR | diets=%s | code=%s | error=%s",
+                    diets,
+                    exc.code,
+                    exc.message,
+                )
+                return _error_response(exc.code, exc.message, exc.status_code)
+        goal_sort_order = goal_overlays.get("goal_sort_order")
+        diet_sort_order = diet_overlays.get("diet_sort_order")
+        selector_sort_order = goal_sort_order or diet_sort_order
+        selector_sort_by = goal_overlays.get("goal_sort_by") or diet_overlays.get("diet_sort_by")
+        should_apply_selector_default_sort = bool(
+            (goals or diets)
+            and (
+                not sort_raw
+                or resolved_sort == "relevance"
+            )
+        )
+        if should_apply_selector_default_sort and selector_sort_by:
+            resolved_sort = str(selector_sort_by).strip().lower()
+        use_selector_sort_order = bool(should_apply_selector_default_sort and selector_sort_order)
+
         if resolved_sort not in VALID_SORT_OPTIONS:
             return _error_response(
                 "INVALID_SORT",
@@ -561,7 +633,7 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         log.info(
             f"UNIFIED_SEARCH_REQUEST | query={query} | department={department_meta} | "
             f"category={category_meta} | subcategory={subcategory_meta} | "
-            f"page={page} | size={size} | sort={resolved_sort} | filters={validated_filters} "
+            f"goal={goal_meta} | diet={diet_meta} | page={page} | size={size} | sort={resolved_sort} | filters={validated_filters} "
             f"| effective_pincode={effective_pincode}"
         )
 
@@ -583,7 +655,7 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
         # a genuine V2 failure now surfaces as a real error. See
         # V1_FALLBACK_AUDIT.md.
         filters_only = (
-            bool(validated_filters)
+            (bool(validated_filters) or bool(goals) or bool(diets))
             and not departments
             and not subcategories
             and not categories
@@ -619,11 +691,26 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 "q": query or "",
                 "size": size,
                 "offset": page * size,
+                "goal": goals or None,
+                "diet": diets or None,
+                "goal_ids": goal_overlays.get("goal_ids"),
+                "goal_filter_clauses": goal_overlays.get("goal_filter_clauses"),
+                "goal_must_not_clauses": goal_overlays.get("goal_must_not_clauses"),
+                "goal_sort_by": goal_overlays.get("goal_sort_by"),
+                "diet_ids": diet_overlays.get("diet_ids"),
+                "diet_filter_clauses": diet_overlays.get("diet_filter_clauses"),
+                "diet_must_not_clauses": diet_overlays.get("diet_must_not_clauses"),
+                "diet_sort_by": diet_overlays.get("diet_sort_by"),
                 "department": departments or None,
                 "category": categories or None,
                 "subcategory": subcategories or None,
             }
-            if sort_raw:
+            if should_apply_selector_default_sort:
+                gw_params["goal_sort_order"] = goal_sort_order
+                gw_params["diet_sort_order"] = diet_sort_order
+            if sort_raw and not should_apply_selector_default_sort:
+                gw_params["sort_by"] = resolved_sort
+            elif should_apply_selector_default_sort and selector_sort_by and not use_selector_sort_order:
                 gw_params["sort_by"] = resolved_sort
             gw_params.update(_v1_filters_to_gw_params(validated_filters or {}))
             if departments:
@@ -650,6 +737,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                     "has_next": returned == size,
                     "has_prev": page > 0,
                     "query": query,
+                    "goal": goal_meta,
+                    "diet": diet_meta,
                     "department": department_meta,
                     "category": category_meta,
                     "subcategory": subcategory_meta,
@@ -665,6 +754,22 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
 
         if result is None and _search_engine() != "v1" and selector_department:
             browse_filter_params = _v1_filters_to_gw_params(validated_filters or {})
+            if goals:
+                browse_filter_params["goal"] = goals
+                browse_filter_params["goal_ids"] = goal_overlays.get("goal_ids")
+                browse_filter_params["goal_filter_clauses"] = goal_overlays.get("goal_filter_clauses")
+                browse_filter_params["goal_must_not_clauses"] = goal_overlays.get("goal_must_not_clauses")
+                browse_filter_params["goal_sort_by"] = goal_overlays.get("goal_sort_by")
+                if should_apply_selector_default_sort:
+                    browse_filter_params["goal_sort_order"] = goal_sort_order
+            if diets:
+                browse_filter_params["diet"] = diets
+                browse_filter_params["diet_ids"] = diet_overlays.get("diet_ids")
+                browse_filter_params["diet_filter_clauses"] = diet_overlays.get("diet_filter_clauses")
+                browse_filter_params["diet_must_not_clauses"] = diet_overlays.get("diet_must_not_clauses")
+                browse_filter_params["diet_sort_by"] = diet_overlays.get("diet_sort_by")
+                if should_apply_selector_default_sort:
+                    browse_filter_params["diet_sort_order"] = diet_sort_order
             if categories:
                 browse_filter_params["category_segment_l2"] = categories
             if subcategories:
@@ -674,7 +779,7 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 department_segment_l1=departments[0],
                 page=page,
                 size=size,
-                sort_by=resolved_sort,
+                sort_by=None if use_selector_sort_order else resolved_sort,
                 filters=browse_filters,
             )
             browse_meta = browse_result.get("meta", {}) or {}
@@ -686,6 +791,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 "meta": {
                     **browse_meta,
                     "query": query,
+                    "goal": goal_meta,
+                    "diet": diet_meta,
                     "department": department_meta,
                     "category": category_meta,
                     "subcategory": subcategory_meta,
@@ -700,6 +807,22 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
             selector_only_category or selector_category_with_subcategory or selector_only_subcategory
         ):
             browse_filter_params = _v1_filters_to_gw_params(validated_filters or {})
+            if goals:
+                browse_filter_params["goal"] = goals
+                browse_filter_params["goal_ids"] = goal_overlays.get("goal_ids")
+                browse_filter_params["goal_filter_clauses"] = goal_overlays.get("goal_filter_clauses")
+                browse_filter_params["goal_must_not_clauses"] = goal_overlays.get("goal_must_not_clauses")
+                browse_filter_params["goal_sort_by"] = goal_overlays.get("goal_sort_by")
+                if should_apply_selector_default_sort:
+                    browse_filter_params["goal_sort_order"] = goal_sort_order
+            if diets:
+                browse_filter_params["diet"] = diets
+                browse_filter_params["diet_ids"] = diet_overlays.get("diet_ids")
+                browse_filter_params["diet_filter_clauses"] = diet_overlays.get("diet_filter_clauses")
+                browse_filter_params["diet_must_not_clauses"] = diet_overlays.get("diet_must_not_clauses")
+                browse_filter_params["diet_sort_by"] = diet_overlays.get("diet_sort_by")
+                if should_apply_selector_default_sort:
+                    browse_filter_params["diet_sort_order"] = diet_sort_order
             if selector_category_with_subcategory and subcategories:
                 browse_filter_params["subcategory_segment_l3"] = subcategories
             browse_filters = SearchFilters.from_dict(browse_filter_params) if browse_filter_params else None
@@ -708,7 +831,7 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                     category_segment_l2=categories[0],
                     page=page,
                     size=size,
-                    sort_by=resolved_sort,
+                    sort_by=None if use_selector_sort_order else resolved_sort,
                     filters=browse_filters,
                 )
             else:
@@ -716,7 +839,7 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                     subcategory_segment_l3=subcategories[0],
                     page=page,
                     size=size,
-                    sort_by=resolved_sort,
+                    sort_by=None if use_selector_sort_order else resolved_sort,
                     filters=browse_filters,
                 )
 
@@ -728,6 +851,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
                 "meta": {
                     **browse_meta,
                     "query": query,
+                    "goal": goal_meta,
+                    "diet": diet_meta,
                     "department": department_meta,
                     "category": category_meta,
                     "subcategory": subcategory_meta,
@@ -763,6 +888,8 @@ def unified_search() -> Tuple[Dict[str, Any], int]:
 
         # Ensure meta.sort_by echoes the resolved canonical value
         meta["sort_by"] = resolved_sort
+        meta["goal"] = goal_meta
+        meta["diet"] = diet_meta
 
         raw_products = result.get("products", [])
         product_cards: List[Dict[str, Any]] = []

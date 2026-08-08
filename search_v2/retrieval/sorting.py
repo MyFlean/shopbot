@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from search_v2.extension.shop_by_goal.constants import DERIVED_FIELD_SCRIPTS
+
 # ── Sort specifications ────────────────────────────────────────────────────────
 # _score tiebreaker ensures equal-valued range items surface by relevance first.
 SORT_SPECS: Dict[str, List[Dict[str, Any]]] = {
@@ -111,4 +113,48 @@ def build_sort_clauses(sort_by: Optional[str]) -> Optional[List[Dict[str, Any]]]
     clauses = SORT_SPECS.get(key)
     if not clauses:
         return None
+    return clauses
+
+
+def _derived_sort_script(field_name: str) -> str:
+    base_script = DERIVED_FIELD_SCRIPTS.get(field_name)
+    if not base_script:
+        raise ValueError(f"Unsupported derived sort field '{field_name}'")
+    return f"{base_script} return metric;"
+
+
+def build_sort_clauses_from_order(
+    sort_order: Optional[List[Dict[str, str]]],
+) -> Optional[List[Dict[str, Any]]]:
+    """Build dynamic multi-key OpenSearch sort clauses from goal sort_order."""
+    if not sort_order:
+        return None
+    clauses: List[Dict[str, Any]] = []
+    for entry in sort_order:
+        field_name = str((entry or {}).get("field") or "").strip()
+        order = str((entry or {}).get("order") or "").strip().lower()
+        if not field_name or order not in {"asc", "desc"}:
+            continue
+        if field_name.startswith("derived."):
+            clauses.append(
+                {
+                    "_script": {
+                        "type": "number",
+                        "order": order,
+                        "script": {
+                            "lang": "painless",
+                            "source": _derived_sort_script(field_name),
+                        },
+                    }
+                }
+            )
+        elif field_name == "_score":
+            clauses.append({"_score": order})
+        else:
+            clauses.append({field_name: {"order": order, "missing": "_last"}})
+    if not clauses:
+        return None
+    has_score_tiebreaker = any(isinstance(clause, dict) and "_score" in clause for clause in clauses)
+    if not has_score_tiebreaker:
+        clauses.append({"_score": "desc"})
     return clauses

@@ -55,6 +55,7 @@ from typing import Any, Dict, List, Optional
 
 from search_v2.config.settings import SearchV2Settings, SETTINGS
 from search_v2.embedding.embedding_service import EmbeddingService
+from search_v2.extension.shop_by_goal.constants import DERIVED_FIELD_SCRIPTS
 from search_v2.query_processing.query_pipeline import ProcessedQuery
 from search_v2.retrieval import fusion, hybrid_query_builder, lexical_query_builder, semantic_query_builder
 from search_v2.retrieval.opensearch_client import OpenSearchClient, extract_hits
@@ -98,8 +99,8 @@ def _retrieval_filters(filters):
     All other filter fields (price, dietary, macros, ...) are left untouched.
     """
     from search_v2.retrieval.filters import SearchFilters
-    if isinstance(filters, SearchFilters) and (filters.sort_by or filters.offset):
-        return dataclasses.replace(filters, sort_by=None, offset=0)
+    if isinstance(filters, SearchFilters) and (filters.sort_by or filters.sort_order or filters.offset):
+        return dataclasses.replace(filters, sort_by=None, sort_order=None, offset=0)
     return filters
 
 
@@ -198,6 +199,7 @@ def _lexical_only(
     settings: SearchV2Settings,
     fallback_reason: Optional[str] = None,
     sort_by: Optional[str] = None,
+    sort_order: Optional[List[Dict[str, str]]] = None,
     offset: int = 0,
     routing_context=None,
 ) -> HybridSearchResult:
@@ -215,6 +217,8 @@ def _lexical_only(
     ]
     if sort_by and sort_by != "relevance":
         items = _apply_post_fusion_sort(items, sort_by)
+    elif sort_order:
+        items = _apply_post_fusion_sort_order(items, sort_order)
     return HybridSearchResult(items=items, strategy_used="lexical_only", lexical_ran=True, fallback_reason=fallback_reason)
 
 
@@ -245,6 +249,7 @@ def _hybrid_search_once(
 
     # Extract sort/offset from SearchFilters if not overridden by kwargs
     _sort_by = sort_by
+    _sort_order: Optional[List[Dict[str, str]]] = None
     _offset = offset
     _is_search_filters = False
     if filters is not None:
@@ -253,6 +258,7 @@ def _hybrid_search_once(
         if _is_search_filters:
             if _sort_by is None:
                 _sort_by = filters.sort_by
+            _sort_order = filters.sort_order
             if _offset == 0:
                 _offset = filters.offset
 
@@ -260,7 +266,7 @@ def _hybrid_search_once(
         return _lexical_only(
             client, query, filters, final_size, settings,
             fallback_reason="hybrid/semantic disabled via settings",
-            sort_by=_sort_by, offset=_offset, routing_context=routing_context,
+            sort_by=_sort_by, sort_order=_sort_order, offset=_offset, routing_context=routing_context,
         )
 
     # A filters/category-only request (no query text at all — e.g.
@@ -271,7 +277,7 @@ def _hybrid_search_once(
         return _lexical_only(
             client, query, filters, final_size, settings,
             fallback_reason="empty query text — filters-only retrieval",
-            sort_by=_sort_by, offset=_offset, routing_context=routing_context,
+            sort_by=_sort_by, sort_order=_sort_order, offset=_offset, routing_context=routing_context,
         )
 
     if getattr(settings, "ENABLE_QUERY_ROUTER", True) and routing_context is not None:
@@ -280,7 +286,7 @@ def _hybrid_search_once(
             return _lexical_only(
                 client, query, filters, final_size, settings,
                 fallback_reason="query_router: LEXICAL_ONLY",
-                sort_by=_sort_by, offset=_offset, routing_context=routing_context,
+                sort_by=_sort_by, sort_order=_sort_order, offset=_offset, routing_context=routing_context,
             )
 
     strategy = settings.FUSION_STRATEGY
@@ -295,7 +301,7 @@ def _hybrid_search_once(
             return _lexical_only(
                 client, query, filters, final_size, settings,
                 fallback_reason="embedding model unavailable",
-                sort_by=_sort_by, offset=_offset, routing_context=routing_context,
+                sort_by=_sort_by, sort_order=_sort_order, offset=_offset, routing_context=routing_context,
             )
         body, query_params = result
         response = client.search(body, query_params)
@@ -306,6 +312,8 @@ def _hybrid_search_once(
         ]
         if _sort_by and _sort_by != "relevance":
             items = _apply_post_fusion_sort(items, _sort_by)
+        elif _sort_order:
+            items = _apply_post_fusion_sort_order(items, _sort_order)
         return HybridSearchResult(items=items, strategy_used="native_hybrid", lexical_ran=True, semantic_ran=True)
 
     if strategy in ("rrf", "weighted"):
@@ -318,7 +326,7 @@ def _hybrid_search_once(
             return _lexical_only(
                 client, query, filters, final_size, settings,
                 fallback_reason="embedding model unavailable",
-                sort_by=_sort_by, offset=_offset, routing_context=routing_context,
+                sort_by=_sort_by, sort_order=_sort_order, offset=_offset, routing_context=routing_context,
             )
 
         # Retrieval phase uses full retrieval_k, always in relevance order
@@ -370,6 +378,8 @@ def _hybrid_search_once(
 
         if _sort_by and _sort_by != "relevance":
             all_fused = _apply_post_fusion_sort(all_fused, _sort_by)
+        elif _sort_order:
+            all_fused = _apply_post_fusion_sort_order(all_fused, _sort_order)
 
         # NOT sliced to a page here — see _pool_size()/module docstring.
         # Pagination is applied by the caller AFTER business ranking.
@@ -455,6 +465,100 @@ def hybrid_search(
         result.product_intent_relaxed = True
 
     return result
+
+
+def _source_value(source: Dict[str, Any], dotted: str) -> Any:
+    value: Any = source
+    for key in dotted.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    return value
+
+
+def _to_float(value: Any) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _derived_sort_value(item: ResultItem, field_name: str) -> Optional[float]:
+    if field_name not in DERIVED_FIELD_SCRIPTS:
+        return None
+    energy = _to_float(_source_value(item.source, "category_data.nutritional.nutri_breakdown.energy kcal")) or 0.0
+    protein = _to_float(_source_value(item.source, "category_data.nutritional.nutri_breakdown.protein g")) or 0.0
+    fat = _to_float(_source_value(item.source, "category_data.nutritional.nutri_breakdown.total fat g")) or 0.0
+    carbs = _to_float(_source_value(item.source, "category_data.nutritional.nutri_breakdown.carbohydrate g")) or 0.0
+    fiber = _to_float(_source_value(item.source, "category_data.nutritional.nutri_breakdown.fiber g")) or 0.0
+
+    if field_name == "derived.protein_cal_pct":
+        return 0.0 if energy <= 0.0 else ((protein * 4.0) / energy) * 100.0
+    if field_name == "derived.fat_cal_pct":
+        return 0.0 if energy <= 0.0 else ((fat * 9.0) / energy) * 100.0
+    if field_name == "derived.net_carbs":
+        return carbs - fiber
+    if field_name == "derived.micronutrient_count":
+        micronutrient_fields = (
+            "category_data.nutritional.nutri_breakdown.vitamin a mcg",
+            "category_data.nutritional.nutri_breakdown.vitamin c",
+            "category_data.nutritional.nutri_breakdown.zinc",
+            "category_data.nutritional.nutri_breakdown.iron mg",
+            "category_data.nutritional.nutri_breakdown.folate dfe mcg",
+            "category_data.nutritional.nutri_breakdown.vitamin b6 mg",
+        )
+        count = 0
+        for nutrient_path in micronutrient_fields:
+            nutrient_value = _to_float(_source_value(item.source, nutrient_path))
+            if nutrient_value is not None:
+                count += 1
+        return float(count)
+    return None
+
+
+def _sort_value_for_field(item: ResultItem, field_name: str) -> Any:
+    if field_name == "_score":
+        return item.fused_score
+    if field_name.startswith("derived."):
+        return _derived_sort_value(item, field_name)
+    return _source_value(item.source, field_name)
+
+
+def _comparable_sort_value(value: Any) -> Any:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        return value.lower()
+    return str(value)
+
+
+def _apply_post_fusion_sort_order(
+    items: List[ResultItem],
+    sort_order: Optional[List[Dict[str, str]]],
+) -> List[ResultItem]:
+    """Apply stable multi-key sort over fused results using goal sort_order."""
+    if not sort_order:
+        return items
+    sorted_items = list(items)
+    for entry in reversed(sort_order):
+        field_name = str((entry or {}).get("field") or "").strip()
+        order = str((entry or {}).get("order") or "").strip().lower()
+        if not field_name or order not in {"asc", "desc"}:
+            continue
+        reverse = order == "desc"
+
+        def _key(it: ResultItem):
+            raw = _sort_value_for_field(it, field_name)
+            if raw is None:
+                return (-1, None) if reverse else (1, None)
+            return (0, _comparable_sort_value(raw))
+
+        sorted_items = sorted(sorted_items, key=_key, reverse=reverse)
+    return sorted_items
 
 
 def _apply_post_fusion_sort(items: List[ResultItem], sort_by: str) -> List[ResultItem]:

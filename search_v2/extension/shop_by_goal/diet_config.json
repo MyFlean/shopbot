@@ -1,0 +1,163 @@
+{
+  "schema_version": "1.0",
+  "config_name": "unified_search_diet_rules",
+  "updated_at": "2026-08-05T00:00:00Z",
+  "diets": [
+    {
+      "id": "keto_low_carb",
+      "label": "Keto / Low Carb",
+      "enabled": true,
+      "include_all": [
+        { "field": "derived.net_carbs", "op": "lte", "value": 15 },
+        { "field": "category_data.nutritional.nutri_breakdown.added sugar g", "op": "lte", "value": 2 },
+        { "field": "derived.fat_cal_pct", "op": "gte", "value": 40 }
+      ],
+      "exclude_any": [
+        {
+          "field": "ingredients.normalised.sweetners",
+          "op": "contains_any",
+          "value": ["sugar", "invert sugar syrup", "glucose syrup", "maltodextrin"]
+        },
+        {
+          "field": "ingredients.normalised.protein_ingredients",
+          "op": "contains_any",
+          "value": ["maida"]
+        }
+      ],
+      "sort_order": [
+        { "field": "derived.net_carbs", "order": "asc" },
+        { "field": "category_data.nutritional.nutri_breakdown.protein g", "order": "desc" }
+      ]
+    },
+    {
+      "id": "diabetic_friendly_low_gi",
+      "label": "Diabetic Friendly / Low GI",
+      "enabled": true,
+      "include_all": [
+        { "field": "category_data.nutritional.nutri_breakdown.added sugar g", "op": "lte", "value": 1 },
+        { "field": "category_data.nutritional.nutri_breakdown.total sugar g", "op": "lte", "value": 5 },
+        {
+          "any_of": [
+            { "field": "category_data.nutritional.nutri_breakdown.fiber g", "op": "gte", "value": 3 },
+            { "field": "category_data.nutritional.nutri_breakdown.protein g", "op": "gte", "value": 8 }
+          ]
+        }
+      ],
+      "exclude_any": [
+        {
+          "field": "ingredients.normalised.sweetners",
+          "op": "contains_any",
+          "value": ["sugar", "invert sugar syrup", "glucose syrup", "maltodextrin", "honey", "jaggery"]
+        },
+        {
+          "field": "ingredients.normalised.protein_ingredients",
+          "op": "contains_any",
+          "value": ["maida"]
+        },
+        {
+          "all_of": [
+            { "field": "category_data.nutritional.nutri_breakdown.carbohydrate g", "op": "gte", "value": 70 },
+            { "field": "category_data.nutritional.nutri_breakdown.fiber g", "op": "lt", "value": 6 }
+          ]
+        }
+      ],
+      "sort_order": [
+        { "field": "stats.sugar_penalty_percentiles.global_percentile", "order": "asc" },
+        { "field": "category_data.nutritional.nutri_breakdown.fiber g", "order": "desc" }
+      ]
+    },
+    {
+      "id": "gluten_free",
+      "label": "Gluten Free",
+      "enabled": true,
+      "include_all": [
+        { "field": "category_data.tags.dietary_tags", "op": "contains_any", "value": ["gluten_free"] }
+      ],
+      "exclude_any": [],
+      "sort_order": [
+        { "field": "flean_score.adjusted_score", "order": "desc" }
+      ]
+    },
+    {
+      "id": "dairy_free",
+      "label": "Dairy Free",
+      "enabled": true,
+      "include_all": [
+        { "field": "category_data.tags.dietary_tags", "op": "contains_any", "value": ["dairy_free"] }
+      ],
+      "exclude_any": [],
+      "sort_order": [
+        { "field": "flean_score.adjusted_score", "order": "desc" }
+      ]
+    },
+    {
+      "id": "high_fiber",
+      "label": "High Fiber",
+      "enabled": true,
+      "include_all": [
+        {
+          "any_of": [
+            { "field": "category_data.nutritional.nutri_breakdown.fiber g", "op": "gte", "value": 6 },
+            { "field": "stats.fiber_percentiles.category_percentile", "op": "gte", "value": 80 }
+          ]
+        }
+      ],
+      "exclude_any": [
+        { "field": "category_data.tags.highlight_tags.carbs_fiber_tags.negative", "op": "contains_any", "value": ["no_fiber_content"] },
+        { "field": "category_data.nutritional.nutri_breakdown.added sugar g", "op": "gt", "value": 12 }
+      ],
+      "sort_order": [
+        { "field": "category_data.nutritional.nutri_breakdown.fiber g", "order": "desc" },
+        { "field": "flean_score.bonuses.fiber_bonus", "order": "desc" }
+      ]
+    },
+    {
+      "id": "low_sodium",
+      "label": "Low Sodium",
+      "enabled": true,
+      "include_all": [
+        { "field": "category_data.nutritional.nutri_breakdown.sodium mg", "op": "not_empty", "value": true },
+        { "field": "category_data.nutritional.nutri_breakdown.sodium mg", "op": "lte", "value": 120 }
+      ],
+      "exclude_any": [],
+      "sort_order": [
+        { "field": "category_data.nutritional.nutri_breakdown.sodium mg", "order": "asc" }
+      ]
+    },
+    {
+      "id": "millet_based",
+      "label": "Millet Based",
+      "enabled": true,
+      "include_all": [
+        {
+          "field": "ingredients.raw_text",
+          "op": "match_any",
+          "value": ["millet", "ragi", "jowar", "bajra", "foxtail", "kodo", "barnyard", "little millet", "proso", "nachni"]
+        }
+      ],
+      "exclude_any": [
+        { "field": "category_data.nutritional.nutri_breakdown.added sugar g", "op": "gt", "value": 12 }
+      ],
+      "sort_order": [
+        { "field": "flean_score.adjusted_score", "order": "desc" },
+        { "field": "stats.wholefood_percentiles.category_percentile", "order": "desc" }
+      ]
+    },
+    {
+      "id": "nut_free",
+      "label": "Nut Free",
+      "enabled": true,
+      "include_all": [
+        {
+          "field": "category_data.tags.dietary_tags",
+          "op": "contains_any",
+          "value": ["nut_free"]
+        }
+      ],
+      "exclude_any": [],
+      "sort_order": [
+        { "field": "flean_score.adjusted_score", "order": "desc" }
+      ]
+    }
+  ]
+}

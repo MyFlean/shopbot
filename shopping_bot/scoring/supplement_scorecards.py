@@ -246,6 +246,18 @@ FAO_PATTERN_MG_PER_G: Dict[str, float] = {
     "histidine": 15, "isoleucine": 30, "leucine": 59, "lysine": 45,
     "methionine": 22, "phenylalanine": 38, "threonine": 23, "tryptophan": 6, "valine": 39,
 }
+# Flat amino_acid_profile keys (e.g. "leucine g") used by newer ES docs.
+_FLAT_EAA_KEYS = tuple(f"{aa} g" for aa in FAO_PATTERN_MG_PER_G)
+_FLAT_NEAA_KEYS = (
+    "alanine g", "arginine g", "aspartic acid g", "asparagine g", "cysteine g",
+    "glutamic acid g", "glutamine g", "glycine g", "proline g", "serine g", "tyrosine g",
+)
+_FLAT_TOTAL_SKIP = frozenset({
+    "qty", "total eaa g", "total_eaa_g", "total bcaa g", "total_bcaa_g",
+    "total neaa g", "total_neaa_g", "total seaa g", "total_seaa_g",
+    "essential_amino_acids_g", "non_essential_amino_acids_g",
+    "conditionally_essential_amino_acids_g",
+})
 
 # Free amino acids whose presence as separate ingredients signals nitrogen spiking (sheet 03 row 41).
 SPIKING_FREE_AMINOS = frozenset({"glycine", "taurine", "alanine", "creatine"})
@@ -448,12 +460,61 @@ def extract_features(src: Dict[str, Any]) -> SupplementFeatures:
     if f.protein_g and f.energy_kcal:
         f.protein_per_100kcal = f.protein_g / f.energy_kcal * 100.0
 
-    # Amino acids: prefer the detailed found_amino_acid_profile, else the summary.
-    found = cd.get("found_amino_acid_profile") or {}
-    summary = cd.get("amino_acid_profile") or {}
-    aa_qty = _parse_qty_grams(found.get("qty")) or _parse_qty_grams(summary.get("qty")) or qty_basis
-    ess = found.get("essential_amino_acids") or {}
-    neaa_dict = found.get("non_essential_amino_acids") or {}
+    # Amino acids — canonical ES fields (config required_inputs):
+    #   category_data.amino_acid_profile  (flat per-AA map, or legacy summary totals)
+    #   category_data.total_amino_acids   (total eaa/bcaa/neaa/seaa)
+    # Legacy fallback: found_amino_acid_profile (nested essential/non-essential dicts).
+    profile = cd.get("amino_acid_profile") or {}
+    totals = cd.get("total_amino_acids") or {}
+    legacy = cd.get("found_amino_acid_profile") or {}
+    if not isinstance(profile, dict):
+        profile = {}
+    if not isinstance(totals, dict):
+        totals = {}
+    if not isinstance(legacy, dict):
+        legacy = {}
+
+    aa_qty = (
+        _parse_qty_grams(profile.get("qty"))
+        or _parse_qty_grams(legacy.get("qty"))
+        or qty_basis
+    )
+
+    # 1) Flat amino_acid_profile: {"leucine g": 2.45, "total eaa g": 11.4, ...}
+    ess = {
+        k: profile[k]
+        for k in _FLAT_EAA_KEYS
+        if k in profile and _num(profile.get(k)) is not None
+    }
+    neaa_dict: Dict[str, Any] = {
+        k: profile[k]
+        for k in _FLAT_NEAA_KEYS
+        if k in profile and _num(profile.get(k)) is not None
+    }
+    if not neaa_dict and ess:
+        neaa_dict = {
+            k: v for k, v in profile.items()
+            if isinstance(k, str)
+            and k.endswith(" g")
+            and k not in _FLAT_EAA_KEYS
+            and k not in _FLAT_TOTAL_SKIP
+            and _num(v) is not None
+        }
+
+    # 2) Nested dicts under amino_acid_profile (rare) or legacy found_* blob.
+    if not ess:
+        nested_ess = profile.get("essential_amino_acids") or legacy.get("essential_amino_acids") or {}
+        if isinstance(nested_ess, dict):
+            ess = dict(nested_ess)
+    if not neaa_dict:
+        nested_neaa = (
+            profile.get("non_essential_amino_acids")
+            or legacy.get("non_essential_amino_acids")
+            or {}
+        )
+        if isinstance(nested_neaa, dict):
+            neaa_dict = dict(nested_neaa)
+
     protein_100 = (protein_per_basis / qty_basis * 100.0) if (protein_per_basis and qty_basis) else None
 
     def per100_aa(v: Any) -> Optional[float]:
@@ -461,15 +522,53 @@ def extract_features(src: Dict[str, Any]) -> SupplementFeatures:
         return (n / aa_qty * 100.0) if (n is not None and aa_qty) else None
 
     leucine_100 = per100_aa(ess.get("leucine g"))
-    eaa_100 = per100_aa(found.get("total_eaa_g")) or per100_aa(summary.get("essential_amino_acids_g"))
-    bcaa_100 = per100_aa(found.get("total_bcaa_g")) or per100_aa(summary.get("total_bcaa_g"))
+    # Prefer total_amino_acids, then flat profile totals, then legacy/summary keys.
+    eaa_100 = (
+        per100_aa(totals.get("total eaa g"))
+        or per100_aa(totals.get("total_eaa_g"))
+        or per100_aa(profile.get("total eaa g"))
+        or per100_aa(profile.get("total_eaa_g"))
+        or per100_aa(profile.get("essential_amino_acids_g"))
+        or per100_aa(legacy.get("total_eaa_g"))
+        or per100_aa(legacy.get("total eaa g"))
+    )
+    if eaa_100 is None and ess:
+        # Sum disclosed EAAs when a total isn't published.
+        eaa_sum = sum(_num(v) or 0.0 for v in ess.values())
+        eaa_100 = (eaa_sum / aa_qty * 100.0) if (aa_qty and eaa_sum > 0) else None
+    bcaa_100 = (
+        per100_aa(totals.get("total bcaa g"))
+        or per100_aa(totals.get("total_bcaa_g"))
+        or per100_aa(profile.get("total bcaa g"))
+        or per100_aa(profile.get("total_bcaa_g"))
+        or per100_aa(legacy.get("total_bcaa_g"))
+        or per100_aa(legacy.get("total bcaa g"))
+    )
+    if bcaa_100 is None and ess:
+        bcaa_sum = sum(
+            _num(ess.get(k)) or 0.0
+            for k in ("leucine g", "isoleucine g", "valine g")
+        )
+        bcaa_100 = (bcaa_sum / aa_qty * 100.0) if (aa_qty and bcaa_sum > 0) else None
     neaa_100 = None
     if neaa_dict:
         s = sum(_num(v) or 0 for v in neaa_dict.values())
         neaa_100 = s / aa_qty * 100.0 if aa_qty else None
-    elif summary.get("non_essential_amino_acids_g") is not None:
-        neaa_100 = per100_aa(summary.get("non_essential_amino_acids_g"))
-    cond_100 = per100_aa(summary.get("conditionally_essential_amino_acids_g"))
+    else:
+        neaa_100 = (
+            per100_aa(totals.get("total neaa g"))
+            or per100_aa(totals.get("total_neaa_g"))
+            or per100_aa(profile.get("total neaa g"))
+            or per100_aa(profile.get("total_neaa_g"))
+            or per100_aa(profile.get("non_essential_amino_acids_g"))
+        )
+    cond_100 = (
+        per100_aa(totals.get("total seaa g"))
+        or per100_aa(totals.get("total_seaa_g"))
+        or per100_aa(profile.get("total seaa g"))
+        or per100_aa(profile.get("total_seaa_g"))
+        or per100_aa(profile.get("conditionally_essential_amino_acids_g"))
+    )
 
     f.eaa_count = sum(1 for v in ess.values() if (_num(v) or 0) > 0)
     f.has_amino_profile = bool(ess) or eaa_100 is not None
@@ -493,8 +592,20 @@ def extract_features(src: Dict[str, Any]) -> SupplementFeatures:
             f.leucine_g_per_serving = leucine_100 * f.serving_qty_g / 100.0
         if eaa_100 is not None:
             f.eaa_g_per_serving = eaa_100 * f.serving_qty_g / 100.0
+    elif aa_qty and qty_basis and abs(aa_qty - qty_basis) < 1e-6:
+        # Panel already on serving basis (common when nutritional.qty is the scoop).
+        if leucine_100 is not None and f.leucine_g_per_serving is None:
+            f.leucine_g_per_serving = _num(ess.get("leucine g"))
+        if eaa_100 is not None and f.eaa_g_per_serving is None:
+            f.eaa_g_per_serving = (
+                _num(totals.get("total eaa g"))
+                or _num(totals.get("total_eaa_g"))
+                or _num(profile.get("total eaa g"))
+                or _num(profile.get("total_eaa_g"))
+                or _num(legacy.get("total_eaa_g"))
+            )
 
-    # Store detailed AA per-100 for completeness scoring.
+    # Store detailed AA per-100 for completeness scoring (Protein Quality).
     f._ess_per100 = {  # type: ignore[attr-defined]
         _norm_token(k.replace(" g", "")): per100_aa(v) for k, v in ess.items()
     }
@@ -1604,6 +1715,39 @@ def present_digestibility(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[s
     return out
 
 
+_BIOAVAILABILITY_POSITIVE_TAGS = frozenset({
+    "highly_bioavailable",
+    "fast_absorbing",
+    "diaas_above_100",
+    "easily_absorbed",
+    "sustained_release",
+})
+_BIOAVAILABILITY_NEGATIVE_TAGS = frozenset({
+    "lower_bioavailability",
+    "poor_protein_source",
+    "negligible_diaas",
+})
+_BIOAVAILABILITY_TAG_LABELS: Dict[str, str] = {
+    "highly_bioavailable": "Highly bioavailable",
+    "fast_absorbing": "Fast absorbing",
+    "diaas_above_100": "DIAAS 100+",
+    "easily_absorbed": "Easily absorbed",
+    "sustained_release": "Sustained release",
+    "moderate_absorption": "Moderate absorption",
+    "lower_bioavailability": "Lower absorption",
+    "poor_protein_source": "Poor source",
+    "negligible_diaas": "Negligible DIAAS",
+}
+
+
+def present_bioavailability(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    """Bioavailability: keep tier value; emit tier tags as ``subtitle_new``."""
+    return _present_tier_tag_card(
+        card, "Bioavailability",
+        _BIOAVAILABILITY_NEGATIVE_TAGS, _BIOAVAILABILITY_POSITIVE_TAGS, _BIOAVAILABILITY_TAG_LABELS,
+    )
+
+
 _LABEL_TRUST_NEGATIVE_TAGS = frozenset({
     "proprietary_blend",
     "undisclosed_dosages",
@@ -2019,6 +2163,8 @@ def apply_audit_presentation(
             out[key] = present_sweeteners(features, card)
         elif key == "digestibility" and card.get("scorable"):
             out[key] = present_digestibility(features, card)
+        elif key == "bioavailability" and card.get("scorable"):
+            out[key] = present_bioavailability(features, card)
         elif key == "label_trust" and card.get("scorable"):
             out[key] = present_label_trust(features, card)
         elif key == "heavy_metals" and card.get("scorable"):

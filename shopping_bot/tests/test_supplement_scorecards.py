@@ -128,6 +128,123 @@ def test_label_trust_no_double_proprietary_blend():
     assert r.detail["integrity"] in (85, 82)  # recovery/flavour only
 
 
+def test_flat_amino_acid_profile_is_recognized():
+    """Newer ES docs publish AAs as flat keys under amino_acid_profile (not nested)."""
+    src = {
+        "id": "flat-aa-1",
+        "price": 2699,
+        "size": "1 kg",
+        "category_paths": ["f_and_b/supplements/protein/whey_concentrate"],
+        "category_data": {
+            # No serving_size; nutrition + AA panel are already on scoop basis.
+            "servings_per_container": 29,
+            "nutritional": {
+                "qty": "35 g",
+                "nutri_breakdown": {
+                    "energy kcal": 137,
+                    "protein g": 25,
+                    "carbohydrate g": 4.5,
+                    "total fat g": 2.1,
+                    "sodium mg": 174,
+                    "added sugar g": 0,
+                },
+            },
+            "amino_acid_profile": {
+                "leucine g": 2.45,
+                "isoleucine g": 1.68,
+                "valine g": 1.45,
+                "total eaa g": 11.4,
+                "histidine g": 0.28,
+                "lysine g": 2.25,
+                "methionine g": 0.55,
+                "phenylalanine g": 0.73,
+                "tryptophan g": 0.23,
+                "threonine g": 1.8,
+                "alanine g": 1.05,
+                "glutamic acid g": 3.5,
+                "glycine g": 0.63,
+                "proline g": 1.68,
+                "cysteine g": 0.53,
+                "tyrosine g": 0.75,
+                "arginine g": 0.7,
+                "serine g": 1.23,
+                "aspartic acid g": 3.55,
+            },
+            "total_amino_acids": {
+                "total bcaa g": 5.58,
+                "total eaa g": 11.4,
+                "total neaa g": 9.33,
+                "total seaa g": 4.29,
+            },
+            "certifications": [],
+        },
+        "ingredients": {
+            "raw_text": "Whey Protein Concentrate, cocoa, sucralose",
+            "normalised": (
+                "{'oils': [], 'additives': [], 'sweeteners': ['ins955'], "
+                "'protein_ingredients': ['whey protein concentrate']}"
+            ),
+        },
+    }
+    f = ss.extract_features(src)
+    assert f.has_amino_profile is True
+    assert f.eaa_count == 9
+    assert f.leucine_g_per_serving == pytest.approx(2.45, abs=0.01)
+    assert f.eaa_g_per_serving == pytest.approx(11.4, abs=0.01)
+    assert f.leucine_per_25g_protein == pytest.approx(2.45, abs=0.05)
+    assert f.amino_acid_recovery is not None
+
+    r = ss.score_label_trust(f)
+    assert "no_amino_profile_published" not in r.tags
+    # Still penalized for missing scoop/serving_size and no batch/lot in text.
+    assert r.detail["disclosure"] == 78  # 92 - 8 scoop - 6 batch
+
+    out = ss.compute_supplement_scorecards(src)
+    assert out is not None
+    # Every AA-dependent card must score from amino_acid_profile / total_amino_acids.
+    aa = out["cards"]["amino_acid_profile"]
+    assert aa["scorable"] is True and aa["score"] is not None
+    assert "no_amino_profile_published" not in (aa.get("tags") or [])
+    pq = out["cards"]["protein_quality"]
+    assert pq["scorable"] is True
+    assert pq["detail"]["completeness"] is not None
+    assert out["cards"]["label_trust"]["scorable"] is True
+
+    adapted = ss.to_pdp_score_cards(out)
+    labels = [e["tag_label"] for e in adapted["score_cards"]["label_trust"]["subtitle_new"]]
+    assert "No amino profile" not in labels
+    pq_labels = [e["tag_label"] for e in adapted["score_cards"]["protein_quality"]["subtitle_new"]]
+    assert "Amino profile unknown" not in pq_labels
+
+
+def test_legacy_found_amino_acid_profile_still_works():
+    """Nested found_amino_acid_profile remains a fallback when flat profile is absent."""
+    src = _protein_src()
+    src["category_data"].pop("amino_acid_profile", None)
+    src["category_data"].pop("total_amino_acids", None)
+    src["category_data"]["found_amino_acid_profile"] = {
+        "qty": "100 g",
+        "total_eaa_g": "45.0",
+        "total_bcaa_g": "20.0",
+        "essential_amino_acids": {
+            "leucine g": "10.5",
+            "isoleucine g": "5.0",
+            "valine g": "5.0",
+            "lysine g": "8.0",
+            "threonine g": "5.0",
+            "methionine g": "2.0",
+            "phenylalanine g": "3.0",
+            "tryptophan g": "1.5",
+            "histidine g": "2.0",
+        },
+        "non_essential_amino_acids": {"glutamic acid g": "15.0"},
+    }
+    f = ss.extract_features(src)
+    assert f.has_amino_profile is True
+    assert f.eaa_count == 9
+    assert ss.score_amino_acid_profile(f).scorable is True
+
+
 def test_digestibility_isolate_two_gums_is_97():
     f = _avvatar_features()
     assert ss.score_digestibility(f).score == 97
@@ -145,6 +262,22 @@ def test_digestibility_subtitle_new_tier_tags():
         {"tag_label": "Lactose free", "color_code": "#2E7D32"},
     ]
     assert dig["subtitle"].startswith("Score:")
+
+
+def test_bioavailability_subtitle_new_tier_tags():
+    adapted = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(_protein_src()))
+    bio = adapted["score_cards"]["bioavailability"]
+    assert bio["title"] == "Bioavailability"
+    assert bio["value"] in ("Best", "Top", "Average", "Poor", "Worst")
+    assert bio["score"] is not None
+    assert bio["subtitle_new"]
+    labels = [e["tag_label"] for e in bio["subtitle_new"]]
+    # Whey isolate → Best band tier tags
+    assert "Highly bioavailable" in labels
+    assert "Fast absorbing" in labels
+    assert "DIAAS 100+" in labels
+    assert all("tag_label" in e and "color_code" in e for e in bio["subtitle_new"])
+    assert bio["subtitle"].startswith("Score:")
 
 
 def test_sweeteners_dual_artificial_is_64():
@@ -363,22 +496,21 @@ def _protein_src(**overrides):
                     "added sugar g": 0.0,
                 },
             },
-            "found_amino_acid_profile": {
-                "qty": "100 g",
-                "total_eaa_g": "45.0",
-                "total_bcaa_g": "20.0",
-                "essential_amino_acids": {
-                    "leucine g": "10.5",
-                    "isoleucine g": "5.0",
-                    "valine g": "5.0",
-                    "lysine g": "8.0",
-                    "threonine g": "5.0",
-                    "methionine g": "2.0",
-                    "phenylalanine g": "3.0",
-                    "tryptophan g": "1.5",
-                    "histidine g": "2.0",
-                },
-                "non_essential_amino_acids": {"glutamic acid g": "15.0"},
+            "amino_acid_profile": {
+                "leucine g": 10.5,
+                "isoleucine g": 5.0,
+                "valine g": 5.0,
+                "lysine g": 8.0,
+                "threonine g": 5.0,
+                "methionine g": 2.0,
+                "phenylalanine g": 3.0,
+                "tryptophan g": 1.5,
+                "histidine g": 2.0,
+                "glutamic acid g": 15.0,
+            },
+            "total_amino_acids": {
+                "total eaa g": 45.0,
+                "total bcaa g": 20.0,
             },
             "certifications": [],
         },
@@ -428,11 +560,12 @@ def test_protein_quality_subtitle_new_array():
 def test_protein_quality_incomplete_without_full_eaa_panel():
     src = _protein_src()
     # Only 3 EAAs published → completeness 0 → Incomplete amino profile
-    src["category_data"]["found_amino_acid_profile"]["essential_amino_acids"] = {
-        "leucine g": "10.5",
-        "isoleucine g": "5.0",
-        "valine g": "5.0",
+    src["category_data"]["amino_acid_profile"] = {
+        "leucine g": 10.5,
+        "isoleucine g": 5.0,
+        "valine g": 5.0,
     }
+    src["category_data"]["total_amino_acids"] = {"total eaa g": 20.5, "total bcaa g": 20.5}
     pq = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(src))["score_cards"]["protein_quality"]
     assert pq["value"] in ("Best", "Top", "Average", "Poor", "Worst")
     labels = [e["tag_label"] for e in pq["subtitle_new"]]
@@ -444,8 +577,9 @@ def test_protein_quality_incomplete_without_full_eaa_panel():
 
 def test_protein_audit_subtitle_new_only_cost_per_gram():
     src = _protein_src()
-    src["category_data"].pop("found_amino_acid_profile")
     src["category_data"].pop("amino_acid_profile", None)
+    src["category_data"].pop("total_amino_acids", None)
+    src["category_data"].pop("found_amino_acid_profile", None)
     pe = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(src))["score_cards"]["protein_efficiency"]
     labels = [e["tag_label"] for e in pe.get("subtitle_new", [])]
     assert len(labels) == 1
@@ -578,21 +712,20 @@ def test_eaa_audit_complete_and_cost():
             "serving_size": "15 g",
             "servings_per_container": 20,
             "nutritional": {"qty": "15 g", "nutri_breakdown": {"protein g": 10.0}},
-            "found_amino_acid_profile": {
-                "qty": "15 g",
-                "total_eaa_g": "10.0",
-                "total_bcaa_g": "5.0",
-                "essential_amino_acids": {
-                    "leucine g": "2.5",
-                    "isoleucine g": "1.25",
-                    "valine g": "1.25",
-                    "lysine g": "1.0",
-                    "threonine g": "0.8",
-                    "methionine g": "0.5",
-                    "phenylalanine g": "0.7",
-                    "tryptophan g": "0.3",
-                    "histidine g": "0.5",
-                },
+            "amino_acid_profile": {
+                "leucine g": 2.5,
+                "isoleucine g": 1.25,
+                "valine g": 1.25,
+                "lysine g": 1.0,
+                "threonine g": 0.8,
+                "methionine g": 0.5,
+                "phenylalanine g": 0.7,
+                "tryptophan g": 0.3,
+                "histidine g": 0.5,
+            },
+            "total_amino_acids": {
+                "total eaa g": 10.0,
+                "total bcaa g": 5.0,
             },
             "certifications": [],
         },
@@ -617,15 +750,14 @@ def test_eaa_audit_bcaa_only_headline():
             "serving_size": "10 g",
             "servings_per_container": 25,
             "nutritional": {"qty": "10 g", "nutri_breakdown": {}},
-            "found_amino_acid_profile": {
-                "qty": "10 g",
-                "total_eaa_g": "5.0",
-                "total_bcaa_g": "5.0",
-                "essential_amino_acids": {
-                    "leucine g": "2.5",
-                    "isoleucine g": "1.25",
-                    "valine g": "1.25",
-                },
+            "amino_acid_profile": {
+                "leucine g": 2.5,
+                "isoleucine g": 1.25,
+                "valine g": 1.25,
+            },
+            "total_amino_acids": {
+                "total eaa g": 5.0,
+                "total bcaa g": 5.0,
             },
             "certifications": [],
         },

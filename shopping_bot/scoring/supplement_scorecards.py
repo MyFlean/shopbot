@@ -31,7 +31,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Collection, Dict, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -2205,8 +2205,15 @@ def _weight_vector(weight_column: str) -> Dict[str, float]:
     return out
 
 
-def compute_supplement_scorecards(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Compute all applicable supplement cards + composite Flean Score.
+def compute_supplement_scorecards(
+    src: Dict[str, Any],
+    allowed_keys: Optional[Collection[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Compute applicable supplement cards + composite Flean Score.
+
+    When ``allowed_keys`` is provided (from flean_card_config), only those cards
+    are calculated and only allowed cards with weight>0 enter the composite.
+    When omitted, all scorers run (legacy weight-based PDP path).
 
     Returns None when the product is not a supplement or its leaf category has no
     weight column defined (caller should then fall back to percentile cards).
@@ -2219,8 +2226,14 @@ def compute_supplement_scorecards(src: Dict[str, Any]) -> Optional[Dict[str, Any
         return None
 
     weights = _weight_vector(features.weight_column)
+    allow = frozenset(allowed_keys) if allowed_keys is not None else None
+    scorers = (
+        {k: CARD_SCORERS[k] for k in allow if k in CARD_SCORERS}
+        if allow is not None
+        else CARD_SCORERS
+    )
     cards: Dict[str, CardResult] = {}
-    for key, scorer in CARD_SCORERS.items():
+    for key, scorer in scorers.items():
         try:
             cards[key] = scorer(features)
         except Exception as exc:  # defensive: one bad card must not sink the PDP
@@ -2229,7 +2242,10 @@ def compute_supplement_scorecards(src: Dict[str, Any]) -> Optional[Dict[str, Any
 
     # Composite: weighted mean of applicable (weight>0) & scorable cards, with
     # renormalisation + confidence deduction for NOT SCORABLE cards (sheet 02 A24).
-    applicable = {k: w for k, w in weights.items() if w > 0}
+    applicable = {
+        k: w for k, w in weights.items()
+        if w > 0 and k in cards and (allow is None or k in allow)
+    }
     scorable = {k: cards[k].score for k in applicable if cards[k].scorable and cards[k].score is not None}
     dropped = [k for k in applicable if k not in scorable]
     total_weight = sum(applicable[k] for k in scorable)
@@ -2246,7 +2262,7 @@ def compute_supplement_scorecards(src: Dict[str, Any]) -> Optional[Dict[str, Any
     if dropped:
         all_tags.append("data_incomplete")
 
-    cards_dict = {k: _card_to_dict(c, applicable.get(k, 0.0)) for k, c in cards.items()}
+    cards_dict = {k: _card_to_dict(c, weights.get(k, 0.0)) for k, c in cards.items()}
     cards_dict = apply_audit_presentation(cards_dict, features)
 
     es_flean = src.get("flean_score") if isinstance(src.get("flean_score"), dict) else {}
@@ -2303,16 +2319,25 @@ SUPPLEMENT_CARD_ICONS: Dict[str, str] = {
 }
 
 
-def to_pdp_score_cards(result: Dict[str, Any]) -> Dict[str, Any]:
+def to_pdp_score_cards(
+    result: Dict[str, Any],
+    allowed_keys: Optional[Collection[str]] = None,
+) -> Dict[str, Any]:
     """Adapt a compute_supplement_scorecards() result into the PDP ``score_cards``
     shape consumed by Flutter, plus a computed ``flean_badge`` and a
     ``supplement_scoring`` detail block.
+
+    When ``allowed_keys`` is provided (config-driven path), emit only those keys
+    and skip weight/bioavailability gates — caller applies config order.
+    When omitted, keep legacy audit-first / weight>0 / bioavailability rules.
     """
     weight_column = result.get("weight_column")
     cards_src = result["cards"]
-    features: Optional[SupplementFeatures] = result.get("_features")
+    allow = frozenset(allowed_keys) if allowed_keys is not None else None
+    if allow is not None:
+        cards_src = {k: v for k, v in cards_src.items() if k in allow}
 
-    # Identify the audit card key for this leaf (pinned to order 1).
+    # Identify the audit card key for this leaf (pinned to order 1 in legacy path).
     audit_key: Optional[str] = None
     for key in cards_src:
         if audit_slot_for(weight_column, key):
@@ -2327,7 +2352,11 @@ def to_pdp_score_cards(result: Dict[str, Any]) -> Dict[str, Any]:
         weight = c.get("weight", 0.0) or 0.0
         return (1 if weight > 0 else 2, -weight)
 
-    entries = sorted(cards_src.items(), key=_sort_key)
+    entries = (
+        list(cards_src.items())
+        if allow is not None
+        else sorted(cards_src.items(), key=_sort_key)
+    )
     cards_out: Dict[str, Any] = {}
     order = 0
     for key, c in entries:
@@ -2337,7 +2366,8 @@ def to_pdp_score_cards(result: Dict[str, Any]) -> Dict[str, Any]:
         if not c.get("scorable"):
             if not (is_audit and audit_slot_for(weight_column, key) == "eaa"):
                 continue
-        if weight <= 0 and key != "bioavailability" and not is_audit:
+        # Legacy visibility: weight>0, bioavailability display-only, or audit.
+        if allow is None and weight <= 0 and key != "bioavailability" and not is_audit:
             continue
         order += 1
         # Ensure muted EAA unscorable still has display fields

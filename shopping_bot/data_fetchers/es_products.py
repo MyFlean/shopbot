@@ -1550,18 +1550,29 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     # ── supplement scorecards (v2 framework): computed on-the-fly from raw label
     # fields, replacing the percentile cards for f_and_b/supplements leaves that
     # have a defined weight vector. Falls back silently to percentile cards. ──
+    # When flean_card_config lists supplement cards for this path, that allowlist
+    # drives calculate + show + order (same pattern as food). If the resolved
+    # config has no known supplement keys (e.g. food Default fallback), keep the
+    # legacy weight>0 path so PDPs stay populated before Redis/S3 is seeded.
     supplement_scoring: Optional[Dict[str, Any]] = None
     try:
         from shopping_bot.scoring.supplement_scorecards import (
+            CARD_SCORERS,
             compute_supplement_scorecards,
             to_pdp_score_cards,
         )
 
-        _supp_result = compute_supplement_scorecards(src)
+        _supp_allowed = allowed_score_keys_from_config(cards_config or []) & frozenset(
+            CARD_SCORERS
+        )
+        _supp_keys = _supp_allowed if _supp_allowed else None
+        _supp_result = compute_supplement_scorecards(src, allowed_keys=_supp_keys)
         if _supp_result is not None:
-            _adapted = to_pdp_score_cards(_supp_result)
+            _adapted = to_pdp_score_cards(_supp_result, allowed_keys=_supp_keys)
             score_cards = _adapted["score_cards"]
-            flean_badge = _adapted["flean_badge"]
+            if _supp_keys is not None and cards_config:
+                score_cards = apply_order_from_config(score_cards, cards_config)
+            # Keep ES/pre-built flean_badge; do not overwrite with card composite.
             supplement_scoring = _adapted["supplement_scoring"]
     except Exception as exc:  # never let supplement scoring break the PDP
         _logging.getLogger(__name__).warning(

@@ -836,3 +836,83 @@ def test_supplement_flean_badge_includes_hide_score():
     adapted_default = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(src_default))
     assert adapted_default["flean_badge"]["hide_score"] is False
 
+
+def test_transform_to_pdp_keeps_es_flean_badge_for_supplements():
+    """Supplement cards replace score_cards but must not overwrite ES flean_badge."""
+    from unittest.mock import patch
+
+    from shopping_bot.data_fetchers.es_products import transform_to_pdp
+
+    src = _protein_src(
+        flean_score={
+            "adjusted_score": 72.0,
+            "adjusted_score_label": 7.2,
+            "hide_score": False,
+        },
+        stats={
+            "protein_percentiles": {"subcategory_percentile": 82.0},
+            "adjusted_score_percentiles": {"subcategory_percentile": 70.0},
+        },
+        name="Test Isolate",
+        brand="Test",
+    )
+    composite = ss.compute_supplement_scorecards(src)["flean_score"]
+    with patch(
+        "shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path",
+        return_value=[],
+    ):
+        pdp = transform_to_pdp(src)
+
+    assert "protein_quality" in pdp["score_cards"] or "protein_efficiency" in pdp["score_cards"]
+    assert pdp["flean_badge"]["score_display"] == "7"
+    assert pdp["flean_badge"]["score"] == 7
+    # Composite is on a 0-100 scale and must not replace the ES badge.
+    assert round(composite) != 7
+    assert pdp.get("supplement_scoring", {}).get("flean_score") == composite
+
+
+def test_allowed_keys_limits_compute_and_pdp_cards():
+    """Config allowlist: only listed cards are calculated/shown; composite ignores others."""
+    from shopping_bot.utils.cards_config import apply_order_from_config
+
+    src = _protein_src()
+    full = ss.compute_supplement_scorecards(src)
+    assert full is not None
+    assert "digestibility" in full["cards"]
+    assert "label_trust" in full["cards"]
+
+    allowed = frozenset({"protein_quality", "label_trust", "bioavailability"})
+    limited = ss.compute_supplement_scorecards(src, allowed_keys=allowed)
+    assert limited is not None
+    assert set(limited["cards"]) == allowed
+    # Composite should differ when high-weight cards are excluded from scoring.
+    assert limited["flean_score"] != full["flean_score"] or limited["cards_dropped"] != full["cards_dropped"]
+
+    adapted = ss.to_pdp_score_cards(limited, allowed_keys=allowed)
+    assert set(adapted["score_cards"]) == {
+        k for k in allowed if limited["cards"][k].get("scorable")
+    } | (
+        {"bioavailability"}
+        if limited["cards"]["bioavailability"].get("scorable")
+        else set()
+    )
+    assert "digestibility" not in adapted["score_cards"]
+
+    config = [
+        {"card": "Bioavailability", "visible": True, "order": 1},
+        {"card": "Label Trust", "visible": True, "order": 2},
+        {"card": "Protein Quality", "visible": True, "order": 3},
+    ]
+    ordered = apply_order_from_config(adapted["score_cards"], config)
+    if "bioavailability" in ordered:
+        assert ordered["bioavailability"]["order"] == 1
+    assert ordered["label_trust"]["order"] == 2
+    assert ordered["protein_quality"]["order"] == 3
+
+
+def test_without_allowed_keys_keeps_legacy_visibility():
+    adapted = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(_protein_src()))
+    # Legacy always shows bioavailability even though weight is 0.
+    assert "bioavailability" in adapted["score_cards"]
+    assert "digestibility" in adapted["score_cards"]
+

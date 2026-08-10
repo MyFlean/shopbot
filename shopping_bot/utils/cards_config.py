@@ -142,15 +142,37 @@ def ensure_cards_config_in_redis(redis_client, *, force: bool = False) -> int:
         return 0
 
     written = 0
+    desired_keys = set()
     for subcategory_path, entries in source.items():
         redis_key = scorecard_redis_key(subcategory_path)
+        desired_keys.add(redis_key)
         if not force and redis_client.exists(redis_key):
             continue
         redis_client.set(redis_key, json.dumps(entries, ensure_ascii=False))
         written += 1
 
+    # When force-reloading, drop scorecard keys no longer present in source so
+    # removed leaf paths do not shadow parent-prefix fallback.
+    deleted = 0
+    if force:
+        prefix = scorecard_redis_prefix()
+        try:
+            existing = list(redis_client.scan_iter(match=f"{prefix}*", count=200))
+        except Exception:
+            existing = redis_client.keys(f"{prefix}*") or []
+        for key in existing:
+            key_str = key.decode("utf-8") if isinstance(key, (bytes, bytearray)) else str(key)
+            if key_str not in desired_keys:
+                redis_client.delete(key)
+                deleted += 1
+
     _seeded = True
-    log.info("CARDS_CONFIG_SEEDED | keys_written=%s", written)
+    log.info(
+        "CARDS_CONFIG_SEEDED | keys_written=%s | keys_deleted=%s | force=%s",
+        written,
+        deleted,
+        force,
+    )
     return written
 
 
@@ -167,24 +189,51 @@ def _parse_config_payload(raw: Optional[str]) -> List[Dict[str, Any]]:
     return [entry for entry in parsed if isinstance(entry, dict)]
 
 
+def _config_lookup_candidates(subcategory_path: str) -> List[str]:
+    """Exact path, then parent prefixes, then Default.
+
+    Example: ``f_and_b/supplements/protein/whey_isolate`` →
+    ``whey_isolate`` path, ``.../protein``, ``.../supplements``, ``f_and_b``,
+    then ``Default``.
+    """
+    path = str(subcategory_path or "").strip().strip("/")
+    candidates: List[str] = []
+    while path:
+        candidates.append(path)
+        if "/" not in path:
+            break
+        path = path.rsplit("/", 1)[0]
+    if DEFAULT_SUBCATEGORY not in candidates:
+        candidates.append(DEFAULT_SUBCATEGORY)
+    return candidates
+
+
 def get_subcategory_cards_config(
     redis_client,
     subcategory_path: str,
     *,
     force_refresh: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Read card config for a subcategory; fallback to Default."""
-    path = str(subcategory_path or "").strip()
+    """Read card config for a subcategory with parent-prefix fallback.
 
+    Tries the exact path, then each parent prefix (dropping the last segment),
+    then ``Default``.
+    """
     ensure_cards_config_in_redis(redis_client)
 
-    raw = redis_client.get(scorecard_redis_key(path)) if path else None
-    entries = _parse_config_payload(raw)
-    if not entries:
-        raw = redis_client.get(scorecard_redis_key(DEFAULT_SUBCATEGORY))
+    for candidate in _config_lookup_candidates(subcategory_path):
+        raw = redis_client.get(scorecard_redis_key(candidate))
         entries = _parse_config_payload(raw)
+        if entries:
+            if candidate != str(subcategory_path or "").strip().strip("/"):
+                log.info(
+                    "CARDS_CONFIG_PARENT_FALLBACK | requested=%s | used=%s",
+                    subcategory_path,
+                    candidate,
+                )
+            return entries
 
-    return entries
+    return []
 
 
 def get_subcategory_cards_config_for_path(subcategory_path: str) -> List[Dict[str, Any]]:
@@ -242,6 +291,19 @@ CARD_DISPLAY_NAME_TO_SCORE_KEY: Dict[str, str] = {
     "Antioxidants": "antioxidants",
     "Gut Health": "gut_health",
     "Hydration": "hydration",
+    # Supplement scorecards (v2 framework)
+    "Protein Quality": "protein_quality",
+    "Amino Acid Profile": "amino_acid_profile",
+    "Protein Efficiency": "protein_efficiency",
+    "Bioavailability": "bioavailability",
+    "Digestibility": "digestibility",
+    "Label Trust": "label_trust",
+    "Heavy metals": "heavy_metals",
+    "Serving Honesty": "serving_honesty",
+    "Clinical Dose": "clinical_dose",
+    "Stimulant Balance": "stimulant_balance",
+    "Pump Formula": "pump_formula",
+    "Recovery Formula": "recovery_formula",
 }
 
 # Unified score-card build registry.

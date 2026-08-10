@@ -33,6 +33,19 @@ CARD_TO_HIGHLIGHT: dict[str, str] = {
     "Gut Health": "gh_tags",
     "Hydration": "hydration_tags",
     "Watch Outs": "",
+    # Supplement scorecards (v2) — no ES highlight_tag groups
+    "Protein Quality": "",
+    "Amino Acid Profile": "",
+    "Protein Efficiency": "",
+    "Bioavailability": "",
+    "Digestibility": "",
+    "Label Trust": "",
+    "Heavy metals": "",
+    "Serving Honesty": "",
+    "Clinical Dose": "",
+    "Stimulant Balance": "",
+    "Pump Formula": "",
+    "Recovery Formula": "",
 }
 
 ALIAS_TO_START_CASE: dict[str, str] = {
@@ -75,6 +88,30 @@ ALIAS_TO_START_CASE: dict[str, str] = {
     "watchOuts": "Watch Outs",
     "WatchOuts": "Watch Outs",
     "Watch Outs": "Watch Outs",
+    "Protein Quality": "Protein Quality",
+    "protein_quality": "Protein Quality",
+    "Amino Acid Profile": "Amino Acid Profile",
+    "amino_acid_profile": "Amino Acid Profile",
+    "Protein Efficiency": "Protein Efficiency",
+    "protein_efficiency": "Protein Efficiency",
+    "Bioavailability": "Bioavailability",
+    "bioavailability": "Bioavailability",
+    "Digestibility": "Digestibility",
+    "digestibility": "Digestibility",
+    "Label Trust": "Label Trust",
+    "label_trust": "Label Trust",
+    "Heavy metals": "Heavy metals",
+    "heavy_metals": "Heavy metals",
+    "Serving Honesty": "Serving Honesty",
+    "serving_honesty": "Serving Honesty",
+    "Clinical Dose": "Clinical Dose",
+    "clinical_dose": "Clinical Dose",
+    "Stimulant Balance": "Stimulant Balance",
+    "stimulant_balance": "Stimulant Balance",
+    "Pump Formula": "Pump Formula",
+    "pump_formula": "Pump Formula",
+    "Recovery Formula": "Recovery Formula",
+    "recovery_formula": "Recovery Formula",
 }
 
 EXPECTED_KEYS = ("card", "highlight_tag", "visible", "optional", "order")
@@ -135,10 +172,14 @@ def validate_config(data: dict) -> list[str]:
             if "highlight_tag" not in entry:
                 errors.append(f"{prefix}: missing highlight_tag")
             elif entry["highlight_tag"] != CARD_TO_HIGHLIGHT[card]:
-                errors.append(
-                    f"{prefix}: highlight_tag {entry['highlight_tag']!r} "
-                    f"!= expected {CARD_TO_HIGHLIGHT[card]!r}"
-                )
+                # Supplement paths intentionally use empty highlight_tag even when
+                # the card title is shared with food (e.g. Sweeteners).
+                is_supplement = str(subcategory).startswith("f_and_b/supplements")
+                if not (is_supplement and entry["highlight_tag"] == ""):
+                    errors.append(
+                        f"{prefix}: highlight_tag {entry['highlight_tag']!r} "
+                        f"!= expected {CARD_TO_HIGHLIGHT[card]!r}"
+                    )
     return errors
 
 

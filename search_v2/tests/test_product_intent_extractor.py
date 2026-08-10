@@ -160,6 +160,22 @@ def test_specific_query_still_resolves_without_override():
     assert result.dominant_category == "energy_bars"
 
 
+def test_pre_workout_query_gets_medium_override():
+    extractor = ProductIntentExtractor(LEXICON, settings=_FakeSettings())
+    result = extractor.extract("pre workout")
+    assert result.primary_product == "pre workout"
+    assert result.tier == "medium"
+    assert result.dominant_category == "pre_workout"
+
+
+def test_preworkout_query_gets_medium_override():
+    extractor = ProductIntentExtractor(LEXICON, settings=_FakeSettings())
+    result = extractor.extract("preworkout")
+    assert result.primary_product == "pre workout"
+    assert result.tier == "medium"
+    assert result.dominant_category == "pre_workout"
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

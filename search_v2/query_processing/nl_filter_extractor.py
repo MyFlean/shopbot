@@ -168,6 +168,11 @@ _LIFESTYLE_INTENT_PATTERNS: List[Tuple[re.Pattern, List[str]]] = [
 ]
 
 
+def _is_pre_workout_head_query(text: str) -> bool:
+    normalized = re.sub(r"[\s\-]+", "", (text or "").strip().lower())
+    return normalized == "preworkout"
+
+
 @dataclass
 class NLExtractionResult:
     """Output of NLFilterExtractor.extract()."""
@@ -290,6 +295,13 @@ class NLFilterExtractor:
         for pattern, profiles in _LIFESTYLE_INTENT_PATTERNS:
             m = pattern.search(remaining)
             if m:
+                matched_phrase_collapsed = re.sub(r"[\s\-]+", "", m.group(0).lower())
+                # Keep "pre workout" query-family head terms intact. Without
+                # this guard, lifestyle extraction strips "workout" and leaves
+                # "pre", which weakens downstream intent/retrieval for exactly
+                # the query family we are targeting.
+                if _is_pre_workout_head_query(remaining) and matched_phrase_collapsed == "workout":
+                    continue
                 for profile in profiles:
                     if profile not in nutrition_profiles:
                         nutrition_profiles.append(profile)

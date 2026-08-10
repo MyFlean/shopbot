@@ -38,6 +38,10 @@ def test_core_text_no_op_without_matched_phrases():
     assert _core_text("heart healthy foods", ()) == "heart healthy foods"
 
 
+def test_core_text_preserves_pre_workout_head_term():
+    assert _core_text("pre workout", ("pre workout",)) == "pre workout"
+
+
 def test_field_match_clauses_unchanged_without_health_intent():
     with_empty = _field_match_clauses("heart healthy foods", SETTINGS, health_intent_matched_phrases=())
     baseline = _field_match_clauses("heart healthy foods", SETTINGS)
@@ -167,6 +171,26 @@ def test_non_targeted_queries_do_not_get_supplement_hierarchy_boost_clause():
         ]
     ]
     assert matched == []
+
+
+def test_preworkout_query_adds_workout_hierarchy_boost_clause():
+    clauses = _field_match_clauses("preworkout", SETTINGS)
+    supplement_clause = next(
+        c["nested"] for c in clauses
+        if "nested" in c
+        and c["nested"].get("query", {}).get("bool", {}).get("filter") == [
+            {"term": {"category_hierarchies.segments": "supplements"}}
+        ]
+        and any(
+            term.get("term", {}).get("category_hierarchies.segments", {}).get("value") == "pre_workout"
+            for term in c["nested"].get("query", {}).get("bool", {}).get("should", [])
+        )
+    )
+    should_terms = supplement_clause["query"]["bool"]["should"]
+    values = {term["term"]["category_hierarchies.segments"]["value"] for term in should_terms}
+    assert "supplements" in values
+    assert "pre_post_workout" in values
+    assert "pre_workout" in values
 
 
 def test_derivative_demotion_skips_powder_for_protein_query():

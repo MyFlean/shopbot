@@ -103,10 +103,12 @@ CATEGORY_HIERARCHIES_BOOST = 0.8
 SUPPLEMENT_DEPARTMENT_BOOST = 3.0
 SUPPLEMENT_PROTEIN_CATEGORY_BOOST = 5.5
 SUPPLEMENT_PRE_POST_WORKOUT_CATEGORY_BOOST = 4.0
+SUPPLEMENT_PRE_WORKOUT_SUBCATEGORY_BOOST = 5.5
 
 _BRAND_FIELDS = {"brand", "brand.camel", "brand.phonetic"}
 _NAME_FIELDS = {"name", "name.camel", "name.phonetic"}
 _PROTEIN_SUPPLEMENT_QUERY_PATTERN = re.compile(r"^protein(?:\s+powder)?$")
+_PRE_WORKOUT_QUERY_PATTERN = re.compile(r"^pre[\s-]?workout$")
 _SUPPLEMENT_PROTEIN_CATEGORIES = (
     ("protein", SUPPLEMENT_PROTEIN_CATEGORY_BOOST),
     ("pre_post_workout", SUPPLEMENT_PRE_POST_WORKOUT_CATEGORY_BOOST),
@@ -118,6 +120,14 @@ def _core_text(text: str, health_intent_matched_phrases: Tuple[str, ...]) -> str
         return text
     descriptor_words = set()
     for phrase in health_intent_matched_phrases:
+        phrase_normalized = " ".join(
+            token for token in re.split(r"[\s\-]+", phrase.lower()) if token
+        )
+        # For workout family product queries, the health phrase is also the
+        # lexical head term; stripping it removes the strongest phrase/exact
+        # signals and hurts relevance.
+        if phrase_normalized == "pre workout":
+            continue
         descriptor_words.update(phrase.lower().split())
     core_words = [w for w in text.split() if w.lower() not in descriptor_words]
     return " ".join(core_words).strip()
@@ -126,6 +136,11 @@ def _core_text(text: str, health_intent_matched_phrases: Tuple[str, ...]) -> str
 def _is_protein_supplement_query(text: str) -> bool:
     normalized = " ".join(text.lower().split())
     return bool(_PROTEIN_SUPPLEMENT_QUERY_PATTERN.fullmatch(normalized))
+
+
+def _is_pre_workout_query(text: str) -> bool:
+    normalized = " ".join(text.lower().split())
+    return bool(_PRE_WORKOUT_QUERY_PATTERN.fullmatch(normalized))
 
 # General linguistic markers of a PROCESSED/DERIVATIVE product, not specific
 # to any one product. This is what makes "apple should rank fresh apple
@@ -343,6 +358,50 @@ def _field_match_clauses(
                                         }
                                     }
                                 }
+                            ],
+                            "minimum_should_match": 1,
+                        }
+                    },
+                }
+            }
+        )
+
+    if _is_pre_workout_query(text):
+        clauses.append(
+            {
+                "nested": {
+                    "path": "category_hierarchies",
+                    "score_mode": "max",
+                    "query": {
+                        "bool": {
+                            "filter": [
+                                {"term": {"category_hierarchies.segments": "supplements"}},
+                            ],
+                            "should": [
+                                {
+                                    "term": {
+                                        "category_hierarchies.segments": {
+                                            "value": "pre_post_workout",
+                                            "boost": SUPPLEMENT_PRE_POST_WORKOUT_CATEGORY_BOOST,
+                                        }
+                                    }
+                                },
+                                {
+                                    "term": {
+                                        "category_hierarchies.segments": {
+                                            "value": "pre_workout",
+                                            "boost": SUPPLEMENT_PRE_WORKOUT_SUBCATEGORY_BOOST,
+                                        }
+                                    }
+                                },
+                                {
+                                    "term": {
+                                        "category_hierarchies.segments": {
+                                            "value": "supplements",
+                                            "boost": SUPPLEMENT_DEPARTMENT_BOOST,
+                                        }
+                                    }
+                                },
                             ],
                             "minimum_should_match": 1,
                         }

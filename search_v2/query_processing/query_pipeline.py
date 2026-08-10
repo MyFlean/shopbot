@@ -49,6 +49,13 @@ def _merged_variant_text(normalized: str) -> Optional[str]:
     return merged if merged != normalized else None
 
 
+def _pre_workout_variant_text(normalized: str) -> Optional[str]:
+    collapsed = re.sub(r"[\s\-]+", "", normalized.strip().lower())
+    if collapsed != "preworkout":
+        return None
+    return "pre workout" if normalized != "pre workout" else None
+
+
 _GROCERY_SYNONYMS: Dict[str, str] = {
     "chips": "crisps",
     "crisps": "chips",
@@ -141,6 +148,10 @@ def process_query(
     merged_variant = _merged_variant_text(normalized)
     if merged_variant:
         variants.append(QueryVariant(text=merged_variant, is_correction=False, confidence=1.0))
+
+    pre_workout_variant = _pre_workout_variant_text(normalized)
+    if pre_workout_variant and pre_workout_variant not in {v.text for v in variants}:
+        variants.append(QueryVariant(text=pre_workout_variant, is_correction=False, confidence=1.0))
 
     synonym_variant = _synonym_variant_text(normalized)
     if synonym_variant:

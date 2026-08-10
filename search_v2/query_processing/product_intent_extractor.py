@@ -117,6 +117,11 @@ _PROTEIN_SUPPLEMENT_OVERRIDES: Dict[str, Tuple[str, str]] = {
     "protein powder": ("whey protein", "protein"),
 }
 
+_PRE_WORKOUT_OVERRIDES: Dict[str, Tuple[str, str]] = {
+    "pre workout": ("pre workout", "pre_workout"),
+    "preworkout": ("pre workout", "pre_workout"),
+}
+
 
 def _build_category_alias_map(categories) -> Dict[str, str]:
     """{normalized query phrase -> catalog dominant_category leaf}, derived
@@ -383,6 +388,18 @@ class ProductIntentExtractor:
         override = _PROTEIN_SUPPLEMENT_OVERRIDES.get(normalized)
         if override is not None:
             product_type, dominant_category = override
+            return ProductIntentResult(
+                primary_product=product_type,
+                modifiers=[],
+                confidence=CATEGORY_FALLBACK_CONFIDENCE,
+                tier="medium",
+                dominant_category=dominant_category,
+                source="category_fallback",
+            )
+
+        pre_workout_override = _PRE_WORKOUT_OVERRIDES.get(normalized)
+        if pre_workout_override is not None:
+            product_type, dominant_category = pre_workout_override
             return ProductIntentResult(
                 primary_product=product_type,
                 modifiers=[],

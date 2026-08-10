@@ -44,12 +44,28 @@ def test_pdp_includes_non_null_category_metadata(_mock_cards):
         amino_acid_profile=AMINO,
         active_ingredients=ACTIVE,
     )
+    src["flavour"] = "Berry Fusion"
     pdp = transform_to_pdp(src)
 
     assert pdp["product_info"]["servings_per_container"] == 30
     assert pdp["product_info"]["dietary_label"] == "Vegetarian"
+    assert pdp["product_info"]["flavour"] == "Berry Fusion"
     assert pdp["amino_acid_profile"] == AMINO
     assert pdp["active_ingredients"] == ACTIVE
+
+
+@patch(
+    "shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path",
+    return_value=[],
+)
+def test_pdp_omits_missing_or_blank_flavour(_mock_cards):
+    pdp = transform_to_pdp(_src())
+    assert "flavour" not in pdp["product_info"]
+
+    src = _src()
+    src["flavour"] = "  "
+    pdp_blank = transform_to_pdp(src)
+    assert "flavour" not in pdp_blank["product_info"]
 
 
 @patch(

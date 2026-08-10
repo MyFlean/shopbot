@@ -1470,6 +1470,9 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
         "variants": _normalize_variant_entries(src.get("variants")),
     }
     _copy_if_present(src, product_info, "scheduled")
+    flavour = str(src.get("flavour") or "").strip()
+    if flavour:
+        product_info["flavour"] = flavour
     servings_per_container = category_data.get("servings_per_container")
     if servings_per_container is not None:
         product_info["servings_per_container"] = servings_per_container

@@ -1,0 +1,229 @@
+{
+  "schema_version": "1.0",
+  "config_name": "unified_search_goal_rules",
+  "updated_at": "2026-08-05T00:00:00Z",
+  "goals": [
+    {
+      "id": "high_protein",
+      "label": "High Protein",
+      "enabled": true,
+      "include_all": [
+        {
+          "any_of": [
+            { "field": "category_data.nutritional.nutri_breakdown.protein g", "op": "gte", "value": 10 },
+            { "field": "derived.protein_cal_pct", "op": "gte", "value": 15 },
+            { "field": "category_data.tags.highlight_tags.protein_tags.positive", "op": "contains_any", "value": ["high_protein_density"] }
+          ]
+        }
+      ],
+      "exclude_any": [
+        { "field": "flean_score.adjusted_score", "op": "lt", "value": 50 },
+        {
+          "all_of": [
+            { "field": "category_data.tags.highlight_tags.sweetners_sugar_tags.negative", "op": "contains_any", "value": ["bad_sweetners_used"] },
+            { "field": "category_data.nutritional.nutri_breakdown.added sugar g", "op": "gt", "value": 10 }
+          ]
+        }
+      ],
+      "sort_order": [
+        { "field": "stats.protein_percentiles.category_percentile", "order": "desc" },
+        { "field": "flean_score.adjusted_score", "order": "desc" }
+      ]
+    },
+    {
+      "id": "weight_loss_fat_loss",
+      "label": "Weight Loss / Fat Loss",
+      "enabled": true,
+      "include_all": [
+        { "field": "category_data.nutritional.nutri_breakdown.energy kcal", "op": "lte", "value": 400 },
+        { "field": "category_data.nutritional.nutri_breakdown.added sugar g", "op": "lte", "value": 5 },
+        {
+          "any_of": [
+            { "field": "category_data.nutritional.nutri_breakdown.fiber g", "op": "gte", "value": 3 },
+            { "field": "flean_score.bonuses.fiber_bonus", "op": "gt", "value": 0 },
+            { "field": "derived.protein_cal_pct", "op": "gte", "value": 12 }
+          ]
+        }
+      ],
+      "exclude_any": [
+        {
+          "all_of": [
+            { "field": "category_data.processing_type", "op": "eq", "value": "ultra_processed" },
+            { "field": "flean_score.adjusted_score", "op": "lt", "value": 55 }
+          ]
+        },
+        { "field": "category_data.nutritional.nutri_breakdown.total fat g", "op": "gt", "value": 20 }
+      ],
+      "sort_order": [
+        { "field": "flean_score.penalties.calories_penalty", "order": "asc" },
+        { "field": "derived.protein_cal_pct", "order": "desc" }
+      ]
+    },
+    {
+      "id": "muscle_gain",
+      "label": "Muscle Gain",
+      "enabled": true,
+      "include_all": [
+        { "field": "category_data.nutritional.nutri_breakdown.protein g", "op": "gte", "value": 12 },
+        { "field": "category_data.nutritional.nutri_breakdown.energy kcal", "op": "gte", "value": 350 },
+        {
+          "any_of": [
+            { "field": "category_data.tags.highlight_tags.protein_tags.positive", "op": "contains_any", "value": ["complete_amino_profile"] },
+            { "field": "category_data.tags.highlight_tags.protein_tags.positive", "op": "contains_any", "value": ["high_protein_density"] }
+          ]
+        }
+      ],
+      "exclude_any": [
+        { "field": "category_data.nutritional.nutri_breakdown.added sugar g", "op": "gt", "value": 15 },
+        { "field": "category_data.nutritional.nutri_breakdown.trans fat g", "op": "gt", "value": 0 }
+      ],
+      "sort_order": [
+        { "field": "category_data.nutritional.nutri_breakdown.protein g", "order": "desc" },
+        { "field": "stats.protein_percentiles.subcategory_percentile", "order": "desc" }
+      ]
+    },
+    {
+      "id": "gut_health",
+      "label": "Gut Health",
+      "enabled": true,
+      "include_all": [
+        {
+          "any_of": [
+            { "field": "category_data.nutritional.nutri_breakdown.fiber g", "op": "gte", "value": 6 },
+            { "field": "stats.fiber_percentiles.category_percentile", "op": "gte", "value": 70 },
+            { "field": "flean_score.bonuses.fermentation_bonus", "op": "gt", "value": 0 }
+          ]
+        },
+        { "field": "category_data.processing_type", "op": "neq", "value": "ultra_processed" }
+      ],
+      "exclude_any": [
+        { "field": "category_data.tags.highlight_tags.carbs_fiber_tags.negative", "op": "contains_any", "value": ["no_fiber_content"] },
+        {
+          "field": "ingredients.normalised.sweetners",
+          "op": "contains_any",
+          "value": ["sucralose", "aspartame", "acesulfame"]
+        }
+      ],
+      "sort_order": [
+        { "field": "flean_score.bonuses.fermentation_bonus", "order": "desc" },
+        { "field": "category_data.nutritional.nutri_breakdown.fiber g", "order": "desc" }
+      ]
+    },
+    {
+      "id": "heart_healthy",
+      "label": "Heart Healthy",
+      "enabled": true,
+      "include_all": [
+        { "field": "category_data.nutritional.nutri_breakdown.saturated fat g", "op": "lte", "value": 5 },
+        { "field": "category_data.nutritional.nutri_breakdown.trans fat g", "op": "eq", "value": 0 },
+        { "field": "category_data.nutritional.nutri_breakdown.sodium mg", "op": "lte", "value": 300 },
+        { "field": "category_data.nutritional.nutri_breakdown.cholesterol mg", "op": "lte", "value": 20 }
+      ],
+      "exclude_any": [
+        { "field": "ingredients.oils", "op": "contains", "value": "Palm Oil" },
+        { "field": "category_data.tags.highlight_tags.oils_fats_tags.negative", "op": "not_empty", "value": true }
+      ],
+      "sort_order": [
+        { "field": "flean_score.bonuses.healthy_fat_bonus", "order": "desc" },
+        { "field": "flean_score.penalties.sodium_penalty", "order": "asc" }
+      ]
+    },
+    {
+      "id": "energy_focus",
+      "label": "Energy & Focus",
+      "enabled": true,
+      "include_all": [
+        { "field": "category_data.nutritional.nutri_breakdown.carbohydrate g", "op": "gte", "value": 30 },
+        { "field": "category_data.nutritional.nutri_breakdown.added sugar g", "op": "lte", "value": 8 },
+        {
+          "any_of": [
+            { "field": "category_data.nutritional.nutri_breakdown.fiber g", "op": "gte", "value": 3 },
+            { "field": "category_data.tags.highlight_tags.energy_tags.neutral", "op": "contains_any", "value": ["medium_calories"] }
+          ]
+        },
+        { "field": "category_data.nutritional.nutri_breakdown.protein g", "op": "gte", "value": 5 }
+      ],
+      "exclude_any": [
+        { "field": "category_data.nutritional.nutri_breakdown.added sugar g", "op": "gt", "value": 15 },
+        { "field": "category_data.nutritional.nutri_breakdown.trans fat g", "op": "gt", "value": 0 }
+      ],
+      "sort_order": [
+        { "field": "flean_score.adjusted_score", "order": "desc" },
+        { "field": "stats.carbs_penalty_percentiles.category_percentile", "order": "asc" }
+      ]
+    },
+    {
+      "id": "clean_eating",
+      "label": "Clean Eating",
+      "enabled": true,
+      "include_all": [
+        { "field": "category_data.processing_type", "op": "neq", "value": "ultra_processed" },
+        { "field": "category_data.tags.highlight_tags.ingredients_tags.positive", "op": "contains_any", "value": ["no_harmful_additives"] },
+        { "field": "category_data.tags.highlight_tags.ingredients_tags.positive", "op": "contains_any", "value": ["preservative_free"] }
+      ],
+      "exclude_any": [
+        { "field": "derived.additives_count", "op": "gt", "value": 2 },
+        {
+          "field": "ingredients.normalised.sweetners",
+          "op": "contains_any",
+          "value": ["sucralose", "aspartame", "acesulfame"]
+        }
+      ],
+      "sort_order": [
+        { "field": "flean_score.bonuses.simplicity_bonus", "order": "desc" },
+        { "field": "flean_score.bonuses.wholefood_bonus", "order": "desc" },
+        { "field": "flean_score.adjusted_score", "order": "desc" }
+      ]
+    },
+    {
+      "id": "low_sugar_sugar_control",
+      "label": "Low Sugar / Sugar Control",
+      "enabled": true,
+      "include_all": [
+        { "field": "category_data.nutritional.nutri_breakdown.added sugar g", "op": "lte", "value": 2 },
+        { "field": "category_data.nutritional.nutri_breakdown.total sugar g", "op": "lte", "value": 8 }
+      ],
+      "exclude_any": [
+        {
+          "field": "ingredients.normalised.sweetners",
+          "op": "contains_any",
+          "value": ["sugar", "invert sugar syrup", "glucose syrup", "maltodextrin", "honey"]
+        },
+        { "field": "category_data.nutritional.nutri_breakdown.added sugar g", "op": "gt", "value": 2 },
+        { "field": "category_data.tags.highlight_tags.sweetners_sugar_tags.negative", "op": "not_empty", "value": true }
+      ],
+      "sort_order": [
+        { "field": "category_data.nutritional.nutri_breakdown.added sugar g", "order": "asc" },
+        { "field": "stats.sugar_penalty_percentiles.global_percentile", "order": "asc" }
+      ]
+    },
+    {
+      "id": "kids_friendly",
+      "label": "Kids Friendly",
+      "enabled": true,
+      "include_all": [
+        { "field": "category_data.tags.highlight_tags.ingredients_tags.positive", "op": "contains_any", "value": ["no_harmful_additives"] },
+        { "field": "category_data.nutritional.nutri_breakdown.added sugar g", "op": "lte", "value": 8 },
+        { "field": "category_data.nutritional.nutri_breakdown.trans fat g", "op": "eq", "value": 0 },
+        { "field": "flean_score.adjusted_score", "op": "gte", "value": 60 }
+      ],
+      "exclude_any": [
+        {
+          "field": "ingredients.normalised.sweetners",
+          "op": "contains_any",
+          "value": ["sucralose", "aspartame", "acesulfame"]
+        },
+        { "field": "category_data.nutritional.nutri_breakdown.sodium mg", "op": "gt", "value": 400 },
+        {
+          "field": "ingredients.additives",
+          "op": "contains_any",
+          "value": ["INS 102", "INS 110", "INS 122", "INS 124", "INS 129", "INS 133", "INS 143", "INS 155"]
+        }
+      ],
+      "sort_order": [
+        { "field": "flean_score.adjusted_score", "order": "desc" },
+        { "field": "flean_score.bonuses.fortification_bonus", "order": "desc" }
+      ]
+    }
+  ]
+}

@@ -15,6 +15,7 @@ import asyncio
 import threading as _threading
 from dataclasses import dataclass
 from logging import log
+import logging as _logging
 import math
 import os
 import re
@@ -474,6 +475,11 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         flean_percentile = None
         if stats.get("adjusted_score_percentiles"):
             flean_percentile = stats["adjusted_score_percentiles"].get("subcategory_percentile")
+        hide_score = (
+            bool(flean_score_data.get("hide_score"))
+            if isinstance(flean_score_data, dict) and flean_score_data.get("hide_score") is not None
+            else False
+        )
     else:
         # Pre-transformed format from _transform_results
         nutrition = {
@@ -494,6 +500,7 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if flean_score is not None:
             flean_score = _round_flean_score_whole(flean_score)
         flean_percentile = src.get("flean_percentile")
+        hide_score = bool(src.get("hide_score", False))
 
     macro_tags = _generate_macro_tags(nutrition)
     nutrition_clean = {k: v for k, v in nutrition.items() if v is not None}
@@ -514,6 +521,7 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "nutrition": nutrition_clean if nutrition_clean else None,
         "flean_score": flean_score,
         "flean_percentile": flean_percentile,
+        "hide_score": hide_score,
         "in_stock": True,
         "variants": _normalize_variant_entries(src.get("variants")),
     }
@@ -1539,6 +1547,38 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     else:
         score_cards = _build_score_cards(src, **build_kwargs)
 
+    # ── supplement scorecards (v2 framework): computed on-the-fly from raw label
+    # fields, replacing the percentile cards for f_and_b/supplements leaves that
+    # have a defined weight vector. Falls back silently to percentile cards. ──
+    # When flean_card_config lists supplement cards for this path, that allowlist
+    # drives calculate + show + order (same pattern as food). If the resolved
+    # config has no known supplement keys (e.g. food Default fallback), keep the
+    # legacy weight>0 path so PDPs stay populated before Redis/S3 is seeded.
+    supplement_scoring: Optional[Dict[str, Any]] = None
+    try:
+        from shopping_bot.scoring.supplement_scorecards import (
+            CARD_SCORERS,
+            compute_supplement_scorecards,
+            to_pdp_score_cards,
+        )
+
+        _supp_allowed = allowed_score_keys_from_config(cards_config or []) & frozenset(
+            CARD_SCORERS
+        )
+        _supp_keys = _supp_allowed if _supp_allowed else None
+        _supp_result = compute_supplement_scorecards(src, allowed_keys=_supp_keys)
+        if _supp_result is not None:
+            _adapted = to_pdp_score_cards(_supp_result, allowed_keys=_supp_keys)
+            score_cards = _adapted["score_cards"]
+            if _supp_keys is not None and cards_config:
+                score_cards = apply_order_from_config(score_cards, cards_config)
+            # Keep ES/pre-built flean_badge; do not overwrite with card composite.
+            supplement_scoring = _adapted["supplement_scoring"]
+    except Exception as exc:  # never let supplement scoring break the PDP
+        _logging.getLogger(__name__).warning(
+            "SUPPLEMENT_SCORECARD_ERROR | id=%s | error=%s", src.get("id"), exc
+        )
+
     # ── notes (static display notes for UI) ──
     notes = {
         "criteria_note": "Per 100 g labels reflect Flean Criteria.",
@@ -1647,6 +1687,8 @@ def transform_to_pdp(src: Dict[str, Any]) -> Dict[str, Any]:
     active_ingredients = category_data.get("active_ingredients")
     if active_ingredients is not None:
         pdp_data["active_ingredients"] = active_ingredients
+    if supplement_scoring is not None:
+        pdp_data["supplement_scoring"] = supplement_scoring
     return pdp_data
 
 def _get_current_user_text(ctx) -> str:

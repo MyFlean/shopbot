@@ -209,6 +209,39 @@ def _coerce_hierarchy_list(
     return out or None
 
 
+def _coerce_selector_list(raw: Any) -> Optional[List[str]]:
+    """Normalize selector IDs to a deduped lowercased list."""
+    if raw is None:
+        return None
+    parts: List[Any]
+    if isinstance(raw, str):
+        parts = [raw]
+    elif isinstance(raw, (list, tuple)):
+        parts = list(raw)
+    else:
+        return None
+    out: List[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        if not isinstance(part, str):
+            continue
+        for token in part.split(","):
+            normalized = token.strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            out.append(normalized)
+    return out or None
+
+
+def _coerce_goal_list(raw: Any) -> Optional[List[str]]:
+    return _coerce_selector_list(raw)
+
+
+def _coerce_diet_list(raw: Any) -> Optional[List[str]]:
+    return _coerce_selector_list(raw)
+
+
 def _hierarchy_level_filter_clause(values: Optional[List[str]]) -> Optional[Dict[str, Any]]:
     if not values:
         return None
@@ -321,8 +354,17 @@ class SearchFilters:
     # Subcategory selector tokens for category_hierarchies.segments[3].
     subcategory_segment_l3: Optional[List[str]] = None
 
+    # Goal selector ids + externally-resolved overlay clauses.
+    goal_ids: Optional[List[str]] = None
+    goal_filter_clauses: Optional[List[Dict[str, Any]]] = None
+    goal_must_not_clauses: Optional[List[Dict[str, Any]]] = None
+    diet_ids: Optional[List[str]] = None
+    diet_filter_clauses: Optional[List[Dict[str, Any]]] = None
+    diet_must_not_clauses: Optional[List[Dict[str, Any]]] = None
+
     # Pagination / sort
     sort_by: Optional[str] = None
+    sort_order: Optional[List[Dict[str, str]]] = None
     offset: int = 0
 
     def __post_init__(self) -> None:
@@ -331,6 +373,21 @@ class SearchFilters:
         self.subcategory_segment_l3 = _coerce_hierarchy_list(
             self.subcategory_segment_l3, strip_path=True
         )
+        self.goal_ids = _coerce_goal_list(self.goal_ids)
+        self.diet_ids = _coerce_diet_list(self.diet_ids)
+        if isinstance(self.sort_order, list):
+            normalized_sort_order: List[Dict[str, str]] = []
+            for entry in self.sort_order:
+                if not isinstance(entry, dict):
+                    continue
+                field_name = str(entry.get("field") or "").strip()
+                order = str(entry.get("order") or "").strip().lower()
+                if not field_name or order not in {"asc", "desc"}:
+                    continue
+                normalized_sort_order.append({"field": field_name, "order": order})
+            self.sort_order = normalized_sort_order or None
+        else:
+            self.sort_order = None
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "SearchFilters":
@@ -467,7 +524,55 @@ class SearchFilters:
             raw_subcategory_segment, strip_path=True
         )
 
+        goal_ids = _coerce_goal_list(d.get("goal_ids") or d.get("goals") or d.get("goal"))
+        diet_ids = _coerce_diet_list(d.get("diet_ids") or d.get("diets") or d.get("diet"))
+
+        raw_goal_filter_clauses = d.get("goal_filter_clauses")
+        goal_filter_clauses: Optional[List[Dict[str, Any]]] = None
+        if isinstance(raw_goal_filter_clauses, list):
+            goal_filter_clauses = [
+                clause for clause in raw_goal_filter_clauses if isinstance(clause, dict)
+            ] or None
+
+        raw_goal_must_not_clauses = d.get("goal_must_not_clauses")
+        goal_must_not_clauses: Optional[List[Dict[str, Any]]] = None
+        if isinstance(raw_goal_must_not_clauses, list):
+            goal_must_not_clauses = [
+                clause for clause in raw_goal_must_not_clauses if isinstance(clause, dict)
+            ] or None
+
+        raw_diet_filter_clauses = d.get("diet_filter_clauses")
+        diet_filter_clauses: Optional[List[Dict[str, Any]]] = None
+        if isinstance(raw_diet_filter_clauses, list):
+            diet_filter_clauses = [
+                clause for clause in raw_diet_filter_clauses if isinstance(clause, dict)
+            ] or None
+
+        raw_diet_must_not_clauses = d.get("diet_must_not_clauses")
+        diet_must_not_clauses: Optional[List[Dict[str, Any]]] = None
+        if isinstance(raw_diet_must_not_clauses, list):
+            diet_must_not_clauses = [
+                clause for clause in raw_diet_must_not_clauses if isinstance(clause, dict)
+            ] or None
+
         sort_by = d.get("sort_by") or d.get("sort")
+        sort_order: Optional[List[Dict[str, str]]] = None
+        raw_sort_order = d.get("sort_order") or d.get("goal_sort_order")
+        if raw_sort_order is None:
+            raw_sort_order = d.get("diet_sort_order")
+        if isinstance(raw_sort_order, list):
+            sort_order = [
+                {
+                    "field": str(entry.get("field") or "").strip(),
+                    "order": str(entry.get("order") or "").strip().lower(),
+                }
+                for entry in raw_sort_order
+                if isinstance(entry, dict)
+            ] or None
+        if not sort_by and not sort_order:
+            goal_sort_by = d.get("goal_sort_by")
+            if isinstance(goal_sort_by, str) and goal_sort_by.strip():
+                sort_by = goal_sort_by.strip().lower()
         offset_raw = d.get("offset") or d.get("from") or 0
         try:
             offset = int(offset_raw)
@@ -500,7 +605,14 @@ class SearchFilters:
             department_segment_l1=department_segment_l1,
             category_segment_l2=category_segment_l2,
             subcategory_segment_l3=subcategory_segment_l3,
+            goal_ids=goal_ids,
+            goal_filter_clauses=goal_filter_clauses,
+            goal_must_not_clauses=goal_must_not_clauses,
+            diet_ids=diet_ids,
+            diet_filter_clauses=diet_filter_clauses,
+            diet_must_not_clauses=diet_must_not_clauses,
             sort_by=sort_by,
+            sort_order=sort_order,
             offset=offset,
         )
 
@@ -761,6 +873,23 @@ def build_filter_clauses(sf: SearchFilters) -> FilterClauses:
             }
         )
 
+    if sf.goal_filter_clauses:
+        for clause in sf.goal_filter_clauses:
+            if isinstance(clause, dict):
+                fc.append(clause)
+    if sf.goal_must_not_clauses:
+        for clause in sf.goal_must_not_clauses:
+            if isinstance(clause, dict):
+                mn.append(clause)
+    if sf.diet_filter_clauses:
+        for clause in sf.diet_filter_clauses:
+            if isinstance(clause, dict):
+                fc.append(clause)
+    if sf.diet_must_not_clauses:
+        for clause in sf.diet_must_not_clauses:
+            if isinstance(clause, dict):
+                mn.append(clause)
+
     # ── Product Intent Identification (see SearchFilters.product_type*) ──────
     # "filter" mode (high confidence) gates admission to the candidate pool
     # via an OR of two independent signals — either is sufficient:
@@ -1010,6 +1139,21 @@ def merge_filters(base: SearchFilters, overlay: SearchFilters) -> SearchFilters:
         subcategory_segment_l3=_merge_list(
             base.subcategory_segment_l3, overlay.subcategory_segment_l3
         ),
+        goal_ids=_merge_list(base.goal_ids, overlay.goal_ids),
+        goal_filter_clauses=_merge_list(
+            base.goal_filter_clauses, overlay.goal_filter_clauses
+        ),
+        goal_must_not_clauses=_merge_list(
+            base.goal_must_not_clauses, overlay.goal_must_not_clauses
+        ),
+        diet_ids=_merge_list(base.diet_ids, overlay.diet_ids),
+        diet_filter_clauses=_merge_list(
+            base.diet_filter_clauses, overlay.diet_filter_clauses
+        ),
+        diet_must_not_clauses=_merge_list(
+            base.diet_must_not_clauses, overlay.diet_must_not_clauses
+        ),
         sort_by=overlay.sort_by or base.sort_by,
+        sort_order=overlay.sort_order or base.sort_order,
         offset=overlay.offset if overlay.offset else base.offset,
     )

@@ -1,5 +1,6 @@
 """Tests for PDP score-card grid config (Redis + config-driven building)."""
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -9,8 +10,10 @@ from shopping_bot.utils.cards_config import (
     CARD_DISPLAY_NAME_TO_SCORE_KEY,
     CARD_STATS_REGISTRY,
     SCORE_CARD_BUILD_ORDER,
+    _config_lookup_candidates,
     allowed_score_keys_from_config,
     apply_order_from_config,
+    get_subcategory_cards_config,
     score_key_meta_from_config,
     scorecard_redis_key,
 )
@@ -21,6 +24,82 @@ def test_scorecard_redis_key_uses_prefix_and_path():
         "scorecard/f_and_b/food/biscuits_and_crackers/cookies"
     )
     assert scorecard_redis_key("Default") == "scorecard/Default"
+
+
+def test_config_lookup_candidates_walks_parents_then_default():
+    assert _config_lookup_candidates(
+        "f_and_b/supplements/protein/whey_isolate"
+    ) == [
+        "f_and_b/supplements/protein/whey_isolate",
+        "f_and_b/supplements/protein",
+        "f_and_b/supplements",
+        "f_and_b",
+        "Default",
+    ]
+    assert _config_lookup_candidates("") == ["Default"]
+    assert _config_lookup_candidates("Default") == ["Default"]
+
+
+def test_get_subcategory_cards_config_uses_parent_prefix():
+    parent_entries = [
+        {"card": "Protein Quality", "highlight_tag": "", "visible": True, "optional": True, "order": 1},
+    ]
+    default_entries = [
+        {"card": "Fiber", "highlight_tag": "carbs_fiber_tags", "visible": True, "optional": True, "order": 1},
+    ]
+    store = {
+        scorecard_redis_key("f_and_b/supplements/protein"): json.dumps(parent_entries),
+        scorecard_redis_key("Default"): json.dumps(default_entries),
+    }
+
+    class _FakeRedis:
+        def exists(self, key):
+            return key in store
+
+        def get(self, key):
+            return store.get(key)
+
+        def set(self, key, value):
+            store[key] = value
+
+    with patch(
+        "shopping_bot.utils.cards_config.ensure_cards_config_in_redis",
+        return_value=0,
+    ):
+        entries = get_subcategory_cards_config(
+            _FakeRedis(),
+            "f_and_b/supplements/protein/whey_isolate",
+        )
+    assert entries == parent_entries
+
+
+def test_get_subcategory_cards_config_falls_back_to_default():
+    default_entries = [
+        {"card": "Fiber", "highlight_tag": "carbs_fiber_tags", "visible": True, "optional": True, "order": 1},
+    ]
+    store = {
+        scorecard_redis_key("Default"): json.dumps(default_entries),
+    }
+
+    class _FakeRedis:
+        def exists(self, key):
+            return key in store
+
+        def get(self, key):
+            return store.get(key)
+
+        def set(self, key, value):
+            store[key] = value
+
+    with patch(
+        "shopping_bot.utils.cards_config.ensure_cards_config_in_redis",
+        return_value=0,
+    ):
+        entries = get_subcategory_cards_config(
+            _FakeRedis(),
+            "f_and_b/supplements/protein/unknown_leaf",
+        )
+    assert entries == default_entries
 
 
 def test_allowed_score_keys_from_config_excludes_visible_false():
@@ -87,6 +166,20 @@ def test_allowed_score_keys_from_config_empty():
     assert allowed_score_keys_from_config([]) == frozenset()
 
 
+def test_allowed_score_keys_from_config_maps_supplement_cards():
+    config = [
+        {"card": "Protein Quality", "visible": True, "order": 1},
+        {"card": "Label Trust", "visible": True, "order": 2},
+        {"card": "Heavy metals", "visible": False, "order": 3},
+        {"card": "Bioavailability", "visible": True, "order": 4},
+    ]
+    assert allowed_score_keys_from_config(config) == frozenset(
+        {"protein_quality", "label_trust", "bioavailability"}
+    )
+    assert CARD_DISPLAY_NAME_TO_SCORE_KEY["Serving Honesty"] == "serving_honesty"
+    assert CARD_DISPLAY_NAME_TO_SCORE_KEY["Recovery Formula"] == "recovery_formula"
+
+
 def test_apply_order_from_config_sets_order_and_visible():
     score_cards = {
         "protein": {"title": "Protein", "value": "Good"},
@@ -100,6 +193,20 @@ def test_apply_order_from_config_sets_order_and_visible():
     assert updated["protein"]["order"] == 2
     assert updated["protein"]["visible"] is True
     assert updated["fiber"]["order"] == 1
+
+
+def test_apply_order_from_config_supplement_cards():
+    score_cards = {
+        "label_trust": {"title": "Label Trust", "value": "Top"},
+        "protein_quality": {"title": "Protein Quality", "value": "Best"},
+    }
+    config = [
+        {"card": "Protein Quality", "visible": True, "order": 3},
+        {"card": "Label Trust", "visible": True, "order": 1},
+    ]
+    updated = apply_order_from_config(score_cards, config)
+    assert updated["label_trust"]["order"] == 1
+    assert updated["protein_quality"]["order"] == 3
 
 
 def _rich_src(**overrides):
@@ -337,10 +444,23 @@ def test_produce_display_names_map_to_score_keys():
 
 
 def test_score_card_build_order_covers_registry_and_display_names():
+    from shopping_bot.scoring.supplement_scorecards import CARD_SCORERS
+
     registry_keys = frozenset(CARD_STATS_REGISTRY.keys())
     assert frozenset(SCORE_CARD_BUILD_ORDER) == registry_keys
-    display_score_keys = frozenset(CARD_DISPLAY_NAME_TO_SCORE_KEY.values())
-    assert display_score_keys <= registry_keys
+    supplement_keys = frozenset(CARD_SCORERS.keys())
+    food_display_score_keys = (
+        frozenset(CARD_DISPLAY_NAME_TO_SCORE_KEY.values()) - supplement_keys
+    )
+    assert food_display_score_keys <= registry_keys
+    # Supplement display names map to v2 scorers, not the food percentile registry.
+    for name in (
+        "Protein Quality",
+        "Label Trust",
+        "Bioavailability",
+        "Serving Honesty",
+    ):
+        assert CARD_DISPLAY_NAME_TO_SCORE_KEY[name] in supplement_keys
 
 
 @patch("shopping_bot.data_fetchers.es_products.get_subcategory_cards_config_for_path")

@@ -9,6 +9,7 @@ from search_v2.query_processing.query_pipeline import ProcessedQuery, QueryVaria
 from search_v2.retrieval.lexical_query_builder import (
     build_query, _field_match_clauses, _core_text,
     _minimum_should_match_for, _bool_prefix_minimum_should_match_for,
+    build_derivative_demotion_negative_query,
 )
 from search_v2.config.settings import SETTINGS
 
@@ -138,3 +139,43 @@ def test_specific_product_queries_unaffected_by_health_intent_path():
         baseline = build_query(_pq(query), filters=None, size=10, settings=SETTINGS)
         with_empty = build_query(_pq(query), filters=None, size=10, settings=SETTINGS, health_intent_matched_phrases=())
         assert baseline == with_empty
+
+
+def test_protein_query_adds_supplement_hierarchy_boost_clause():
+    clauses = _field_match_clauses("protein", SETTINGS)
+    supplement_clause = next(
+        c["nested"] for c in clauses
+        if "nested" in c
+        and c["nested"].get("query", {}).get("bool", {}).get("filter") == [
+            {"term": {"category_hierarchies.segments": "supplements"}}
+        ]
+    )
+    should_terms = supplement_clause["query"]["bool"]["should"]
+    values = {term["term"]["category_hierarchies.segments"]["value"] for term in should_terms}
+    assert "supplements" in values
+    assert "protein" in values
+    assert "pre_post_workout" in values
+
+
+def test_non_targeted_queries_do_not_get_supplement_hierarchy_boost_clause():
+    clauses = _field_match_clauses("protein bar", SETTINGS)
+    matched = [
+        c for c in clauses
+        if "nested" in c
+        and c["nested"].get("query", {}).get("bool", {}).get("filter") == [
+            {"term": {"category_hierarchies.segments": "supplements"}}
+        ]
+    ]
+    assert matched == []
+
+
+def test_derivative_demotion_skips_powder_for_protein_query():
+    negative = build_derivative_demotion_negative_query(_pq("protein"))
+    text = negative["match"]["name"]["query"]
+    assert "powder" not in text.split()
+
+
+def test_derivative_demotion_keeps_powder_for_non_protein_query():
+    negative = build_derivative_demotion_negative_query(_pq("apple"))
+    text = negative["match"]["name"]["query"]
+    assert "powder" in text.split()

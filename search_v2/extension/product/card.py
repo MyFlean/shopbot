@@ -124,4 +124,7 @@ def to_product_card(source: Dict[str, Any], rank: int = 0, score: float = 0.0) -
     # uses the same _copy_if_present() pattern) — found missing during the
     # final V1-vs-V2 parity audit.
     _copy_if_present(source, card, "scheduled")
+    flavour = str(source.get("flavour") or "").strip()
+    if flavour:
+        card["flavour"] = flavour
     return card

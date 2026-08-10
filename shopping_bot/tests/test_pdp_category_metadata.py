@@ -135,6 +135,21 @@ def test_listing_cards_do_not_gain_category_metadata_fields():
         assert "express_delivery" not in card
         # hide_score is a listing field (defaults false); not a PDP-only metadata leak
         assert card["hide_score"] is False
+        assert "flavour" not in card
+
+
+def test_listing_cards_include_flavour_from_es():
+    src = _src()
+    src["flavour"] = "Berry Fusion"
+    v1_card = transform_to_product_card(src)
+    v2_card = to_product_card(src)
+    assert v1_card["flavour"] == "Berry Fusion"
+    assert v2_card["flavour"] == "Berry Fusion"
+
+    blank = _src()
+    blank["flavour"] = "  "
+    assert "flavour" not in transform_to_product_card(blank)
+    assert "flavour" not in to_product_card(blank)
 
 
 def test_listing_cards_include_hide_score_from_flean_score():

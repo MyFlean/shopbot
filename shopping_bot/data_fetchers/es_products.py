@@ -526,6 +526,9 @@ def transform_to_product_card(src: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "variants": _normalize_variant_entries(src.get("variants")),
     }
     _copy_if_present(src, card, "scheduled")
+    flavour = str(src.get("flavour") or "").strip()
+    if flavour:
+        card["flavour"] = flavour
     return card
 
 

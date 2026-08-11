@@ -16,7 +16,9 @@ from search_v2.retrieval.opensearch_client import OpenSearchClient
 
 _client: Optional[OpenSearchClient] = None
 _FALLBACK_MIN_RESULTS = 3
-_FALLBACK_SOURCE_FIELDS = ["name", "id", "brand", "category_group"]
+_FALLBACK_SOURCE_FIELDS = ["name", "id", "brand", "category_group", "category_paths"]
+_SUPPLEMENT_PATH_PREFIX = "f_and_b/supplements"
+_SUPPLEMENT_PREFERRED_QUERIES = {"protein", "protein powder"}
 
 
 def _get_client() -> OpenSearchClient:
@@ -30,6 +32,27 @@ def _normalize_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
 
 
+def _prefer_supplements_for_query(query_text: str) -> bool:
+    return query_text.casefold() in _SUPPLEMENT_PREFERRED_QUERIES
+
+
+def _extract_category_paths(source: Dict[str, Any]) -> List[str]:
+    raw_paths = source.get("category_paths")
+    if isinstance(raw_paths, str):
+        return [raw_paths]
+    if isinstance(raw_paths, list):
+        return [str(p) for p in raw_paths if isinstance(p, str)]
+    return []
+
+
+def _is_supplement_source(source: Dict[str, Any]) -> bool:
+    for path in _extract_category_paths(source):
+        normalized = path.strip().lower()
+        if normalized == _SUPPLEMENT_PATH_PREFIX or normalized.startswith(f"{_SUPPLEMENT_PATH_PREFIX}/"):
+            return True
+    return False
+
+
 def _suggestion_item(text: str, src: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "text": text,
@@ -37,10 +60,16 @@ def _suggestion_item(text: str, src: Dict[str, Any]) -> Dict[str, Any]:
         "id": src.get("id"),
         "brand": src.get("brand") or None,
         "category_group": src.get("category_group"),
+        "is_supplement": _is_supplement_source(src),
     }
 
 
-def _extract_completion_suggestions(options: List[Dict[str, Any]], seen: set[str]) -> List[Dict[str, Any]]:
+def _extract_completion_suggestions(
+    options: List[Dict[str, Any]],
+    seen: set[str],
+    *,
+    prefer_supplements: bool,
+) -> List[Dict[str, Any]]:
     suggestions: List[Dict[str, Any]] = []
     for option in options:
         text = _normalize_text(option.get("text"))
@@ -52,6 +81,8 @@ def _extract_completion_suggestions(options: List[Dict[str, Any]], seen: set[str
         seen.add(key)
         src = option.get("_source") or {}
         suggestions.append(_suggestion_item(text=text, src=src))
+    if prefer_supplements:
+        suggestions.sort(key=lambda item: int(bool(item.get("is_supplement"))), reverse=True)
     return suggestions
 
 
@@ -67,11 +98,24 @@ def _has_token_match(query_text: str, suggestions: List[Dict[str, Any]]) -> bool
     return False
 
 
-def _should_use_lexical_fallback(query_text: str, suggestions: List[Dict[str, Any]], size: int) -> bool:
+def _has_supplement_match(suggestions: List[Dict[str, Any]]) -> bool:
+    return any(bool(item.get("is_supplement")) for item in suggestions[:5])
+
+
+def _should_use_lexical_fallback(
+    query_text: str,
+    suggestions: List[Dict[str, Any]],
+    size: int,
+    *,
+    prefer_supplements: bool,
+) -> bool:
     if not suggestions:
         return True
 
     if len(suggestions) < min(size, _FALLBACK_MIN_RESULTS):
+        return True
+
+    if prefer_supplements and not _has_supplement_match(suggestions):
         return True
 
     # Completion can return lexical-neighbour noise for short supplement queries
@@ -80,7 +124,13 @@ def _should_use_lexical_fallback(query_text: str, suggestions: List[Dict[str, An
     return not _has_token_match(query_text, suggestions)
 
 
-def _build_fallback_query(query_text: str, *, size: int, category_group: Optional[str]) -> Dict[str, Any]:
+def _build_fallback_query(
+    query_text: str,
+    *,
+    size: int,
+    category_group: Optional[str],
+    prefer_supplements: bool,
+) -> Dict[str, Any]:
     should_clauses: List[Dict[str, Any]] = [
         {
             "multi_match": {
@@ -143,6 +193,17 @@ def _build_fallback_query(query_text: str, *, size: int, category_group: Optiona
             }
         },
     ]
+    if prefer_supplements:
+        should_clauses.append(
+            {
+                "prefix": {
+                    "category_paths": {
+                        "value": _SUPPLEMENT_PATH_PREFIX,
+                        "boost": 3.0,
+                    }
+                }
+            }
+        )
 
     bool_query: Dict[str, Any] = {"should": should_clauses, "minimum_should_match": 1}
     if category_group:
@@ -156,6 +217,25 @@ def _build_fallback_query(query_text: str, *, size: int, category_group: Optiona
     }
 
 
+def _build_supplement_only_query(
+    query_text: str,
+    *,
+    size: int,
+    category_group: Optional[str],
+) -> Dict[str, Any]:
+    body = _build_fallback_query(
+        query_text,
+        size=size,
+        category_group=category_group,
+        prefer_supplements=True,
+    )
+    bool_query = ((body.get("query") or {}).get("bool") or {})
+    filters = list(bool_query.get("filter") or [])
+    filters.append({"prefix": {"category_paths": _SUPPLEMENT_PATH_PREFIX}})
+    bool_query["filter"] = filters
+    return body
+
+
 def _append_fallback_suggestions(
     query_text: str,
     suggestions: List[Dict[str, Any]],
@@ -163,8 +243,14 @@ def _append_fallback_suggestions(
     *,
     size: int,
     category_group: Optional[str],
+    prefer_supplements: bool,
 ) -> int:
-    fallback_body = _build_fallback_query(query_text, size=size, category_group=category_group)
+    fallback_body = _build_fallback_query(
+        query_text,
+        size=size,
+        category_group=category_group,
+        prefer_supplements=prefer_supplements,
+    )
     t0 = time.monotonic()
     response = _get_client().search(fallback_body)
     took_ms = round((time.monotonic() - t0) * 1000)
@@ -183,6 +269,38 @@ def _append_fallback_suggestions(
         if len(suggestions) >= size:
             break
     return took_ms
+
+
+def _fetch_supplement_prefetch_suggestions(
+    query_text: str,
+    *,
+    size: int,
+    category_group: Optional[str],
+) -> tuple[List[Dict[str, Any]], int]:
+    body = _build_supplement_only_query(
+        query_text,
+        size=size,
+        category_group=category_group,
+    )
+    t0 = time.monotonic()
+    response = _get_client().search(body)
+    took_ms = round((time.monotonic() - t0) * 1000)
+    hits = ((response.get("hits") or {}).get("hits") or [])
+    out: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for hit in hits:
+        src = hit.get("_source") or {}
+        text = _normalize_text(src.get("name"))
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(_suggestion_item(text=text, src=src))
+        if len(out) >= size:
+            break
+    return out, took_ms
 
 
 def _merge_suggestions_with_preferred_order(
@@ -217,11 +335,32 @@ def _token_priority(item: Dict[str, Any], query_text: str) -> tuple[int, int]:
     return (text_contains, brand_contains)
 
 
+def _ranking_priority(
+    item: Dict[str, Any],
+    query_text: str,
+    *,
+    prefer_supplements: bool,
+) -> tuple[int, int, int]:
+    text_contains, brand_contains = _token_priority(item, query_text)
+    supplement_bonus = 1 if (prefer_supplements and bool(item.get("is_supplement"))) else 0
+    return (supplement_bonus, text_contains, brand_contains)
+
+
+def _public_suggestions(suggestions: List[Dict[str, Any]], size: int) -> List[Dict[str, Any]]:
+    output: List[Dict[str, Any]] = []
+    for item in suggestions[:size]:
+        cleaned = dict(item)
+        cleaned.pop("is_supplement", None)
+        output.append(cleaned)
+    return output
+
+
 def suggest(query: str, size: int = 8, category_group: Optional[str] = None) -> Dict[str, Any]:
     query_text = _normalize_text(query)
     if not query_text:
         return {"suggestions": [], "meta": {"query": "", "size": 0, "returned": 0}}
 
+    prefer_supplements = _prefer_supplements_for_query(query_text)
     size = max(1, min(int(size), 100))
     body = build_suggest_query(query_text, category_group=category_group, size=size)
 
@@ -236,14 +375,45 @@ def suggest(query: str, size: int = 8, category_group: Optional[str] = None) -> 
     )
 
     seen: set[str] = set()
-    suggestions = _extract_completion_suggestions(options, seen)
+    suggestions = _extract_completion_suggestions(
+        options,
+        seen,
+        prefer_supplements=prefer_supplements,
+    )
+
+    prefetch_used = False
+    if prefer_supplements and not _has_supplement_match(suggestions):
+        supplement_prefetch, prefetch_took_ms = _fetch_supplement_prefetch_suggestions(
+            query_text,
+            size=size,
+            category_group=category_group,
+        )
+        took_ms += prefetch_took_ms
+        if supplement_prefetch:
+            prefetch_used = True
+            suggestions = _merge_suggestions_with_preferred_order(
+                supplement_prefetch,
+                suggestions,
+                size=size,
+            )
 
     completion_has_token_match = _has_token_match(query_text, suggestions)
-    fallback_used = _should_use_lexical_fallback(query_text, suggestions, size)
+    use_lexical_fallback = _should_use_lexical_fallback(
+        query_text,
+        suggestions,
+        size,
+        prefer_supplements=prefer_supplements,
+    )
+    fallback_used = prefetch_used or use_lexical_fallback
     fuzzy_fallback_used = False
     prefix_fallback_used = False
     phonetic_fallback_used = False
-    if fallback_used:
+    if prefetch_used:
+        # supplement prefetch uses the lexical fallback query family under a
+        # strict supplement taxonomy filter.
+        fuzzy_fallback_used = True
+        prefix_fallback_used = True
+    if use_lexical_fallback:
         completion_suggestions = list(suggestions)
         took_ms += _append_fallback_suggestions(
             query_text,
@@ -251,15 +421,20 @@ def suggest(query: str, size: int = 8, category_group: Optional[str] = None) -> 
             seen,
             size=size,
             category_group=category_group,
+            prefer_supplements=prefer_supplements,
         )
         fuzzy_fallback_used = True
         prefix_fallback_used = True
         fallback_suggestions = [item for item in suggestions if item not in completion_suggestions]
-        if not completion_has_token_match and fallback_suggestions:
+        if (prefer_supplements or not completion_has_token_match) and fallback_suggestions:
             # When completion misses the token entirely (e.g. "eaa"), promote
             # lexical-fallback hits ahead of noisy completion candidates.
             fallback_suggestions.sort(
-                key=lambda item: _token_priority(item, query_text),
+                key=lambda item: _ranking_priority(
+                    item,
+                    query_text,
+                    prefer_supplements=prefer_supplements,
+                ),
                 reverse=True,
             )
             suggestions = _merge_suggestions_with_preferred_order(
@@ -267,13 +442,24 @@ def suggest(query: str, size: int = 8, category_group: Optional[str] = None) -> 
                 completion_suggestions,
                 size=size,
             )
+    elif prefer_supplements:
+        suggestions.sort(
+            key=lambda item: _ranking_priority(
+                item,
+                query_text,
+                prefer_supplements=prefer_supplements,
+            ),
+            reverse=True,
+        )
+
+    public_suggestions = _public_suggestions(suggestions, size)
 
     return {
-        "suggestions": suggestions[:size],
+        "suggestions": public_suggestions,
         "meta": {
             "query": query_text,
             "size": size,
-            "returned": len(suggestions[:size]),
+            "returned": len(public_suggestions),
             "took_ms": took_ms,
             "fallback_used": fallback_used,
             "fuzzy_fallback_used": fuzzy_fallback_used,

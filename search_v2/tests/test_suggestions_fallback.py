@@ -192,3 +192,182 @@ def test_suggest_dedupes_and_respects_size_across_stages():
     assert "BCAA Gold" in texts
     assert any(text in texts for text in ("BCAA Recovery", "BCAA Max"))
 
+
+def test_protein_override_prefers_supplements_in_completion():
+    fake = _FakeClient(
+        responses=[
+            {
+                "suggest": {
+                    "name_suggest": [
+                        {
+                            "options": [
+                                {
+                                    "text": "Protein Chef Roasted Soya Mixture",
+                                    "_source": {
+                                        "id": "51",
+                                        "brand": "Protein Chef",
+                                        "category_group": "f_and_b",
+                                        "category_paths": ["f_and_b/food/light_bites/savory_namkeen"],
+                                    },
+                                },
+                                {
+                                    "text": "Whey Protein Isolate 1kg",
+                                    "_source": {
+                                        "id": "52",
+                                        "brand": "SuppCo",
+                                        "category_group": "f_and_b",
+                                        "category_paths": ["f_and_b/supplements/protein/whey_isolate"],
+                                    },
+                                },
+                                {
+                                    "text": "Protein Oats",
+                                    "_source": {
+                                        "id": "53",
+                                        "brand": "FoodCo",
+                                        "category_group": "f_and_b",
+                                        "category_paths": ["f_and_b/food/breakfast_essentials/muesli_and_oats"],
+                                    },
+                                },
+                            ]
+                        }
+                    ]
+                }
+            }
+        ]
+    )
+    with _with_fake_client(fake):
+        out = suggest_module.suggest("protein", size=3)
+
+    assert len(fake.calls) == 1
+    assert out["suggestions"][0]["text"] == "Whey Protein Isolate 1kg"
+
+
+def test_protein_override_adds_supplement_boost_clause_in_fallback():
+    fake = _FakeClient(
+        responses=[
+            {"suggest": {"name_suggest": [{"options": []}]}},
+            {
+                "hits": {
+                    "hits": [
+                        {
+                            "_source": {
+                                "name": "Whey Protein Concentrate",
+                                "id": "61",
+                                "brand": "SuppCo",
+                                "category_group": "f_and_b",
+                                "category_paths": ["f_and_b/supplements/protein/whey_concentrate"],
+                            }
+                        }
+                    ]
+                }
+            },
+            {"hits": {"hits": []}},
+        ]
+    )
+    with _with_fake_client(fake):
+        out = suggest_module.suggest("protein powder", size=5)
+
+    assert out["meta"]["fallback_used"] is True
+    assert len(fake.calls) == 3
+    prefetch_filters = fake.calls[1]["query"]["bool"]["filter"]
+    assert any("prefix" in clause and "category_paths" in clause["prefix"] for clause in prefetch_filters)
+
+
+def test_non_override_query_does_not_prefer_supplements():
+    fake = _FakeClient(
+        responses=[
+            {
+                "suggest": {
+                    "name_suggest": [
+                        {
+                            "options": [
+                                {
+                                    "text": "Protein Bar Dark Chocolate",
+                                    "_source": {
+                                        "id": "71",
+                                        "brand": "SnackCo",
+                                        "category_group": "f_and_b",
+                                        "category_paths": ["f_and_b/food/light_bites/energy_bars"],
+                                    },
+                                },
+                                {
+                                    "text": "Whey Protein Bar",
+                                    "_source": {
+                                        "id": "72",
+                                        "brand": "SuppCo",
+                                        "category_group": "f_and_b",
+                                        "category_paths": ["f_and_b/supplements/protein/whey_isolate"],
+                                    },
+                                },
+                            ]
+                        }
+                    ]
+                }
+            },
+            {"hits": {"hits": []}},
+        ]
+    )
+    with _with_fake_client(fake):
+        out = suggest_module.suggest("protein bar", size=2)
+
+    assert len(fake.calls) == 2
+    fallback_should = fake.calls[1]["query"]["bool"]["should"]
+    assert not any("prefix" in clause and "category_paths" in clause["prefix"] for clause in fallback_should)
+    # Non-exact query should preserve completion ordering.
+    assert out["suggestions"][0]["text"] == "Protein Bar Dark Chocolate"
+
+
+def test_protein_override_prefetches_supplements_when_completion_has_none():
+    fake = _FakeClient(
+        responses=[
+            {
+                "suggest": {
+                    "name_suggest": [
+                        {
+                            "options": [
+                                {
+                                    "text": "Protein Chef Roasted Soya Mixture",
+                                    "_source": {
+                                        "id": "81",
+                                        "brand": "Protein Chef",
+                                        "category_group": "f_and_b",
+                                        "category_paths": ["f_and_b/food/light_bites/savory_namkeen"],
+                                    },
+                                },
+                                {
+                                    "text": "Protein Oats",
+                                    "_source": {
+                                        "id": "82",
+                                        "brand": "FoodCo",
+                                        "category_group": "f_and_b",
+                                        "category_paths": ["f_and_b/food/breakfast_essentials/muesli_and_oats"],
+                                    },
+                                },
+                            ]
+                        }
+                    ]
+                }
+            },
+            {
+                "hits": {
+                    "hits": [
+                        {
+                            "_source": {
+                                "name": "Whey Protein Isolate 1kg",
+                                "id": "83",
+                                "brand": "SuppCo",
+                                "category_group": "f_and_b",
+                                "category_paths": ["f_and_b/supplements/protein/whey_isolate"],
+                            }
+                        }
+                    ]
+                }
+            },
+        ]
+    )
+    with _with_fake_client(fake):
+        out = suggest_module.suggest("protein", size=3)
+
+    assert len(fake.calls) == 2
+    assert out["meta"]["fallback_used"] is True
+    assert out["suggestions"][0]["text"] == "Whey Protein Isolate 1kg"

@@ -596,26 +596,19 @@
       "purpose": "Whether key actives hit evidence-based doses",
       "tier_tags": {
         "best": [
-          "clinically_dosed",
-          "evidence_based_dose",
-          "full_clinical_dose"
+          "fully_dosed"
         ],
         "top": [
-          "well_dosed",
-          "near_clinical_dose"
+          "well_dosed"
         ],
         "average": [
-          "moderately_dosed",
-          "partial_dose"
+          "partially_dosed"
         ],
         "poor": [
-          "underdosed",
-          "sub_clinical"
+          "underdosed"
         ],
         "worst": [
-          "severely_underdosed",
-          "ineffective_dose",
-          "fairy_dusted"
+          "severely_underdosed"
         ]
       },
       "required_inputs": "category_data.active_ingredients{} with doses; nutritional.qty",
@@ -628,22 +621,21 @@
       "tier_tags": {
         "best": [
           "optimal_caffeine_dose",
-          "balanced_energy",
-          "stim_free"
+          "balanced_energy"
         ],
         "top": [
-          "moderate_stimulants",
+          "mild_caffeine",
           "single_stimulant"
         ],
         "average": [
-          "average_stimulant_profile"
+          "high_caffeine",
+          "strong_formula"
         ],
         "poor": [
-          "high_caffeine",
-          "multi_stim_stack"
+          "multi_stim_stack",
+          "very_high_caffeine"
         ],
         "worst": [
-          "extreme_stimulant_load",
           "exceeds_fssai_caffeine_limit"
         ]
       },
@@ -656,17 +648,18 @@
       "purpose": "Effectiveness of the vasodilation and endurance stack",
       "tier_tags": {
         "best": [
-          "clinically_dosed_citrulline",
-          "complete_pump_matrix"
+          "max_pump",
+          "full_6g_citrulline"
         ],
         "top": [
-          "strong_pump_profile"
+          "strong_pump",
+          "full_3_2g_beta_alanine"
         ],
         "average": [
-          "moderate_pump_profile"
+          "moderate_pump",
+          "all_doses_disclosed"
         ],
         "poor": [
-          "weak_pump",
           "underdosed_citrulline"
         ],
         "worst": [
@@ -683,17 +676,16 @@
       "tier_tags": {
         "best": [
           "complete_eaa_blend",
-          "clinically_dosed_leucine"
+          "leucine_full"
         ],
         "top": [
-          "strong_recovery_support"
+          "all_9_essentials"
         ],
         "average": [
-          "average_recovery_profile"
+          "bcaa_only"
         ],
         "poor": [
-          "weak_recovery",
-          "bcaa_only"
+          "weak_recovery"
         ],
         "worst": [
           "ineffective_recovery_dose"

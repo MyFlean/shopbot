@@ -474,6 +474,47 @@ def test_stimulant_over_400mg_caffeine_caps_at_25():
     assert "exceeds_safe_caffeine_dose" in r.tags
 
 
+def test_stimulant_balance_subtitle_new_uses_tier_tags():
+    src = {
+        "id": "pw-stim-1",
+        "price": 2000,
+        "size": "300 g",
+        "category_paths": ["f_and_b/supplements/performance/pre_workout"],
+        "category_data": {
+            "serving_size": "15 g",
+            "servings_per_container": 20,
+            "active_ingredients": {"caffeine anhydrous mg": 200.0},
+            "nutritional": {"qty": "15 g", "nutri_breakdown": {}},
+            "certifications": [],
+        },
+        "ingredients": {"raw_text": "caffeine anhydrous", "normalised": "{}"},
+    }
+    ss.clear_config_cache()
+    out = ss.compute_supplement_scorecards(src)
+    assert out is not None
+    card = ss.to_pdp_score_cards(out)["score_cards"]["stimulant_balance"]
+    assert card["title"] == "Stimulant Balance"
+    assert card["value"] in ("Best", "Top", "Average", "Poor", "Worst")
+    assert card["subtitle_new"]
+    assert 1 <= len(card["subtitle_new"]) <= 2
+    labels = {e["tag_label"] for e in card["subtitle_new"]}
+    assert labels <= {
+        "Optimal caffeine",
+        "Balanced energy",
+        "Mild caffeine",
+        "Single stimulant",
+        "High caffeine",
+        "Strong formula",
+        "Multi-stim stack",
+        "Very high caffeine",
+        "Exceeds FSSAI limit",
+        "Exceeds safe dose",
+    }
+    assert "optimal_caffeine_dose" in card["tags"] or "mild_caffeine" in card["tags"]
+    assert "stim_free" not in card["tags"]
+    assert "moderate_stimulants" not in card["tags"]
+
+
 # ── Category audit presentations (Protein / Creatine / Pre-workout / EAA) ─────
 def _protein_src(**overrides):
     src = {
@@ -615,9 +656,11 @@ def test_creatine_audit_cost_and_not_assayed():
     assert "Tub lasts 50 days" in card["subtitle"]
     assert "Not assayed." in card["subtitle"]
     assert card["subtitle_new"]
+    assert len(card["subtitle_new"]) == 1
     assert all("tag_label" in e and "color_code" in e for e in card["subtitle_new"])
-    assert any("clinical" in e["tag_label"].lower() or "dosed" in e["tag_label"].lower()
-               for e in card["subtitle_new"])
+    assert card["subtitle_new"][0]["tag_label"] == "Fully Dosed"
+    assert "fully_dosed" in card["tags"]
+    assert card["tags"].count("fully_dosed") == 1
 
 
 def test_creatine_audit_proprietary_blend_still_emits():
@@ -676,7 +719,11 @@ def test_preworkout_audit_espresso_and_capped_bars():
     assert "140%" not in card["subtitle"]
     assert "Citrulline 50%" in card["subtitle"]
     assert card["subtitle_new"]
+    assert len(card["subtitle_new"]) == 1
     assert all("tag_label" in e and "color_code" in e for e in card["subtitle_new"])
+    assert card["subtitle_new"][0]["tag_label"] in {
+        "Fully Dosed", "Well Dosed", "Partially Dosed", "Underdosed", "Severely Underdosed",
+    }
 
 
 def test_preworkout_proprietary_greyed():
@@ -738,6 +785,19 @@ def test_eaa_audit_complete_and_cost():
     assert card["value"] == "9/9 complete"
     assert "Leucine 2.5 g (MPS 2.5 g)" in card["subtitle"]
     assert "/g EAA" in card["subtitle"]
+    assert card["subtitle_new"]
+    assert 1 <= len(card["subtitle_new"]) <= 2
+    labels = {e["tag_label"] for e in card["subtitle_new"]}
+    assert labels <= {
+        "Complete EAA blend",
+        "Leucine full",
+        "All 9 essentials",
+        "BCAA only",
+        "Weak recovery",
+        "Ineffective dose",
+        "Amino profile hidden",
+    }
+    assert "complete_eaa_blend" in card["tags"] or "all_9_essentials" in card["tags"]
 
 
 def test_eaa_audit_bcaa_only_headline():
@@ -766,6 +826,40 @@ def test_eaa_audit_bcaa_only_headline():
     card = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(src))["score_cards"]["recovery_formula"]
     assert card["title"] == "EAA"
     assert card["value"] == "BCAA-only"
+    assert card["subtitle_new"]
+    assert any(e["tag_label"] == "BCAA only" for e in card["subtitle_new"])
+    assert "bcaa_only" in card["tags"]
+
+
+def test_pump_formula_subtitle_new_uses_tier_tags():
+    src = {
+        "id": "pw-pump-1",
+        "price": 2000,
+        "size": "300 g",
+        "category_paths": ["f_and_b/supplements/performance/pre_workout"],
+        "category_data": {
+            "serving_size": "15 g",
+            "servings_per_container": 20,
+            "active_ingredients": {
+                "l-citrulline g": 6.0,
+                "beta-alanine g": 3.2,
+                "nitrate mg": 500.0,
+                "glycerol g": 2.0,
+            },
+            "nutritional": {"qty": "15 g", "nutri_breakdown": {}},
+            "certifications": [],
+        },
+        "ingredients": {"raw_text": "citrulline beta alanine", "normalised": "{}"},
+    }
+    ss.clear_config_cache()
+    out = ss.compute_supplement_scorecards(src)
+    assert out is not None
+    card = ss.to_pdp_score_cards(out)["score_cards"]["pump_formula"]
+    assert card["title"] == "Pump Formula"
+    assert card["value"] == "Best"
+    assert {e["tag_label"] for e in card["subtitle_new"]} == {"Max pump", "Full 6g citrulline"}
+    assert "max_pump" in card["tags"]
+    assert "full_6g_citrulline" in card["tags"]
 
 
 def test_settings_threshold_change_updates_preworkout_bars(monkeypatch):
@@ -824,7 +918,10 @@ def test_clinical_dose_on_multivitamin_keeps_default_title():
     adapted = ss.to_pdp_score_cards(out)["score_cards"]["clinical_dose"]
     assert adapted["value"] in ("Best", "Top", "Average", "Poor", "Worst")
     assert adapted["subtitle_new"]
-    assert all("tag_label" in e and "color_code" in e for e in adapted["subtitle_new"])
+    assert len(adapted["subtitle_new"]) == 1
+    assert adapted["subtitle_new"][0]["tag_label"] in {
+        "Fully Dosed", "Well Dosed", "Partially Dosed", "Underdosed", "Severely Underdosed",
+    }
 
 
 def test_supplement_flean_badge_includes_hide_score():

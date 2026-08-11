@@ -1294,8 +1294,9 @@ def score_clinical_dose(f: SupplementFeatures) -> CardResult:
     name = "Clinical Dose"
     thresholds = _clinical_thresholds()
     if not f.has_actives:
+        # Absence is scored; keep a single disclosure tag (no Poor tier chip).
         return CardResult("clinical_dose", name, 25.0, True,
-                          _tier_tags(name, 25.0) + ["undisclosed_dosages"], {"reason": "no_actives"})
+                          ["undisclosed_dosages"], {"reason": "no_actives"})
     primary = _PRIMARY_ACTIVE_BY_COLUMN.get(f.weight_column or "")
     sub_scores: List[Tuple[str, float, float]] = []  # (key, score, weight)
     dose_ratios: Dict[str, float] = {}
@@ -1318,15 +1319,13 @@ def score_clinical_dose(f: SupplementFeatures) -> CardResult:
         if key == primary:
             primary_ratio = ratio
     if not sub_scores:
-        return CardResult("clinical_dose", name, 25.0, True, _tier_tags(name, 25.0) + ["undisclosed_dosages"])
+        return CardResult("clinical_dose", name, 25.0, True, ["undisclosed_dosages"])
     wsum = sum(w for _k, _s, w in sub_scores)
     score = sum(s * w for _k, s, w in sub_scores) / wsum
-    tags = []
     if primary_ratio is not None and primary_ratio < 0.50:
         score = min(score, 40.0)  # hard cap (sheet 03 row 21)
-        tags.append("underdosed")
     score = round(_clamp(score))
-    return CardResult("clinical_dose", name, score, True, _tier_tags(name, score) + tags,
+    return CardResult("clinical_dose", name, score, True, _tier_tags(name, score),
                       {"primary": primary, "primary_ratio": primary_ratio, "dose_ratios": dose_ratios})
 
 
@@ -1891,6 +1890,129 @@ def present_heavy_metals(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[st
     )
 
 
+_STIMULANT_BALANCE_POSITIVE_TAGS = frozenset({
+    "optimal_caffeine_dose",
+    "balanced_energy",
+    "mild_caffeine",
+    "single_stimulant",
+})
+_STIMULANT_BALANCE_NEGATIVE_TAGS = frozenset({
+    "high_caffeine",
+    "multi_stim_stack",
+    "very_high_caffeine",
+    "exceeds_fssai_caffeine_limit",
+    "exceeds_safe_caffeine_dose",
+})
+_STIMULANT_BALANCE_TAG_LABELS: Dict[str, str] = {
+    "optimal_caffeine_dose": "Optimal caffeine",
+    "balanced_energy": "Balanced energy",
+    "mild_caffeine": "Mild caffeine",
+    "single_stimulant": "Single stimulant",
+    "high_caffeine": "High caffeine",
+    "strong_formula": "Strong formula",
+    "multi_stim_stack": "Multi-stim stack",
+    "very_high_caffeine": "Very high caffeine",
+    "exceeds_fssai_caffeine_limit": "Exceeds FSSAI limit",
+    "exceeds_safe_caffeine_dose": "Exceeds safe dose",
+}
+
+
+def present_stimulant_balance(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    """Stimulant Balance: value = tier label; subtitle_new = tier tags."""
+    return _present_tier_tag_card(
+        card,
+        "Stimulant Balance",
+        _STIMULANT_BALANCE_NEGATIVE_TAGS,
+        _STIMULANT_BALANCE_POSITIVE_TAGS,
+        _STIMULANT_BALANCE_TAG_LABELS,
+        chip_limit=2,
+    )
+
+
+_PUMP_FORMULA_POSITIVE_TAGS = frozenset({
+    "max_pump",
+    "full_6g_citrulline",
+    "strong_pump",
+    "full_3_2g_beta_alanine",
+    "all_doses_disclosed",
+})
+_PUMP_FORMULA_NEGATIVE_TAGS = frozenset({
+    "underdosed_citrulline",
+    "no_effective_pump_ingredients",
+})
+_PUMP_FORMULA_TAG_LABELS: Dict[str, str] = {
+    "max_pump": "Max pump",
+    "full_6g_citrulline": "Full 6g citrulline",
+    "strong_pump": "Strong pump",
+    "full_3_2g_beta_alanine": "Full 3.2g beta-alanine",
+    "moderate_pump": "Moderate pump",
+    "all_doses_disclosed": "All doses disclosed",
+    "underdosed_citrulline": "Underdosed citrulline",
+    "no_effective_pump_ingredients": "No effective pump",
+}
+
+
+def present_pump_formula(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    """Pump Formula: value = tier label; subtitle_new = tier tags."""
+    return _present_tier_tag_card(
+        card,
+        "Pump Formula",
+        _PUMP_FORMULA_NEGATIVE_TAGS,
+        _PUMP_FORMULA_POSITIVE_TAGS,
+        _PUMP_FORMULA_TAG_LABELS,
+        chip_limit=2,
+    )
+
+
+_RECOVERY_FORMULA_POSITIVE_TAGS = frozenset({
+    "complete_eaa_blend",
+    "leucine_full",
+    "all_9_essentials",
+})
+_RECOVERY_FORMULA_NEGATIVE_TAGS = frozenset({
+    "bcaa_only",
+    "weak_recovery",
+    "ineffective_recovery_dose",
+    "no_amino_profile_published",
+    "amino_profile_not_disclosed",
+})
+_RECOVERY_FORMULA_TAG_LABELS: Dict[str, str] = {
+    "complete_eaa_blend": "Complete EAA blend",
+    "leucine_full": "Leucine full",
+    "all_9_essentials": "All 9 essentials",
+    "bcaa_only": "BCAA only",
+    "weak_recovery": "Weak recovery",
+    "ineffective_recovery_dose": "Ineffective dose",
+    "no_amino_profile_published": "Amino profile hidden",
+    "amino_profile_not_disclosed": "Amino profile hidden",
+}
+
+
+def _attach_recovery_tier_subtitle(out: Dict[str, Any], tags: List[str]) -> None:
+    presented = _present_tier_tag_card(
+        {**out, "tags": tags},
+        out.get("title") or "Recovery Formula",
+        _RECOVERY_FORMULA_NEGATIVE_TAGS,
+        _RECOVERY_FORMULA_POSITIVE_TAGS,
+        _RECOVERY_FORMULA_TAG_LABELS,
+        chip_limit=2,
+    )
+    if presented.get("subtitle_new"):
+        out["subtitle_new"] = presented["subtitle_new"]
+
+
+def present_recovery_formula(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    """Recovery Formula: value = tier label; subtitle_new = tier tags."""
+    return _present_tier_tag_card(
+        card,
+        "Recovery Formula",
+        _RECOVERY_FORMULA_NEGATIVE_TAGS,
+        _RECOVERY_FORMULA_POSITIVE_TAGS,
+        _RECOVERY_FORMULA_TAG_LABELS,
+        chip_limit=2,
+    )
+
+
 _SERVING_HONESTY_POSITIVE_TAGS = frozenset({
     "standard_serving",
     "scoop_stated",
@@ -1926,34 +2048,21 @@ def present_serving_honesty(f: SupplementFeatures, card: Dict[str, Any]) -> Dict
 
 
 _CLINICAL_DOSE_POSITIVE_TAGS = frozenset({
-    "clinically_dosed",
-    "evidence_based_dose",
-    "full_clinical_dose",
+    "fully_dosed",
     "well_dosed",
-    "near_clinical_dose",
 })
 _CLINICAL_DOSE_NEGATIVE_TAGS = frozenset({
     "underdosed",
-    "sub_clinical",
     "severely_underdosed",
-    "ineffective_dose",
-    "fairy_dusted",
     "undisclosed_dosages",
     "doses_not_disclosed",
 })
 _CLINICAL_DOSE_TAG_LABELS: Dict[str, str] = {
-    "clinically_dosed": "Clinically dosed",
-    "evidence_based_dose": "Evidence based",
-    "full_clinical_dose": "Full clinical",
-    "well_dosed": "Well dosed",
-    "near_clinical_dose": "Near clinical",
-    "moderately_dosed": "Moderate dose",
-    "partial_dose": "Partial dose",
+    "fully_dosed": "Fully Dosed",
+    "well_dosed": "Well Dosed",
+    "partially_dosed": "Partially Dosed",
     "underdosed": "Underdosed",
-    "sub_clinical": "Sub clinical",
-    "severely_underdosed": "Severely underdosed",
-    "ineffective_dose": "Ineffective dose",
-    "fairy_dusted": "Fairy dusted",
+    "severely_underdosed": "Severely Underdosed",
     "undisclosed_dosages": "Doses hidden",
     "doses_not_disclosed": "Doses hidden",
 }
@@ -1966,6 +2075,7 @@ def _attach_clinical_tier_subtitle(out: Dict[str, Any], tags: List[str]) -> None
         _CLINICAL_DOSE_NEGATIVE_TAGS,
         _CLINICAL_DOSE_POSITIVE_TAGS,
         _CLINICAL_DOSE_TAG_LABELS,
+        chip_limit=1,
     )
     if presented.get("subtitle_new"):
         out["subtitle_new"] = presented["subtitle_new"]
@@ -2111,6 +2221,7 @@ def present_eaa_audit(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, 
         # Ensure status fields exist for PDP
         if out.get("score") is None:
             out["score"] = 0
+        _attach_recovery_tier_subtitle(out, tags)
         return out
 
     if bcaa_only:
@@ -2134,6 +2245,7 @@ def present_eaa_audit(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, 
         parts.append(f"{_fmt_rupees(cost)}/g EAA")
     out["subtitle"] = " · ".join(parts) if parts else f"Score: {card.get('score')}"
     out["tags"] = tags
+    _attach_recovery_tier_subtitle(out, tags)
     return out
 
 
@@ -2171,6 +2283,10 @@ def apply_audit_presentation(
             out[key] = present_heavy_metals(features, card)
         elif key == "serving_honesty" and card.get("scorable"):
             out[key] = present_serving_honesty(features, card)
+        elif key == "stimulant_balance" and card.get("scorable"):
+            out[key] = present_stimulant_balance(features, card)
+        elif key == "pump_formula" and card.get("scorable"):
+            out[key] = present_pump_formula(features, card)
         elif kind == "protein":
             out[key] = present_protein_audit(features, card)
         elif kind == "creatine":
@@ -2181,6 +2297,8 @@ def apply_audit_presentation(
             out[key] = present_clinical_dose(features, card)
         elif kind == "eaa":
             out[key] = present_eaa_audit(features, card)
+        elif key == "recovery_formula" and card.get("scorable"):
+            out[key] = present_recovery_formula(features, card)
         else:
             out[key] = card
     return out

@@ -337,26 +337,68 @@ def test_sweeteners_unsweetened_value():
 
 def test_serving_honesty_standard_is_100():
     f = _avvatar_features()
+    f.pack_weight_g = 35.0 * 29.0  # exact pack math
     r = ss.score_serving_honesty(f)
     assert r.score == 100
-    assert "standard_serving" in r.tags
-    assert "scoop_stated" in r.tags
-    assert "pack_math_checks" in r.tags
+    assert "ideal_scoop" in r.tags
+    assert "full_tub_math" in r.tags
+    assert "inflated_serving" not in r.tags
 
 
 def test_serving_honesty_icon_and_subtitle_new():
     ss.clear_config_cache()
     adapted = ss.to_pdp_score_cards(ss.compute_supplement_scorecards(_protein_src()))
     sh = adapted["score_cards"]["serving_honesty"]
-    assert sh["title"] == "Serving Honesty"
-    assert sh["value"] == "Best"
-    assert sh["icon_url"] == "https://img.flean.ai/assets/Pdp-Icons/serving.png"
-    assert sh["subtitle_new"] == [
-        {"tag_label": "Standard serving", "color_code": "#2E7D32"},
-        {"tag_label": "Scoop stated", "color_code": "#2E7D32"},
-        {"tag_label": "Pack checks", "color_code": "#2E7D32"},
-    ]
-    assert sh["subtitle"].startswith("Score:")
+    assert sh["title"] == "Servings"
+    assert sh["value"] == "35 g · 28 servings"
+    assert sh["icon_url"] == "https://img.flean.ai/assets/Pdp-Icons/serving.svg"
+    assert sh["subtitle_new"]
+    assert 1 <= len(sh["subtitle_new"]) <= 2
+    labels = {e["tag_label"] for e in sh["subtitle_new"]}
+    assert labels <= {
+        "Ideal scoop",
+        "Full tub math",
+        "Solid scoop",
+        "Servings clear",
+        "Typical scoop",
+        "Inflated serving",
+        "Unclear scoop",
+        "Misleading servings",
+        "Pack mismatch",
+    }
+    assert all("tag_label" in e and "color_code" in e for e in sh["subtitle_new"])
+
+
+def test_servings_inflated_protein_scoop():
+    f = _avvatar_features()
+    f.serving_qty_g = 45.0
+    f.protein_g = 18.0
+    f.pack_weight_g = 45.0 * 29.0
+    r = ss.score_serving_honesty(f)
+    assert r.score < 90
+    assert "inflated_serving" in r.tags
+
+
+def test_servings_creatine_ideal_scoop():
+    f = ss.SupplementFeatures(leaf="creatine", weight_column="Creatine")
+    f.serving_qty_g = 5.0
+    f.scoop_stated = True
+    f.servings_per_container = 50.0
+    f.pack_weight_g = 250.0
+    r = ss.score_serving_honesty(f)
+    assert r.score == 100
+    assert "ideal_scoop" in r.tags
+
+
+def test_servings_preworkout_bloated_scoop():
+    f = ss.SupplementFeatures(leaf="pre_workout", weight_column="Pre-Workout")
+    f.serving_qty_g = 25.0
+    f.scoop_stated = True
+    f.servings_per_container = 20.0
+    f.pack_weight_g = 500.0
+    r = ss.score_serving_honesty(f)
+    assert "inflated_serving" in r.tags
+    assert r.score <= 70
 
 
 def test_label_trust_and_heavy_metals_subtitle_new():
@@ -474,45 +516,65 @@ def test_stimulant_over_400mg_caffeine_caps_at_25():
     assert "exceeds_safe_caffeine_dose" in r.tags
 
 
-def test_stimulant_balance_subtitle_new_uses_tier_tags():
+def test_formula_card_subtitle_new_on_preworkout():
     src = {
-        "id": "pw-stim-1",
+        "id": "pw-formula-1",
         "price": 2000,
         "size": "300 g",
         "category_paths": ["f_and_b/supplements/performance/pre_workout"],
         "category_data": {
             "serving_size": "15 g",
             "servings_per_container": 20,
-            "active_ingredients": {"caffeine anhydrous mg": 200.0},
+            "active_ingredients": {
+                "caffeine anhydrous mg": 200.0,
+                "l-citrulline g": 6.0,
+                "beta-alanine g": 3.2,
+                "nitrate mg": 500.0,
+                "glycerol g": 2.0,
+            },
             "nutritional": {"qty": "15 g", "nutri_breakdown": {}},
             "certifications": [],
         },
-        "ingredients": {"raw_text": "caffeine anhydrous", "normalised": "{}"},
+        "ingredients": {"raw_text": "caffeine citrulline beta alanine", "normalised": "{}"},
     }
     ss.clear_config_cache()
     out = ss.compute_supplement_scorecards(src)
     assert out is not None
-    card = ss.to_pdp_score_cards(out)["score_cards"]["stimulant_balance"]
-    assert card["title"] == "Stimulant Balance"
-    assert card["value"] in ("Best", "Top", "Average", "Poor", "Worst")
+    adapted = ss.to_pdp_score_cards(out)["score_cards"]
+    assert "stimulant_balance" not in adapted
+    assert "pump_formula" not in adapted
+    card = adapted["formula"]
+    assert card["title"] == "Formula"
+    assert card["value"] == "Best"
     assert card["subtitle_new"]
     assert 1 <= len(card["subtitle_new"]) <= 2
     labels = {e["tag_label"] for e in card["subtitle_new"]}
     assert labels <= {
         "Optimal caffeine",
-        "Balanced energy",
-        "Mild caffeine",
-        "Single stimulant",
-        "High caffeine",
-        "Strong formula",
-        "Multi-stim stack",
-        "Very high caffeine",
-        "Exceeds FSSAI limit",
+        "Max pump",
+        "Solid energy",
+        "Strong pump",
+        "Moderate formula",
+        "Mixed stack",
+        "High stim",
+        "Weak pump",
+        "Unsafe stim",
+        "No pump",
         "Exceeds safe dose",
+        "Exceeds FSSAI limit",
     }
-    assert "optimal_caffeine_dose" in card["tags"] or "mild_caffeine" in card["tags"]
-    assert "stim_free" not in card["tags"]
-    assert "moderate_stimulants" not in card["tags"]
+    assert "optimal_caffeine" in card["tags"]
+    assert "max_pump" in card["tags"]
+    assert out["cards"]["formula"]["score"] is not None
+    assert out["cards"]["formula"]["score"] >= 90
+
+
+def test_formula_only_on_preworkout_leaf():
+    f = ss.SupplementFeatures(leaf="creatine", weight_column="Creatine")
+    f.active_ingredients = {"creatine g": 5.0, "caffeine mg": 200.0}
+    f.has_actives = True
+    r = ss.score_formula(f)
+    assert r.scorable is False
 
 
 # ── Category audit presentations (Protein / Creatine / Pre-workout / EAA) ─────
@@ -831,7 +893,8 @@ def test_eaa_audit_bcaa_only_headline():
     assert "bcaa_only" in card["tags"]
 
 
-def test_pump_formula_subtitle_new_uses_tier_tags():
+def test_formula_blends_stim_and_pump_when_pump_strong_stim_absent():
+    """Caffeine-free with full pump still scores via renormalized pump weight."""
     src = {
         "id": "pw-pump-1",
         "price": 2000,
@@ -854,12 +917,13 @@ def test_pump_formula_subtitle_new_uses_tier_tags():
     ss.clear_config_cache()
     out = ss.compute_supplement_scorecards(src)
     assert out is not None
-    card = ss.to_pdp_score_cards(out)["score_cards"]["pump_formula"]
-    assert card["title"] == "Pump Formula"
-    assert card["value"] == "Best"
-    assert {e["tag_label"] for e in card["subtitle_new"]} == {"Max pump", "Full 6g citrulline"}
-    assert "max_pump" in card["tags"]
-    assert "full_6g_citrulline" in card["tags"]
+    card = ss.to_pdp_score_cards(out)["score_cards"]["formula"]
+    assert card["title"] == "Formula"
+    assert card["value"] in ("Best", "Top", "Average", "Poor", "Worst")
+    assert card["subtitle_new"]
+    assert len(card["subtitle_new"]) <= 2
+    assert "stimulant_balance" not in out["cards"]
+    assert "pump_formula" not in out["cards"]
 
 
 def test_settings_threshold_change_updates_preworkout_bars(monkeypatch):

@@ -4967,7 +4967,7 @@
       "order": 5
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5018,7 +5018,7 @@
       "order": 5
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5069,7 +5069,7 @@
       "order": 5
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5120,7 +5120,7 @@
       "order": 5
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5157,7 +5157,7 @@
       "order": 3
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5187,7 +5187,7 @@
       "order": 3
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5217,7 +5217,7 @@
       "order": 3
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5268,7 +5268,7 @@
       "order": 5
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5305,7 +5305,7 @@
       "order": 3
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5356,7 +5356,7 @@
       "order": 5
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5407,7 +5407,7 @@
       "order": 5
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5437,39 +5437,32 @@
       "order": 2
     },
     {
-      "card": "Stimulant Balance",
+      "card": "Formula",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
       "order": 3
     },
     {
-      "card": "Pump Formula",
+      "card": "Sweeteners",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
       "order": 4
     },
     {
-      "card": "Sweeteners",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
       "order": 5
     },
     {
-      "card": "Serving Honesty",
-      "highlight_tag": "",
-      "visible": true,
-      "optional": true,
-      "order": 6
-    },
-    {
       "card": "Heavy metals",
       "highlight_tag": "",
       "visible": false,
       "optional": true,
-      "order": 7
+      "order": 6
     }
   ],
   "f_and_b/supplements/performance/preworkout": [
@@ -5488,39 +5481,32 @@
       "order": 2
     },
     {
-      "card": "Stimulant Balance",
+      "card": "Formula",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
       "order": 3
     },
     {
-      "card": "Pump Formula",
+      "card": "Sweeteners",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
       "order": 4
     },
     {
-      "card": "Sweeteners",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
       "order": 5
     },
     {
-      "card": "Serving Honesty",
-      "highlight_tag": "",
-      "visible": true,
-      "optional": true,
-      "order": 6
-    },
-    {
       "card": "Heavy metals",
       "highlight_tag": "",
       "visible": false,
       "optional": true,
-      "order": 7
+      "order": 6
     }
   ],
   "f_and_b/supplements/pre_post_workout": [
@@ -5546,7 +5532,7 @@
       "order": 3
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5597,7 +5583,7 @@
       "order": 5
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5634,7 +5620,7 @@
       "order": 3
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5685,7 +5671,7 @@
       "order": 5
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5736,7 +5722,7 @@
       "order": 5
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5766,39 +5752,32 @@
       "order": 2
     },
     {
-      "card": "Stimulant Balance",
+      "card": "Formula",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
       "order": 3
     },
     {
-      "card": "Pump Formula",
+      "card": "Sweeteners",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
       "order": 4
     },
     {
-      "card": "Sweeteners",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
       "order": 5
     },
     {
-      "card": "Serving Honesty",
-      "highlight_tag": "",
-      "visible": true,
-      "optional": true,
-      "order": 6
-    },
-    {
       "card": "Heavy metals",
       "highlight_tag": "",
       "visible": false,
       "optional": true,
-      "order": 7
+      "order": 6
     }
   ],
   "f_and_b/supplements/pre_post_workout/preworkout": [
@@ -5817,39 +5796,32 @@
       "order": 2
     },
     {
-      "card": "Stimulant Balance",
+      "card": "Formula",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
       "order": 3
     },
     {
-      "card": "Pump Formula",
+      "card": "Sweeteners",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
       "order": 4
     },
     {
-      "card": "Sweeteners",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
       "order": 5
     },
     {
-      "card": "Serving Honesty",
-      "highlight_tag": "",
-      "visible": true,
-      "optional": true,
-      "order": 6
-    },
-    {
       "card": "Heavy metals",
       "highlight_tag": "",
       "visible": false,
       "optional": true,
-      "order": 7
+      "order": 6
     }
   ],
   "f_and_b/supplements/protein": [
@@ -5896,7 +5868,7 @@
       "order": 6
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,
@@ -5940,7 +5912,7 @@
       "order": 3
     },
     {
-      "card": "Serving Honesty",
+      "card": "Servings",
       "highlight_tag": "",
       "visible": true,
       "optional": true,

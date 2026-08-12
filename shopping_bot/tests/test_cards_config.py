@@ -177,7 +177,11 @@ def test_allowed_score_keys_from_config_maps_supplement_cards():
         {"protein_quality", "label_trust", "bioavailability"}
     )
     assert CARD_DISPLAY_NAME_TO_SCORE_KEY["Serving Honesty"] == "serving_honesty"
+    assert CARD_DISPLAY_NAME_TO_SCORE_KEY["Servings"] == "serving_honesty"
     assert CARD_DISPLAY_NAME_TO_SCORE_KEY["Recovery Formula"] == "recovery_formula"
+    assert CARD_DISPLAY_NAME_TO_SCORE_KEY["Formula"] == "formula"
+    assert CARD_DISPLAY_NAME_TO_SCORE_KEY["Stimulant Balance"] == "formula"
+    assert CARD_DISPLAY_NAME_TO_SCORE_KEY["Pump Formula"] == "formula"
 
 
 def test_apply_order_from_config_sets_order_and_visible():
@@ -458,6 +462,7 @@ def test_score_card_build_order_covers_registry_and_display_names():
         "Protein Quality",
         "Label Trust",
         "Bioavailability",
+        "Servings",
         "Serving Honesty",
     ):
         assert CARD_DISPLAY_NAME_TO_SCORE_KEY[name] in supplement_keys

@@ -299,10 +299,12 @@ CARD_DISPLAY_NAME_TO_SCORE_KEY: Dict[str, str] = {
     "Digestibility": "digestibility",
     "Label Trust": "label_trust",
     "Heavy metals": "heavy_metals",
-    "Serving Honesty": "serving_honesty",
+    "Serving Honesty": "serving_honesty",  # legacy alias
+    "Servings": "serving_honesty",
     "Clinical Dose": "clinical_dose",
-    "Stimulant Balance": "stimulant_balance",
-    "Pump Formula": "pump_formula",
+    "Formula": "formula",
+    "Stimulant Balance": "formula",  # legacy → Formula
+    "Pump Formula": "formula",  # legacy → Formula
     "Recovery Formula": "recovery_formula",
 }
 

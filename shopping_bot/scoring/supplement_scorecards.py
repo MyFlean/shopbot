@@ -124,13 +124,16 @@ CARD_KEY_TO_NAME: Dict[str, str] = {
     "label_trust": "Label Trust",
     "heavy_metals": "Heavy metals",
     "sweeteners": "Sweeteners",
-    "serving_honesty": "Serving Honesty",
+    "serving_honesty": "Servings",
     "clinical_dose": "Clinical Dose",
-    "stimulant_balance": "Stimulant Balance",
-    "pump_formula": "Pump Formula",
+    "formula": "Formula",
     "recovery_formula": "Recovery Formula",
 }
 NAME_TO_CARD_KEY = {v: k for k, v in CARD_KEY_TO_NAME.items()}
+# Legacy flean_card_config / workbook names.
+NAME_TO_CARD_KEY["Serving Honesty"] = "serving_honesty"
+NAME_TO_CARD_KEY["Stimulant Balance"] = "formula"
+NAME_TO_CARD_KEY["Pump Formula"] = "formula"
 
 
 # ── Threshold ladders (sheet 01 col L / sheet 03). Interpolated ladders. ──────
@@ -1402,6 +1405,52 @@ def score_pump_formula(f: SupplementFeatures) -> CardResult:
     return CardResult("pump_formula", name, score, True, _tier_tags(name, score))
 
 
+_FORMULA_STIM_WEIGHT = 20.0
+_FORMULA_PUMP_WEIGHT = 18.0
+_FORMULA_RUNTIME_TAGS = frozenset({
+    "exceeds_safe_caffeine_dose",
+    "exceeds_fssai_caffeine_limit",
+})
+
+
+def score_formula(f: SupplementFeatures) -> CardResult:
+    """Pre-workout Formula: stim 20/38 + pump 18/38 blend (legacy weight sum)."""
+    name = "Formula"
+    if f.weight_column != "Pre-Workout":
+        return CardResult("formula", name, None, False)
+
+    stim = score_stimulant_balance(f)
+    pump = score_pump_formula(f)
+    parts: List[Tuple[float, float]] = []
+    runtime: List[str] = []
+    if stim.scorable and stim.score is not None:
+        parts.append((float(stim.score), _FORMULA_STIM_WEIGHT))
+        for t in stim.tags or []:
+            if t in _FORMULA_RUNTIME_TAGS and t not in runtime:
+                runtime.append(t)
+    if pump.scorable and pump.score is not None:
+        parts.append((float(pump.score), _FORMULA_PUMP_WEIGHT))
+
+    if not parts:
+        return CardResult("formula", name, None, False)
+
+    wsum = sum(w for _s, w in parts)
+    score = round(_clamp(sum(s * w for s, w in parts) / wsum))
+    return CardResult(
+        "formula",
+        name,
+        score,
+        True,
+        _tier_tags(name, score) + runtime,
+        {
+            "stim_score": stim.score if stim.scorable else None,
+            "pump_score": pump.score if pump.scorable else None,
+            "stim_weight": _FORMULA_STIM_WEIGHT,
+            "pump_weight": _FORMULA_PUMP_WEIGHT,
+        },
+    )
+
+
 def score_recovery_formula(f: SupplementFeatures) -> CardResult:
     name = "Recovery Formula"
     if not f.has_amino_profile and f.leucine_g_per_serving is None:
@@ -1436,27 +1485,159 @@ def score_recovery_formula(f: SupplementFeatures) -> CardResult:
     )
 
 
-def score_serving_honesty(f: SupplementFeatures) -> CardResult:
-    """Serving Honesty (sheet 02 row 12 + worked example). Penalties constructed
-    from the tag dictionary (inflated_serving_size) and derived-metric net-weight
-    check; the workbook gives no explicit point table for this card, so the
-    deductions below are documented assumptions consistent with the reachability
-    floor of 35 and the worked example (standard serving -> 100)."""
-    name = "Serving Honesty"
-    score = 100.0
+def _servings_disclosure_score(f: SupplementFeatures) -> float:
+    scoop = 100.0 if f.scoop_stated else 30.0
+    count = 100.0 if f.servings_per_container else 40.0
+    return (scoop + count) / 2.0
+
+
+def _servings_pack_math_score(f: SupplementFeatures) -> Optional[float]:
+    if not (f.serving_qty_g and f.servings_per_container and f.pack_weight_g):
+        return None
+    implied = f.serving_qty_g * f.servings_per_container
+    if f.pack_weight_g <= 0:
+        return None
+    if abs(implied - f.pack_weight_g) / f.pack_weight_g > 0.03:
+        return 20.0
+    return 100.0
+
+
+def _servings_scoop_fit(f: SupplementFeatures) -> Tuple[Optional[float], List[str]]:
+    """Category-aware scoop appropriateness. Returns (score, runtime_tags)."""
     tags: List[str] = []
-    is_gainer = f.weight_column == "Mass Gainer"
-    if f.serving_qty_g is not None and not is_gainer and f.serving_qty_g > 40:
-        score -= 15
-        tags.append("inflated_serving_size")
-    if not f.scoop_stated:
-        score -= 10
-    if f.serving_qty_g and f.servings_per_container and f.pack_weight_g:
-        implied = f.serving_qty_g * f.servings_per_container
-        if abs(implied - f.pack_weight_g) / f.pack_weight_g > 0.03:
-            score -= 20
+    col = f.weight_column or ""
+    g = f.serving_qty_g
+
+    if col == "Mass Gainer":
+        if g is None:
+            return None, tags
+        if 50 <= g <= 100:
+            return 100.0, tags
+        if 40 <= g < 50 or 100 < g <= 120:
+            return 80.0, tags
+        if 30 <= g < 40 or 120 < g <= 150:
+            return 55.0, tags
+        return 35.0, tags
+
+    if col in PROTEIN_LEAVES or f.is_protein_category:
+        if g is None:
+            return None, tags
+        protein = f.protein_g
+        if g > 40:
+            tags.append("inflated_serving")
+            if protein is not None and protein < 20:
+                return 25.0, tags
+            return 40.0, tags
+        if 25 <= g <= 35:
+            size_s = 100.0
+        elif 20 <= g < 25 or 35 < g <= 40:
+            size_s = 80.0
+        elif 15 <= g < 20:
+            size_s = 55.0
+        else:
+            size_s = 35.0
+        if protein is None:
+            return size_s, tags
+        if protein >= 24:
+            dens = 100.0
+        elif protein >= 20:
+            dens = 80.0
+        elif protein >= 15:
+            dens = 55.0
+        else:
+            dens = 30.0
+        return 0.6 * size_s + 0.4 * dens, tags
+
+    if col == "Creatine":
+        if g is None:
+            return None, tags
+        if 3 <= g <= 5:
+            return 100.0, tags
+        if 2.5 <= g < 3 or 5 < g <= 6:
+            return 85.0, tags
+        if 2 <= g < 2.5 or 6 < g <= 8:
+            return 60.0, tags
+        return 35.0, tags
+
+    if col == "Pre-Workout":
+        if g is None:
+            return None, tags
+        if g > 20:
+            tags.append("inflated_serving")
+            return 40.0, tags
+        if 8 <= g <= 16:
+            return 100.0, tags
+        if 6 <= g < 8 or 16 < g <= 20:
+            return 75.0, tags
+        return 50.0, tags
+
+    if col in ("BCAA", "EAA"):
+        if g is None:
+            return None, tags
+        if g > 40:
+            tags.append("inflated_serving")
+            return 35.0, tags
+        if 8 <= g <= 15:
+            return 100.0, tags
+        if 5 <= g < 8 or 15 < g <= 18:
+            return 75.0, tags
+        return 45.0, tags
+
+    # Multivitamin / Omega / unknown: no scoop ladder.
+    if g is not None and g > 40 and col != "Mass Gainer":
+        tags.append("inflated_serving")
+    return None, tags
+
+
+def score_serving_honesty(f: SupplementFeatures) -> CardResult:
+    """Servings card (internal key serving_honesty).
+
+    Blend of disclosure (30%), category scoop fit (50%), and pack math (20%).
+    Missing scoop-fit or pack-math components renormalise over the rest.
+    Floor 35. Always scorable.
+    """
+    name = "Servings"
+    tags: List[str] = []
+    disclosure = _servings_disclosure_score(f)
+    scoop_fit, scoop_tags = _servings_scoop_fit(f)
+    tags.extend(scoop_tags)
+    pack = _servings_pack_math_score(f)
+
+    # Non-gainer oversized scoop flag even when scoop ladder unused.
+    if (
+        f.serving_qty_g is not None
+        and f.serving_qty_g > 40
+        and f.weight_column != "Mass Gainer"
+        and "inflated_serving" not in tags
+    ):
+        tags.append("inflated_serving")
+
+    weights: Dict[str, float] = {"disclosure": 30.0}
+    subs: Dict[str, float] = {"disclosure": disclosure}
+    if scoop_fit is not None:
+        weights["scoop"] = 50.0
+        subs["scoop"] = scoop_fit
+    if pack is not None:
+        weights["pack"] = 20.0
+        subs["pack"] = pack
+
+    wsum = sum(weights[k] for k in subs)
+    score = sum(subs[k] * weights[k] for k in subs) / wsum
     score = round(_clamp(score, lo=35.0))
-    return CardResult("serving_honesty", name, score, True, _tier_tags(name, score) + tags)
+    return CardResult(
+        "serving_honesty",
+        name,
+        score,
+        True,
+        _tier_tags(name, score) + tags,
+        {
+            "disclosure": disclosure,
+            "scoop_fit": scoop_fit,
+            "pack_math": pack,
+            "serving_qty_g": f.serving_qty_g,
+            "servings_per_container": f.servings_per_container,
+        },
+    )
 
 
 CARD_SCORERS = {
@@ -1470,8 +1651,7 @@ CARD_SCORERS = {
     "sweeteners": score_sweeteners,
     "serving_honesty": score_serving_honesty,
     "clinical_dose": score_clinical_dose,
-    "stimulant_balance": score_stimulant_balance,
-    "pump_formula": score_pump_formula,
+    "formula": score_formula,
     "recovery_formula": score_recovery_formula,
 }
 
@@ -1890,76 +2070,44 @@ def present_heavy_metals(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[st
     )
 
 
-_STIMULANT_BALANCE_POSITIVE_TAGS = frozenset({
-    "optimal_caffeine_dose",
-    "balanced_energy",
-    "mild_caffeine",
-    "single_stimulant",
-})
-_STIMULANT_BALANCE_NEGATIVE_TAGS = frozenset({
-    "high_caffeine",
-    "multi_stim_stack",
-    "very_high_caffeine",
-    "exceeds_fssai_caffeine_limit",
-    "exceeds_safe_caffeine_dose",
-})
-_STIMULANT_BALANCE_TAG_LABELS: Dict[str, str] = {
-    "optimal_caffeine_dose": "Optimal caffeine",
-    "balanced_energy": "Balanced energy",
-    "mild_caffeine": "Mild caffeine",
-    "single_stimulant": "Single stimulant",
-    "high_caffeine": "High caffeine",
-    "strong_formula": "Strong formula",
-    "multi_stim_stack": "Multi-stim stack",
-    "very_high_caffeine": "Very high caffeine",
-    "exceeds_fssai_caffeine_limit": "Exceeds FSSAI limit",
-    "exceeds_safe_caffeine_dose": "Exceeds safe dose",
-}
-
-
-def present_stimulant_balance(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
-    """Stimulant Balance: value = tier label; subtitle_new = tier tags."""
-    return _present_tier_tag_card(
-        card,
-        "Stimulant Balance",
-        _STIMULANT_BALANCE_NEGATIVE_TAGS,
-        _STIMULANT_BALANCE_POSITIVE_TAGS,
-        _STIMULANT_BALANCE_TAG_LABELS,
-        chip_limit=2,
-    )
-
-
-_PUMP_FORMULA_POSITIVE_TAGS = frozenset({
+_FORMULA_POSITIVE_TAGS = frozenset({
+    "optimal_caffeine",
     "max_pump",
-    "full_6g_citrulline",
+    "solid_energy",
     "strong_pump",
-    "full_3_2g_beta_alanine",
-    "all_doses_disclosed",
 })
-_PUMP_FORMULA_NEGATIVE_TAGS = frozenset({
-    "underdosed_citrulline",
-    "no_effective_pump_ingredients",
+_FORMULA_NEGATIVE_TAGS = frozenset({
+    "high_stim",
+    "weak_pump",
+    "unsafe_stim",
+    "no_pump",
+    "exceeds_safe_caffeine_dose",
+    "exceeds_fssai_caffeine_limit",
 })
-_PUMP_FORMULA_TAG_LABELS: Dict[str, str] = {
+_FORMULA_TAG_LABELS: Dict[str, str] = {
+    "optimal_caffeine": "Optimal caffeine",
     "max_pump": "Max pump",
-    "full_6g_citrulline": "Full 6g citrulline",
+    "solid_energy": "Solid energy",
     "strong_pump": "Strong pump",
-    "full_3_2g_beta_alanine": "Full 3.2g beta-alanine",
-    "moderate_pump": "Moderate pump",
-    "all_doses_disclosed": "All doses disclosed",
-    "underdosed_citrulline": "Underdosed citrulline",
-    "no_effective_pump_ingredients": "No effective pump",
+    "moderate_formula": "Moderate formula",
+    "mixed_stack": "Mixed stack",
+    "high_stim": "High stim",
+    "weak_pump": "Weak pump",
+    "unsafe_stim": "Unsafe stim",
+    "no_pump": "No pump",
+    "exceeds_safe_caffeine_dose": "Exceeds safe dose",
+    "exceeds_fssai_caffeine_limit": "Exceeds FSSAI limit",
 }
 
 
-def present_pump_formula(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
-    """Pump Formula: value = tier label; subtitle_new = tier tags."""
+def present_formula(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
+    """Formula: value = tier label; subtitle_new = tier tags (max 2)."""
     return _present_tier_tag_card(
         card,
-        "Pump Formula",
-        _PUMP_FORMULA_NEGATIVE_TAGS,
-        _PUMP_FORMULA_POSITIVE_TAGS,
-        _PUMP_FORMULA_TAG_LABELS,
+        "Formula",
+        _FORMULA_NEGATIVE_TAGS,
+        _FORMULA_POSITIVE_TAGS,
+        _FORMULA_TAG_LABELS,
         chip_limit=2,
     )
 
@@ -2014,37 +2162,87 @@ def present_recovery_formula(f: SupplementFeatures, card: Dict[str, Any]) -> Dic
 
 
 _SERVING_HONESTY_POSITIVE_TAGS = frozenset({
-    "standard_serving",
-    "scoop_stated",
-    "pack_math_checks",
-    "clear_serving",
-    "honest_scoop",
+    "ideal_scoop",
+    "full_tub_math",
+    "solid_scoop",
+    "servings_clear",
 })
 _SERVING_HONESTY_NEGATIVE_TAGS = frozenset({
+    "inflated_serving",
     "inflated_serving_size",
-    "scoop_unstated",
-    "misleading_serving",
+    "unclear_scoop",
+    "misleading_servings",
     "pack_math_mismatch",
 })
 _SERVING_HONESTY_TAG_LABELS: Dict[str, str] = {
-    "standard_serving": "Standard serving",
-    "scoop_stated": "Scoop stated",
-    "pack_math_checks": "Pack checks",
-    "clear_serving": "Clear serving",
-    "honest_scoop": "Honest scoop",
-    "typical_serving": "Typical serving",
+    "ideal_scoop": "Ideal scoop",
+    "full_tub_math": "Full tub math",
+    "solid_scoop": "Solid scoop",
+    "servings_clear": "Servings clear",
+    "typical_scoop": "Typical scoop",
+    "inflated_serving": "Inflated serving",
     "inflated_serving_size": "Inflated serving",
-    "scoop_unstated": "Scoop missing",
-    "misleading_serving": "Misleading serving",
+    "unclear_scoop": "Unclear scoop",
+    "misleading_servings": "Misleading servings",
     "pack_math_mismatch": "Pack mismatch",
 }
 
 
+def _fmt_serving_qty(g: float) -> str:
+    if abs(g - round(g)) < 1e-9:
+        return f"{g:.0f} g"
+    return f"{g:.1f} g"
+
+
 def present_serving_honesty(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
-    return _present_tier_tag_card(
-        card, "Serving Honesty",
-        _SERVING_HONESTY_NEGATIVE_TAGS, _SERVING_HONESTY_POSITIVE_TAGS, _SERVING_HONESTY_TAG_LABELS,
+    """Servings: value = size · count; subtitle_new = tier tags."""
+    out = dict(card)
+    out["title"] = "Servings"
+    tags = list(card.get("tags") or [])
+
+    if not f.scoop_stated and not f.servings_per_container:
+        out["value"] = "Serving size not disclosed"
+        out.update(_MUTED_TIER)
+    else:
+        parts: List[str] = []
+        if f.serving_qty_g is not None:
+            parts.append(_fmt_serving_qty(f.serving_qty_g))
+        if f.servings_per_container is not None:
+            n = f.servings_per_container
+            n_txt = f"{n:.0f}" if abs(n - round(n)) < 1e-9 else f"{n:g}"
+            parts.append(f"{n_txt} servings")
+        out["value"] = " · ".join(parts) if parts else "Serving size not disclosed"
+        if card.get("score") is not None:
+            tier = tier_for_score(card["score"])
+            if not out.get("status_label"):
+                out["status_label"] = tier["label"]
+            out["status"] = out.get("status") or tier["status"]
+            out["color"] = out.get("color") or tier["color"]
+            out["theme"] = out.get("theme") or tier["theme"]
+
+    presented = _present_tier_tag_card(
+        {**out, "tags": tags},
+        "Servings",
+        _SERVING_HONESTY_NEGATIVE_TAGS,
+        _SERVING_HONESTY_POSITIVE_TAGS,
+        _SERVING_HONESTY_TAG_LABELS,
+        chip_limit=2,
     )
+    if presented.get("subtitle_new"):
+        out["subtitle_new"] = presented["subtitle_new"]
+
+    detail = card.get("detail") or {}
+    facts: List[str] = []
+    pack = detail.get("pack_math")
+    if pack is not None:
+        facts.append("Pack math checks" if float(pack) >= 90 else "Pack math off")
+    if "inflated_serving" in tags or "inflated_serving_size" in tags:
+        facts.append("Inflated scoop")
+    out["subtitle"] = " · ".join(facts) if facts else (
+        f"Score: {card.get('score')}" if card.get("score") is not None else ""
+    )
+    out["tags"] = tags
+    return out
 
 
 _CLINICAL_DOSE_POSITIVE_TAGS = frozenset({
@@ -2283,10 +2481,8 @@ def apply_audit_presentation(
             out[key] = present_heavy_metals(features, card)
         elif key == "serving_honesty" and card.get("scorable"):
             out[key] = present_serving_honesty(features, card)
-        elif key == "stimulant_balance" and card.get("scorable"):
-            out[key] = present_stimulant_balance(features, card)
-        elif key == "pump_formula" and card.get("scorable"):
-            out[key] = present_pump_formula(features, card)
+        elif key == "formula" and card.get("scorable"):
+            out[key] = present_formula(features, card)
         elif kind == "protein":
             out[key] = present_protein_audit(features, card)
         elif kind == "creatine":
@@ -2426,14 +2622,15 @@ SUPPLEMENT_CARD_ICONS: Dict[str, str] = {
     "amino_acid_profile": "https://img.flean.ai/assets/Pdp-Icons/02.svg",
     "protein_efficiency": "https://img.flean.ai/assets/Pdp-Icons/02.svg",
     "sweeteners": "https://img.flean.ai/assets/Pdp-Icons/03.svg",
-    "digestibility": "https://img.flean.ai/assets/Pdp-Icons/gut1.svg",
+    "digestibility": "https://img.flean.ai/assets/Pdp-Icons/digestability.svg",
     "additives": "https://img.flean.ai/assets/Pdp-Icons/additives1.svg",
     "label_trust": "https://img.flean.ai/assets/Pdp-Icons/01.svg",
     "heavy_metals": "https://img.flean.ai/assets/Pdp-Icons/preservatives1.svg",
-    "serving_honesty": "https://img.flean.ai/assets/Pdp-Icons/serving.png",
+    "serving_honesty": "https://img.flean.ai/assets/Pdp-Icons/serving.svg",
     "clinical_dose": "https://img.flean.ai/assets/Pdp-Icons/02.svg",
-    "recovery_formula": "https://img.flean.ai/assets/Pdp-Icons/02.svg",
-    "bioavailability": "https://img.flean.ai/assets/Pdp-Icons/bioavailable.png",
+    "formula": "https://img.flean.ai/assets/Pdp-Icons/formula1.svg",
+    "recovery_formula": "https://img.flean.ai/assets/Pdp-Icons/wellness.svg",
+    "bioavailability": "https://img.flean.ai/assets/Pdp-Icons/bioavailable.svg",
 }
 
 

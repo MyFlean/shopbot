@@ -41,10 +41,12 @@ CARD_TO_HIGHLIGHT: dict[str, str] = {
     "Digestibility": "",
     "Label Trust": "",
     "Heavy metals": "",
-    "Serving Honesty": "",
+    "Servings": "",
+    "Serving Honesty": "",  # legacy
     "Clinical Dose": "",
-    "Stimulant Balance": "",
-    "Pump Formula": "",
+    "Formula": "",
+    "Stimulant Balance": "",  # legacy → Formula
+    "Pump Formula": "",  # legacy → Formula
     "Recovery Formula": "",
 }
 
@@ -102,14 +104,18 @@ ALIAS_TO_START_CASE: dict[str, str] = {
     "label_trust": "Label Trust",
     "Heavy metals": "Heavy metals",
     "heavy_metals": "Heavy metals",
-    "Serving Honesty": "Serving Honesty",
-    "serving_honesty": "Serving Honesty",
+    "Servings": "Servings",
+    "servings": "Servings",
+    "Serving Honesty": "Servings",
+    "serving_honesty": "Servings",
     "Clinical Dose": "Clinical Dose",
     "clinical_dose": "Clinical Dose",
-    "Stimulant Balance": "Stimulant Balance",
-    "stimulant_balance": "Stimulant Balance",
-    "Pump Formula": "Pump Formula",
-    "pump_formula": "Pump Formula",
+    "Formula": "Formula",
+    "formula": "Formula",
+    "Stimulant Balance": "Formula",
+    "stimulant_balance": "Formula",
+    "Pump Formula": "Formula",
+    "pump_formula": "Formula",
     "Recovery Formula": "Recovery Formula",
     "recovery_formula": "Recovery Formula",
 }

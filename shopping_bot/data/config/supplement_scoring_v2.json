@@ -1,19 +1,84 @@
 {
   "settings": {
     "clinical_thresholds": {
-      "creatine": {"threshold": 3.0, "unit": "g", "weight": 1.0, "label": "Creatine"},
-      "beta_alanine": {"threshold": 3.2, "unit": "g", "weight": 0.7, "label": "Beta-alanine"},
-      "citrulline": {"threshold": 6.0, "unit": "g", "weight": 1.0, "label": "Citrulline"},
-      "caffeine": {"threshold": 200.0, "unit": "mg", "weight": 1.0, "label": "Caffeine"},
-      "leucine": {"threshold": 2.5, "unit": "g", "weight": 1.0, "label": "Leucine"},
-      "betaine": {"threshold": 2.5, "unit": "g", "weight": 0.5, "label": "Betaine"},
-      "taurine": {"threshold": 1.5, "unit": "g", "weight": 0.4, "label": "Taurine"},
-      "theanine": {"threshold": 150.0, "unit": "mg", "weight": 0.4, "label": "Theanine"},
-      "nitrate": {"threshold": 500.0, "unit": "mg", "weight": 0.8, "label": "Nitrate"},
-      "glycerol": {"threshold": 2.0, "unit": "g", "weight": 0.5, "label": "Glycerol"},
-      "ashwagandha": {"threshold": 450.0, "unit": "mg", "weight": 0.6, "label": "Ashwagandha"},
-      "vitamin_d3": {"threshold": 600.0, "unit": "iu", "weight": 0.7, "label": "Vitamin D3"},
-      "epa_dha": {"threshold": 750.0, "unit": "mg", "weight": 1.0, "label": "EPA+DHA"}
+      "creatine": {
+        "threshold": 3.0,
+        "unit": "g",
+        "weight": 1.0,
+        "label": "Creatine"
+      },
+      "beta_alanine": {
+        "threshold": 3.2,
+        "unit": "g",
+        "weight": 0.7,
+        "label": "Beta-alanine"
+      },
+      "citrulline": {
+        "threshold": 6.0,
+        "unit": "g",
+        "weight": 1.0,
+        "label": "Citrulline"
+      },
+      "caffeine": {
+        "threshold": 200.0,
+        "unit": "mg",
+        "weight": 1.0,
+        "label": "Caffeine"
+      },
+      "leucine": {
+        "threshold": 2.5,
+        "unit": "g",
+        "weight": 1.0,
+        "label": "Leucine"
+      },
+      "betaine": {
+        "threshold": 2.5,
+        "unit": "g",
+        "weight": 0.5,
+        "label": "Betaine"
+      },
+      "taurine": {
+        "threshold": 1.5,
+        "unit": "g",
+        "weight": 0.4,
+        "label": "Taurine"
+      },
+      "theanine": {
+        "threshold": 150.0,
+        "unit": "mg",
+        "weight": 0.4,
+        "label": "Theanine"
+      },
+      "nitrate": {
+        "threshold": 500.0,
+        "unit": "mg",
+        "weight": 0.8,
+        "label": "Nitrate"
+      },
+      "glycerol": {
+        "threshold": 2.0,
+        "unit": "g",
+        "weight": 0.5,
+        "label": "Glycerol"
+      },
+      "ashwagandha": {
+        "threshold": 450.0,
+        "unit": "mg",
+        "weight": 0.6,
+        "label": "Ashwagandha"
+      },
+      "vitamin_d3": {
+        "threshold": 600.0,
+        "unit": "iu",
+        "weight": 0.7,
+        "label": "Vitamin D3"
+      },
+      "epa_dha": {
+        "threshold": 750.0,
+        "unit": "mg",
+        "weight": 1.0,
+        "label": "EPA+DHA"
+      }
     },
     "creatine_effective_dose_g": 5.0,
     "amino_integrity": {
@@ -144,20 +209,6 @@
       "Multivitamin": 4.0,
       "Omega-3 / Fish Oil": 0.0
     },
-    "Serving Honesty": {
-      "Whey Isolate": 2.0,
-      "Whey Concentrate": 1.0,
-      "Whey Blend": 1.0,
-      "Casein": 3.0,
-      "Plant Protein": 2.0,
-      "Mass Gainer": 9.0,
-      "Creatine": 5.0,
-      "Pre-Workout": 3.0,
-      "BCAA": 3.0,
-      "EAA": 3.0,
-      "Multivitamin": 6.0,
-      "Omega-3 / Fish Oil": 6.0
-    },
     "Clinical Dose": {
       "Whey Isolate": 0.0,
       "Whey Concentrate": 0.0,
@@ -172,34 +223,6 @@
       "Multivitamin": 30.0,
       "Omega-3 / Fish Oil": 26.0
     },
-    "Stimulant Balance": {
-      "Whey Isolate": 0.0,
-      "Whey Concentrate": 0.0,
-      "Whey Blend": 0.0,
-      "Casein": 0.0,
-      "Plant Protein": 0.0,
-      "Mass Gainer": 0.0,
-      "Creatine": 0.0,
-      "Pre-Workout": 20.0,
-      "BCAA": 0.0,
-      "EAA": 0.0,
-      "Multivitamin": 0.0,
-      "Omega-3 / Fish Oil": 0.0
-    },
-    "Pump Formula": {
-      "Whey Isolate": 0.0,
-      "Whey Concentrate": 0.0,
-      "Whey Blend": 0.0,
-      "Casein": 0.0,
-      "Plant Protein": 0.0,
-      "Mass Gainer": 0.0,
-      "Creatine": 0.0,
-      "Pre-Workout": 18.0,
-      "BCAA": 0.0,
-      "EAA": 0.0,
-      "Multivitamin": 0.0,
-      "Omega-3 / Fish Oil": 0.0
-    },
     "Recovery Formula": {
       "Whey Isolate": 0.0,
       "Whey Concentrate": 0.0,
@@ -211,6 +234,34 @@
       "Pre-Workout": 0.0,
       "BCAA": 25.0,
       "EAA": 26.0,
+      "Multivitamin": 0.0,
+      "Omega-3 / Fish Oil": 0.0
+    },
+    "Servings": {
+      "Whey Isolate": 2.0,
+      "Whey Concentrate": 1.0,
+      "Whey Blend": 1.0,
+      "Casein": 3.0,
+      "Plant Protein": 2.0,
+      "Mass Gainer": 9.0,
+      "Creatine": 5.0,
+      "Pre-Workout": 3.0,
+      "BCAA": 3.0,
+      "EAA": 3.0,
+      "Multivitamin": 6.0,
+      "Omega-3 / Fish Oil": 6.0
+    },
+    "Formula": {
+      "Whey Isolate": 0.0,
+      "Whey Concentrate": 0.0,
+      "Whey Blend": 0.0,
+      "Casein": 0.0,
+      "Plant Protein": 0.0,
+      "Mass Gainer": 0.0,
+      "Creatine": 0.0,
+      "Pre-Workout": 38.0,
+      "BCAA": 0.0,
+      "EAA": 0.0,
       "Multivitamin": 0.0,
       "Omega-3 / Fish Oil": 0.0
     }
@@ -531,35 +582,6 @@
       "required_inputs": "ingredients.raw_text; nutritional.*; amino_acid_profile; active_ingredients; certifications[]; servings_per_container",
       "missing_rule": "Always scorable. Integrity pillar may be absent without raw text/recovery; blend renormalises over disclosure + verification. Proprietary blend is penalised once (disclosure)."
     },
-    "Serving Honesty": {
-      "applies_to": "All",
-      "status": "REVISED",
-      "purpose": "Whether the stated serving size and pack math are honest and usable",
-      "tier_tags": {
-        "best": [
-          "standard_serving",
-          "scoop_stated",
-          "pack_math_checks"
-        ],
-        "top": [
-          "clear_serving",
-          "honest_scoop"
-        ],
-        "average": [
-          "typical_serving"
-        ],
-        "poor": [
-          "inflated_serving_size",
-          "scoop_unstated"
-        ],
-        "worst": [
-          "misleading_serving",
-          "pack_math_mismatch"
-        ]
-      },
-      "required_inputs": "serving_size; servings_per_container; pack weight / size",
-      "missing_rule": "Always scorable. Missing scoop or pack inconsistency is the signal; floor score 35."
-    },
     "Sweeteners": {
       "applies_to": "All",
       "status": "REVISED",
@@ -614,61 +636,6 @@
       "required_inputs": "category_data.active_ingredients{} with doses; nutritional.qty",
       "missing_rule": "If active_ingredients is empty or dose-free (proprietary blend) -> score 25 and tag undisclosed_dosages. This is one of the few cards where absence IS scored, because non-disclosure of dose is itself the defect."
     },
-    "Stimulant Balance": {
-      "applies_to": "pre_workout, fat_burner",
-      "status": "REVISED",
-      "purpose": "Appropriate and safe stimulant profile",
-      "tier_tags": {
-        "best": [
-          "optimal_caffeine_dose",
-          "balanced_energy"
-        ],
-        "top": [
-          "mild_caffeine",
-          "single_stimulant"
-        ],
-        "average": [
-          "high_caffeine",
-          "strong_formula"
-        ],
-        "poor": [
-          "multi_stim_stack",
-          "very_high_caffeine"
-        ],
-        "worst": [
-          "exceeds_fssai_caffeine_limit"
-        ]
-      },
-      "required_inputs": "active_ingredients (caffeine mg, theanine, yohimbine, synephrine, etc.)",
-      "missing_rule": "If caffeine is declared only inside a proprietary blend -> cap card at 35 and tag undisclosed_stimulant_dose."
-    },
-    "Pump Formula": {
-      "applies_to": "pre_workout",
-      "status": "REVISED",
-      "purpose": "Effectiveness of the vasodilation and endurance stack",
-      "tier_tags": {
-        "best": [
-          "max_pump",
-          "full_6g_citrulline"
-        ],
-        "top": [
-          "strong_pump",
-          "full_3_2g_beta_alanine"
-        ],
-        "average": [
-          "moderate_pump",
-          "all_doses_disclosed"
-        ],
-        "poor": [
-          "underdosed_citrulline"
-        ],
-        "worst": [
-          "no_effective_pump_ingredients"
-        ]
-      },
-      "required_inputs": "active_ingredients (citrulline, beta_alanine, nitrate, glycerol)",
-      "missing_rule": "Missing actives score 0 for their sub-weight (unlike nutrition cards, absence here means the ingredient genuinely is not present)."
-    },
     "Recovery Formula": {
       "applies_to": "bcaa, eaa, intra_workout",
       "status": "REVISED",
@@ -720,6 +687,63 @@
       },
       "required_inputs": "certifications[]; ingredients.normalised.*; tags; leaf_category",
       "missing_rule": "Always scorable. Baseline 55 reflects genuine unknown risk rather than assumed safety."
+    },
+    "Servings": {
+      "applies_to": "All",
+      "status": "REVISED",
+      "purpose": "Serving size, servings per tub, and whether the scoop is an honest fit for the category",
+      "tier_tags": {
+        "best": [
+          "ideal_scoop",
+          "full_tub_math"
+        ],
+        "top": [
+          "solid_scoop",
+          "servings_clear"
+        ],
+        "average": [
+          "typical_scoop"
+        ],
+        "poor": [
+          "inflated_serving",
+          "unclear_scoop"
+        ],
+        "worst": [
+          "misleading_servings",
+          "pack_math_mismatch"
+        ]
+      },
+      "required_inputs": "serving_size; servings_per_container; pack weight / size; nutritional protein for protein leaves",
+      "missing_rule": "Always scorable. Missing scoop or pack inconsistency is the signal; floor score 35."
+    },
+    "Formula": {
+      "applies_to": "pre_workout",
+      "status": "REVISED",
+      "purpose": "Combined stimulant safety and pump-stack effectiveness for pre-workout",
+      "tier_tags": {
+        "best": [
+          "optimal_caffeine",
+          "max_pump"
+        ],
+        "top": [
+          "solid_energy",
+          "strong_pump"
+        ],
+        "average": [
+          "moderate_formula",
+          "mixed_stack"
+        ],
+        "poor": [
+          "high_stim",
+          "weak_pump"
+        ],
+        "worst": [
+          "unsafe_stim",
+          "no_pump"
+        ]
+      },
+      "required_inputs": "active_ingredients (caffeine, stims, citrulline, beta_alanine, nitrate, glycerol)",
+      "missing_rule": "Pre-workout only. Unscorable when both stim and pump sub-scores are missing."
     }
   }
 }

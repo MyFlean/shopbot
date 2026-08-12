@@ -300,6 +300,35 @@ def _enrich_listing_card(card: Dict[str, Any], raw_src: Dict[str, Any]) -> Dict[
     return card
 
 
+def _is_add_to_cart_listing_candidate(
+    card: Dict[str, Any],
+    raw_src: Optional[Dict[str, Any]] = None,
+    cta_meta: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """
+    Check whether a listing product would resolve to add_to_cart CTA on PDP.
+
+    Uses existing CTA resolver so listing filters stay aligned with PDP behavior.
+    """
+    source = raw_src if isinstance(raw_src, dict) else {}
+    meta = cta_meta if isinstance(cta_meta, dict) else {}
+    visibility = source.get("visibility")
+    if visibility is None:
+        visibility = meta.get("visibility")
+    if visibility is None and isinstance(card, dict):
+        visibility = card.get("visibility")
+
+    visibility_norm = str(visibility or "").strip().lower()
+    product_info = {
+        "visibility": visibility,
+        "in_stock": visibility_norm == "visible",
+    }
+    flean_badge = {"score": card.get("flean_score")} if isinstance(card, dict) else {}
+    has_palm_oil = bool(meta.get("has_palm_oil")) if "has_palm_oil" in meta else _has_palm_oil_ingredient(source)
+    cta = _resolve_pdp_cta(product_info, flean_badge, has_palm_oil=has_palm_oil)
+    return cta.get("type") == CTA_TYPE_ADD_TO_CART
+
+
 def _resolve_pdp_cta(
     product_info: Dict[str, Any],
     flean_badge: Dict[str, Any],
@@ -632,13 +661,28 @@ def get_healthier_alternatives(product_id: str) -> Tuple[Dict[str, Any], int]:
             # propagates instead of silently re-querying V1. See
             # V1_FALLBACK_AUDIT.md.
             from search_v2.extension.recommendations import similar_products
-            result = similar_products(pid, limit=5)
+            limit = 5
+            # Overfetch candidates, then apply add-to-cart filter and trim back
+            # to limit so alternatives remains "up to 5".
+            candidate_size = min(limit * 3, 20)
+            result = similar_products(pid, limit=limit, candidate_size=candidate_size)
             if not result.get("source_product"):
                 return _error_response("PRODUCT_NOT_FOUND", f"Product '{pid}' not found", 404)
-            log.info(f"ALTERNATIVES_SUCCESS | id={pid} | found={len(result['alternatives'])} | engine=v2")
+            cta_meta_by_id = result.get("alt_cta_meta_by_id") or {}
+
+            filtered_alternatives: List[Dict[str, Any]] = []
+            for alt_card in (result.get("alternatives") or []):
+                if not isinstance(alt_card, dict):
+                    continue
+                alt_id = str(alt_card.get("id") or "").strip()
+                cta_meta = cta_meta_by_id.get(alt_id) if alt_id and isinstance(cta_meta_by_id, dict) else None
+                if _is_add_to_cart_listing_candidate(alt_card, cta_meta=cta_meta):
+                    filtered_alternatives.append(alt_card)
+            filtered_alternatives = filtered_alternatives[:limit]
+            log.info(f"ALTERNATIVES_SUCCESS | id={pid} | found={len(filtered_alternatives)} | engine=v2")
             return jsonify(_success_response({
                 "source_product": result["source_product"],
-                "alternatives": result["alternatives"],
+                "alternatives": filtered_alternatives,
             })), 200
 
         fetcher = get_es_fetcher()
@@ -658,7 +702,9 @@ def get_healthier_alternatives(product_id: str) -> Tuple[Dict[str, Any], int]:
                 continue
             alt_card = transform_to_product_card(alt_raw)
             if alt_card is not None:
-                alt_cards.append(_enrich_listing_card(alt_card, alt_raw))
+                enriched = _enrich_listing_card(alt_card, alt_raw)
+                if _is_add_to_cart_listing_candidate(enriched, alt_raw):
+                    alt_cards.append(enriched)
 
         log.info(f"ALTERNATIVES_SUCCESS | id={pid} | found={len(alt_cards)}")
 
@@ -675,6 +721,13 @@ def get_healthier_alternatives(product_id: str) -> Tuple[Dict[str, Any], int]:
 # ============================================================================
 # Recommended Products API - Similar products for PDP
 # ============================================================================
+#
+# MAINTAINER NOTE:
+# Alternatives-specific logic in this module (e.g. add-to-cart filtering,
+# CTA-eligibility refinements, and related perf tradeoffs) is intentionally
+# scoped to `/api/v1/product/<id>/alternatives`.
+# Do not block those changes on `/recommended` behavior unless explicitly
+# requested in the change scope.
 
 @bp.route("/api/v1/product/<product_id>/recommended", methods=["GET"])
 def get_recommended_products(product_id: str) -> Tuple[Dict[str, Any], int]:

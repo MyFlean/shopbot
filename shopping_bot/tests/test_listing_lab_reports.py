@@ -164,7 +164,8 @@ def test_curated_home_sets_has_lab_report(
 
 
 @patch("shopping_bot.routes.product_api.get_es_fetcher")
-def test_alternatives_sets_has_lab_report(mock_get_fetcher, product_client):
+def test_alternatives_sets_has_lab_report(mock_get_fetcher, product_client, monkeypatch):
+    monkeypatch.setenv("SEARCH_ENGINE", "v1")
     mock_get_fetcher.return_value = SimpleNamespace(
         search_healthier_alternatives=lambda _pid, limit=5: {
             "source_product": RAW_WITHOUT_REPORT,
@@ -180,3 +181,172 @@ def test_alternatives_sets_has_lab_report(mock_get_fetcher, product_client):
     assert data["source_product"]["has_lab_report"] is False
     assert len(data["alternatives"]) == 1
     assert data["alternatives"][0]["has_lab_report"] is True
+
+
+@patch("shopping_bot.routes.product_api.get_es_fetcher")
+def test_alternatives_filters_to_add_to_cart_only(mock_get_fetcher, product_client, monkeypatch):
+    monkeypatch.setenv("SEARCH_ENGINE", "v1")
+    keep_alt = {
+        "id": "alt-keep",
+        "name": "Keep Me",
+        "visibility": "visible",
+        "brand": "BrandK",
+        "price": 120,
+        "category_data": {
+            "nutritional": {"qty": "100 g"},
+            "tags": {"ingredient_tags": ["no_palm_oil"]},
+        },
+        "flean_score": {"adjusted_score": 90},
+        "stats": {},
+    }
+    drop_soft = {
+        "id": "alt-soft",
+        "name": "Soft Visibility",
+        "visibility": "soft",
+        "brand": "BrandS",
+        "price": 130,
+        "category_data": {
+            "nutritional": {"qty": "100 g"},
+            "tags": {"ingredient_tags": ["no_palm_oil"]},
+        },
+        "flean_score": {"adjusted_score": 90},
+        "stats": {},
+    }
+    drop_low_score = {
+        "id": "alt-low",
+        "name": "Low Score",
+        "visibility": "visible",
+        "brand": "BrandL",
+        "price": 110,
+        "category_data": {
+            "nutritional": {"qty": "100 g"},
+            "tags": {"ingredient_tags": ["no_palm_oil"]},
+        },
+        "flean_score": {"adjusted_score": 40},
+        "stats": {},
+    }
+
+    mock_get_fetcher.return_value = SimpleNamespace(
+        search_healthier_alternatives=lambda _pid, limit=5: {
+            "source_product": RAW_WITHOUT_REPORT,
+            "alternatives": [keep_alt, drop_soft, drop_low_score],
+        }
+    )
+
+    resp = product_client.get("/rs/api/v1/product/source-prod/alternatives")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    data = payload["data"]
+    alt_ids = [item["id"] for item in data["alternatives"]]
+    assert alt_ids == ["alt-keep"]
+
+
+@patch("shopping_bot.routes.product_api.get_es_fetcher")
+def test_alternatives_returns_empty_when_all_non_add_to_cart(
+    mock_get_fetcher, product_client, monkeypatch
+):
+    monkeypatch.setenv("SEARCH_ENGINE", "v1")
+    drop_palm = {
+        "id": "alt-palm",
+        "name": "Palm Oil",
+        "visibility": "visible",
+        "brand": "BrandP",
+        "price": 140,
+        "category_data": {
+            "nutritional": {"qty": "100 g"},
+            "tags": {"ingredient_tags": ["contains_palm_oil"]},
+        },
+        "flean_score": {"adjusted_score": 90},
+        "stats": {},
+    }
+    drop_soft = {
+        "id": "alt-soft",
+        "name": "Soft Visibility",
+        "visibility": "soft",
+        "brand": "BrandS",
+        "price": 130,
+        "category_data": {
+            "nutritional": {"qty": "100 g"},
+            "tags": {"ingredient_tags": ["no_palm_oil"]},
+        },
+        "flean_score": {"adjusted_score": 90},
+        "stats": {},
+    }
+
+    mock_get_fetcher.return_value = SimpleNamespace(
+        search_healthier_alternatives=lambda _pid, limit=5: {
+            "source_product": RAW_WITHOUT_REPORT,
+            "alternatives": [drop_palm, drop_soft],
+        }
+    )
+
+    resp = product_client.get("/rs/api/v1/product/source-prod/alternatives")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["data"]["alternatives"] == []
+
+
+@patch("shopping_bot.routes.product_api.get_es_fetcher")
+def test_alternatives_returns_404_when_source_missing(mock_get_fetcher, product_client, monkeypatch):
+    monkeypatch.setenv("SEARCH_ENGINE", "v1")
+    mock_get_fetcher.return_value = SimpleNamespace(
+        search_healthier_alternatives=lambda _pid, limit=5: {
+            "source_product": None,
+            "alternatives": [],
+        }
+    )
+
+    resp = product_client.get("/rs/api/v1/product/source-prod/alternatives")
+    assert resp.status_code == 404
+    payload = resp.get_json()
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "PRODUCT_NOT_FOUND"
+
+
+@patch("search_v2.extension.recommendations.similar_products")
+def test_alternatives_v2_uses_single_fetch_cta_metadata(
+    mock_similar_products, product_client, monkeypatch
+):
+    monkeypatch.setenv("SEARCH_ENGINE", "v2")
+    mock_similar_products.return_value = {
+        "source_product": {"id": "source-prod", "name": "Source"},
+        "alternatives": [
+            {"id": "alt-keep", "name": "Keep", "visibility": "visible", "flean_score": 9},
+            {"id": "alt-drop", "name": "Drop", "visibility": "visible", "flean_score": 9},
+        ],
+        "alt_cta_meta_by_id": {
+            "alt-keep": {"visibility": "visible", "has_palm_oil": False},
+            "alt-drop": {"visibility": "visible", "has_palm_oil": True},
+        },
+    }
+
+    resp = product_client.get("/rs/api/v1/product/source-prod/alternatives")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    alt_ids = [item["id"] for item in payload["data"]["alternatives"]]
+    assert alt_ids == ["alt-keep"]
+
+
+@patch("search_v2.extension.recommendations.similar_products")
+def test_alternatives_v2_trims_filtered_results_to_five(
+    mock_similar_products, product_client, monkeypatch
+):
+    monkeypatch.setenv("SEARCH_ENGINE", "v2")
+    alternatives = []
+    cta_meta = {}
+    for idx in range(1, 8):
+        alt_id = f"alt-{idx}"
+        alternatives.append({"id": alt_id, "name": f"Alt {idx}", "visibility": "visible", "flean_score": 9})
+        cta_meta[alt_id] = {"visibility": "visible", "has_palm_oil": False}
+    mock_similar_products.return_value = {
+        "source_product": {"id": "source-prod", "name": "Source"},
+        "alternatives": alternatives,
+        "alt_cta_meta_by_id": cta_meta,
+    }
+
+    resp = product_client.get("/rs/api/v1/product/source-prod/alternatives")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    returned_ids = [item["id"] for item in payload["data"]["alternatives"]]
+    assert len(returned_ids) == 5
+    assert returned_ids == ["alt-1", "alt-2", "alt-3", "alt-4", "alt-5"]

@@ -695,14 +695,15 @@
       "tier_tags": {
         "best": [
           "ideal_scoop",
-          "full_tub_math"
+          "cost_per_serving"
         ],
         "top": [
           "solid_scoop",
-          "servings_clear"
+          "cost_per_serving"
         ],
         "average": [
-          "typical_scoop"
+          "typical_scoop",
+          "cost_per_serving"
         ],
         "poor": [
           "inflated_serving",
@@ -713,7 +714,7 @@
           "pack_math_mismatch"
         ]
       },
-      "required_inputs": "serving_size; servings_per_container; pack weight / size; nutritional protein for protein leaves",
+      "required_inputs": "serving_size; servings_per_container; pack weight / size; nutritional protein for protein leaves; price",
       "missing_rule": "Always scorable. Missing scoop or pack inconsistency is the signal; floor score 35."
     },
     "Formula": {

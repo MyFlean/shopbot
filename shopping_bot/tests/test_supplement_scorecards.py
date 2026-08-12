@@ -338,10 +338,12 @@ def test_sweeteners_unsweetened_value():
 def test_serving_honesty_standard_is_100():
     f = _avvatar_features()
     f.pack_weight_g = 35.0 * 29.0  # exact pack math
+    f.price = 2900.0
     r = ss.score_serving_honesty(f)
     assert r.score == 100
     assert "ideal_scoop" in r.tags
-    assert "full_tub_math" in r.tags
+    assert "cost_per_serving" in r.tags
+    assert "full_tub_math" not in r.tags
     assert "inflated_serving" not in r.tags
 
 
@@ -353,19 +355,10 @@ def test_serving_honesty_icon_and_subtitle_new():
     assert sh["value"] == "35 g · 28 servings"
     assert sh["icon_url"] == "https://img.flean.ai/assets/Pdp-Icons/serving.svg"
     assert sh["subtitle_new"]
-    assert 1 <= len(sh["subtitle_new"]) <= 2
-    labels = {e["tag_label"] for e in sh["subtitle_new"]}
-    assert labels <= {
-        "Ideal scoop",
-        "Full tub math",
-        "Solid scoop",
-        "Servings clear",
-        "Typical scoop",
-        "Inflated serving",
-        "Unclear scoop",
-        "Misleading servings",
-        "Pack mismatch",
-    }
+    assert len(sh["subtitle_new"]) == 2
+    labels = [e["tag_label"] for e in sh["subtitle_new"]]
+    assert labels[0] == "35g Scoop"
+    assert labels[1] == "₹125/serving"
     assert all("tag_label" in e and "color_code" in e for e in sh["subtitle_new"])
 
 

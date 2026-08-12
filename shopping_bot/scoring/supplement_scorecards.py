@@ -2163,7 +2163,7 @@ def present_recovery_formula(f: SupplementFeatures, card: Dict[str, Any]) -> Dic
 
 _SERVING_HONESTY_POSITIVE_TAGS = frozenset({
     "ideal_scoop",
-    "full_tub_math",
+    "cost_per_serving",
     "solid_scoop",
     "servings_clear",
 })
@@ -2176,7 +2176,8 @@ _SERVING_HONESTY_NEGATIVE_TAGS = frozenset({
 })
 _SERVING_HONESTY_TAG_LABELS: Dict[str, str] = {
     "ideal_scoop": "Ideal scoop",
-    "full_tub_math": "Full tub math",
+    "cost_per_serving": "Per serving",
+    "full_tub_math": "Full tub math",  # legacy
     "solid_scoop": "Solid scoop",
     "servings_clear": "Servings clear",
     "typical_scoop": "Typical scoop",
@@ -2194,11 +2195,48 @@ def _fmt_serving_qty(g: float) -> str:
     return f"{g:.1f} g"
 
 
+_SCOOP_SIZE_TAGS = frozenset({"ideal_scoop", "solid_scoop", "typical_scoop"})
+
+
+def _fmt_scoop_tag_label(g: float) -> str:
+    if abs(g - round(g)) < 1e-9:
+        return f"{g:.0f}g Scoop"
+    return f"{g:.1f}g Scoop"
+
+
+def _cost_per_serving(f: SupplementFeatures) -> Optional[float]:
+    if f.price is None or not f.servings_per_container or f.servings_per_container <= 0:
+        return None
+    return float(f.price) / float(f.servings_per_container)
+
+
+def _serving_honesty_tag_labels(f: SupplementFeatures) -> Dict[str, str]:
+    labels = dict(_SERVING_HONESTY_TAG_LABELS)
+    if f.serving_qty_g is not None:
+        scoop_label = _fmt_scoop_tag_label(f.serving_qty_g)
+        for tag in _SCOOP_SIZE_TAGS:
+            labels[tag] = scoop_label
+    cost = _cost_per_serving(f)
+    if cost is not None:
+        labels["cost_per_serving"] = f"{_fmt_rupees(cost)}/serving"
+    return labels
+
+
 def present_serving_honesty(f: SupplementFeatures, card: Dict[str, Any]) -> Dict[str, Any]:
-    """Servings: value = size · count; subtitle_new = tier tags."""
+    """Servings: value = size · count; subtitle_new = scoop size + per-serving cost."""
     out = dict(card)
     out["title"] = "Servings"
     tags = list(card.get("tags") or [])
+
+    # Prefer cost_per_serving over legacy full_tub_math in subtitle chips.
+    tags = ["cost_per_serving" if t == "full_tub_math" else t for t in tags]
+    if _cost_per_serving(f) is not None and "cost_per_serving" not in tags:
+        tags.append("cost_per_serving")
+    # Scoop size chip before cost so subtitle reads "35g Scoop" · "₹X/serving".
+    scoop = [t for t in tags if t in _SCOOP_SIZE_TAGS]
+    cost_tags = [t for t in tags if t == "cost_per_serving"]
+    rest = [t for t in tags if t not in _SCOOP_SIZE_TAGS and t != "cost_per_serving"]
+    tags = scoop + cost_tags + rest
 
     if not f.scoop_stated and not f.servings_per_container:
         out["value"] = "Serving size not disclosed"
@@ -2225,7 +2263,7 @@ def present_serving_honesty(f: SupplementFeatures, card: Dict[str, Any]) -> Dict
         "Servings",
         _SERVING_HONESTY_NEGATIVE_TAGS,
         _SERVING_HONESTY_POSITIVE_TAGS,
-        _SERVING_HONESTY_TAG_LABELS,
+        _serving_honesty_tag_labels(f),
         chip_limit=2,
     )
     if presented.get("subtitle_new"):

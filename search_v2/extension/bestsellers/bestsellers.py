@@ -25,6 +25,7 @@ from search_v2.retrieval.listing import (
     apply_flat_listing_defaults,
     listing_visibility_filter_clause,
     finalize_listing_cards,
+    preferred_listing_source_from_hit,
 )
 from search_v2.retrieval.opensearch_client import OpenSearchClient
 
@@ -101,7 +102,7 @@ def fetch_lab_tested_candidates(
     )
     response = _get_client().search(body)
     hits = response.get("hits", {}).get("hits", [])
-    return [hit.get("_source") or {} for hit in hits if hit.get("_source")]
+    return [preferred_listing_source_from_hit(hit) for hit in hits if hit.get("_source")]
 
 
 def best_selling(

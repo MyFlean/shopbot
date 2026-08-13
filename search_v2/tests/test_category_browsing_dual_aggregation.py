@@ -12,6 +12,34 @@ from search_v2.retrieval.filters import SearchFilters
 browse_module = importlib.import_module("search_v2.extension.category_browsing.browse")
 
 
+def test_preferred_listing_source_from_hit_uses_first_available_variant_inner_hit():
+    hit = {
+        "_id": "top-1",
+        "_source": {
+            "id": "top-1",
+            "name": "Top Product",
+            "variants": [
+                {"id": "sib-a", "availability": False},
+                {"id": "sib-b", "availability": True},
+            ],
+        },
+        "inner_hits": {
+            "family_siblings": {
+                "hits": {
+                    "hits": [
+                        {"_id": "sib-a", "_source": {"id": "sib-a", "name": "Sibling A", "price": 100}},
+                        {"_id": "sib-b", "_source": {"id": "sib-b", "name": "Sibling B", "price": 120}},
+                    ]
+                }
+            }
+        },
+    }
+    selected = browse_module._preferred_listing_source_from_hit(hit)
+    assert selected["id"] == "sib-b"
+    assert selected["name"] == "Sibling B"
+    assert selected["price"] == 120
+
+
 def test_category_browse_subcategory_list_uses_relaxed_dual_aggregation(monkeypatch):
     requests: list[dict] = []
 

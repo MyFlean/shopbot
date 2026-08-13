@@ -37,6 +37,7 @@ from search_v2.retrieval.listing import (
     apply_flat_listing_defaults,
     finalize_listing_cards,
     listing_visibility_filter_clause,
+    preferred_listing_source_from_hit,
 )
 from search_v2.retrieval.opensearch_client import OpenSearchClient
 from search_v2.retrieval.sorting import build_sort_clauses, build_sort_clauses_from_order
@@ -133,6 +134,10 @@ def _label_lookup_from_metadata(entries: List[Dict[str, str]]) -> Dict[str, str]
     return out
 
 
+def _preferred_listing_source_from_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
+    return preferred_listing_source_from_hit(hit)
+
+
 def _browse_by_filters(
     selector_filters: SearchFilters,
     page: int = 0,
@@ -195,7 +200,7 @@ def _browse_by_filters(
     total = ((response.get("hits") or {}).get("total") or {}).get("value", len(hits))
 
     products = [
-        to_product_card(hit.get("_source") or {}, rank=i + 1, score=hit.get("_score") or 0.0)
+        to_product_card(_preferred_listing_source_from_hit(hit), rank=i + 1, score=hit.get("_score") or 0.0)
         for i, hit in enumerate(hits)
     ]
     products = finalize_listing_cards(products)

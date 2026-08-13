@@ -66,4 +66,17 @@ def extract_hits(response: Dict[str, Any]) -> list:
     business ranking, the playground) deals with one consistent shape
     regardless of which query produced it."""
     hits = response.get("hits", {}).get("hits", [])
-    return [(hit.get("_id") or hit.get("_source", {}).get("id"), hit.get("_score", 0.0), hit.get("_source", {})) for hit in hits]
+    parsed = []
+    for hit in hits:
+        source = dict(hit.get("_source", {}) or {})
+        inner_hits = hit.get("inner_hits")
+        if isinstance(inner_hits, dict) and inner_hits:
+            source["_inner_hits"] = inner_hits
+        parsed.append(
+            (
+                hit.get("_id") or source.get("id"),
+                hit.get("_score", 0.0),
+                source,
+            )
+        )
+    return parsed

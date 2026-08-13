@@ -10,7 +10,12 @@ from typing import Any, Dict, Optional
 
 from search_v2.config.settings import SETTINGS
 from search_v2.extension.product import to_product_card
-from search_v2.retrieval.listing import apply_flat_listing_defaults, apply_general_retrieval_rules, listing_visibility_filter_clause
+from search_v2.retrieval.listing import (
+    apply_flat_listing_defaults,
+    apply_general_retrieval_rules,
+    listing_visibility_filter_clause,
+    preferred_listing_source_from_hit,
+)
 from search_v2.retrieval.opensearch_client import OpenSearchClient
 
 _client: Optional[OpenSearchClient] = None
@@ -94,7 +99,7 @@ def similar_products(product_id: str, limit: int = 5, candidate_size: Optional[i
     alt_cta_meta_by_id: Dict[str, Dict[str, Any]] = {}
     cards: list[Dict[str, Any]] = []
     for hit in hits:
-        raw = hit.get("_source") or {}
+        raw = preferred_listing_source_from_hit(hit)
         card = to_product_card(raw)
         cards.append(card)
         alt_id = str(card.get("id") or "").strip()

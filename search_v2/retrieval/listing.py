@@ -22,7 +22,16 @@ T = TypeVar("T")
 FLEAN_SCORE_DEMOTION_THRESHOLD = 6.0  # on 0–10 scale
 
 LISTING_COLLAPSE_FIELD = "parent_id"
-LISTING_COLLAPSE: Dict[str, str] = {"field": LISTING_COLLAPSE_FIELD}
+LISTING_COLLAPSE_INNER_HITS_NAME = "family_siblings"
+LISTING_COLLAPSE_INNER_HITS_SIZE = 25
+LISTING_COLLAPSE: Dict[str, Any] = {
+    "field": LISTING_COLLAPSE_FIELD,
+    "inner_hits": {
+        "name": LISTING_COLLAPSE_INNER_HITS_NAME,
+        "size": LISTING_COLLAPSE_INNER_HITS_SIZE,
+        "_source": {"excludes": ["text_vector", "text_vector_source", "vernacular_synonyms"]},
+    },
+}
 
 LISTING_SOURCE_EXCLUDES: List[str] = [
     "text_vector",
@@ -38,6 +47,78 @@ LISTING_VISIBILITY_FILTER: Dict[str, Any] = {
 def listing_visibility_filter_clause() -> Dict[str, Any]:
     """Filter clause: only customer-visible products."""
     return deepcopy(LISTING_VISIBILITY_FILTER)
+
+
+def _availability_true(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
+def preferred_listing_source_from_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Pick the source doc to render for one collapsed family hit:
+    - default = top-ranked hit _source
+    - if top source has variants[] with first availability=true id,
+      swap to that sibling's full _source from collapse.inner_hits.
+    """
+    source = dict(hit.get("_source") or {})
+
+    sibling_sources: Dict[str, Dict[str, Any]] = {}
+    current_id = str(source.get("id") or hit.get("_id") or "").strip()
+    if current_id:
+        sibling_sources[current_id] = source
+
+    inner_hits = hit.get("inner_hits")
+    sibling_hits = (
+        (inner_hits.get(LISTING_COLLAPSE_INNER_HITS_NAME) or {})
+        .get("hits", {})
+        .get("hits", [])
+        if isinstance(inner_hits, dict)
+        else []
+    )
+    for sibling_hit in sibling_hits:
+        if not isinstance(sibling_hit, dict):
+            continue
+        sibling_source = sibling_hit.get("_source")
+        if not isinstance(sibling_source, dict):
+            continue
+        sibling_id = str(sibling_source.get("id") or sibling_hit.get("_id") or "").strip()
+        if sibling_id:
+            sibling_sources[sibling_id] = sibling_source
+
+    for variant in source.get("variants") or []:
+        if not isinstance(variant, dict):
+            continue
+        if not _availability_true(variant.get("availability")):
+            continue
+        variant_id = str(variant.get("id") or "").strip()
+        if not variant_id:
+            continue
+        selected_source = sibling_sources.get(variant_id)
+        if isinstance(selected_source, dict):
+            return dict(selected_source)
+    return source
+
+
+def preferred_listing_source_from_source(source: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Same selector as preferred_listing_source_from_hit(), but accepts sources
+    that carry serialized inner_hits under `_inner_hits` (see extract_hits()).
+    """
+    if not isinstance(source, dict):
+        return source
+    inner_hits = source.get("_inner_hits")
+    if not isinstance(inner_hits, dict):
+        return source
+    hit = {"_source": source, "inner_hits": inner_hits, "_id": source.get("id")}
+    selected = preferred_listing_source_from_hit(hit)
+    selected.pop("_inner_hits", None)
+    return selected
 
 
 def apply_flat_listing_defaults(

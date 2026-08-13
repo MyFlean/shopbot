@@ -39,7 +39,10 @@ from search_v2.extension.taxonomy import (
     parse_subcategory_counts_from_aggregations,
 )
 from search_v2.retrieval.filters import SearchFilters, build_filter_clauses
-from search_v2.retrieval.listing import listing_visibility_filter_clause
+from search_v2.retrieval.listing import (
+    listing_visibility_filter_clause,
+    preferred_listing_source_from_source,
+)
 
 _log = logging.getLogger("search_v2.extension.search")
 
@@ -54,6 +57,10 @@ _lock = threading.Lock()
 def _map_filters(params: Dict[str, Any]):
     from search_v2.retrieval.filters import SearchFilters
     return SearchFilters.from_dict(params)
+
+
+def _preferred_listing_source(source: Dict[str, Any]) -> Dict[str, Any]:
+    return preferred_listing_source_from_source(source)
 
 
 def _validate_vocabulary_payload(payload: Any) -> Optional[Dict[str, int]]:
@@ -247,7 +254,7 @@ def _build_search() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
 
         page_items = ranked[offset: offset + size]
         products = [
-            to_product_card(item.source or {}, rank=rank, score=item.final_score)
+            to_product_card(_preferred_listing_source(item.source or {}), rank=rank, score=item.final_score)
             for rank, item in enumerate(page_items, 1)
         ]
         took_ms = round((time.monotonic() - t0) * 1000)

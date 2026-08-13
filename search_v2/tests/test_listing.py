@@ -10,12 +10,15 @@ from search_v2.ranking.business_ranking import RankedItem, finalize_search_ranki
 
 from search_v2.retrieval.listing import (
     LISTING_COLLAPSE,
+    LISTING_COLLAPSE_INNER_HITS_NAME,
     apply_flat_listing_defaults,
     apply_general_retrieval_rules,
     demote_below_flean_threshold,
     finalize_listing_cards,
     flean_score_on_10_scale,
     listing_visibility_filter_clause,
+    preferred_listing_source_from_hit,
+    preferred_listing_source_from_source,
     pin_lab_tested_to_top,
 )
 
@@ -29,6 +32,7 @@ def test_apply_flat_listing_defaults_adds_collapse_and_source_excludes():
         "text_vector_source",
         "vernacular_synonyms",
     ]
+    assert out["collapse"]["inner_hits"]["name"] == LISTING_COLLAPSE_INNER_HITS_NAME
 
 
 def test_apply_flat_listing_defaults_preserves_existing_source_includes():
@@ -45,6 +49,76 @@ def test_apply_flat_listing_defaults_preserves_existing_source_includes():
 def test_listing_visibility_filter_clause():
     clause = listing_visibility_filter_clause()
     assert clause == {"terms": {"visibility": ["visible", "soft"]}}
+
+
+def test_preferred_listing_source_from_hit_selects_first_available_variant():
+    hit = {
+        "_id": "top-1",
+        "_source": {
+            "id": "top-1",
+            "name": "Top Product",
+            "variants": [
+                {"id": "sib-a", "availability": False},
+                {"id": "sib-b", "availability": True},
+            ],
+        },
+        "inner_hits": {
+            LISTING_COLLAPSE_INNER_HITS_NAME: {
+                "hits": {
+                    "hits": [
+                        {"_id": "sib-a", "_source": {"id": "sib-a", "name": "Sibling A"}},
+                        {"_id": "sib-b", "_source": {"id": "sib-b", "name": "Sibling B", "price": 99}},
+                    ]
+                }
+            }
+        },
+    }
+    selected = preferred_listing_source_from_hit(hit)
+    assert selected["id"] == "sib-b"
+    assert selected["name"] == "Sibling B"
+    assert selected["price"] == 99
+
+
+def test_preferred_listing_source_from_source_uses_serialized_inner_hits():
+    source = {
+        "id": "top-1",
+        "variants": [{"id": "sib-b", "availability": True}],
+        "_inner_hits": {
+            LISTING_COLLAPSE_INNER_HITS_NAME: {
+                "hits": {"hits": [{"_id": "sib-b", "_source": {"id": "sib-b", "size": "500 g"}}]}
+            }
+        },
+    }
+    selected = preferred_listing_source_from_source(source)
+    assert selected["id"] == "sib-b"
+    assert selected["size"] == "500 g"
+    assert "_inner_hits" not in selected
+
+
+def test_preferred_listing_source_from_hit_skips_missing_available_variant_then_uses_next():
+    hit = {
+        "_id": "top-1",
+        "_source": {
+            "id": "top-1",
+            "name": "Top Product",
+            "variants": [
+                {"id": "missing-a", "availability": True},
+                {"id": "sib-b", "availability": True},
+            ],
+        },
+        "inner_hits": {
+            LISTING_COLLAPSE_INNER_HITS_NAME: {
+                "hits": {
+                    "hits": [
+                        {"_id": "sib-b", "_source": {"id": "sib-b", "name": "Sibling B"}},
+                    ]
+                }
+            }
+        },
+    }
+    selected = preferred_listing_source_from_hit(hit)
+    assert selected["id"] == "sib-b"
+    assert selected["name"] == "Sibling B"
 
 
 def test_pin_lab_tested_to_top_preserves_relative_order():
